@@ -174,14 +174,22 @@ namespace UnityGameTranslator.Core.UI.Panels
             _bulkChoiceHost.Clear();
 
             // All button callbacks use the static singleton to avoid IL2CPP 'this' capture issues
-            _bulkChoice = Choices.Create(_bulkChoiceHost, "BulkChoice",
-                new[] { "Keep My Changes", "Take Server" }, initial: -1, spacing: 10, onChosen: index =>
+            BuiltScreen bulk = null;
+            bulk = _screen.Instantiate("BulkChoice", _bulkChoiceHost, act =>
+            {
+                switch (act)
                 {
-                    var self = _self;
-                    if (self == null) return;
-                    if (index == 0) self.UseAllLocal();
-                    else self.UseAllRemote();
-                });
+                    case "chosen": return () =>
+                    {
+                        var self = _self;
+                        if (self == null) return;
+                        if (bulk.Choice("BulkChoice").Selected == 0) self.UseAllLocal();
+                        else self.UseAllRemote();
+                    };
+                    default: return null;
+                }
+            });
+            _bulkChoice = bulk.Choice("BulkChoice");
 
             _helpZone?.Describe(_bulkChoice.Option(0),
                 "Resolve every conflict with YOUR version of the line");
@@ -232,64 +240,48 @@ namespace UnityGameTranslator.Core.UI.Panels
         //
         // Both are replaced by UIStyles.CreateTagChip, whose colours come from Common.Theme.
 
+        /// <summary>
+        /// One conflict: the key, the two versions side by side each under its tag chip (the
+        /// square the website draws — naming the tag in prose meant translating the letter into
+        /// this panel's own word, so H read "Human" here and "H" on the site), and the choice.
+        /// </summary>
         private void CreateConflictRowInternal(string key, string localValue, string localTag, string remoteValue, string remoteTag)
         {
-            var rowHost = Stacks.Vertical(_conflictList.Rows, $"Conflict_{key}", spacing: 3,
-                                          minHeight: UIStyles.MultiLineMedium);
-
-            // Key label
-            var keyLabel = Labels.Create(rowHost, "Key", $"Key: {key}", TextRole.Body,
-                                         policy: TextPolicy.Excluded, minHeight: UIStyles.RowHeightSmall);
-            keyLabel.Bold = true;
-
-            // Values row
-            var valuesRow = Stacks.Horizontal(rowHost, "Values", spacing: 10, minHeight: UIStyles.CodeDisplayHeight);
-
-            // Local value
-            var localGroup = Stacks.Vertical(valuesRow, "Local", spacing: 2);
-
-            // 🔴 The tag as the CHIP the website draws, not as "[AI]" in coloured words.
-            //
-            // Naming it in prose meant translating the letter into a word — and the words were
-            // this panel's own, so H read "Human" here, "H" on the site's tables and a green band
-            // in the bar three inches away. The chip is the same square in all three, from the
-            // same library. Side and tag also stop competing for one label's colour: the side is
-            // told in plain text, the tag by its own mark.
-            var localHead = Stacks.Horizontal(localGroup, "LocalHead", spacing: 6, minHeight: UIStyles.RowHeightSmall);
-
-            Labels.Create(localHead, "LocalLabel", "Local:", TextRole.Small, tone: Tone.Secondary);
-            if (localTag != null) TagChips.Create(localHead, localTag);
-
-            Labels.Create(localGroup, "LocalValue", localValue, TextRole.Small, tone: Tone.Accent,
-                          policy: TextPolicy.Excluded, fill: Fill.Stretch);
-
-            // Remote value
-            var remoteGroup = Stacks.Vertical(valuesRow, "Remote", spacing: 2);
-
-            var remoteHead = Stacks.Horizontal(remoteGroup, "RemoteHead", spacing: 6, minHeight: UIStyles.RowHeightSmall);
-
-            Labels.Create(remoteHead, "RemoteLabel", "Server:", TextRole.Small, tone: Tone.Secondary);
-            if (remoteTag != null) TagChips.Create(remoteHead, remoteTag);
-
-            Labels.Create(remoteGroup, "RemoteValue", remoteValue, TextRole.Small, tone: Tone.Success,
-                          policy: TextPolicy.Excluded, fill: Fill.Stretch);
-
-            // Choice buttons (using ButtonRef instead of Toggle for IL2CPP compatibility)
-            var choiceRow = Stacks.Horizontal(rowHost, "Choices", spacing: 10, minHeight: UIStyles.RowHeightMedium);
-
             bool isLocal = _resolutions.TryGetValue(key, out var res) && res == ConflictResolution.KeepLocal;
 
-            // Capture key by value for closures
+            // Capture key by value for closures; every callback goes through the static singleton.
             string capturedKey = key;
-
-            Choices.Create(choiceRow, "Choice", new[] { "Use Local", "Use Server" },
-                initial: isLocal ? 0 : 1, spacing: 10, minWidth: 100, onChosen: index =>
+            BuiltScreen row = null;
+            row = _screen.Instantiate("ConflictRow", _conflictList.Rows, act =>
+            {
+                switch (act)
                 {
-                    var self = _self;
-                    if (self == null) return;
-                    self._resolutions[capturedKey] = index == 0 ? ConflictResolution.KeepLocal : ConflictResolution.TakeRemote;
-                    self.OnUserMadeChoice();
-                });
+                    case "chosen": return () =>
+                    {
+                        var self = _self;
+                        if (self == null) return;
+                        self._resolutions[capturedKey] = row.Choice("Choice").Selected == 0
+                            ? ConflictResolution.KeepLocal : ConflictResolution.TakeRemote;
+                        self.OnUserMadeChoice();
+                    };
+                    default: return null;
+                }
+            });
+
+            row.Say("key", $"Key: {key}");
+            row.Say("local", localValue);
+            row.Say("remote", remoteValue);
+            ShowTag(row.Chip("LocalChip"), localTag);
+            ShowTag(row.Chip("RemoteChip"), remoteTag);
+            row.Choice("Choice").Selected = isLocal ? 0 : 1;
+        }
+
+        /// <summary>A tag as its chip, or no chip at all for a side that has no line.</summary>
+        private static void ShowTag(TagChipHandle chip, string tag)
+        {
+            if (tag == null) return;
+            chip.Retag(tag);
+            chip.Visible = true;
         }
 
         internal void UseAllLocal()

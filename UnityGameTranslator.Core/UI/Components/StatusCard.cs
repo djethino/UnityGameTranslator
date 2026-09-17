@@ -1,8 +1,6 @@
 using System;
 using System.Collections.Generic;
 using UnityEngine;
-using UnityEngine.UI;
-using UniverseLib.UI;
 using UnityGameTranslator.Common;
 using UnityGameTranslator.Core.UI;
 
@@ -54,17 +52,26 @@ namespace UnityGameTranslator.Core.UI.Components
     }
 
     /// <summary>
-    /// Reusable status card widget displaying sync status, role, and translation info.
+    /// The status card: what the translation this game holds IS — its languages, the chips of its
+    /// standing, how much of it there is and how good, the one thing its mode has to say, and the
+    /// vote row.
+    ///
+    /// ⚠ **Its shape is a document** (common/spec/screens/parts/status-card.json, a PART: templates
+    /// alone, shared by whichever screen leaves a host for it). This builds the one template into
+    /// that host and then decides, from the standing, what each line says and which rows show —
+    /// the rules stay here and in the socle (StatusCards), never in the document.
     /// </summary>
     public class StatusCard
     {
-        // UI elements
-        private GameObject _root;
-        private Text _identityLabel;
+        /// <summary>The part, read once: the card's shape, in the closed vocabulary.</summary>
+        private static readonly ScreenDocument Part = ScreenDocument.FromEmbedded("parts/status-card");
+
+        private BuiltScreen _card;
+        private LabelHandle _identityLabel;
 
         /// <summary>Holds the two flags in front of the language pair. Rebuilt with the pair.</summary>
-        private GameObject _identityMarks;
-        private GameObject _badgeHost;
+        private Host _identityMarks;
+        private Host _badgeHost;
 
         /// <summary>
         /// How much room the chips have. The card sits in a 450-wide panel with padding either
@@ -72,103 +79,58 @@ namespace UnityGameTranslator.Core.UI.Components
         /// push a chip off the edge.
         /// </summary>
         private const float _stripWidth = 380f;
-        private Text _detailsLabel;
-        private GameObject _qualityRow;
-        private GameObject _stageRow;
-        private GameObject _legendRow;
-        private Text _qualityLabel;
+        private LabelHandle _detailsLabel;
+        private Host _qualityRow;
+        private Host _stageRow;
+        private Host _legendRow;
+        private LabelHandle _qualityLabel;
         private QualityBar _qualityBar;
-        private Text _qualityLegend;
-        private GameObject _emptyRow;
-        private Text _emptyLabel;
-        private UniverseLib.UI.Models.ButtonRef _emptyBtn;
-        private UniverseLib.UI.Models.ButtonRef _dismissBtn;
-        private GameObject _modeRow;
+        private LabelHandle _qualityLegend;
+        private Host _emptyRow;
+        private LabelHandle _emptyLabel;
+        private ButtonHandle _emptyBtn;
+        private ButtonHandle _dismissBtn;
+        private Host _modeRow;
         /// <summary>Where the tag chips of what a contribution holds are drawn.</summary>
-        private GameObject _contributionRow;
-        private GameObject _voteRow;
-        private GameObject _voteHost;
-        private Text _voteHint;
+        private Host _contributionRow;
+        private Host _voteRow;
+        private Host _voteHost;
+        private LabelHandle _voteHint;
         private VoteButtons _voteButtons;
         private int _voteBuiltForId = -1;
         private bool _voteBuiltInteractive;
-        private Text _secondaryLabel;
-
-        /// <summary>
-        /// The root GameObject of the status card.
-        /// </summary>
-        internal GameObject Root => _root;
-
-        /// <summary>
-        /// Create the status card UI in the given parent.
-        /// </summary>
-        /// <param name="parent">Parent container</param>
-        /// <param name="width">Optional fixed width (0 = flexible width to fill parent)</param>
-        /// <summary>Create the card in a host.</summary>
-        public void CreateUI(Host parent, int width = 0) => CreateUI(parent.Object, width);
+        private LabelHandle _secondaryLabel;
 
         /// <summary>The card, as a panel holds it.</summary>
-        public Host Handle => new Host(_root);
+        public Host Handle => _card?.Root;
 
-        internal void CreateUI(GameObject parent, int width = 0)
+        /// <summary>
+        /// Build the card in a host — the one the screen's document leaves for it.
+        ///
+        /// ⚠ **A SECTION, not a card, because of where it sits.** This lands inside the "My
+        /// translation" card, between boxes built as sections — and it was dressing itself as a
+        /// top-level card: CardPadding against their SectionPadding, and CardBackground against
+        /// their transparent one. Same outer width, so the frame lined up while its contents started
+        /// eight pixels further in and on a different shade — which reads as a box of the wrong
+        /// width stacked among the others. The document says so: SectionPadding, no surface.
+        /// </summary>
+        public void CreateUI(Host parent)
         {
-            // Main card container - use flexible width if not specified
-            if (width > 0)
-            {
-                _root = UIStyles.CreateAdaptiveCard(parent, "StatusCard", width);
-            }
-            else
-            {
-                // ⚠ **A SECTION, not a card, because of where it sits.** This lands inside the
-                // "My translation" card, between boxes built by UIStyles.CreateSection — and it was
-                // dressing itself as a top-level card: CardPadding (20) against their SectionPadding
-                // (12), and CardBackground against SectionBackground. Same outer width, so the frame
-                // lined up while its contents started eight pixels further in and on a different
-                // shade — which reads as a box of the wrong width stacked among the others.
-                //
-                // The width parameter above is the other case: used on its own, it IS a card.
-                _root = UIFactory.CreateVerticalGroup(parent, "StatusCard", false, false, true, true, UIStyles.ElementSpacing);
-                UIFactory.SetLayoutElement(_root, flexibleWidth: 9999);
-                UIStyles.SetBackground(_root, UIStyles.SectionBackground);
-                var layout = _root.GetComponent<VerticalLayoutGroup>();
-                if (layout != null)
-                {
-                    layout.padding = Compat.MakeRectOffset(UIStyles.SectionPadding, UIStyles.SectionPadding,
-                                                           UIStyles.SectionPadding, UIStyles.SectionPadding);
-                    layout.childAlignment = TextAnchor.UpperLeft;
-                }
-            }
+            _card = ScreenBuilder.Part(Part, "Card", parent, ActOf);
 
             // Row 1 — WHAT this translation is, plus the role badge. Identity leads: you know what
             // you are looking at before you are told how it is doing.
-            var identityRow = UIFactory.CreateHorizontalGroup(_root, "IdentityRow", false, false, true, true, UIStyles.SmallSpacing);
-            // flexibleHeight 0: this is a line, and it must stay one. Without it the
-            // row absorbed the card's spare height — the badge stretched into a tall
-            // green column and the language pair floated in the middle of the void.
-            UIFactory.SetLayoutElement(identityRow, minHeight: UIStyles.RowHeightMedium, flexibleWidth: 9999, flexibleHeight: 0);
-            UIStyles.ClearRowBackground(identityRow);
-            var idLayout = identityRow.GetComponent<HorizontalLayoutGroup>();
-            if (idLayout != null) idLayout.childAlignment = TextAnchor.MiddleLeft;
-
+            //
             // The flags lead, the names follow. ⚠ Both: a flag is found faster in a glance and
             // cannot always name a language on its own — ten Indian languages share one — so the
             // words stay and the pictures are added in front. Rebuilt by SetIdentity, since the
             // pair changes when a different translation is taken.
-            _identityMarks = UIFactory.CreateUIObject("IdentityMarks", identityRow);
-            UIFactory.SetLayoutGroup<HorizontalLayoutGroup>(_identityMarks, false, false, true, true,
-                                                            4, 0, 0, 0, 0, TextAnchor.MiddleLeft);
-            UIFactory.SetLayoutElement(_identityMarks, minHeight: UIStyles.RowHeightSmall,
-                                       flexibleWidth: 0, flexibleHeight: 0);
+            _identityMarks = _card.Host("IdentityMarks");
 
             // ⚠ Kept for the states that have no pair to show — "Auto", or a language we do not
             // recognise. It is EMPTY whenever the marks carry the names, because "🇬🇧 English →
             // 🇫🇷 French  English → French" is the same sentence twice.
-            _identityLabel = UIFactory.CreateLabel(identityRow, "IdentityLabel", "", TextAnchor.MiddleLeft);
-            _identityLabel.fontStyle = FontStyle.Bold;
-            _identityLabel.fontSize = UIStyles.FontSizeNormal;
-            _identityLabel.color = UIStyles.TextPrimary;
-            UIFactory.SetLayoutElement(_identityLabel.gameObject, flexibleWidth: 9999);
-            TranslatorCore.RegisterExcluded(_identityLabel);
+            _identityLabel = _card.Label("IdentityLabel");
 
             // ⚠ The role chip used to live here, alone and in its own colours. It moved into the
             // badge strip below, where it sits beside the other things it has to be read WITH —
@@ -184,29 +146,14 @@ namespace UnityGameTranslator.Core.UI.Components
             // ⚠ The card keeps its quality bar and its vote row, so the chips ABOUT those are
             // dropped rather than shown twice: BadgeKind is what makes that a selection instead of
             // a second opinion.
-            _badgeHost = UIFactory.CreateVerticalGroup(_root, "BadgeHost", false, false, true, true, 0);
-            UIFactory.SetLayoutElement(_badgeHost, flexibleWidth: 9999, flexibleHeight: 0);
-            UIStyles.ClearRowBackground(_badgeHost);
-
-            var statusRow = UIFactory.CreateHorizontalGroup(_root, "StatusRow", false, false, true, true, UIStyles.SmallSpacing);
-            UIFactory.SetLayoutElement(statusRow, minHeight: UIStyles.RowHeightSmall, flexibleWidth: 9999, flexibleHeight: 0);
-
-            UIStyles.ClearRowBackground(statusRow);
+            _badgeHost = _card.Host("BadgeHost");
 
             // Volume + game
-            _detailsLabel = UIFactory.CreateLabel(statusRow, "DetailsLabel", "", TextAnchor.MiddleLeft);
-            _detailsLabel.fontSize = UIStyles.FontSizeSmall;
-            _detailsLabel.color = UIStyles.TextSecondary;
-            UIFactory.SetLayoutElement(_detailsLabel.gameObject, flexibleWidth: 9999);
-            TranslatorCore.RegisterExcluded(_detailsLabel);
+            _detailsLabel = _card.Label("DetailsLabel");
 
             // Row 3 — quality bar, FULL WIDTH. It used to share a row with the score label, which
             // shortened it and made the proportions harder to read; the score moved to the legend.
-            _qualityRow = UIFactory.CreateHorizontalGroup(_root, "QualityRow", false, false, true, true, 0);
-            UIFactory.SetLayoutElement(_qualityRow, minHeight: 14, flexibleWidth: 9999, flexibleHeight: 0);
-            UIStyles.ClearRowBackground(_qualityRow);
-            var qrLayout = _qualityRow.GetComponent<HorizontalLayoutGroup>();
-            if (qrLayout != null) qrLayout.childAlignment = TextAnchor.MiddleLeft;
+            _qualityRow = _card.Host("QualityRow");
 
             // Shared with the community list and matching the website's bar — see QualityBar.
             _qualityBar = new QualityBar();
@@ -219,40 +166,19 @@ namespace UnityGameTranslator.Core.UI.Components
             // the key half a row — its two lines wrapped into four. A line of its own removes the
             // competition for width; kept to the right so the block does not stack up flush left,
             // and so the verdict still reads as the summing-up of the bar above it.
-            var stageRow = UIFactory.CreateHorizontalGroup(_root, "StageRow", false, false, true, true, 0);
-            UIFactory.SetLayoutElement(stageRow, minHeight: UIStyles.RowHeightSmall, flexibleWidth: 9999, flexibleHeight: 0);
-            UIStyles.ClearRowBackground(stageRow);
-            var stageLayout = stageRow.GetComponent<HorizontalLayoutGroup>();
-            if (stageLayout != null) stageLayout.childAlignment = TextAnchor.MiddleRight;
-
-            _qualityLabel = UIFactory.CreateLabel(stageRow, "QualityLabel", "", TextAnchor.MiddleRight);
-            _qualityLabel.fontSize = UIStyles.FontSizeHint;
-            _qualityLabel.color = UIStyles.TextMuted;
-            UIFactory.SetLayoutElement(_qualityLabel.gameObject, flexibleWidth: 9999);
-            TranslatorCore.RegisterExcluded(_qualityLabel);
-
-            _stageRow = stageRow;
+            _stageRow = _card.Host("StageRow");
+            _qualityLabel = _card.Label("QualityLabel");
 
             // Row 5 — the colour key with the PERCENTAGES (asked for: the bar shows proportions,
             // the key says what they are worth). Full width, with nothing beside it.
-            var legendRow = UIFactory.CreateHorizontalGroup(_root, "LegendRow", false, false, true, true, UIStyles.SmallSpacing);
-            UIFactory.SetLayoutElement(legendRow, minHeight: UIStyles.RowHeightSmall, flexibleWidth: 9999, flexibleHeight: 0);
-
-            UIStyles.ClearRowBackground(legendRow);
-
+            //
             // Top-aligned: the key takes as many lines as the current width leaves it (see
-            // QualityBar.BuildLegend), and centring would float them inside the row.
-            _qualityLegend = UIFactory.CreateLabel(legendRow, "QualityLegend", "", TextAnchor.UpperLeft);
-            _qualityLegend.fontSize = UIStyles.FontSizeHint;
-            _qualityLegend.color = UIStyles.TextMuted;
-            // Wrap, and no minHeight of its own: the label announces the height its wrapped text
-            // needs at the width it is given, the row inherits it, and a resize re-lays it out
-            // without anyone recomputing anything.
-            _qualityLegend.horizontalOverflow = HorizontalWrapMode.Wrap;
-            UIFactory.SetLayoutElement(_qualityLegend.gameObject, flexibleWidth: 9999);
-            TranslatorCore.RegisterExcluded(_qualityLegend);
-
-            _legendRow = legendRow;
+            // QualityBar.BuildLegend), and centring would float them inside the row. Wrapping, and
+            // no minHeight of its own: the label announces the height its wrapped text needs at the
+            // width it is given, the row inherits it, and a resize re-lays it out without anyone
+            // recomputing anything.
+            _legendRow = _card.Host("LegendRow");
+            _qualityLegend = _card.Label("QualityLegend");
 
             // Row 5b — published, and translating nothing.
             //
@@ -261,41 +187,14 @@ namespace UnityGameTranslator.Core.UI.Components
             // can do something about it — and the button leads straight to the row that carries
             // the delete, because uploading takes one click and unpublishing is a page nobody
             // thinks to look for.
-            _emptyRow = UIFactory.CreateHorizontalGroup(_root, "EmptyRow", false, false, true, true, UIStyles.SmallSpacing);
-            UIFactory.SetLayoutElement(_emptyRow, minHeight: UIStyles.RowHeightMedium, flexibleWidth: 9999, flexibleHeight: 0);
-            UIStyles.ClearRowBackground(_emptyRow);
-            var emptyLayout = _emptyRow.GetComponent<HorizontalLayoutGroup>();
-            if (emptyLayout != null) emptyLayout.childAlignment = TextAnchor.MiddleLeft;
-
-            _emptyLabel = UIFactory.CreateLabel(_emptyRow, "EmptyLabel", "", TextAnchor.MiddleLeft);
-            _emptyLabel.fontSize = UIStyles.FontSizeSmall;
-            _emptyLabel.color = UIStyles.StatusWarning;
-            _emptyLabel.horizontalOverflow = HorizontalWrapMode.Wrap;
-            UIFactory.SetLayoutElement(_emptyLabel.gameObject, flexibleWidth: 9999);
-            TranslatorCore.RegisterExcluded(_emptyLabel);
-
-            _emptyBtn = UIStyles.CreateSecondaryButton(_emptyRow, "EmptyBtn", "", 120);
-            _emptyBtn.OnClick += () =>
-            {
-                var state = TranslatorCore.ServerState;
-                TranslatorCore.OpenUrlSafe(ApiClient.GetMyTranslationsUrl(state?.SiteId));
-            };
-            TranslatorCore.RegisterExcluded(_emptyBtn.ButtonText);
+            _emptyRow = _card.Host("EmptyRow");
+            _emptyLabel = _card.Label("EmptyLabel");
+            _emptyBtn = _card.Button("EmptyBtn");
 
             // Only on the notice that is a judgement about somebody else: an empty file of one's
             // own is a fact that comes back the moment a line is written, and hiding it would
             // only hide it from the person who can fix it.
-            _dismissBtn = UIStyles.CreateSecondaryButton(_emptyRow, "DismissBtn", "", 90);
-            _dismissBtn.OnClick += DismissCurrentNotice;
-            _dismissBtn.Component.gameObject.SetActive(false);
-            TranslatorCore.RegisterExcluded(_dismissBtn.ButtonText);
-
-            _emptyRow.SetActive(false);
-
-            // Hide quality row by default
-            _qualityRow.SetActive(false);
-            _stageRow.SetActive(false);
-            _legendRow.SetActive(false);
+            _dismissBtn = _card.Button("DismissBtn");
 
             // Row 5 — the ONE thing this mode has to tell you.
             //
@@ -304,19 +203,8 @@ namespace UnityGameTranslator.Core.UI.Components
             // conditions this row had no way to express — signed in, online, anything left to send.
             // A card that describes must not offer a second door to an action, least of all one
             // that skips the lock.
-            _modeRow = UIFactory.CreateHorizontalGroup(_root, "ModeRow", false, false, true, true, UIStyles.SmallSpacing);
-            UIFactory.SetLayoutElement(_modeRow, minHeight: UIStyles.RowHeightMedium, flexibleWidth: 9999, flexibleHeight: 0);
-            UIStyles.ClearRowBackground(_modeRow);
-            var modeLayout = _modeRow.GetComponent<HorizontalLayoutGroup>();
-            if (modeLayout != null) modeLayout.childAlignment = TextAnchor.MiddleLeft;
-
-            _secondaryLabel = UIFactory.CreateLabel(_modeRow, "SecondaryLabel", "", TextAnchor.MiddleLeft);
-            _secondaryLabel.fontSize = UIStyles.FontSizeSmall;
-            _secondaryLabel.color = UIStyles.TextMuted;
-            UIFactory.SetLayoutElement(_secondaryLabel.gameObject, flexibleWidth: 0);
-            TranslatorCore.RegisterExcluded(_secondaryLabel);
-
-            _modeRow.SetActive(false);
+            _modeRow = _card.Host("ModeRow");
+            _secondaryLabel = _card.Label("SecondaryLabel");
 
             // 🔴 What a contribution is HOLDING, in the marks the website uses for it.
             //
@@ -335,51 +223,44 @@ namespace UnityGameTranslator.Core.UI.Components
             //
             // ⚠ A kind and its letters still belong together: that is what the per-kind row keeps,
             // and it is why this is a COLUMN of rows rather than one row that wraps.
-            _contributionRow = UIFactory.CreateVerticalGroup(_root, "Contributions", false, false, true, true, 2);
-            UIFactory.SetLayoutElement(_contributionRow, minHeight: UIStyles.RowHeightSmall,
-                                       flexibleWidth: 9999, flexibleHeight: 0);
-            UIStyles.ClearRowBackground(_contributionRow);
-            var contribLayout = _contributionRow.GetComponent<VerticalLayoutGroup>();
-            if (contribLayout != null) contribLayout.childAlignment = TextAnchor.UpperLeft;
-            _contributionRow.SetActive(false);
+            _contributionRow = _card.Host("Contributions");
 
             // Row 6 — giving something back. Last, because it is not status: it is the one thing
             // the player can do FOR the translation rather than with it.
-            _voteRow = UIFactory.CreateHorizontalGroup(_root, "VoteRow", false, false, true, true, UIStyles.SmallSpacing);
-            UIFactory.SetLayoutElement(_voteRow, minHeight: UIStyles.RowHeightMedium, flexibleWidth: 9999, flexibleHeight: 0);
-            UIStyles.ClearRowBackground(_voteRow);
-            var voteLayout = _voteRow.GetComponent<HorizontalLayoutGroup>();
-            if (voteLayout != null) voteLayout.childAlignment = TextAnchor.MiddleLeft;
-
+            //
             // 🔴 **The row says what it is.** It showed a bare "+1" beside a sentence, and a lone
             // signed number names nothing: it could be a score, a difference, lines added. Every
             // other row of this card carries the word for its subject, and this one did not.
             //
             // ⚠ "Votes", the website's word (games.sort.votes, admin.votes), not "rating": the
             // same fact must read the same way in the mod and on the site, and the site counts
-            // votes. See CLAUDE.md — it is one ecosystem.
-            var voteTitle = UIFactory.CreateLabel(_voteRow, "VoteTitle", "Votes", TextAnchor.MiddleLeft);
-            voteTitle.fontSize = UIStyles.FontSizeHint;
-            voteTitle.color = UIStyles.TextSecondary;
-            UIFactory.SetLayoutElement(voteTitle.gameObject, minWidth: 40, flexibleWidth: 0);
-            // Written once and never rewritten by the code, so it goes through the translation
-            // pipeline like the card's other fixed words — unlike the labels above, whose text the
-            // code replaces on every refresh and which are therefore excluded from it.
-            TranslatorCore.RegisterUIText(voteTitle);
+            // votes. See CLAUDE.md — it is one ecosystem. Written once in the document and never
+            // rewritten by the code, so it goes through the translation pipeline like the card's
+            // other fixed words — unlike the labels above, whose text the code replaces on every
+            // refresh and which are therefore excluded from it.
+            _voteRow = _card.Host("VoteRow");
 
             // The widget is rebuilt into this host whenever the mode changes (signed in, seen
             // enough of it, someone else's work) — arrows exist or they don't, they are never
             // shown greyed out.
-            _voteHost = UIFactory.CreateHorizontalGroup(_voteRow, "VoteHost", false, false, true, true, 0);
-            UIFactory.SetLayoutElement(_voteHost, minWidth: 90, flexibleWidth: 0);
+            _voteHost = _card.Host("VoteHost");
+            _voteHint = _card.Label("VoteHint");
+        }
 
-            _voteHint = UIFactory.CreateLabel(_voteRow, "VoteHint", "", TextAnchor.MiddleLeft);
-            _voteHint.fontSize = UIStyles.FontSizeHint;
-            _voteHint.color = UIStyles.TextMuted;
-            UIFactory.SetLayoutElement(_voteHint.gameObject, flexibleWidth: 9999);
-            TranslatorCore.RegisterExcluded(_voteHint);
-
-            _voteRow.SetActive(false);
+        /// <summary>The two verbs the document asks for.</summary>
+        private Action ActOf(string act)
+        {
+            switch (act)
+            {
+                case "manage":
+                    return () =>
+                    {
+                        var state = TranslatorCore.ServerState;
+                        TranslatorCore.OpenUrlSafe(ApiClient.GetMyTranslationsUrl(state?.SiteId));
+                    };
+                case "dismiss": return DismissCurrentNotice;
+                default: return null;
+            }
         }
 
         /// <summary>
@@ -399,7 +280,7 @@ namespace UnityGameTranslator.Core.UI.Components
 
             if (vote == null)
             {
-                _voteRow.SetActive(false);
+                _voteRow.Visible = false;
                 return;
             }
 
@@ -419,7 +300,7 @@ namespace UnityGameTranslator.Core.UI.Components
             // is dead belongs in words next to it.
             if (_voteButtons == null || _voteBuiltForId != vote.TargetId || _voteBuiltInteractive != interactive)
             {
-                UIHelpers.DestroyChildren(_voteHost);
+                _voteHost.Clear();
                 _voteButtons = new VoteButtons();
                 _voteButtons.Create(_voteHost, vote.TargetId, vote.Count, OnVoteCast, vote.UserVote, interactive);
                 _voteBuiltForId = vote.TargetId;
@@ -441,10 +322,11 @@ namespace UnityGameTranslator.Core.UI.Components
             else
                 hint = null;
 
-            _voteHint.text = hint == null ? string.Empty : TranslatorCore.TranslateOwnUIDynamic(hint, _voteHint);
-            _voteHint.gameObject.SetActive(hint != null);
+            if (hint == null) _voteHint.Show(string.Empty);
+            else _voteHint.Say(hint);
+            _voteHint.Visible = hint != null;
 
-            _voteRow.SetActive(true);
+            _voteRow.Visible = true;
         }
 
         /// <summary>
@@ -485,7 +367,7 @@ namespace UnityGameTranslator.Core.UI.Components
             _standing = standing;
             if (_badgeHost == null) return;
 
-            UIHelpers.DestroyChildren(_badgeHost);
+            _badgeHost.Clear();
 
             var all = Badges.For(standing.Publication, standing.Role == LineageRole.Main ? true
                                      : standing.Role == LineageRole.Branch ? (bool?)false : null,
@@ -565,7 +447,7 @@ namespace UnityGameTranslator.Core.UI.Components
             // The pair is drawn as marks, each side carrying its flag when it has one. The text
             // label is only the standby for when there is no row to draw them in at all.
             bool marked = RebuildIdentityMarks(sourceLanguage, targetLanguage);
-            _identityLabel.text = marked ? "" : $"{source} → {target}";
+            _identityLabel.Show(marked ? "" : $"{source} → {target}");
         }
 
         /// <summary>
@@ -580,16 +462,12 @@ namespace UnityGameTranslator.Core.UI.Components
         {
             if (_identityMarks == null) return false;
 
-            for (int i = _identityMarks.transform.childCount - 1; i >= 0; i--)
-                UnityEngine.Object.Destroy(_identityMarks.transform.GetChild(i).gameObject);
+            _identityMarks.Clear();
 
             AddIdentitySide("IdSource", sourceLanguage);
 
-            var arrow = UIFactory.CreateLabel(_identityMarks, "IdArrow", "→", TextAnchor.MiddleCenter);
-            arrow.fontSize = UIStyles.FontSizeNormal;
-            arrow.color = UIStyles.TextMuted;
-            UIFactory.SetLayoutElement(arrow.gameObject, minHeight: UIStyles.RowHeightSmall,
-                                       flexibleWidth: 0);
+            Labels.Create(_identityMarks, "IdArrow", "→", TextRole.Body, tone: Tone.Muted,
+                          policy: TextPolicy.Excluded, minHeight: UIStyles.RowHeightSmall);
 
             AddIdentitySide("IdTarget", targetLanguage);
             return true;
@@ -610,15 +488,9 @@ namespace UnityGameTranslator.Core.UI.Components
 
             // Nothing to mark: no language was chosen, which is auto-detection rather than a value
             // we failed to record. The word takes the mark's place so the row still reads as a pair.
-            var word = UIFactory.CreateLabel(_identityMarks, name + "Auto",
-                                             TranslatorCore.TranslateOwnUIDynamic("Auto"),
-                                             TextAnchor.MiddleLeft);
-            word.fontSize = UIStyles.FontSizeNormal;
-            word.color = UIStyles.TextPrimary;
-            word.horizontalOverflow = HorizontalWrapMode.Overflow;
-            word.verticalOverflow = VerticalWrapMode.Overflow;
-            UIFactory.SetLayoutElement(word.gameObject, minHeight: UIStyles.RowHeightSmall,
-                                       flexibleWidth: 0, flexibleHeight: 0);
+            Labels.Create(_identityMarks, name + "Auto", TranslatorCore.TranslateOwnUIDynamic("Auto"),
+                          TextRole.Body, tone: Tone.Plain, policy: TextPolicy.Excluded, wrap: false,
+                          minHeight: UIStyles.RowHeightSmall);
         }
 
         /// <summary>
@@ -636,7 +508,7 @@ namespace UnityGameTranslator.Core.UI.Components
             string details = "· " + TranslatorCore.TranslateOwnUIDynamic($"{entryCount} entries");
             if (!string.IsNullOrEmpty(gameName))
                 details += $" · {gameName}";
-            _detailsLabel.text = details;
+            _detailsLabel.Show(details);
         }
 
         /// <summary>
@@ -671,15 +543,14 @@ namespace UnityGameTranslator.Core.UI.Components
             bool hasInfo = !string.IsNullOrEmpty(info);
             if (hasInfo)
             {
-                _secondaryLabel.text = string.IsNullOrEmpty(mention)
-                    ? TranslatorCore.TranslateOwnUIDynamic(info, _secondaryLabel)
-                    : TranslatorCore.TranslateOwnUIDynamic(info) + " " + mention;
+                if (string.IsNullOrEmpty(mention)) _secondaryLabel.Say(info);
+                else _secondaryLabel.Show(TranslatorCore.TranslateOwnUIDynamic(info) + " " + mention);
 
-                _secondaryLabel.color = needsAttention ? UIStyles.StatusWarning : UIStyles.TextMuted;
+                _secondaryLabel.Tone = needsAttention ? Tone.Warning : Tone.Muted;
             }
 
-            _secondaryLabel.gameObject.SetActive(hasInfo);
-            _modeRow.SetActive(hasInfo);
+            _secondaryLabel.Visible = hasInfo;
+            _modeRow.Visible = hasInfo;
 
             // 🔴 **The kinds belong to THIS sentence, so they go when it is rewritten.** They used
             // to be a child of the row above and vanished with it; on their own they would outlive
@@ -687,7 +558,7 @@ namespace UnityGameTranslator.Core.UI.Components
             // still show what somebody else's contributions were holding. Every caller that has
             // kinds to draw calls SetContributionKinds straight after this, so clearing here costs
             // nothing and makes the stale case impossible rather than unlikely.
-            if (_contributionRow != null) _contributionRow.SetActive(false);
+            if (_contributionRow != null) _contributionRow.Visible = false;
         }
 
         /// <summary>
@@ -705,11 +576,10 @@ namespace UnityGameTranslator.Core.UI.Components
         {
             if (_contributionRow == null) return;
 
-            for (int i = _contributionRow.transform.childCount - 1; i >= 0; i--)
-                UnityEngine.Object.Destroy(_contributionRow.transform.GetChild(i).gameObject);
+            _contributionRow.Clear();
 
             bool any = kinds != null && kinds.Length > 0;
-            _contributionRow.SetActive(any);
+            _contributionRow.Visible = any;
             if (!any) return;
 
             // 🔴 **One line, opening with "N to review:" — the shape the Manager already has.** It
@@ -717,12 +587,11 @@ namespace UnityGameTranslator.Core.UI.Components
             // and the dash joined two facts that answer different questions: how much work is
             // waiting, and what that work is made of. The second belongs with the pieces that detail
             // it, which is where the eye goes when deciding whether the evening is worth it.
-            var row = UIFactory.CreateHorizontalGroup(_contributionRow, "Kinds", false, false, true, true, 4);
-            UIFactory.SetLayoutElement(row, minHeight: UIStyles.RowHeightSmall,
-                                       flexibleWidth: 9999, flexibleHeight: 0);
-            UIStyles.ClearRowBackground(row);
-            var rowLayout = row.GetComponent<HorizontalLayoutGroup>();
-            if (rowLayout != null) rowLayout.childAlignment = TextAnchor.MiddleLeft;
+            //
+            // ⚠ Built here and not described: how many pieces the line holds is the work's, so the
+            // row is the one thing of this card the document cannot draw ahead of time.
+            var row = Stacks.Horizontal(_contributionRow, "Kinds", spacing: 4, pad: Pad.None,
+                                        minHeight: UIStyles.RowHeightSmall);
 
             if (!string.IsNullOrEmpty(head)) Piece(row, "Head", head + ":");
 
@@ -733,7 +602,7 @@ namespace UnityGameTranslator.Core.UI.Components
 
                 foreach (TagCount piece in kinds[k].Tally.Counted())
                 {
-                    UIStyles.CreateTagChip(row, piece.Letter, out _);
+                    TagChips.Create(row, piece.Letter);
                     Piece(row, "Count" + piece.Letter, piece.Count.ToString());
                 }
             }
@@ -750,14 +619,11 @@ namespace UnityGameTranslator.Core.UI.Components
         /// crush a label to nothing when the row is tight, and a Text given no width does not clip,
         /// it wraps — one syllable per line, which is exactly what this row used to do.
         /// </summary>
-        private static void Piece(GameObject row, string name, string text)
+        private static void Piece(Host row, string name, string text)
         {
-            var label = UIFactory.CreateLabel(row, name, text, TextAnchor.MiddleLeft);
-            label.fontSize = UIStyles.FontSizeSmall;
-            label.color = UIStyles.TextPrimary;
-            UIFactory.SetLayoutElement(label.gameObject, minWidth: Mathf.CeilToInt(label.preferredWidth),
-                                       minHeight: UIStyles.RowHeightSmall, flexibleWidth: 0);
-            TranslatorCore.RegisterExcluded(label);
+            var label = Labels.Create(row, name, text, TextRole.Small, tone: Tone.Plain,
+                                      policy: TextPolicy.Excluded, minHeight: UIStyles.RowHeightSmall);
+            label.FitWords();
         }
 
         /// <summary>
@@ -769,10 +635,10 @@ namespace UnityGameTranslator.Core.UI.Components
 
             if (stats == null)
             {
-                _qualityRow.SetActive(false);
-                _stageRow?.SetActive(false);
-                _legendRow?.SetActive(false);
-                _emptyRow?.SetActive(false);
+                _qualityRow.Visible = false;
+                _stageRow.Visible = false;
+                _legendRow.Visible = false;
+                _emptyRow.Visible = false;
                 return;
             }
 
@@ -786,64 +652,58 @@ namespace UnityGameTranslator.Core.UI.Components
 
             if (!hasData)
             {
-                _qualityRow.SetActive(false);
-                _stageRow?.SetActive(false);
-                _legendRow?.SetActive(false);
+                _qualityRow.Visible = false;
+                _stageRow.Visible = false;
+                _legendRow.Visible = false;
                 return;
             }
 
             // Percentages in the legend: the bar shows the proportions, the legend says what they
             // are worth. Rounded to whole percents — a decimal here is noise, not information.
-            if (_qualityLegend != null)
-            {
-                _qualityLegend.text = QualityBar.BuildLegend(
-                    stats.HumanCount, stats.ValidatedCount, stats.AiCount,
-                    stats.SkippedCount, stats.CaptureCount);
+            //
+            // No height set from here. The row used to be measured for a PREDICTED number of
+            // lines, which cannot survive a resizable panel: the same key needs one line wide and
+            // three narrow. The layout already knows — a Text reports the height its wrapped
+            // content needs at the width it has just been given, and the row takes it. The one row
+            // of minHeight the document fixes stays as a floor.
+            _qualityLegend.Show(QualityBar.BuildLegend(
+                stats.HumanCount, stats.ValidatedCount, stats.AiCount,
+                stats.SkippedCount, stats.CaptureCount));
 
-                // No height set from here any more. The row used to be measured for a PREDICTED
-                // number of lines, which cannot survive a resizable panel: the same key needs one
-                // line wide and three narrow. The layout already knows — a Text reports the
-                // height its wrapped content needs at the width it has just been given, and the
-                // row takes it. The one row of minHeight fixed in CreateUI stays as a floor.
+            // The step, plus what is left to read. No mark: a score answers "where does each
+            // line come from" when the question is "has anyone been through this", and its
+            // top demanded retyping by hand what the AI already had right. The remaining
+            // count is the part that moves as you work — that is what carries a translator
+            // forward, not a grade.
+            string stage = stats.ReviewStage;
+            if (stage == null && stats.Completeness > 0f)
+            {
+                // Still mostly untranslated: how much is done and how much is waiting says
+                // more than a review step that has nothing to judge yet.
+                _qualityLabel.Show(Mathf.RoundToInt(stats.Completeness * 100f) + "% "
+                    + TranslatorCore.TranslateOwnUIDynamic("translated")
+                    + $" · {stats.CaptureCount} " + TranslatorCore.TranslateOwnUIDynamic("waiting"));
+            }
+            else if (stage == null)
+            {
+                _qualityLabel.Show(string.Empty);
+            }
+            else if (stats.UnreviewedCount > 0)
+            {
+                _qualityLabel.Show(TranslatorCore.TranslateOwnUIDynamic(stage)
+                    + $" · {stats.UnreviewedCount} " + TranslatorCore.TranslateOwnUIDynamic("left to review"));
+            }
+            else
+            {
+                _qualityLabel.Show(TranslatorCore.TranslateOwnUIDynamic(stage));
             }
 
-            if (_qualityLabel != null)
-            {
-                // The step, plus what is left to read. No mark: a score answers "where does each
-                // line come from" when the question is "has anyone been through this", and its
-                // top demanded retyping by hand what the AI already had right. The remaining
-                // count is the part that moves as you work — that is what carries a translator
-                // forward, not a grade.
-                string stage = stats.ReviewStage;
-                if (stage == null && stats.Completeness > 0f)
-                {
-                    // Still mostly untranslated: how much is done and how much is waiting says
-                    // more than a review step that has nothing to judge yet.
-                    _qualityLabel.text = Mathf.RoundToInt(stats.Completeness * 100f) + "% "
-                        + TranslatorCore.TranslateOwnUIDynamic("translated")
-                        + $" · {stats.CaptureCount} " + TranslatorCore.TranslateOwnUIDynamic("waiting");
-                }
-                else if (stage == null)
-                {
-                    _qualityLabel.text = string.Empty;
-                }
-                else if (stats.UnreviewedCount > 0)
-                {
-                    _qualityLabel.text = TranslatorCore.TranslateOwnUIDynamic(stage)
-                        + $" · {stats.UnreviewedCount} " + TranslatorCore.TranslateOwnUIDynamic("left to review");
-                }
-                else
-                {
-                    _qualityLabel.text = TranslatorCore.TranslateOwnUIDynamic(stage);
-                }
+            // A file with nothing translated has no stage: an empty row would be a blank
+            // gap between the bar and its key.
+            _stageRow.Visible = stage != null;
 
-                // A file with nothing translated has no stage: an empty row would be a blank
-                // gap between the bar and its key.
-                _stageRow?.SetActive(stage != null);
-            }
-
-            _qualityRow.SetActive(true);
-            _legendRow?.SetActive(true);
+            _qualityRow.Visible = true;
+            _legendRow.Visible = true;
         }
 
         /// <summary>Notice key for "the Main is not taking the new work into account".</summary>
@@ -881,7 +741,7 @@ namespace UnityGameTranslator.Core.UI.Components
                 TranslatorCore.SaveConfig();
             }
 
-            _emptyRow?.SetActive(false);
+            if (_emptyRow != null) _emptyRow.Visible = false;
         }
 
         /// <summary>
@@ -905,33 +765,23 @@ namespace UnityGameTranslator.Core.UI.Components
 
             if (notice == null)
             {
-                _dismissBtn?.Component.gameObject.SetActive(false);
-                _emptyRow.SetActive(false);
+                _dismissBtn.Visible = false;
+                _emptyRow.Visible = false;
                 return;
             }
 
             var said = notice.Value;
 
-            if (_emptyLabel != null)
-            {
-                _emptyLabel.color = said.Tone == NoticeTone.Error ? UIStyles.StatusError : UIStyles.StatusWarning;
-                _emptyLabel.text = TranslatorCore.TranslateOwnUIDynamic(said.Text);
-            }
+            _emptyLabel.Tone = said.Tone == NoticeTone.Error ? Tone.Error : Tone.Warning;
+            _emptyLabel.Show(TranslatorCore.TranslateOwnUIDynamic(said.Text));
 
-            if (_emptyBtn?.ButtonText != null)
-            {
-                _emptyBtn.ButtonText.text = TranslatorCore.TranslateOwnUIDynamic(said.Verb);
-            }
+            _emptyBtn.Label = said.Verb;
 
-            // A judgement about somebody else can be put away; a fact about the file cannot.
-            if (_dismissBtn != null)
-            {
-                if (_dismissBtn.ButtonText != null)
-                    _dismissBtn.ButtonText.text = TranslatorCore.TranslateOwnUIDynamic("Dismiss");
-                _dismissBtn.Component.gameObject.SetActive(said.Dismissable);
-            }
+            // A judgement about somebody else can be put away; a fact about the file cannot. The
+            // word on the button is the document's, written once by the pipeline.
+            _dismissBtn.Visible = said.Dismissable;
 
-            _emptyRow.SetActive(true);
+            _emptyRow.Visible = true;
         }
 
         /// <summary>
@@ -1079,10 +929,7 @@ namespace UnityGameTranslator.Core.UI.Components
         /// </summary>
         public void SetVisible(bool visible)
         {
-            if (_root != null)
-            {
-                _root.SetActive(visible);
-            }
+            if (_card?.Root != null) _card.Root.Visible = visible;
         }
     }
 }

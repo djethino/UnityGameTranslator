@@ -36,6 +36,10 @@
          ScreenDocument.FromEmbedded("confirm") reads screens/confirm.json from here. -->
     <EmbeddedResource Include="..\common\spec\screens\*.json" Exclude="..\common\spec\screens\schema.json"
                       LogicalName="screens/%(Filename)%(Extension)" />
+    <!-- The parts — pieces several screens hold, templates alone — under their folder:
+         ScreenDocument.FromEmbedded("parts/status-card") reads screens/parts/status-card.json. -->
+    <EmbeddedResource Include="..\common\spec\screens\parts\*.json"
+                      LogicalName="screens/parts/%(Filename)%(Extension)" />
   </ItemGroup>
 
   <ItemGroup>

@@ -210,8 +210,9 @@ namespace UnityGameTranslator.Core.UI.Panels
         ///   the very thing that section shows, and the list lives in its own panel;
         /// - the footer's three buttons concern the whole mod and belong to every tab.
         ///
-        /// ⚠ Two components the vocabulary does not describe — the status card and the community
-        /// list — are built here into the two hosts the document leaves empty.
+        /// ⚠ Two components with a document of their own — the status card and the community
+        /// list, parts under common/spec/screens/parts — are built here into the two hosts the
+        /// document leaves empty.
         /// </summary>
         protected override void ConstructPanelContent()
         {
@@ -295,7 +296,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // The community list, in the host between the search row and its own action row —
             // the list takes the spare height and that row keeps its own.
-            _translationList.CreateUI(_screen.Host("TranslationListHost"), 200, onSelectionChanged: (t) =>
+            _translationList.CreateUI(_screen.Host("TranslationListHost"), onSelectionChanged: (t) =>
             {
                 if (_downloadBtn != null)
                 {

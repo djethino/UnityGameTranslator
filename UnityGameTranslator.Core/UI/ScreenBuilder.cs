@@ -12,6 +12,12 @@ namespace UnityGameTranslator.Core.UI
     internal sealed class BuiltScreen
     {
         private readonly ScreenDocument _doc;
+        private readonly string _name;
+        private readonly Dictionary<string, ScreenNode> _binds;
+        private ScreenBuilder.Site _site;
+
+        /// <summary>The piece an instance of a template is, when its root is a container; null for a lone leaf.</summary>
+        public Host Root { get; internal set; }
         private readonly Dictionary<string, LabelHandle> _labels = new Dictionary<string, LabelHandle>(StringComparer.Ordinal);
         private readonly Dictionary<string, ButtonHandle> _buttons = new Dictionary<string, ButtonHandle>(StringComparer.Ordinal);
         private readonly Dictionary<string, Host> _hosts = new Dictionary<string, Host>(StringComparer.Ordinal);
@@ -22,38 +28,59 @@ namespace UnityGameTranslator.Core.UI
         private readonly Dictionary<string, TabBar> _tabBars = new Dictionary<string, TabBar>(StringComparer.Ordinal);
         private readonly Dictionary<string, Collapsible> _collapsibles = new Dictionary<string, Collapsible>(StringComparer.Ordinal);
 
-        internal BuiltScreen(ScreenDocument doc) { _doc = doc; }
+        internal BuiltScreen(ScreenDocument doc, string name, Dictionary<string, ScreenNode> binds)
+        {
+            _doc = doc;
+            _name = name;
+            _binds = binds;
+        }
+
+        internal void Attach(ScreenBuilder.Site site) { _site = site; }
+
+        /// <summary>
+        /// Build one of the document's templates into a host — a row for one element of a list —
+        /// with the acts of that element. What comes back is reached by the template's own names.
+        /// </summary>
+        public BuiltScreen Instantiate(string template, Host parent, Func<string, Action> actOf)
+            => ScreenBuilder.Instantiate(_doc, template, parent, actOf, _site.Help, _site.LayoutChanged);
 
         internal void Add(string name, TabBar tabs) => _tabBars[name] = tabs;
         internal void Add(string name, Collapsible collapsible) => _collapsibles[name] = collapsible;
 
-        public TabBar Tabs(string name) => _tabBars.TryGetValue(name, out var t) ? t : throw new ScreenDocumentException($"{_doc.Name}: no row of tabs named '{name}'");
-        public Collapsible Collapsible(string name) => _collapsibles.TryGetValue(name, out var c) ? c : throw new ScreenDocumentException($"{_doc.Name}: no collapsible named '{name}'");
+        public TabBar Tabs(string name) => _tabBars.TryGetValue(name, out var t) ? t : throw new ScreenDocumentException($"{_name}: no row of tabs named '{name}'");
+        public Collapsible Collapsible(string name) => _collapsibles.TryGetValue(name, out var c) ? c : throw new ScreenDocumentException($"{_name}: no collapsible named '{name}'");
 
         internal void Add(string name, LabelHandle label) => _labels[name] = label;
         internal void Add(string name, ButtonHandle button) => _buttons[name] = button;
         internal void Add(string name, Host host) => _hosts[name] = host;
+        internal bool HasHost(string name) => _hosts.ContainsKey(name);
         internal void Add(string name, StatusLine status) => _statuses[name] = status;
         internal void Add(string name, FieldHandle field) => _fields[name] = field;
         internal void Add(string name, SearchableDropdown dropdown) => _dropdowns[name] = dropdown;
         internal void Add(string name, ScrollList list) => _lists[name] = list;
         internal void Add(string name, ToggleHandle toggle) => _toggles[name] = toggle;
         private readonly Dictionary<string, ToggleHandle> _toggles = new Dictionary<string, ToggleHandle>(StringComparer.Ordinal);
-        public ToggleHandle Toggle(string name) => _toggles.TryGetValue(name, out var t) ? t : throw new ScreenDocumentException($"{_doc.Name}: no checkbox named '{name}'");
+        public ToggleHandle Toggle(string name) => _toggles.TryGetValue(name, out var t) ? t : throw new ScreenDocumentException($"{_name}: no checkbox named '{name}'");
         internal void Add(string name, Toasts toast) => _toasts[name] = toast;
         private readonly Dictionary<string, Toasts> _toasts = new Dictionary<string, Toasts>(StringComparer.Ordinal);
         internal void Add(string name, SliderHandle slider) => _sliders[name] = slider;
         private readonly Dictionary<string, SliderHandle> _sliders = new Dictionary<string, SliderHandle>(StringComparer.Ordinal);
-        public SliderHandle Slider(string name) => _sliders.TryGetValue(name, out var s) ? s : throw new ScreenDocumentException($"{_doc.Name}: no slider named '{name}'");
-        public Toasts Toast(string name) => _toasts.TryGetValue(name, out var t) ? t : throw new ScreenDocumentException($"{_doc.Name}: no toast named '{name}'");
+        public SliderHandle Slider(string name) => _sliders.TryGetValue(name, out var s) ? s : throw new ScreenDocumentException($"{_name}: no slider named '{name}'");
+        internal void Add(string name, ChoiceHandle choice) => _choices[name] = choice;
+        private readonly Dictionary<string, ChoiceHandle> _choices = new Dictionary<string, ChoiceHandle>(StringComparer.Ordinal);
+        public ChoiceHandle Choice(string name) => _choices.TryGetValue(name, out var c) ? c : throw new ScreenDocumentException($"{_name}: no choice named '{name}'");
+        internal void Add(string name, TagChipHandle chip) => _chips[name] = chip;
+        private readonly Dictionary<string, TagChipHandle> _chips = new Dictionary<string, TagChipHandle>(StringComparer.Ordinal);
+        public TagChipHandle Chip(string name) => _chips.TryGetValue(name, out var c) ? c : throw new ScreenDocumentException($"{_name}: no chip named '{name}'");
+        public Toasts Toast(string name) => _toasts.TryGetValue(name, out var t) ? t : throw new ScreenDocumentException($"{_name}: no toast named '{name}'");
 
-        public LabelHandle Label(string name) => _labels.TryGetValue(name, out var l) ? l : throw new ScreenDocumentException($"{_doc.Name}: no label named '{name}'");
-        public ButtonHandle Button(string name) => _buttons.TryGetValue(name, out var b) ? b : throw new ScreenDocumentException($"{_doc.Name}: no button named '{name}'");
-        public Host Host(string name) => _hosts.TryGetValue(name, out var h) ? h : throw new ScreenDocumentException($"{_doc.Name}: no host named '{name}'");
-        public StatusLine Status(string name) => _statuses.TryGetValue(name, out var s) ? s : throw new ScreenDocumentException($"{_doc.Name}: no status line named '{name}'");
-        public FieldHandle Field(string name) => _fields.TryGetValue(name, out var f) ? f : throw new ScreenDocumentException($"{_doc.Name}: no field named '{name}'");
-        public SearchableDropdown Dropdown(string name) => _dropdowns.TryGetValue(name, out var d) ? d : throw new ScreenDocumentException($"{_doc.Name}: no dropdown named '{name}'");
-        public ScrollList List(string name) => _lists.TryGetValue(name, out var s) ? s : throw new ScreenDocumentException($"{_doc.Name}: no list named '{name}'");
+        public LabelHandle Label(string name) => _labels.TryGetValue(name, out var l) ? l : throw new ScreenDocumentException($"{_name}: no label named '{name}'");
+        public ButtonHandle Button(string name) => _buttons.TryGetValue(name, out var b) ? b : throw new ScreenDocumentException($"{_name}: no button named '{name}'");
+        public Host Host(string name) => _hosts.TryGetValue(name, out var h) ? h : throw new ScreenDocumentException($"{_name}: no host named '{name}'");
+        public StatusLine Status(string name) => _statuses.TryGetValue(name, out var s) ? s : throw new ScreenDocumentException($"{_name}: no status line named '{name}'");
+        public FieldHandle Field(string name) => _fields.TryGetValue(name, out var f) ? f : throw new ScreenDocumentException($"{_name}: no field named '{name}'");
+        public SearchableDropdown Dropdown(string name) => _dropdowns.TryGetValue(name, out var d) ? d : throw new ScreenDocumentException($"{_name}: no dropdown named '{name}'");
+        public ScrollList List(string name) => _lists.TryGetValue(name, out var s) ? s : throw new ScreenDocumentException($"{_name}: no list named '{name}'");
 
         /// <summary>
         /// Write a slot. The document names it and says which piece holds it; the code says what
@@ -61,8 +88,8 @@ namespace UnityGameTranslator.Core.UI
         /// </summary>
         public void Say(string bind, string text)
         {
-            if (!_doc.Binds.TryGetValue(bind, out var node))
-                throw new ScreenDocumentException($"{_doc.Name}: no slot named '{bind}'");
+            if (!_binds.TryGetValue(bind, out var node))
+                throw new ScreenDocumentException($"{_name}: no slot named '{bind}'");
             if (node.Kind == "button") Button(node.Name).Label = text;
             // A slot the document marks Excluded holds a figure or somebody's own words — written
             // as they are, never through the mod's own translation.
@@ -98,16 +125,55 @@ namespace UnityGameTranslator.Core.UI
             if (title == null && doc.Nodes.Values.Any(n => n.Kind == "title"))
                 throw new ScreenDocumentException($"{doc.Name}: the document has a title with a scope switch and the panel gave no way to make one");
 
-            var built = new BuiltScreen(doc);
+            var built = new BuiltScreen(doc, doc.Name, doc.Binds);
             var site = new Site { Doc = doc, Built = built, ActOf = actOf, Help = help, Body = body, LayoutChanged = layoutChanged, Title = title };
+            built.Attach(site);
             foreach (var node in doc.Header) Place(site, node, header);
             foreach (var node in doc.Body) Place(site, node, body);
             foreach (var node in doc.Footer) Place(site, node, footer);
             return built;
         }
 
+        /// <summary>
+        /// Build one template of a PART — a document of templates alone, shared by screens — into a
+        /// host, for the component that owns the part (the status card, the community list). The
+        /// help bar is the screen's, handed over by the panel when it has one.
+        /// </summary>
+        public static BuiltScreen Part(ScreenDocument part, string template, Host parent, Func<string, Action> actOf,
+                                       HelpZone help = null)
+        {
+            if (part == null) throw new ArgumentNullException(nameof(part));
+            if (!part.IsPart)
+                throw new ScreenDocumentException($"{part.Name}: a screen, not a part — its templates are instantiated from the screen once built");
+            return Instantiate(part, template, parent, actOf, help, layoutChanged: null);
+        }
+
+        /// <summary>
+        /// One template of a document, built into a host with the acts of the element it stands
+        /// for. What comes back is reached by the template's own names.
+        /// </summary>
+        internal static BuiltScreen Instantiate(ScreenDocument doc, string template, Host parent, Func<string, Action> actOf,
+                                                HelpZone help, Action layoutChanged)
+        {
+            if (!doc.Templates.TryGetValue(template, out var t))
+                throw new ScreenDocumentException($"{doc.Name}: no template named '{template}'");
+            if (actOf == null) throw new ArgumentNullException(nameof(actOf));
+            if (parent == null) throw new ArgumentNullException(nameof(parent));
+
+            var built = new BuiltScreen(doc, doc.Name + "/" + t.Name, t.Pieces.Binds);
+            var site = new Site
+            {
+                Doc = doc, Built = built, ActOf = actOf, Help = help,
+                Body = parent, LayoutChanged = layoutChanged, Title = null,
+            };
+            built.Attach(site);
+            Place(site, t.Root, parent);
+            if (built.HasHost(t.Root.Name)) built.Root = built.Host(t.Root.Name);
+            return built;
+        }
+
         /// <summary>What every piece is placed with — carried down the tree rather than passed five times.</summary>
-        private sealed class Site
+        internal sealed class Site
         {
             public ScreenDocument Doc;
             public BuiltScreen Built;
@@ -131,11 +197,15 @@ namespace UnityGameTranslator.Core.UI
             int all = Spacing(node, "pad") ?? 0;
             int x = Spacing(node, "padX") ?? all;
             int y = Spacing(node, "padY") ?? all;
-            return Pad.Of(x, y);
+            // One side may differ from its axis — a block padded 6 on the left and 8 elsewhere.
+            return new Pad(node.Int("padLeft") ?? x, node.Int("padRight") ?? x,
+                           node.Int("padTop") ?? y, node.Int("padBottom") ?? y);
         }
 
         private static bool HasPad(ScreenNode node)
-            => node.Props["pad"] != null || node.Props["padX"] != null || node.Props["padY"] != null;
+            => node.Props["pad"] != null || node.Props["padX"] != null || node.Props["padY"] != null
+               || node.Props["padLeft"] != null || node.Props["padRight"] != null
+               || node.Props["padTop"] != null || node.Props["padBottom"] != null;
 
         /// <summary>The help sentence the document gives a piece, attached to what was built for it.</summary>
         private static void Describe(Site site, ScreenNode node, Handle handle)
@@ -148,7 +218,7 @@ namespace UnityGameTranslator.Core.UI
             => site.ActOf(node.Act)
                ?? throw new ScreenDocumentException($"{site.Doc.Name}: the act '{node.Act}' has no handler");
 
-        private static void Place(Site site, ScreenNode node, Host parent)
+        internal static void Place(Site site, ScreenNode node, Host parent)
         {
             var doc = site.Doc;
             var built = site.Built;
@@ -224,7 +294,8 @@ namespace UnityGameTranslator.Core.UI
                                                surface: Enum(node.Word("surface"), Surface.None),
                                                fill: Enum(node.Word("fill"), Fill.Stretch),
                                                minHeight: MinHeight(node),
-                                               fillHeight: node.Flag("fillHeight") ?? false);
+                                               fillHeight: node.Flag("fillHeight") ?? false,
+                                               minWidth: node.Int("minWidth"));
                     host.Visible = node.StartsVisible;
                     built.Add(node.Name, host);
                     Describe(site, node, host);
@@ -236,7 +307,8 @@ namespace UnityGameTranslator.Core.UI
                     // The panel's ordinary row — its own padding, a floor, a placement — unless the
                     // document says more: then the horizontal stack, with padding, surface and fill
                     // spelt out.
-                    bool bare = !HasPad(node) && node.Word("surface") == null && node.Word("fill") == null;
+                    bool bare = !HasPad(node) && node.Word("surface") == null && node.Word("fill") == null
+                                && node.Int("minWidth") == null;
                     Host host;
                     if (bare)
                         host = Stacks.Row(parent, node.Name, Spacing(node) ?? 10, MinHeight(node),
@@ -247,7 +319,7 @@ namespace UnityGameTranslator.Core.UI
                                                  Enum(node.Word("placement"), Placement.MiddleLeft),
                                                  Enum(node.Word("surface"), Surface.None),
                                                  Enum(node.Word("fill"), Fill.Stretch),
-                                                 MinHeight(node));
+                                                 MinHeight(node), minWidth: node.Int("minWidth"));
                     }
                     host.Visible = node.StartsVisible;
                     built.Add(node.Name, host);
@@ -264,13 +336,46 @@ namespace UnityGameTranslator.Core.UI
                 case "toast":
                     built.Add(node.Name, Toasts.Create(parent, node.Name));
                     break;
+                case "chip":
+                {
+                    // The tag is data, written by the code (Retag); built blank and hidden.
+                    var chip = TagChips.Create(parent, "");
+                    chip.Visible = node.StartsVisible;
+                    built.Add(node.Name, chip);
+                    break;
+                }
+                case "choice":
+                {
+                    Action chosen = node.Act != null ? Act(site, node) : null;
+                    var words = ((Newtonsoft.Json.Linq.JArray)node.Props["options"]).Select(w => (string)w).ToArray();
+                    var choice = Choices.Create(parent, node.Name, words, initial: node.Int("initial") ?? -1,
+                                                onChosen: chosen != null ? (Action<int>)(_ => chosen()) : null,
+                                                size: Enum(node.Word("size"), ButtonSize.Compact),
+                                                spacing: Spacing(node) ?? 4, minWidth: node.Int("minWidth"));
+                    built.Add(node.Name, choice);
+                    // Each word is described with the same sentence: the help is about the choice.
+                    if (ScreenDocument.HelpOf(node) != null)
+                        for (int i = 0; i < words.Length; i++) Describe(site, node, choice.Option(i));
+                    break;
+                }
                 case "slider":
                 {
                     Action changed = node.Act != null ? Act(site, node) : null;
                     float min = node.Number("min") ?? 0f, max = node.Number("max") ?? 1f;
-                    Func<float, string> format = node.Word("format") == "Percent"
-                        ? (Func<float, string>)(v => $"{v * 100f:0}%")
-                        : v => v.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
+                    Func<float, string> format;
+                    switch (node.Word("format"))
+                    {
+                        case "Percent": format = v => $"{v * 100f:0}%"; break;
+                        // A size multiplier in steps of 5%, "default" at zero.
+                        case "PercentOrDefault":
+                            format = v =>
+                            {
+                                float rounded = (float)Math.Round(v * 20) / 20f;
+                                return rounded > 0.001f ? $"{(int)(rounded * 100)}%" : "default";
+                            };
+                            break;
+                        default: format = v => v.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture); break;
+                    }
                     // Its value at show time is the code's; built at the floor of its range.
                     var slider = Sliders.Labelled(parent, node.Name, node.Word("caption"), min, max, min, format,
                                                   onChanged: changed != null ? (Action<float>)(_ => changed()) : null,
@@ -322,6 +427,7 @@ namespace UnityGameTranslator.Core.UI
                                         Enum(node.Word("input"), FieldKind.Text),
                                         minHeight: MinHeight(node),
                                         fill: Enum(node.Word("fill"), Fill.Stretch),
+                                        richText: node.Flag("richText") ?? true,
                                         minWidth: node.Int("minWidth"));
                     if (node.Act != null)
                     {
@@ -400,6 +506,7 @@ namespace UnityGameTranslator.Core.UI
                                               centred: node.Flag("centred"),
                                               policy: policy,
                                               wrap: node.Flag("wrap") ?? true,
+                                              richText: node.Flag("richText") ?? true,
                                               fill: Enum(node.Word("fill"), Fill.Content),
                                               minHeight: MinHeight(node),
                                               autoHeight: node.Flag("autoHeight") ?? false,
@@ -454,6 +561,7 @@ namespace UnityGameTranslator.Core.UI
                 case "MultiLineSmall": return UIStyles.MultiLineSmall;
                 case "CodeDisplayHeight": return UIStyles.CodeDisplayHeight;
                 case "ButtonHeight": return UIStyles.ButtonHeight;
+                case "SectionTitleHeight": return UIStyles.SectionTitleHeight;
                 // A row of a screen's own buttons: the button, and the room a row of them keeps around itself.
                 case "ButtonRowHeight": return UIStyles.ButtonHeight + 16;
                 default: throw new ScreenDocumentException($"'{node.Name}': '{node.Word("minHeight")}' is not a height the theme names");
@@ -468,6 +576,7 @@ namespace UnityGameTranslator.Core.UI
                 case null: return null;
                 case "SmallSpacing": return UIStyles.SmallSpacing;
                 case "ElementSpacing": return UIStyles.ElementSpacing;
+                case "SectionPadding": return UIStyles.SectionPadding;
                 default: throw new ScreenDocumentException($"'{node.Name}': '{node.Word(prop)}' is not a spacing the theme names");
             }
         }

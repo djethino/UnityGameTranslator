@@ -1,35 +1,47 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using UnityEngine;
-using UnityEngine.UI;
-using UniverseLib.UI;
 using UnityGameTranslator.Common;
 using UnityGameTranslator.Core.UI;
 
 namespace UnityGameTranslator.Core.UI.Components
 {
     /// <summary>
-    /// Reusable translation list component.
-    /// Displays a scrollable list of translations with selection.
+    /// The community list: the translations the website holds for this game, one row each, and
+    /// the one the player picks.
+    ///
+    /// ⚠ **Its shape is a document** (common/spec/screens/parts/community-list.json, a PART:
+    /// templates alone, shared by the two screens that hold this list). The status line and the
+    /// scrolling list are built once into the host a screen leaves for it; a row is built per
+    /// translation shown. What a row says, and which row is the player's own, is decided here from
+    /// what the server sent — never in the document.
     /// </summary>
     public class TranslationList
     {
+        /// <summary>The part, read once: the list's shape, in the closed vocabulary.</summary>
+        private static readonly ScreenDocument Part = ScreenDocument.FromEmbedded("parts/community-list");
+
+        /// <summary>The templates placed once or per row that ask for nothing: no verb to hand them.</summary>
+        private static readonly Func<string, Action> NoActs = _ => null;
+
         /// <summary>
         /// How many results the list renders. The rest is announced, never
         /// dropped in silence (see Populate).
         /// </summary>
         private const int MaxDisplayed = 5;
 
-        /// <summary>Gap between the stacked lines of a row. Enters the row's height — see CreateListItem.</summary>
-        private const int InfoColumnSpacing = 3;
-
-        /// <summary>Breathing room above and below a row's content, top and bottom each.</summary>
-        private const int RowVerticalPadding = 8;
-
         // UI elements
-        private GameObject _root;
-        private GameObject _listContent;
-        private Text _statusLabel;
+        private ScrollList _list;
+        private LabelHandle _statusLabel;
+
+        /// <summary>The tick box of each row shown, by the translation's id — for RefreshSelection.</summary>
+        private readonly List<KeyValuePair<int, ToggleHandle>> _rowToggles = new List<KeyValuePair<int, ToggleHandle>>();
+
+        /// <summary>
+        /// Set while the rows are being built or their boxes put right: writing a box's value from
+        /// code fires its act exactly as a click would, and a row being filled is not a choice.
+        /// </summary>
+        private bool _fillingRows;
 
         // State
         private List<TranslationInfo> _translations = new List<TranslationInfo>();
@@ -66,12 +78,6 @@ namespace UnityGameTranslator.Core.UI.Components
         public int Count => _translations.Count;
 
         /// <summary>
-        /// The scroll view hosting the list. Use it to attach a help description covering
-        /// the whole list area (individual rows are generated dynamically and not described).
-        /// </summary>
-        internal GameObject Root => _root;
-
-        /// <summary>
         /// Create a new translation list component.
         /// </summary>
         /// <param name="getCurrentUser">Function to get current logged-in username</param>
@@ -81,68 +87,49 @@ namespace UnityGameTranslator.Core.UI.Components
         }
 
         /// <summary>
-        /// Create the UI elements in the given parent.
+        /// Build the list in a host — the one the screen's document leaves for it: the status line,
+        /// then the scrolling list under it.
+        ///
+        /// The list takes the space its card has left over, so it is what grows when the window
+        /// does and everything around it stays where it was put. This only holds now that
+        /// FillViewportHeight raises a floor instead of replacing what the content asks for. Before,
+        /// the scrolling area was told it was exactly viewport-sized whatever it held, so a flexible
+        /// child swallowed the viewport and pushed the row beneath it somewhere unreachable.
+        ///
+        /// ⚠ The trough, not a field, behind the rows (the document's `list`). It was
+        /// InputBackground — the same value as ItemBackground — so every row was painted the exact
+        /// colour of what it sits on and the card disappeared into its own list.
         /// </summary>
-        /// <param name="parent">Parent GameObject to add UI to</param>
-        /// <param name="listHeight">Height of the scrollable list</param>
         /// <param name="onSelectionChanged">Callback when selection changes</param>
         /// <param name="help">
         /// The panel's help bar, so each row's composition bar can say its own figures on hover.
         /// Optional: without one the bar simply stays silent, as it did before.
         /// </param>
-        /// <summary>Build the list in a host.</summary>
-        public void CreateUI(Host parent, int listHeight, Action<TranslationInfo> onSelectionChanged = null,
-                             HelpZone help = null)
-            => CreateUI(parent.Object, listHeight, onSelectionChanged, help);
-
-        /// <summary>The list, as a panel holds it.</summary>
-        public Host Handle => new Host(_root);
-
-        /// <summary>Set the status message, in a tone.</summary>
-        public void SetStatus(string message, Tone tone) => SetStatus(message, Tones.Colour(tone));
-
-        internal void CreateUI(GameObject parent, int listHeight, Action<TranslationInfo> onSelectionChanged = null,
-            HelpZone help = null)
+        public void CreateUI(Host parent, Action<TranslationInfo> onSelectionChanged = null, HelpZone help = null)
         {
             _onSelectionChanged = onSelectionChanged;
             _help = help;
 
-            // Status label
-            _statusLabel = UIFactory.CreateLabel(parent, "TranslationStatus", "", TextAnchor.MiddleLeft);
-            _statusLabel.fontSize = UIStyles.FontSizeSmall;
-            _statusLabel.color = UIStyles.TextSecondary;
-            UIFactory.SetLayoutElement(_statusLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
-
-            // Scroll view for list
-            var scrollObj = UIFactory.CreateScrollView(parent, "TranslationScroll", out _listContent, out _);
-            _root = scrollObj;
-            // Takes the space its card has left over, so the list is what grows when the window
-            // does and everything around it stays where it was put.
-            //
-            // This only holds now that FillViewportHeight raises a floor instead of replacing
-            // what the content asks for. Before, the scrolling area was told it was exactly
-            // viewport-sized whatever it held, so a flexible child swallowed the viewport and
-            // pushed the row beneath it somewhere unreachable.
-            UIFactory.SetLayoutElement(scrollObj, minHeight: listHeight, preferredHeight: listHeight,
-                flexibleHeight: 9999);
-            UIFactory.SetLayoutGroup<VerticalLayoutGroup>(_listContent, false, false, true, true, 5, 5, 5, 5, 5);
-            // ⚠ The trough, not a field. It was InputBackground — the same value as
-            // ItemBackground — so every row was painted the exact colour of what it sits on and
-            // the card disappeared into its own list.
-            UIStyles.SetBackground(scrollObj, UIStyles.TroughBackground);
-            UIStyles.ConfigureScrollViewNoScrollbar(scrollObj);
+            _statusLabel = ScreenBuilder.Part(Part, "Status", parent, NoActs, help).Label("Status");
+            _list = ScreenBuilder.Part(Part, "Rows", parent, NoActs, help).List("Rows");
         }
 
         /// <summary>
-        /// Set the status message.
+        /// The scroll view hosting the list, as a panel holds it. Use it to attach a help
+        /// description covering the whole list area (individual rows are generated dynamically and
+        /// not described).
         /// </summary>
-        private void SetStatus(string message, Color color)
+        public Host Handle => _list?.Handle;
+
+        /// <summary>
+        /// Set the status message, in a tone. Written as it is: what the panels say here is
+        /// composed with counts and server messages.
+        /// </summary>
+        public void SetStatus(string message, Tone tone)
         {
-            if (_statusLabel != null)
-            {
-                _statusLabel.text = message;
-                _statusLabel.color = color;
-            }
+            if (_statusLabel == null) return;
+            _statusLabel.Show(message);
+            _statusLabel.Tone = tone;
         }
 
         /// <summary>
@@ -190,7 +177,7 @@ namespace UnityGameTranslator.Core.UI.Components
             if (_isSearching) return;
 
             _isSearching = true;
-            SetStatus("Searching online...", UIStyles.StatusWarning);
+            SetStatus("Searching online...", Tone.Warning);
             Clear();
 
             try
@@ -210,7 +197,7 @@ namespace UnityGameTranslator.Core.UI.Components
                 }
 
                 // After the awaits we may be on a background thread (IL2CPP). All UI access
-                // (SetStatus = _statusLabel.text, SetTranslations -> Populate -> Destroy/Create
+                // (SetStatus = the label's text, SetTranslations -> Populate -> Destroy/Create
                 // child GameObjects) must run on the main thread or the IL2CPP runtime faults
                 // with AccessViolationException inside the Unity layout/UI code.
                 var capturedResult = result;
@@ -221,17 +208,17 @@ namespace UnityGameTranslator.Core.UI.Components
                         var translations = capturedResult.Translations ?? new List<TranslationInfo>();
                         if (translations.Count == 0)
                         {
-                            SetStatus("No translations found for your language", UIStyles.TextMuted);
+                            SetStatus("No translations found for your language", Tone.Muted);
                         }
                         else
                         {
-                            SetStatus($"Found {translations.Count} translation(s):", UIStyles.TextPrimary);
+                            SetStatus($"Found {translations.Count} translation(s):", Tone.Plain);
                             SetTranslations(translations);
                         }
                     }
                     else
                     {
-                        SetStatus(capturedResult?.Error ?? "Search failed", UIStyles.StatusError);
+                        SetStatus(capturedResult?.Error ?? "Search failed", Tone.Error);
                     }
                 });
             }
@@ -240,7 +227,7 @@ namespace UnityGameTranslator.Core.UI.Components
                 var errorMsg = e.Message;
                 TranslatorUIManager.RunOnMainThread(() =>
                 {
-                    SetStatus($"Error: {errorMsg}", UIStyles.StatusError);
+                    SetStatus($"Error: {errorMsg}", Tone.Error);
                 });
                 TranslatorCore.LogWarning($"[TranslationList] Search error: {errorMsg}");
             }
@@ -253,7 +240,8 @@ namespace UnityGameTranslator.Core.UI.Components
 
         private void ClearUI()
         {
-            UIHelpers.DestroyChildren(_listContent);
+            _list?.Clear();
+            _rowToggles.Clear();
         }
 
         private void Populate()
@@ -264,25 +252,29 @@ namespace UnityGameTranslator.Core.UI.Components
             bool isLoggedIn = !string.IsNullOrEmpty(TranslatorCore.Config.api_token);
             string currentUser = isLoggedIn ? _getCurrentUser?.Invoke() : null;
 
-            int displayCount = Math.Min(MaxDisplayed, _translations.Count);
-            for (int i = 0; i < displayCount; i++)
+            _fillingRows = true;
+            try
             {
-                var t = _translations[i];
-                CreateListItem(t, isLoggedIn, currentUser);
+                int displayCount = Math.Min(MaxDisplayed, _translations.Count);
+                for (int i = 0; i < displayCount; i++)
+                {
+                    var t = _translations[i];
+                    CreateListItem(t, isLoggedIn, currentUser);
+                }
+
+                // Never cut the list in silence: the status line says how many were
+                // found, so stopping at five without a word reads as "that's all".
+                if (_translations.Count > displayCount)
+                {
+                    ScreenBuilder.Part(Part, "More", _list.Rows, NoActs, _help)
+                        .Say("more", $"Showing the {displayCount} best of {_translations.Count} — refine the search to see others");
+
+                    ShowOwnTranslationBelowTheCut(displayCount, isLoggedIn, currentUser);
+                }
             }
-
-            // Never cut the list in silence: the status line says how many were
-            // found, so stopping at five without a word reads as "that's all".
-            if (_translations.Count > displayCount)
+            finally
             {
-                var moreLabel = UIFactory.CreateLabel(_listContent, "MoreResults",
-                    $"Showing the {displayCount} best of {_translations.Count} — refine the search to see others",
-                    TextAnchor.MiddleCenter);
-                moreLabel.fontSize = UIStyles.FontSizeHint;
-                moreLabel.color = UIStyles.TextMuted;
-                UIFactory.SetLayoutElement(moreLabel.gameObject, minHeight: UIStyles.RowHeightSmall, flexibleWidth: 9999);
-
-                ShowOwnTranslationBelowTheCut(displayCount, isLoggedIn, currentUser);
+                _fillingRows = false;
             }
         }
 
@@ -302,18 +294,23 @@ namespace UnityGameTranslator.Core.UI.Components
             {
                 if (!TranslatorCore.IsUuidMatch(_translations[i].FileUuid)) continue;
 
-                var rankLabel = UIFactory.CreateLabel(_listContent, "YourRank",
-                    TranslatorCore.TranslateOwnUIDynamic("Your current translation ranks") + $" #{i + 1}",
-                    TextAnchor.MiddleLeft);
-                rankLabel.fontSize = UIStyles.FontSizeHint;
-                rankLabel.color = UIStyles.TextMuted;
-                UIFactory.SetLayoutElement(rankLabel.gameObject, minHeight: UIStyles.RowHeightSmall, flexibleWidth: 9999);
+                ScreenBuilder.Part(Part, "Rank", _list.Rows, NoActs, _help)
+                    .Say("rank", TranslatorCore.TranslateOwnUIDynamic("Your current translation ranks") + $" #{i + 1}");
 
                 CreateListItem(_translations[i], isLoggedIn, currentUser);
                 return;
             }
         }
 
+        /// <summary>
+        /// One row: the document's 'Row', filled from what the server sent about this translation.
+        ///
+        /// ⚠ Its height is no longer counted here, piece by piece. It used to start from
+        /// CodeDisplayHeight — a constant that once covered two lines of text with enough slack to
+        /// swallow the padding — and every change to the row since widened the gap between the
+        /// count and the content. Each line now states its own floor and the row takes what its
+        /// column adds up to, as every other list of the mod does since its rows became templates.
+        /// </summary>
         private void CreateListItem(TranslationInfo translation, bool isLoggedIn, string currentUser)
         {
             // Check if this translation is from the same lineage (UUID match)
@@ -335,9 +332,6 @@ namespace UnityGameTranslator.Core.UI.Components
                 TranslatorCore.LogInfo($"[TranslationList] Learned this file is site #{translation.Id}");
             }
 
-            // What the info column will hold, decided BEFORE the row exists:
-            // its height was calibrated for two lines, and the extra ones would
-            // simply have been cut off.
             var facts = BuildFactsLine(translation);
             string note = BuildNoteLine(translation);
 
@@ -352,74 +346,28 @@ namespace UnityGameTranslator.Core.UI.Components
             bool hasComposition = translation.HumanCount + translation.ValidatedCount +
                 translation.AiCount + translation.SkippedCount + translation.CaptureCount > 0;
 
-            // Counted from what the row ACTUALLY holds, piece by piece.
-            //
-            // It used to start from CodeDisplayHeight — a constant that once covered two lines of
-            // text with enough slack to swallow the padding — and add a line per optional block.
-            // Every change to the row since has widened the gap: the author moved to its own
-            // line, the spacing was loosened, and the count silently fell fifteen pixels short of
-            // the content. A row that lies about its height makes the list lie about its own, and
-            // the panel lies about how much space it needs — which is how a whole tab ends up
-            // overflowing a window that had room for it.
-            // languages, author, details, [origin], [facts], [note]
-            int textRows = 3 + (origin != null ? 1 : 0) + (facts != null ? 1 : 0) + (note != null ? 1 : 0);
-            int blocks = textRows + (hasComposition ? 1 : 0);
-            int rowHeight = textRows * UIStyles.RowHeightSmall
-                + (hasComposition ? QualityBar.CompactHeight : 0)
-                + (blocks - 1) * InfoColumnSpacing
-                + RowVerticalPadding * 2;
-
-            var itemRow = UIFactory.CreateHorizontalGroup(_listContent, $"Item_{translation.Id}", false, false, true, true, 8);
-            UIFactory.SetLayoutElement(itemRow, minHeight: rowHeight, flexibleWidth: 9999);
-            UIStyles.SetBackground(itemRow, UIStyles.ItemBackground);
-
-            // No left padding: the accent stripe below is flush with the edge
-            var layout = itemRow.GetComponent<HorizontalLayoutGroup>();
-            if (layout != null)
-            {
-                layout.padding = Compat.MakeRectOffset(0, 10, RowVerticalPadding, RowVerticalPadding);
-                // Top, not middle: the tick box and the vote count belong to the row's subject,
-                // which is its first line. Centred vertically they drifted to the middle of a
-                // five-line block and looked unattached to anything.
-                layout.childAlignment = TextAnchor.UpperLeft;
-            }
+            // The row's one act is its tick box: ticked by the person, this becomes the choice.
+            // ⚠ The box is reached after the row exists, so the act reads it through a local the
+            // row fills in; and a value written by code (Populate, RefreshSelection) is not a click.
+            ToggleHandle select = null;
+            var row = ScreenBuilder.Part(Part, "Row", _list.Rows, act => act == "select"
+                ? (Action)(() =>
+                {
+                    if (_fillingRows || select == null || !select.IsOn) return;
+                    _selectedTranslation = translation;
+                    RefreshSelection();
+                    _onSelectionChanged?.Invoke(translation);
+                })
+                : null, _help);
+            select = row.Toggle("Select");
+            select.IsOn = _selectedTranslation == translation;
+            _rowToggles.Add(new KeyValuePair<int, ToggleHandle>(translation.Id, select));
 
             // The player's own translation is marked by a stripe down the left edge rather than
             // by flooding the row with colour. A full purple wash fought every text colour on
             // top of it and made the bar's track read as a black slab; a stripe says the same
             // thing at a glance and leaves the row legible.
-            var stripe = UIFactory.CreateUIObject("Accent", itemRow);
-            stripe.AddComponent<Image>().color = isLineageMatch ? UIStyles.ButtonPrimary : Color.clear;
-            UIFactory.SetLayoutElement(stripe, minWidth: 3, flexibleWidth: 0,
-                minHeight: rowHeight, flexibleHeight: 9999);
-
-            // Selection toggle
-            var toggleObj = UIFactory.CreateToggle(itemRow, "SelectToggle", out var toggle, out var _);
-            toggle.isOn = _selectedTranslation == translation;
-            UIHelpers.AddToggleListener(toggle, (val) =>
-            {
-                if (val)
-                {
-                    _selectedTranslation = translation;
-                    RefreshSelection();
-                    _onSelectionChanged?.Invoke(translation);
-                }
-            });
-            UIFactory.SetLayoutElement(toggleObj, minWidth: UIStyles.ToggleControlWidth);
-
-            // Info column. Transparent: CreateVerticalGroup fits its own background image, which
-            // drew a dark rectangle inside the row's own colour — a box within a box, and it hid
-            // the highlight that marks the player's own translation on three of its four sides.
-            var infoCol = UIFactory.CreateVerticalGroup(itemRow, "InfoCol", false, false, true, true, InfoColumnSpacing);
-            UIFactory.SetLayoutElement(infoCol, flexibleWidth: 9999);
-            UIStyles.ClearRowBackground(infoCol);
-
-            // Configure info column alignment
-            var infoLayout = infoCol.GetComponent<VerticalLayoutGroup>();
-            if (infoLayout != null)
-            {
-                infoLayout.childAlignment = TextAnchor.MiddleLeft;
-            }
+            Stacks.Retint(row.Host("Accent"), isLineageMatch ? Surface.Accent : Surface.None);
 
             // The SOURCE language leads because it decides whether this
             // translation can work at all: one made from Japanese is useless on
@@ -436,22 +384,12 @@ namespace UnityGameTranslator.Core.UI.Components
             // 🔴 **Each flag beside the language it names**, on one line: "🇬🇧 English → 🇫🇷 French".
             // The first attempt put the two flags on their own line above the two names, which said
             // everything twice and cost a row.
-            var pairRow = UIFactory.CreateUIObject("LanguagePair", infoCol);
-            UIFactory.SetLayoutGroup<HorizontalLayoutGroup>(pairRow, false, false, true, true,
-                                                            6, 0, 0, 0, 0, TextAnchor.MiddleLeft);
-            UIFactory.SetLayoutElement(pairRow, minHeight: UIStyles.RowHeightSmall, flexibleWidth: 9999);
-
-            var marked = LanguageMark.Create(pairRow, "Source", translation.SourceLanguage,
+            var marked = LanguageMark.Create(row.Host("From"), "Source", translation.SourceLanguage,
                                              withName: true) != null;
             if (marked)
             {
-                var arrow = UIFactory.CreateLabel(pairRow, "Arrow", "→", TextAnchor.MiddleCenter);
-                arrow.fontSize = UIStyles.FontSizeNormal;
-                arrow.color = UIStyles.TextMuted;
-                UIFactory.SetLayoutElement(arrow.gameObject, minHeight: UIStyles.RowHeightSmall,
-                                           flexibleWidth: 0);
-
-                marked = LanguageMark.Create(pairRow, "Target", translation.TargetLanguage,
+                row.Label("Arrow").Visible = true;
+                marked = LanguageMark.Create(row.Host("Into"), "Target", translation.TargetLanguage,
                                              withName: true) != null;
             }
 
@@ -459,12 +397,9 @@ namespace UnityGameTranslator.Core.UI.Components
             // pair would name one language and leave the other missing.
             if (!marked)
             {
-                UnityEngine.Object.Destroy(pairRow);
-
-                var titleLabel = UIFactory.CreateLabel(infoCol, "Title", languages, TextAnchor.MiddleLeft);
-                titleLabel.fontStyle = FontStyle.Bold;
-                titleLabel.color = UIStyles.TextPrimary;
-                UIFactory.SetLayoutElement(titleLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
+                row.Host("Pair").Visible = false;
+                row.Say("title", languages);
+                row.Label("Title").Visible = true;
             }
 
             // ⚠ One form for the whole ecosystem, composed in `common`: "@name", and "@name (you)"
@@ -480,19 +415,16 @@ namespace UnityGameTranslator.Core.UI.Components
             // nobody can act on.
             if (isLineageMatch) by += "  ·  " + TranslatorCore.TranslateOwnUIDynamic("installed");
 
-            var byLabel = UIFactory.CreateLabel(infoCol, "Author", by, TextAnchor.MiddleLeft);
-            byLabel.fontSize = UIStyles.FontSizeHint;
-            // 🔴 **Never the accent here.** It was ButtonPrimary — purple-600, a FILL colour used as
-            // text — which scores 1.86 against this row and is simply unreadable. The palette says
-            // as much: 600 fills, 400 writes. And even purple-400 only manages 3.69 on a raised
-            // row, because a row is LIGHTER than the card it sits on: accent text belongs on the
-            // card, not on the row.
+            // 🔴 **Never the accent on the author line.** It was ButtonPrimary — purple-600, a FILL
+            // colour used as text — which scores 1.86 against this row and is simply unreadable.
+            // The palette says as much: 600 fills, 400 writes. And even purple-400 only manages
+            // 3.69 on a raised row, because a row is LIGHTER than the card it sits on: accent text
+            // belongs on the card, not on the row.
             //
             // ⚠ Nothing is lost. The row already carries a purple stripe for the lineage it
             // matches, and the line spells "installed" out in words. The colour was a third way of
             // saying the same thing, and the only one that cost legibility.
-            byLabel.color = UIStyles.TextSecondary;
-            UIFactory.SetLayoutElement(byLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
+            row.Say("author", by);
 
             // Right under the author, because it answers the same question — whose work is this —
             // and a fork is otherwise indistinguishable from a translation written from scratch.
@@ -506,32 +438,28 @@ namespace UnityGameTranslator.Core.UI.Components
                 // limit worth relying on, and a single unbreakable block runs out of the row and
                 // into the vote column; allowed to break, "Forked from" stays put and the name is
                 // what gives — with the whole sentence one hover away either way.
-                var originLabel = UIFactory.CreateLabel(infoCol, "Origin", origin,
-                    TextAnchor.MiddleLeft);
-                originLabel.fontSize = UIStyles.FontSizeHint;
-                originLabel.color = UIStyles.TextMuted;
-                UIFactory.SetLayoutElement(originLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
+                row.Say("origin", origin);
+                var originLabel = row.Label("Origin");
+                originLabel.Visible = true;
 
-                _help?.Describe(originLabel.gameObject, Origins.Effect(translation.Origin.Value));
+                _help?.Describe(originLabel, Origins.Effect(translation.Origin.Value));
             }
 
             // The verdict leads, the size follows: "has anyone read this" decides between two
             // translations, the line count only qualifies it.
-            string detailsText = Unbreakable(FormatQualityStats(translation))
+            row.Say("details", Unbreakable(FormatQualityStats(translation))
                 + "  ·  " + Unbreakable($"{translation.LineCount} lines")
-                + FormatCoverage(translation);
-            var detailsLabel = UIFactory.CreateLabel(infoCol, "Details", detailsText, TextAnchor.MiddleLeft);
-            detailsLabel.fontSize = UIStyles.FontSizeHint;
-            detailsLabel.color = UIStyles.TextSecondary;
-            UIFactory.SetLayoutElement(detailsLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
+                + FormatCoverage(translation));
 
             // Same component, same colours and same denominator as the card and the website.
             if (hasComposition)
             {
+                var composition = row.Host("Composition");
                 var bar = new QualityBar();
-                bar.CreateUI(infoCol, QualityBar.CompactHeight);
+                bar.CreateUI(composition, QualityBar.CompactHeight);
                 bar.SetCounts(translation.HumanCount, translation.ValidatedCount,
                     translation.AiCount, translation.SkippedCount, translation.CaptureCount);
+                composition.Visible = true;
 
                 // The figures the bar draws, in words, on hover — the narrow form of the same
                 // composition the card spells out under itself. Without this the coloured band is
@@ -540,7 +468,7 @@ namespace UnityGameTranslator.Core.UI.Components
                 // ⚠ composed: BuildLegend already translated each word and welded colour tags
                 // around them. The card showing the identical string is RegisterExcluded for the
                 // same reason — translating it again would hand markup to the AI.
-                _help?.Describe(bar.Root, QualityBar.BuildLegend(
+                _help?.Describe(bar.Handle, QualityBar.BuildLegend(
                     translation.HumanCount, translation.ValidatedCount,
                     translation.AiCount, translation.SkippedCount, translation.CaptureCount),
                     composed: true);
@@ -550,19 +478,14 @@ namespace UnityGameTranslator.Core.UI.Components
             // it need anything. All of it was already received and shown nowhere.
             if (facts != null)
             {
-                var factsLabel = UIFactory.CreateLabel(infoCol, "Facts", facts, TextAnchor.MiddleLeft);
-                factsLabel.fontSize = UIStyles.FontSizeHint;
-                factsLabel.color = UIStyles.TextMuted;
-                UIFactory.SetLayoutElement(factsLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
+                row.Say("facts", facts);
+                row.Label("Facts").Visible = true;
             }
 
             if (note != null)
             {
-                var notesLabel = UIFactory.CreateLabel(infoCol, "Notes", note, TextAnchor.MiddleLeft);
-                notesLabel.fontSize = UIStyles.FontSizeHint;
-                notesLabel.fontStyle = FontStyle.Italic;
-                notesLabel.color = UIStyles.TextSecondary;
-                UIFactory.SetLayoutElement(notesLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
+                row.Say("note", note);
+                row.Label("Note").Visible = true;
             }
 
             // Vote COUNT (right side), and no arrows.
@@ -571,7 +494,7 @@ namespace UnityGameTranslator.Core.UI.Components
             // run, and a vote cast here would rate a title card. Seeing how others rated it is
             // exactly what helps you choose — casting your own belongs on the current
             // translation, once you have played with it.
-            new VoteButtons().Create(itemRow, translation.Id, translation.VoteCount, null,
+            new VoteButtons().Create(row.Host("Votes"), translation.Id, translation.VoteCount, null,
                 translation.UserVote, interactive: false);
         }
 
@@ -737,23 +660,21 @@ namespace UnityGameTranslator.Core.UI.Components
             return translation.Type ?? "unknown";
         }
 
+        /// <summary>
+        /// Put every row's box in step with the choice: one ticked, the others not. Written by code,
+        /// so the act stays quiet (see _fillingRows).
+        /// </summary>
         private void RefreshSelection()
         {
-            if (_listContent == null) return;
-
-            // Manual iteration for IL2CPP compatibility (foreach on Transform doesn't work)
-            for (int i = 0; i < _listContent.transform.childCount; i++)
+            _fillingRows = true;
+            try
             {
-                Transform child = _listContent.transform.GetChild(i);
-                var toggle = child.GetComponentInChildren<Toggle>();
-                if (toggle != null)
-                {
-                    string itemName = child.name;
-                    if (itemName.StartsWith("Item_") && int.TryParse(itemName.Substring(5), out int id))
-                    {
-                        toggle.isOn = _selectedTranslation != null && _selectedTranslation.Id == id;
-                    }
-                }
+                foreach (var pair in _rowToggles)
+                    pair.Value.IsOn = _selectedTranslation != null && _selectedTranslation.Id == pair.Key;
+            }
+            finally
+            {
+                _fillingRows = false;
             }
         }
     }

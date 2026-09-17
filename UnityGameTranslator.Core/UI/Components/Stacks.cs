@@ -19,6 +19,8 @@ namespace UnityGameTranslator.Core.UI.Components
         Trough,
         /// <summary>A field's fill.</summary>
         Input,
+        /// <summary>The product's own colour, solid — a stripe down a row, a mark.</summary>
+        Accent,
     }
 
     /// <summary>
@@ -35,22 +37,24 @@ namespace UnityGameTranslator.Core.UI.Components
         /// <summary>Children one under the other.</summary>
         public static Host Vertical(Host parent, string name, int spacing = 0, Pad pad = default,
                                     Placement placement = Placement.TopLeft, Surface surface = Surface.None,
-                                    Fill fill = Fill.Stretch, int? minHeight = null, bool fillHeight = false)
+                                    Fill fill = Fill.Stretch, int? minHeight = null, bool fillHeight = false,
+                                    int? minWidth = null)
         {
             var obj = UIFactory.CreateVerticalGroup(parent.Object, name, false, false, true, true, spacing,
                                                     default, UIStyles.Transparent, Tones.Anchor(placement));
-            Finish(obj, obj.GetComponent<VerticalLayoutGroup>(), pad, surface, fill, minHeight, fillHeight);
+            Finish(obj, obj.GetComponent<VerticalLayoutGroup>(), pad, surface, fill, minHeight, fillHeight, minWidth);
             return new Host(obj);
         }
 
         /// <summary>Children side by side.</summary>
         public static Host Horizontal(Host parent, string name, int spacing = 0, Pad pad = default,
                                       Placement placement = Placement.MiddleLeft, Surface surface = Surface.None,
-                                      Fill fill = Fill.Stretch, int? minHeight = null, bool fillHeight = false)
+                                      Fill fill = Fill.Stretch, int? minHeight = null, bool fillHeight = false,
+                                      int? minWidth = null)
         {
             var obj = UIFactory.CreateHorizontalGroup(parent.Object, name, false, false, true, true, spacing,
                                                       default, UIStyles.Transparent, Tones.Anchor(placement));
-            Finish(obj, obj.GetComponent<HorizontalLayoutGroup>(), pad, surface, fill, minHeight, fillHeight);
+            Finish(obj, obj.GetComponent<HorizontalLayoutGroup>(), pad, surface, fill, minHeight, fillHeight, minWidth);
             return new Host(obj);
         }
 
@@ -106,14 +110,16 @@ namespace UnityGameTranslator.Core.UI.Components
         }
 
         /// <summary>
-        /// Repaints a stack between <see cref="Surface.Card"/> and <see cref="Surface.Elevated"/>
-        /// without rebuilding it — a box that raises itself while something in it needs attention
-        /// and settles back once it does not.
+        /// Repaints a stack on another surface without rebuilding it — a box that raises itself
+        /// (<see cref="Surface.Elevated"/>) while something in it needs attention and settles back
+        /// (<see cref="Surface.Card"/>) once it does not; a stripe painted in the accent for the
+        /// row that is the player's own and left transparent (<see cref="Surface.None"/>) otherwise.
+        /// The colour only: an edge is given once, at creation.
         /// </summary>
         public static void Retint(Host host, Surface surface)
         {
             if (host?.Object == null) return;
-            UIStyles.SetBackground(host.Object, surface == Surface.Elevated ? UIStyles.CardElevated : UIStyles.CardBackground);
+            Paint(host.Object, surface, edged: false);
         }
 
         /// <summary>A fixed gap.</summary>
@@ -129,10 +135,11 @@ namespace UnityGameTranslator.Core.UI.Components
         }
 
         private static void Finish(GameObject obj, HorizontalOrVerticalLayoutGroup layout, Pad pad,
-                                   Surface surface, Fill fill, int? minHeight, bool fillHeight)
+                                   Surface surface, Fill fill, int? minHeight, bool fillHeight, int? minWidth)
         {
             UIFactory.SetLayoutElement(obj,
                 minHeight: minHeight,
+                minWidth: minWidth,
                 flexibleWidth: fill == Fill.Stretch ? 9999 : (int?)0,
                 flexibleHeight: fillHeight ? 9999 : (int?)0);
 
@@ -143,11 +150,17 @@ namespace UnityGameTranslator.Core.UI.Components
                 layout.childForceExpandHeight = false;
             }
 
+            Paint(obj, surface, edged: true);
+        }
+
+        /// <summary>What a surface looks like, on creation (<paramref name="edged"/>: a card gets its edge) or on a repaint.</summary>
+        private static void Paint(GameObject obj, Surface surface, bool edged)
+        {
             switch (surface)
             {
                 case Surface.Card:
                     UIStyles.SetBackground(obj, UIStyles.CardBackground);
-                    UIFactory.AddBorder(obj, UIStyles.BorderSubtle);
+                    if (edged) UIFactory.AddBorder(obj, UIStyles.BorderSubtle);
                     break;
                 case Surface.Elevated:
                     UIStyles.SetBackground(obj, UIStyles.CardElevated);
@@ -160,6 +173,9 @@ namespace UnityGameTranslator.Core.UI.Components
                     break;
                 case Surface.Input:
                     UIStyles.SetBackground(obj, UIStyles.InputBackground);
+                    break;
+                case Surface.Accent:
+                    UIStyles.SetBackground(obj, UIStyles.ButtonPrimary);
                     break;
                 default:
                     // Transparent, and the padding we just set is kept: only the colour goes.

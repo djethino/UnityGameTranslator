@@ -237,7 +237,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _localTranslationsLabel = _screen.Label("LocalLabel");
             _accountStatusLabel = _screen.Label("AccountStatus");
             _loginBtn = _screen.Button("LoginBtn");
-            _translationList.CreateUI(_screen.Host("TranslationListHost"), 200, onSelectionChanged: (t) =>
+            _translationList.CreateUI(_screen.Host("TranslationListHost"), onSelectionChanged: (t) =>
             {
                 UpdateActionButtons();
             });

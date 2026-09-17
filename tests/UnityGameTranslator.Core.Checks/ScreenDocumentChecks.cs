@@ -21,16 +21,25 @@ namespace UnityGameTranslator.Core.Checks
 
             // ── Every shipped screen parses ───────────────────────────────────
             var screens = Directory.GetFiles(folder, "*.json").Where(f => Path.GetFileName(f) != "schema.json").ToList();
-            check(screens.Count > 0, $"{screens.Count} screen(s) to read", "a rule with nothing to guard is decoration");
-            foreach (var file in screens)
+            // The parts — templates alone, shared by screens — live under their folder and parse
+            // with the same reader: a part has no pieces of its own, only templates.
+            string partsFolder = Path.Combine(folder, "parts");
+            var parts = Directory.Exists(partsFolder) ? Directory.GetFiles(partsFolder, "*.json").ToList() : new List<string>();
+            check(screens.Count > 0 && parts.Count > 0, $"{screens.Count} screen(s) and {parts.Count} part(s) to read", "a rule with nothing to guard is decoration");
+            foreach (var file in screens.Concat(parts))
             {
                 string name = Path.GetFileName(file);
                 try
                 {
                     var doc = ScreenDocument.FromFile(file);
-                    check(doc.Nodes.Count > 0 && doc.Acts.Count > 0,
-                        $"{name} parses: {doc.Nodes.Count} pieces, {doc.Binds.Count} slot(s), {doc.Acts.Count} act(s)",
-                        "a screen has pieces, and at least one verb somewhere on it");
+                    if (doc.IsPart)
+                        check(doc.Nodes.Count == 0 && doc.Templates.Count > 0,
+                            $"parts/{name} parses: {doc.Templates.Count} template(s) and no screen of its own",
+                            "a part is what a component builds into a host a screen leaves for it");
+                    else
+                        check(doc.Nodes.Count > 0 && doc.Acts.Count > 0,
+                            $"{name} parses: {doc.Nodes.Count} pieces, {doc.Binds.Count} slot(s), {doc.Acts.Count} act(s)",
+                            "a screen has pieces, and at least one verb somewhere on it");
                 }
                 catch (ScreenDocumentException e)
                 {
@@ -245,6 +254,82 @@ namespace UnityGameTranslator.Core.Checks
             check(options.Acts.Count == 38 && options.Nodes["AiAdvanced"].Kind == "collapsible" && options.Nodes["AiAdvanced"].Flag("expanded") == false,
                 "options.json asks for 38 acts and folds the AI's advanced settings", $"got {options.Acts.Count} acts");
 
+            // ── Templates: the rows of every list, described once, instantiated per element ──
+            var templated = new Dictionary<string, int> {
+                { "merge", 2 }, { "settings-choice", 1 }, { "upload-setup", 1 }, { "inspector", 1 }, { "tools", 8 }, { "backups", 5 } };
+            foreach (var pair in templated)
+            {
+                var doc = ScreenDocument.FromFile(Path.Combine(folder, pair.Key + ".json"));
+                check(doc.Templates.Count == pair.Value,
+                    $"{pair.Key}.json describes {pair.Value} template(s)", $"got {doc.Templates.Count}: {string.Join(", ", doc.Templates.Keys)}");
+                check(doc.Templates.Values.All(t => t.Pieces.Nodes.ContainsKey(t.Name) && !doc.Nodes.ContainsKey(t.Name)),
+                    $"each template of {pair.Key}.json is named by its root, and by no piece of the screen", "the code reaches an instance by the template's own names");
+            }
+            check(backups.Templates["Entry"].Pieces.Nodes.ContainsKey("TextHost") && backups.Templates["EntryRenaming"].Pieces.Nodes.ContainsKey("TextHost"),
+                "a name may repeat from one template to the next", "each instance is reached by its own names; two templates for two states of one row share them on purpose");
+            check(backups.Templates["Entry"].Pieces.Acts.Keys.OrderBy(k => k).SequenceEqual(new[] { "delete", "keep", "rename", "restore" })
+                  && backups.Templates["EntryRenaming"].Pieces.Acts.Keys.OrderBy(k => k).SequenceEqual(new[] { "cancel", "ok" }),
+                "a template's acts are its own, answered per instance", "the code hands each instance the acts of the element it stands for");
+
+            // ── Parts: the status card and the community list, described once for two screens ──
+            var statusCard = ScreenDocument.FromFile(Path.Combine(partsFolder, "status-card.json"));
+            check(statusCard.IsPart && statusCard.Body.Count == 0 && statusCard.Nodes.Count == 0 && statusCard.Templates.Keys.SequenceEqual(new[] { "Card" }),
+                "status-card.json is a part: one template, no screen of its own", "the card is built by its component into the host main.json leaves for it");
+            var card = statusCard.Templates["Card"];
+            check(card.Pieces.Acts.Keys.OrderBy(k => k).SequenceEqual(new[] { "dismiss", "manage" })
+                  && card.Pieces.Binds.Keys.OrderBy(k => k).SequenceEqual(new[] { "details", "identity", "legend", "notice", "noticeVerb", "secondary", "stage", "voteHint" }),
+                "the card asks for two acts and eight slots", $"got {string.Join(",", card.Pieces.Acts.Keys)} / {string.Join(",", card.Pieces.Binds.Keys)}");
+            check(card.Root.Kind == "stack" && card.Root.Word("pad") == "SectionPadding" && card.Root.Word("surface") == null,
+                "the card is a section among sections: their padding, no surface of its own", "dressed as a card it read as a box of the wrong width stacked among the others");
+            check(new[] { "IdentityMarks", "BadgeHost", "QualityRow", "Contributions", "VoteHost" }.All(h => card.Pieces.Nodes[h].Children.Count == 0)
+                  && new[] { "QualityRow", "StageRow", "LegendRow", "EmptyRow", "ModeRow", "Contributions", "VoteRow", "DismissBtn" }.All(h => !card.Pieces.Nodes[h].StartsVisible),
+                "five hosts the code fills (flags, chips, bar, kinds, votes) and every row after the details starts hidden", "which rows show is the standing's, decided in code");
+            check(card.Pieces.Binds["secondary"].Word("policy") == null && card.Pieces.Binds["voteHint"].Word("policy") == null
+                  && card.Pieces.Binds["identity"].Word("policy") == "Excluded" && card.Pieces.Binds["legend"].Word("policy") == "Excluded",
+                "the two sentences the code says stay Dynamic; the lines it composes are Excluded", "a sentence is translated as it is written, a composed line is written as it is");
+
+            var community = ScreenDocument.FromFile(Path.Combine(partsFolder, "community-list.json"));
+            check(community.IsPart && community.Templates.Keys.OrderBy(k => k).SequenceEqual(new[] { "More", "Rank", "Row", "Rows", "Status" }),
+                "community-list.json is a part of five templates", $"got {string.Join(",", community.Templates.Keys)}");
+            check(community.Templates["Rows"].Root.Kind == "list" && community.Templates["Status"].Root.Kind == "label"
+                  && community.Templates["Rows"].Root.Int("minHeight") == 200 && community.Templates["Rows"].Root.Flag("fill") != false,
+                "the list and its status line are leaves placed once; the list states its floor and takes the spare height", "the two screens holding it used to pass the same figure");
+            var row = community.Templates["Row"];
+            check(row.Pieces.Acts.Keys.SequenceEqual(new[] { "select" }) && row.Pieces.Acts["select"].Kind == "checkbox" && row.Pieces.Acts["select"].Text == null,
+                "a row's one act is its bare tick box", "ticked by the person it becomes the choice; written by the code it is not one");
+            check(row.Root.Word("surface") == "Item" && row.Pieces.Nodes["Accent"].Int("minWidth") == 3 && row.Pieces.Nodes["Accent"].Flag("fillHeight") == true
+                  && row.Pieces.Nodes["Accent"].Word("surface") == null,
+                "a row sits on the item surface with a stripe three wide down its full height, painted by the code", "the stripe says 'the player's own' in the accent; which row that is, is a rule");
+            check(row.Pieces.Binds.Keys.OrderBy(k => k).SequenceEqual(new[] { "author", "details", "facts", "note", "origin", "title" })
+                  && new[] { "Title", "Origin", "Facts", "Note", "Composition", "Arrow" }.All(n => !row.Pieces.Nodes[n].StartsVisible)
+                  && row.Pieces.Nodes["From"].Children.Count == 0 && row.Pieces.Nodes["Into"].Children.Count == 0 && row.Pieces.Nodes["Votes"].Children.Count == 0,
+                "a row's optional lines start hidden; its flags, its bar and its votes have hosts", "what the server sent decides which of them show");
+
+            // ── The components that own a part build it, and answer its acts ──
+            string components = Find("UnityGameTranslator", "UnityGameTranslator.Core", "UI", "Components");
+            check(components != null, "the components are found", "without them this proves nothing");
+            if (components != null)
+            {
+                int owners = 0;
+                foreach (var file in Directory.GetFiles(components, "*.cs"))
+                {
+                    string source = File.ReadAllText(file);
+                    var embedded = System.Text.RegularExpressions.Regex.Match(source, @"FromEmbedded\(""parts/([a-z-]+)""\)");
+                    if (!embedded.Success) continue;
+                    owners++;
+
+                    string component = Path.GetFileName(file);
+                    var part = ScreenDocument.FromFile(Path.Combine(partsFolder, embedded.Groups[1].Value + ".json"));
+                    check(part.IsPart && source.Contains("ScreenBuilder.Part("),
+                        $"{component} owns a part and builds it through ScreenBuilder.Part", "a screen's templates are built from the screen; a part's from its component");
+                    var acts = part.Templates.Values.SelectMany(t => t.Pieces.Acts.Keys).Distinct().ToList();
+                    var unanswered = acts.Where(a => !source.Contains($"\"{a}\"")).ToList();
+                    check(unanswered.Count == 0, $"{component} answers every act {embedded.Groups[1].Value}.json asks for",
+                        unanswered.Count == 0 ? "the builder would refuse at construction otherwise" : $"nothing names: {string.Join(", ", unanswered)}");
+                }
+                check(owners == 2, "two components own a part: the status card and the community list", $"found {owners}");
+            }
+
             // ── Every panel built from a document hands the builder what the document needs ──
             // 🔴 The builder refuses a document with a header or a help bar it was given nowhere
             // to put — at construction, inside CreatePanels, which then aborts: the panels after
@@ -291,6 +376,37 @@ namespace UnityGameTranslator.Core.Checks
                 }
             }
 
+            // ── The frontier: a panel builds nothing by hand any more ──────────────
+            // 🔴 What this chantier was for: a second engine rewrites the interpreter and the
+            // components, and touches no panel. So no panel may reach for a factory — every piece
+            // comes from its document, every row from a template. What a panel may still do to a
+            // built piece is repaint it (Retint, Highlight) or put a language mark in a host.
+            // The base is the chrome (scroll layout, header host, help bar) and is the one
+            // exception, named.
+            if (panels != null)
+            {
+                var construction = new[] {
+                    @"Stacks\.(Vertical|Horizontal|Row|Card|Section|ListItem|Spacer|FlexSpacer)\(", @"Labels\.\w+\(", @"Buttons\.\w+\(",
+                    @"Fields\.\w+\(", @"CheckBoxes\.\w+\(", @"Sliders\.\w+\(", @"Choices\.\w+\(", @"TagChips\.\w+\(",
+                    @"ScrollList\.Create\(", @"StatusLine\.Create\(", @"Toasts\.Create\(", @"Callout\.Create\(", @"Collapsible\.Create\(",
+                    @"new SearchableDropdown\(", @"new TabBar\(", @"UIFactory\.", @"UIStyles\.Create" };
+                int scanned = 0;
+                foreach (var file in Directory.GetFiles(panels, "*.cs"))
+                {
+                    string panel = Path.GetFileName(file);
+                    if (panel == "TranslatorPanelBase.cs") continue;
+                    scanned++;
+                    string source = System.Text.RegularExpressions.Regex.Replace(File.ReadAllText(file), @"/\*.*?\*/", "", System.Text.RegularExpressions.RegexOptions.Singleline);
+                    source = System.Text.RegularExpressions.Regex.Replace(source, @"//[^\r\n]*", "");
+                    var found = construction.Select(c => System.Text.RegularExpressions.Regex.Match(source, c)).Where(m => m.Success).Select(m => m.Value).ToList();
+                    check(found.Count == 0, $"{panel} builds nothing by hand",
+                        found.Count == 0 ? "its pieces are its document's, its rows its templates'" : "found: " + string.Join(", ", found));
+                }
+                check(scanned >= 12, $"{scanned} panels scanned", "a rule with nothing to guard is decoration");
+                check(System.Text.RegularExpressions.Regex.IsMatch("            var row = Stacks.Row(body, \"X\");", construction[0]),
+                    "the frontier would catch a row built by hand", "a pattern that matches nothing guards nothing");
+            }
+
             // ── Refusals ──────────────────────────────────────────────────────
             Refuses(check, "a dropdown that does not say where its choices come from", @"{""name"":""X"",""size"":{""width"":400,""height"":200},""body"":[{""kind"":""dropdown"",""name"":""D"",""act"":""pick""}],""footer"":[]}", "choices come from");
             Refuses(check, "a dropdown without an act", @"{""name"":""X"",""size"":{""width"":400,""height"":200},""body"":[{""kind"":""dropdown"",""name"":""D"",""options"":""languages""}],""footer"":[]}", "asks for no act");
@@ -317,6 +433,17 @@ namespace UnityGameTranslator.Core.Checks
                 "a checkbox without words is bare, and a field may ask for an act as it is typed in", "the words of a bare box are elsewhere on its row; a field's act is how a wizard keeps its state as the person types");
             Refuses(check, "a slider without its range", @"{""name"":""X"",""size"":{""width"":400,""height"":200},""body"":[{""kind"":""slider"",""name"":""S"",""caption"":""Size:""}],""footer"":[]}", "caption and a range");
             Refuses(check, "two checkboxes asking for one act", @"{""name"":""X"",""size"":{""width"":400,""height"":200},""body"":[{""kind"":""checkbox"",""name"":""A"",""text"":""a"",""act"":""flip""},{""kind"":""checkbox"",""name"":""B"",""text"":""b"",""act"":""flip""}],""footer"":[]}", "two pieces");
+            Refuses(check, "a template named like a piece of the screen", @"{""name"":""X"",""size"":{""width"":400,""height"":200},""body"":[{""kind"":""spacer"",""name"":""A"",""height"":1}],""footer"":[],""templates"":[{""kind"":""spacer"",""name"":""A"",""height"":1}]}", "shares its name");
+            Refuses(check, "a template declared twice", @"{""name"":""X"",""size"":{""width"":400,""height"":200},""body"":[],""footer"":[],""templates"":[{""kind"":""spacer"",""name"":""A"",""height"":1},{""kind"":""spacer"",""name"":""A"",""height"":1}]}", "declared twice");
+            Refuses(check, "a template that is a title", @"{""name"":""X"",""size"":{""width"":400,""height"":200},""body"":[],""footer"":[],""templates"":[{""kind"":""title"",""name"":""T"",""text"":""x"",""scope"":{""onThisMachine"":true,""yourPublishedCopy"":false}}]}", "only a screen carries");
+            Refuses(check, "a choice with one word", @"{""name"":""X"",""size"":{""width"":400,""height"":200},""body"":[{""kind"":""choice"",""name"":""C"",""options"":[""Keep""]}],""footer"":[]}", "at least two words");
+            Refuses(check, "a part with a body", @"{""name"":""X"",""part"":true,""body"":[],""templates"":[{""kind"":""spacer"",""name"":""A"",""height"":1}]}", "a part has no body");
+            Refuses(check, "a part with a size", @"{""name"":""X"",""part"":true,""size"":{""width"":400,""height"":200},""templates"":[{""kind"":""spacer"",""name"":""A"",""height"":1}]}", "a part has no size");
+            Refuses(check, "a part without a template", @"{""name"":""X"",""part"":true,""templates"":[]}", "at least one template");
+            Refuses(check, "a part with a help sentence", @"{""name"":""X"",""part"":true,""templates"":[{""kind"":""spacer"",""name"":""A"",""height"":1,""help"":""x""}]}", "no help bar");
+            var aPart = ScreenDocument.Parse(JObject.Parse(@"{""name"":""P"",""part"":true,""templates"":[{""kind"":""row"",""name"":""R"",""children"":[{""kind"":""button"",""name"":""B"",""text"":""Go"",""act"":""go""}]}]}"));
+            check(aPart.IsPart && aPart.Width == 0 && aPart.Templates["R"].Pieces.Acts.ContainsKey("go") && aPart.Acts.Count == 0,
+                "a part is templates alone: no size, no pieces of its own, its acts per template", "what a component builds into a host, never a window");
 
             var defaults = ScreenDocument.Parse(JObject.Parse(@"{""name"":""X"",""size"":{""width"":500,""height"":200},""body"":[],""footer"":[]}"));
             check(defaults.MinWidth == 500 && defaults.MinHeight == 200 && defaults.Backdrop && defaults.Persist && defaults.CardWidth == 460,

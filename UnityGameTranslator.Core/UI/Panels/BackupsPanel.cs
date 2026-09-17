@@ -240,7 +240,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                   + "of whatever you try.",
                   saved: true);
 
-            Stacks.Spacer(ListHost, 12);
+            _screen.Instantiate("GroupGap", ListHost, _ => null);
 
             Group(Backups.AutomaticHeading, Backups.AutomaticNote, automatic,
                   "Nothing yet. One is taken whenever something replaces your translation.");
@@ -368,35 +368,29 @@ namespace UnityGameTranslator.Core.UI.Panels
         }
 
         /// <summary>
-        /// One titled block: its heading, and its own rows under it.
+        /// One titled block, from its template: its heading, and its own rows under it.
         ///
         /// ⚠ The heading uses the panel's shared section title — the same size, weight and colour
         /// every other section of this product wears. Hand-rolling a bold label made it the same
         /// weight as the rows beneath it, which is how a heading stops reading as one.
+        /// ⚠ The block is pinned (no flexible height, the document says so), and its list is given
+        /// a settled height: a flexible block hands spare room to a list that has nothing to put
+        /// there, and a flexible list in a pinned block is pinned anyway. Both were learnt the hard
+        /// way, one after the other.
         /// </summary>
         private void Group(string heading, string note, List<BackupEntry> entries, string empty,
                            bool saved = false)
         {
-            // Left 6, right 8, top 8, bottom 8 — the padding as it was, named.
-            // ⚠ Pinned, and its list is given a settled height: a flexible block hands spare room to
-            // a list that has nothing to put there, and a flexible list in a pinned block is pinned
-            // anyway. Both were learnt the hard way, one after the other.
-            var block = Stacks.Vertical(ListHost, "Group", spacing: 4, pad: new Pad(6, 8, 8, 8),
-                                        surface: Surface.Elevated,
-                                        fillHeight: false);
-
-            var titleRow = Stacks.Row(block, "Heading", spacing: 8, minHeight: UIStyles.SectionTitleHeight);
-
-            Labels.Create(titleRow, "Text", heading, TextRole.SectionTitle, minWidth: 190);
-
+            var block = _screen.Instantiate("Group", ListHost, act => act == "save" ? (Action)SaveCopy : null);
+            block.Say("heading", heading);
             // ⚠ Beside the heading, right-aligned: it qualifies the LIST — how full it is, or that
             // it ages out — and on a row it would read as being about that row.
-            Labels.Create(titleRow, "Note", note, TextRole.Caption, policy: TextPolicy.Excluded,
-                          align: Placement.MiddleRight, fill: Fill.Stretch);
+            block.Say("note", note);
 
             if (entries.Count == 0)
             {
-                Labels.Create(block, "Empty", empty, TextRole.Caption, fill: Fill.Stretch);
+                block.Say("empty", empty);
+                block.Label("Empty").Visible = true;
 
                 // ⚠ Offered even on an empty list: this is the one control that puts the FIRST
                 // copy there, and hiding it until a copy exists would hide it from everybody who
@@ -420,9 +414,9 @@ namespace UnityGameTranslator.Core.UI.Panels
             // measured rows.
             var floor = (int)ListRooms.For(entries.Count, RowSpace, ListPad).Least;
 
-            var list = ScrollList.Create(block, "Rows",
-                                         minHeight: floor, preferredHeight: floor,
-                                         fillHeight: false, spacing: 4);
+            var list = block.List("Rows");
+            list.SetHeight(floor, fill: false);
+            list.Visible = true;
 
             _slices.Add(new Slice { List = list, Rows = entries.Count, Given = floor });
 
@@ -439,18 +433,15 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// 🔴 **Under the list it fills, not above it.** Every verb in this product sits below the
         /// zone it acts on — the Apply of a settings block, the Apply of a hotkey. Above, it read
         /// as a heading for the list rather than an act upon it, and the eye had to travel back up
-        /// to find it.
+        /// to find it. The row is the template's, pushed to the right edge as every action row in
+        /// this product is; only the saved list gets it.
         /// </summary>
-        private void AddSaveButton(Host block, bool saved)
+        private void AddSaveButton(BuiltScreen block, bool saved)
         {
             if (!saved) return;
 
-            // Pushes the button to the right edge, as every action row in this product does.
-            var row = Stacks.Row(block, "SaveRow", spacing: 8, minHeight: UIStyles.RowHeightNormal,
-                                 placement: Placement.MiddleRight);
-
-            _saveBtn = Buttons.Primary(row, "SaveBtn", "Backup");
-            _saveBtn.Clicked += SaveCopy;
+            block.Host("SaveRow").Visible = true;
+            _saveBtn = block.Button("SaveBtn");
 
             RefreshSaveButton();
         }
@@ -461,23 +452,57 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// 🔴 **Two lines at most, and the verbs share the first one.** Stacked — facts, then
         /// reason, then a row of buttons — a copy took four lines and each list showed less than
         /// two entries. A list you cannot read two rows of is not a list, it is a keyhole.
+        ///
+        /// 🔴 **Being renamed, the row becomes two storeys** (a second template). A field has no
+        /// room on a row that already carries the facts and two buttons: it came out about 170 px
+        /// wide, and wider or narrower depending on how long the name and the date beside it
+        /// happened to be — so the one control somebody is typing into was the only thing on the
+        /// screen whose size moved. Laid out downwards, the facts keep their line and the field
+        /// gets one. The facts themselves are a third template, the same in both storeys.
         /// </summary>
         private void Row(Host rows, BackupEntry entry)
         {
-            // 🔴 **Being renamed, the row becomes two storeys.** A field has no room on a row that
-            // already carries the facts and two buttons: it came out about 170 px wide, and wider
-            // or narrower depending on how long the name and the date beside it happened to be — so
-            // the one control somebody is typing into was the only thing on the screen whose size
-            // moved. Laid out downwards, the facts keep their line and the field gets one.
             bool renaming = _renaming == entry.Id;
 
+            Action rename = null;
             var box = renaming
-                ? Stacks.Vertical(rows, "Entry", spacing: 4, pad: new Pad(4, 4, 6, 6),
-                                  surface: Surface.Item)
-                : Stacks.Horizontal(rows, "Entry", spacing: 8, pad: new Pad(4, 4, 6, 6),
-                                    surface: Surface.Item);
+                ? _screen.Instantiate("EntryRenaming", rows, act =>
+                {
+                    switch (act)
+                    {
+                        // ⚠ ONE act, two ways to reach it — the button and the key run the same
+                        // lines (see RenameRow). Two copies is how one of them comes to lack the
+                        // other's conditions.
+                        case "ok": return () => rename?.Invoke();
+                        case "cancel": return () => { _renaming = null; Refresh(); };
+                        default: return null;
+                    }
+                })
+                : _screen.Instantiate("Entry", rows, act =>
+                {
+                    switch (act)
+                    {
+                        case "restore": return () => ConfirmRestore(entry);
+                        case "rename": return () => { _renaming = entry.Id; Refresh(); };
+                        case "delete": return () => ConfirmDelete(entry);
+                        case "keep": return () =>
+                        {
+                            if (!TranslationBackups.Keep(entry.Id))
+                            {
+                                // ⚠ The slot ceiling alone: this duplicates a backup that already
+                                // holds lines, so how many the game holds today has no say in it.
+                                Intents.Toast(
+                                    Backups.WhyNoRoom(TranslationBackups.List())
+                                    ?? "This one could not be kept.", ToastTone.Off);
+                            }
 
-            var text = Stacks.Vertical(box, "Text", spacing: 1);
+                            Redraw();
+                        };
+                        default: return null;
+                    }
+                });
+
+            var text = _screen.Instantiate("EntryText", box.Host("TextHost"), _ => null);
 
             // 🔴 **What identifies stays on the first line; what qualifies goes underneath,
             // small.** Everything on one line grew wider than the row and pushed against the
@@ -506,10 +531,9 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (entry.ByHand > 0) details.Add($"{entry.ByHand} by hand");
             if (entry.WithAssets) details.Add("with fonts and images");
 
-            // ⚠ Excluded either way: a date and a count are not ours to rewrite, and a name is
-            // somebody's own words.
-            Labels.Create(text, "Facts", named ?? facts, TextRole.Body, policy: TextPolicy.Excluded,
-                          fill: Fill.Stretch, minHeight: UIStyles.RowHeightSmall);
+            // ⚠ Excluded either way (the document says so): a date and a count are not ours to
+            // rewrite, and a name is somebody's own words.
+            text.Say("facts", named ?? facts);
 
             ShowLanguages(text, entry);
 
@@ -517,47 +541,29 @@ namespace UnityGameTranslator.Core.UI.Panels
             // are and not in small print underneath.
             if (Backups.IsAnotherLineage(entry.Uuid, TranslatorCore.FileUuid))
             {
-                Labels.Create(text, "Foreign", Backups.AnotherLineageNote, TextRole.Caption,
-                              tone: Tone.Warning, fill: Fill.Stretch);
+                text.Say("foreign", Backups.AnotherLineageNote);
+                text.Label("Foreign").Visible = true;
             }
 
             // ⚠ Absent entirely when there is nothing to say, rather than an empty line: a backup
             // taken a second ago, unnamed and with no assets, is one line and no more.
             if (details.Count > 0)
             {
-                // ⚠ Excluded from the mod's own translation pass: it carries a name somebody
-                // wrote and figures, neither of which is ours to rewrite.
-                Labels.Create(text, "Why", string.Join(" · ", details), TextRole.Caption,
-                              tone: Tone.Secondary, policy: TextPolicy.Excluded, fill: Fill.Stretch);
+                text.Say("why", string.Join(" · ", details));
+                text.Label("Why").Visible = true;
             }
 
             if (renaming)
             {
-                RenameRow(box, entry);
+                rename = RenameRow(box, entry);
                 return;
             }
 
             // ── the verbs, on the same line, at the right edge ──
-            var buttons = Stacks.Horizontal(box, "Verbs", spacing: 4, placement: Placement.MiddleRight,
-                                            fill: Fill.Content, minHeight: UIStyles.RowHeightSmall);
-
-            var restore = Buttons.Secondary(buttons, "Restore", "Restore");
-            restore.Clicked += () => ConfirmRestore(entry);
-            _helpZone?.Describe(restore,
-                "Puts this backup into the game. What is there now is backed up first, so this "
-                + "can be walked back.");
-
             if (entry.IsSaved)
             {
-                var rename = Buttons.Secondary(buttons, "Rename", "Rename");
-                rename.Clicked += () => { _renaming = entry.Id; Refresh(); };
-                _helpZone?.Describe(rename,
-                    "Ten dated rows are not a choice. A name is what makes one of them findable.");
-
-                var delete = Buttons.Secondary(buttons, "Delete", "Delete");
-                delete.Clicked += () => ConfirmDelete(entry);
-                _helpZone?.Describe(delete,
-                    "Deletes this backup and frees a slot. Nothing else is touched.");
+                box.Button("Rename").Visible = true;
+                box.Button("Delete").Visible = true;
             }
             else
             {
@@ -570,21 +576,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                 var all = TranslationBackups.List();
                 bool already = Backups.AlreadyKept(all, entry);
 
-                var keep = Buttons.Secondary(buttons, "Keep", "Keep");
+                var keep = box.Button("Keep");
+                keep.Visible = true;
                 keep.Enabled = !already && Backups.CanSaveAnother(all);
-                keep.Clicked += () =>
-                {
-                    if (!TranslationBackups.Keep(entry.Id))
-                    {
-                        // ⚠ The slot ceiling alone: this duplicates a backup that already holds
-                        // lines, so how many the game holds today has no say in it.
-                        Intents.Toast(
-                            Backups.WhyNoRoom(TranslationBackups.List())
-                            ?? "This one could not be kept.", ToastTone.Off);
-                    }
-
-                    Redraw();
-                };
                 _helpZone?.Describe(keep, already
                     ? Backups.AlreadyKeptHint
                     : "Copies it into " + Backups.SavedHeading + ", so it stops ageing out. This "
@@ -592,18 +586,6 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
         }
 
-        /// <summary>
-        /// The line the name is typed on — its own, under the facts it names.
-        ///
-        /// ⚠ **The grammar is the search row of <see cref="UploadSetupPanel"/>**: the field takes the
-        /// row, its buttons are as tall as it (<see cref="ButtonSize.Field"/>) and short, and there
-        /// is no caption — the row above already says which backup this is, so nothing here repeats
-        /// it. It was built instead with the ordinary 130/110-wide buttons and a 22 px field, where
-        /// every other field in this product is 32.
-        ///
-        /// ⚠ A floor on the width as well: the panel can be dragged down to
-        /// <see cref="MinWidth"/>, and what must not shrink there is the field, not the two verbs.
-        /// </summary>
         /// <summary>
         /// What this copy translates, in two flags.
         ///
@@ -619,36 +601,47 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// ⚠ Nothing at all when neither is known: an older copy whose file did not say is a row
         /// with one line less, not a row with two empty boxes.
         /// </summary>
-        private static void ShowLanguages(Host text, BackupEntry entry)
+        private static void ShowLanguages(BuiltScreen text, BackupEntry entry)
         {
             bool source = Backups.IsSettledLanguage(entry.SourceLanguage);
             bool target = Backups.IsSettledLanguage(entry.TargetLanguage);
 
             if (!source && !target) return;
 
-            var row = Stacks.Row(text, "Languages", spacing: 4,
-                                 minHeight: UIStyles.RowHeightSmall);
+            text.Host("Languages").Visible = true;
 
-            if (source) LanguageMark.Create(row, "From", entry.SourceLanguage);
+            if (source)
+            {
+                var from = text.Host("From");
+                LanguageMark.Create(from, "From", entry.SourceLanguage);
+                from.Visible = true;
+            }
 
-            // ⚠ Excluded from the mod's own translation pass: an arrow is a sign, not a word, and
-            // there is nothing to translate in it.
-            Labels.Create(row, "To", "→", TextRole.Caption, tone: Tone.Secondary,
-                          policy: TextPolicy.Excluded);
-
-            if (target) LanguageMark.Create(row, "Into", entry.TargetLanguage);
+            if (target)
+            {
+                var into = text.Host("Into");
+                LanguageMark.Create(into, "Into", entry.TargetLanguage);
+                into.Visible = true;
+            }
         }
 
-        private void RenameRow(Host box, BackupEntry entry)
+        /// <summary>
+        /// The line the name is typed on — its own, under the facts it names.
+        ///
+        /// ⚠ **The grammar is the search row of <see cref="UploadSetupPanel"/>**: the field takes the
+        /// row, its buttons are as tall as it (<see cref="ButtonSize.Field"/>) and short, and there
+        /// is no caption — the row above already says which backup this is, so nothing here repeats
+        /// it. Cancel, then the verb — the order ConfirmationPanel uses and the order the manager's
+        /// own naming dialog uses. A floor on the width as well: the panel can be dragged down to
+        /// <see cref="MinWidth"/>, and what must not shrink there is the field, not the two verbs.
+        /// All of it is the template's; what is here is the act, returned so the button and the
+        /// key run the same lines.
+        /// </summary>
+        private Action RenameRow(BuiltScreen box, BackupEntry entry)
         {
-            var row = Stacks.Row(box, "Rename", spacing: 5, minHeight: UIStyles.RowHeightLarge);
-
-            var field = Fields.Create(row, "Label", "What is this one?",
-                                      minHeight: UIStyles.InputHeight, minWidth: 160);
+            var field = box.Field("Label");
             field.Text = entry.Label ?? "";
 
-            // ⚠ ONE act, two ways to reach it — the button and the key run the same lines. Two
-            // copies is how one of them comes to lack the other's conditions.
             Action save = () =>
             {
                 TranslationBackups.Rename(entry.Id, field.Text);
@@ -661,15 +654,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             // onto the button beside the field. See UIHelpers.AddSubmitListener.
             field.Submitted(_ => save());
 
-            // ⚠ Cancel, then the verb — the order ConfirmationPanel uses and the order the manager's
-            // own naming dialog uses. This row had them the other way round.
-            var cancel = Buttons.Create(row, "Cancel", "Cancel", ButtonTone.Secondary,
-                                        ButtonSize.Field, minWidth: 70);
-            cancel.Clicked += () => { _renaming = null; Refresh(); };
-
-            var ok = Buttons.Create(row, "Ok", "Save", ButtonTone.Primary,
-                                    ButtonSize.Field, minWidth: 70);
-            ok.Clicked += () => save();
+            return save;
         }
 
         // ── Acts that replace or remove ───────────────────────────────────

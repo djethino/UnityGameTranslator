@@ -1,6 +1,7 @@
 using System;
 using UnityEngine;
 using UnityEngine.UI;
+using UniverseLib.UI;
 using UniverseLib.UI.Models;
 using UnityGameTranslator.Common;
 
@@ -365,6 +366,17 @@ namespace UnityGameTranslator.Core.UI.Components
                 Text.fontStyle = value ? (bold ? FontStyle.BoldAndItalic : FontStyle.Italic)
                                        : (bold ? FontStyle.Bold : FontStyle.Normal);
             }
+        }
+
+        /// <summary>
+        /// Keep the room its words take right now, so a row handing out its width cannot crush
+        /// this label to nothing — a Text given no width does not clip, it wraps, one syllable per
+        /// line. For a word or a count drawn among chips; measured once, when the words are set.
+        /// </summary>
+        public void FitWords()
+        {
+            if (Text == null) return;
+            UIFactory.SetLayoutElement(Text.gameObject, minWidth: Mathf.CeilToInt(Text.preferredWidth));
         }
 
         /// <summary>Bold on or off.</summary>

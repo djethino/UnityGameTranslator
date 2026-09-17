@@ -80,6 +80,13 @@ namespace UnityGameTranslator.Core.UI.Panels
         // they are noise for everyone else (user-arbitrated). Recomputed at each list refresh.
         private bool _rtlControlsVisible;
 
+        /// <summary>
+        /// True while a row is being filled from what is stored. Writing a value into a piece fires
+        /// its act exactly as a person would, and the acts say what they did on the status line —
+        /// which, at build, would announce every font as just changed.
+        /// </summary>
+        private bool _fillingRows;
+
         // Images section
         private ScrollList _imagesList;
         private LabelHandle _imagesStatus;
@@ -608,19 +615,8 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             foreach (var kvp in found)
             {
-                var row = Stacks.Horizontal(_findResultsList.Rows, "FindResult", spacing: 5, pad: Pad.All(2),
-                    minHeight: UIStyles.RowHeightSmall);
-
-                Labels.Create(row, "Path", kvp.Key, TextRole.Small, fill: Fill.Stretch);
-
-                // Which framework drew it. A UI Toolkit path is a list of USS classes and reads
-                // nothing like a GameObject hierarchy — without this, one of the two looks broken.
-                Labels.Create(row, "Engine", kvp.Value, TextRole.Caption, policy: TextPolicy.Excluded,
-                    wrap: false, minWidth: 60, align: Placement.MiddleRight);
-
                 var capturedPath = kvp.Key;
-                var excludeBtn = Buttons.Secondary(row, "Exclude", "+", 30);
-                excludeBtn.Clicked += () =>
+                var row = _screen.Instantiate("FindResult", _findResultsList.Rows, act => act == "pick" ? (Action)(() =>
                 {
                     if (!_pendingExclusionAdds.Contains(capturedPath))
                     {
@@ -630,7 +626,11 @@ namespace UnityGameTranslator.Core.UI.Panels
                         _exclusionsStatus.Show(Tr("Added:") + $" {capturedPath}");
                         _exclusionsStatus.Tone = Tone.Success;
                     }
-                };
+                }) : null);
+                // Which framework drew it. A UI Toolkit path is a list of USS classes and reads
+                // nothing like a GameObject hierarchy — without this, one of the two looks broken.
+                row.Say("path", kvp.Key);
+                row.Say("engine", kvp.Value);
             }
 
             _findResultsList.Filled();
@@ -664,37 +664,34 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             foreach (var (pattern, isPending, isRemoved) in effectiveExclusions)
             {
-                var row = Stacks.Row(_exclusionsList.Rows, $"Row_{pattern.GetHashCode()}", spacing: 5,
-                    minHeight: UIStyles.RowHeightNormal);
+                var capturedPattern = pattern;
+                var row = _screen.Instantiate("ExclusionRow", _exclusionsList.Rows, act =>
+                {
+                    switch (act)
+                    {
+                        case "undo": return () =>
+                        {
+                            _pendingExclusionRemoves.Remove(capturedPattern);
+                            RefreshExclusionsList();
+                            UpdateApplyButtonText();
+                        };
+                        case "delete": return () => OnDeleteExclusionClicked(capturedPattern);
+                        default: return null;
+                    }
+                });
 
                 // What this row is waiting for is said by the shared mark (green added, red
                 // removed) and, for a removal, in words — the row stays until Apply so the
                 // removal can be seen and undone, exactly like a change to any other field.
-                Labels.Create(row, "PatternLabel", pattern, TextRole.Small,
-                    tone: isRemoved ? Tone.Muted : Tone.Plain, policy: TextPolicy.Excluded, fill: Fill.Stretch);
+                row.Say("pattern", pattern);
+                row.Label("PatternLabel").Tone = isRemoved ? Tone.Muted : Tone.Plain;
 
                 var state = isPending ? PendingState.Added : isRemoved ? PendingState.Removed : PendingState.None;
-                Pending.TrackState(row, () => state, "exclusions");
+                Pending.TrackState(row.Root, () => state, "exclusions");
 
-                var capturedPattern = pattern;
-                if (isRemoved)
-                {
-                    Labels.Create(row, "RemovedLabel", "Removed on Apply", TextRole.Small, tone: Tone.Error,
-                        minWidth: 110, align: Placement.MiddleRight);
-
-                    var undoBtn = Buttons.Secondary(row, "UndoBtn", "Undo", 50);
-                    undoBtn.Clicked += () =>
-                    {
-                        _pendingExclusionRemoves.Remove(capturedPattern);
-                        RefreshExclusionsList();
-                        UpdateApplyButtonText();
-                    };
-                }
-                else
-                {
-                    var deleteBtn = Buttons.Secondary(row, "DeleteBtn", "X", 30);
-                    deleteBtn.Clicked += () => OnDeleteExclusionClicked(capturedPattern);
-                }
+                row.Label("RemovedLabel").Visible = isRemoved;
+                row.Button("UndoBtn").Visible = isRemoved;
+                row.Button("DeleteBtn").Visible = !isRemoved;
             }
 
             _exclusionsList.Filled();
@@ -853,16 +850,11 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             foreach (var kvp in found)
             {
-                var row = Stacks.Horizontal(_fontOverrideFindResultsList.Rows, "FindResult", spacing: 5,
-                    pad: Pad.All(2), minHeight: UIStyles.RowHeightSmall);
-
-                Labels.Create(row, "Path", kvp.Key, TextRole.Small, fill: Fill.Stretch);
-                Labels.Create(row, "Engine", kvp.Value, TextRole.Caption, policy: TextPolicy.Excluded,
-                    wrap: false, minWidth: 60, align: Placement.MiddleRight);
-
                 var capturedPath = kvp.Key;
-                var addPathBtn = Buttons.Secondary(row, "AddOverride", "+", 30);
-                addPathBtn.Clicked += () => AddFontOverrideForPath("path:" + capturedPath);
+                var row = _screen.Instantiate("FindResult", _fontOverrideFindResultsList.Rows,
+                    act => act == "pick" ? (Action)(() => AddFontOverrideForPath("path:" + capturedPath)) : null);
+                row.Say("path", kvp.Key);
+                row.Say("engine", kvp.Value);
             }
 
             _fontOverrideFindResultsList.Filled();
@@ -921,122 +913,104 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// </summary>
         private void CreateRemovedFontOverrideRow(int index, FontOverrideRule rule)
         {
-            var row = Stacks.Horizontal(_fontOverridesList.Rows, $"Override_{index}", spacing: 5,
-                pad: new Pad(5, 5, 8, 8), surface: Surface.Card, minHeight: UIStyles.RowHeightNormal);
-            Pending.TrackState(row, () => PendingState.Removed, "overrides");
-
-            Labels.Create(row, "MatchLabel", string.IsNullOrEmpty(rule.match) ? "(empty rule)" : rule.match,
-                TextRole.Small, tone: Tone.Muted, policy: TextPolicy.Excluded, fill: Fill.Stretch);
-
-            Labels.Create(row, "RemovedLabel", "Removed on Apply", TextRole.Small, tone: Tone.Error,
-                minWidth: 110, align: Placement.MiddleRight);
-
-            var undoBtn = Buttons.Secondary(row, "UndoBtn", "Undo", 50);
-            undoBtn.Clicked += () =>
+            var row = _screen.Instantiate("RemovedOverrideRow", _fontOverridesList.Rows, act => act == "undo" ? (Action)(() =>
             {
                 _removedFontOverrides.Remove(rule);
                 RefreshFontOverridesList();
                 UpdateApplyButtonText();
-            };
+            }) : null);
+            Pending.TrackState(row.Root, () => PendingState.Removed, "overrides");
+            row.Say("match", string.IsNullOrEmpty(rule.match) ? "(empty rule)" : rule.match);
         }
 
         private void CreateFontOverrideRow(int index, FontOverrideRule rule)
         {
             if (_removedFontOverrides.Contains(rule)) { CreateRemovedFontOverrideRow(index, rule); return; }
 
-            var row = Stacks.Vertical(_fontOverridesList.Rows, $"Override_{index}", spacing: 3,
-                surface: Surface.Card, minHeight: UIStyles.MultiLineMedium);
-
             // A rule the panel opened with is compared field by field to what it was; a rule
             // added since is one thing waiting as a whole. The lists stay parallel by index —
             // nothing reorders them, and a removal keeps its slot until Apply.
             FontOverrideRule initial = index < _initialFontOverrides.Count ? _initialFontOverrides[index] : null;
-            if (initial == null) Pending.TrackState(row, () => PendingState.Added, "overrides");
-
-            // Row 1: Match pattern (editable) + delete button
-            var topRow = Stacks.Row(row, "TopRow", spacing: 5, minHeight: UIStyles.RowHeightNormal);
-
-            Labels.Create(topRow, "MatchLabel", "Match:", TextRole.Small, policy: TextPolicy.Excluded, minWidth: 45);
-
-            var matchInput = Fields.Create(topRow, "MatchInput", "path:*Pattern*");
-            matchInput.Text = rule.match ?? "";
-
             int capturedIndex = index;
 
-            matchInput.Changed += (val) =>
+            BuiltScreen row = null;
+            row = _screen.Instantiate("OverrideRow", _fontOverridesList.Rows, act =>
             {
-                if (capturedIndex < _pendingFontOverrides.Count)
+                switch (act)
                 {
-                    _pendingFontOverrides[capturedIndex].match = val;
-                    UpdateApplyButtonText();
-                }
-            };
-            if (initial != null)
-                Pending.Track(matchInput, () => (rule.match ?? "") != (initial.match ?? ""), "overrides");
-
-            // Delete button: a rule the panel opened with waits for Apply, marked and undoable;
-            // one added since simply goes, there is nothing on disk to take back.
-            var deleteBtn = Buttons.Compact(topRow, "DeleteBtn", "X", ButtonTone.Danger, minWidth: 28,
-                policy: TextPolicy.Excluded);
-            deleteBtn.Clicked += () =>
-            {
-                if (capturedIndex >= _pendingFontOverrides.Count) return;
-                if (initial != null) _removedFontOverrides.Add(rule);
-                else _pendingFontOverrides.RemoveAt(capturedIndex);
-                RefreshFontOverridesList();
-                UpdateApplyButtonText();
-            };
-
-            // Row 2: Size multiplier slider — the mod's other "Size:" slider (the Fonts sub-tab's
-            // per-font row) reads label → slider → value; this one used to read label → value →
-            // slider. The vocabulary's slider factory offers one order, so this row now reads the
-            // same way as its sibling — a harmless reordering, not a behaviour change.
-            float initialSlider = rule.size_multiplier > 0.001f ? rule.size_multiplier : 1.0f;
-            var sizeSlider = Sliders.Labelled(row, $"OverrideSize_{index}", "Size:", 0f, 3f, initialSlider,
-                v =>
-                {
-                    float rounded = (float)Math.Round(v * 20) / 20f;
-                    return rounded > 0.001f ? $"{(int)(rounded * 100)}%" : "default";
-                },
-                v =>
-                {
-                    float rounded = (float)Math.Round(v * 20) / 20f;
-                    if (capturedIndex < _pendingFontOverrides.Count)
+                    case "matchChanged": return () =>
                     {
-                        _pendingFontOverrides[capturedIndex].size_multiplier = rounded;
+                        if (_fillingRows || capturedIndex >= _pendingFontOverrides.Count) return;
+                        _pendingFontOverrides[capturedIndex].match = row.Field("MatchInput").Text;
                         UpdateApplyButtonText();
-                    }
-                },
-                captionWidth: 35);
-            if (initial != null)
-                Pending.Track(sizeSlider, () => Math.Abs(rule.size_multiplier - initial.size_multiplier) > 0.001f, "overrides");
+                    };
+                    // Delete: a rule the panel opened with waits for Apply, marked and undoable;
+                    // one added since simply goes, there is nothing on disk to take back.
+                    case "delete": return () =>
+                    {
+                        if (capturedIndex >= _pendingFontOverrides.Count) return;
+                        if (initial != null) _removedFontOverrides.Add(rule);
+                        else _pendingFontOverrides.RemoveAt(capturedIndex);
+                        RefreshFontOverridesList();
+                        UpdateApplyButtonText();
+                    };
+                    case "sizeChanged": return () =>
+                    {
+                        if (_fillingRows) return;
+                        float rounded = (float)Math.Round(row.Slider("OverrideSize").Value * 20) / 20f;
+                        if (capturedIndex < _pendingFontOverrides.Count)
+                        {
+                            _pendingFontOverrides[capturedIndex].size_multiplier = rounded;
+                            UpdateApplyButtonText();
+                        }
+                    };
+                    case "rtlChanged": return () =>
+                    {
+                        if (_fillingRows || capturedIndex >= _pendingFontOverrides.Count) return;
+                        string selected = row.Dropdown("OverrideRtl").SelectedValue;
+                        _pendingFontOverrides[capturedIndex].rtl_alignment =
+                            selected == "Mirror" ? "mirror" : selected == "Keep game's" ? "keep" : null;
+                        UpdateApplyButtonText();
+                    };
+                    default: return null;
+                }
+            });
+            if (initial == null) Pending.TrackState(row.Root, () => PendingState.Added, "overrides");
 
-            // RTL alignment for the matched components (only when this translation involves
-            // right-to-left text): inherit the font's setting, or force mirror/keep here — the
-            // per-rule refinement the bench demanded (one game, mirroring pane next to
-            // one-side-built buttons).
-            if (_rtlControlsVisible)
+            _fillingRows = true;
+            try
             {
-                var rtlRow = Stacks.Row(row, "RtlRow", spacing: 5, minHeight: UIStyles.RowHeightNormal);
-
-                Labels.Create(rtlRow, "RtlLabel", "RTL alignment:", TextRole.Small, policy: TextPolicy.Excluded, minWidth: 95);
-
-                string initialRtl = string.Equals(rule.rtl_alignment, "mirror", StringComparison.OrdinalIgnoreCase) ? "Mirror"
-                                  : string.Equals(rule.rtl_alignment, "keep", StringComparison.OrdinalIgnoreCase) ? "Keep game's"
-                                  : "Inherit from font";
-                var rtlDropdown = new SearchableDropdown($"OverrideRtl_{index}",
-                    new[] { "Inherit from font", "Mirror", "Keep game's" }, initialRtl);
-                var rtlHost = rtlDropdown.CreateUI(rtlRow, (selected) =>
-                {
-                    if (capturedIndex >= _pendingFontOverrides.Count) return;
-                    _pendingFontOverrides[capturedIndex].rtl_alignment =
-                        selected == "Mirror" ? "mirror" : selected == "Keep game's" ? "keep" : null;
-                    UpdateApplyButtonText();
-                }, 150);
-                _overrideRtlDropdowns.Add(rtlDropdown);
+                var matchInput = row.Field("MatchInput");
+                matchInput.Text = rule.match ?? "";
                 if (initial != null)
-                    Pending.Track(rtlHost, () => !string.Equals(rule.rtl_alignment, initial.rtl_alignment, StringComparison.OrdinalIgnoreCase), "overrides");
+                    Pending.Track(matchInput, () => (rule.match ?? "") != (initial.match ?? ""), "overrides");
+
+                // Size multiplier — the mod's other "Size:" slider (the Fonts sub-tab's per-font
+                // row) reads label → slider → value, and so does this one.
+                var sizeSlider = row.Slider("OverrideSize");
+                sizeSlider.Value = rule.size_multiplier > 0.001f ? rule.size_multiplier : 1.0f;
+                if (initial != null)
+                    Pending.Track(sizeSlider, () => Math.Abs(rule.size_multiplier - initial.size_multiplier) > 0.001f, "overrides");
+
+                // RTL alignment for the matched components (only when this translation involves
+                // right-to-left text): inherit the font's setting, or force mirror/keep here — the
+                // per-rule refinement the bench demanded (one game, mirroring pane next to
+                // one-side-built buttons).
+                if (_rtlControlsVisible)
+                {
+                    row.Host("RtlRow").Visible = true;
+                    string initialRtl = string.Equals(rule.rtl_alignment, "mirror", StringComparison.OrdinalIgnoreCase) ? "Mirror"
+                                      : string.Equals(rule.rtl_alignment, "keep", StringComparison.OrdinalIgnoreCase) ? "Keep game's"
+                                      : "Inherit from font";
+                    var rtlDropdown = row.Dropdown("OverrideRtl");
+                    rtlDropdown.SetOptions(new[] { "Inherit from font", "Mirror", "Keep game's" });
+                    rtlDropdown.SelectedValue = initialRtl;
+                    _overrideRtlDropdowns.Add(rtlDropdown);
+                    if (initial != null)
+                        Pending.Track(rtlDropdown.Handle, () => !string.Equals(rule.rtl_alignment, initial.rtl_alignment, StringComparison.OrdinalIgnoreCase), "overrides");
+                }
             }
+            finally { _fillingRows = false; }
         }
 
         private void RefreshFontsList()
@@ -1156,226 +1130,228 @@ namespace UnityGameTranslator.Core.UI.Panels
             return null;
         }
 
+        /// <summary>
+        /// One detected font, from its template: name and presence, the Translate box and the
+        /// Identify button on the first line; the RTL box when this translation involves
+        /// right-to-left text; the fallback picker for fonts that support one; the size slider
+        /// with its Auto box for the font types whose design-scale means something.
+        /// </summary>
         private void CreateFontRow(FontDisplayInfo fontInfo)
         {
-            // Main row container with padding
-            var row = Stacks.Vertical(_fontsList.Rows, $"FontRow_{fontInfo.Name.GetHashCode()}", spacing: 3,
-                pad: Pad.All(5), surface: Surface.Card, minHeight: 55);
-
-            // Header row: font name + type + enable toggle
-            var headerRow = Stacks.Row(row, "HeaderRow", spacing: 5, minHeight: UIStyles.RowHeightNormal);
-
             // Capture values for closure
             string capturedFontName = fontInfo.Name;
 
-            // Font name and type
-            Labels.Create(headerRow, "FontLabel", $"{fontInfo.Name} ({fontInfo.Type})", TextRole.Body,
-                tone: Tone.Plain, policy: TextPolicy.Excluded, fill: Fill.Stretch);
-
-            // How present this font is on the screen right now — the figure that tells the user
-            // whether a font is worth configuring. -1 means the count couldn't be taken; say
-            // nothing rather than show a misleading zero.
-            if (fontInfo.SceneCount >= 0)
+            BuiltScreen row = null;
+            row = _screen.Instantiate("FontRow", _fontsList.Rows, act =>
             {
-                Labels.Create(headerRow, "SceneCount", $"{fontInfo.SceneCount} " + Tr("in scene"), TextRole.Small,
-                    tone: fontInfo.SceneCount > 0 ? Tone.Secondary : Tone.Muted, policy: TextPolicy.Excluded,
-                    minWidth: 70);
-            }
-
-            // Identify button: highlight in-game texts using this font. Its tone swaps between
-            // Secondary and Primary to say whether it is the one currently highlighted — the
-            // vocabulary's tones stand in for the bespoke slate/accent fill the raw button used.
-            var identifyBtn = Buttons.Compact(headerRow, "IdentifyBtn", "?", ButtonTone.Secondary, minWidth: 28,
-                policy: TextPolicy.Excluded);
-            identifyBtn.Clicked += () => ToggleFontHighlight(capturedFontName, identifyBtn);
-
-            // Enable toggle
-            var enableToggle = CheckBoxes.Create(headerRow, "EnableToggle", "Translate", fontInfo.Enabled,
-                (isOn) => OnFontEnableChanged(capturedFontName, isOn));
-            Pending.Track(enableToggle, () => FontFieldChanged(capturedFontName, (p, i) => p.enabled != i.enabled), "fonts");
-
-            // RTL alignment (only when this translation involves right-to-left text): mirror the
-            // component's alignment to follow the reading direction, or keep the game's own —
-            // per font and shared with the translation, refinable per rule below.
-            if (_rtlControlsVisible)
-            {
-                var rtlRow = Stacks.Row(row, "RtlRow", spacing: 5, minHeight: UIStyles.RowHeightNormal);
-                var rtlToggle = CheckBoxes.Create(rtlRow, "RtlMirrorToggle", "Mirror alignment (RTL)",
-                    GetEffectiveFontSettings(capturedFontName).mirrorRtl,
-                    (isOn) => OnFontRtlAlignChanged(capturedFontName, isOn));
-                Pending.Track(rtlToggle, () => FontFieldChanged(capturedFontName, (p, i) => p.mirrorRtl != i.mirrorRtl), "fonts");
-                _helpZone?.Describe(rtlToggle,
-                    "Right-to-left text flips left-aligned components to right-aligned, following the reading direction. Turn off to keep the game's own alignment when its layout was built around one side.");
-            }
-
-            // Fallback row (only for fonts that support it)
-            if (fontInfo.SupportsFallback)
-            {
-                var fallbackRow = Stacks.Row(row, "FallbackRow", spacing: 5, minHeight: UIStyles.RowHeightNormal);
-
-                Labels.Create(fallbackRow, "FallbackLabel", "Fallback:", TextRole.Small, policy: TextPolicy.Excluded, minWidth: 55);
-
-                // Build options array based on font type
-                var options = new List<string> { "(None)" };
-                string[] availableFonts = null;
-                bool isTMPFont = fontInfo.Type == "TMP" || fontInfo.Type == "TextMeshPro" || fontInfo.Type == "TMP (alt)";
-
-                if (fontInfo.Type == "TMP (alt)")
+                switch (act)
                 {
-                    // For alternate TMP (TMProOld, etc.), show game fonts + system fonts
-                    var altFonts = TranslatorPatches.GetAlternateTMPFontNames();
-                    if (altFonts != null && altFonts.Length > 0)
+                    case "identify": return () => ToggleFontHighlight(capturedFontName, row.Button("IdentifyBtn"));
+                    case "enabledChanged": return () => { if (!_fillingRows) OnFontEnableChanged(capturedFontName, row.Toggle("EnableToggle").IsOn); };
+                    case "rtlChanged": return () => { if (!_fillingRows) OnFontRtlAlignChanged(capturedFontName, row.Toggle("RtlMirrorToggle").IsOn); };
+                    case "fallbackChanged": return () =>
                     {
-                        options.Add("--- Game Fonts ---");
-                        foreach (var af in altFonts)
-                            options.Add("[Game] " + af);
-                    }
-
-                    if (_systemFonts != null && _systemFonts.Length > 0)
-                    {
-                        options.Add("--- System Fonts ---");
-                        availableFonts = _systemFonts;
-                    }
+                        if (_fillingRows) return;
+                        // Markers are display only — what gets stored is the font name
+                        string selectedValue = FontManager.StripOptionMarker(row.Dropdown("Fallback").SelectedValue);
+                        string fallback = selectedValue == "(None)" ? null : selectedValue;
+                        OnFontFallbackChanged(capturedFontName, fallback);
+                    };
+                    case "scaleChanged": return () => { if (!_fillingRows) OnFontScaleChanged(capturedFontName, (float)Math.Round(row.Slider("Scale").Value, 2)); };
+                    case "autoScaleChanged": return () => { if (!_fillingRows) OnFontAutoScaleChanged(capturedFontName, row.Toggle("AutoScale").IsOn); };
+                    default: return null;
                 }
-                else if (isTMPFont)
-                {
-                    var gameFonts = FontManager.GetGameFontNames();
-                    var knownFonts = FontManager.GetKnownUnloadedFontNames(tmpFamily: true);
-                    if (gameFonts.Length > 0 || knownFonts.Length > 0)
-                    {
-                        options.Add("--- Game Fonts ---");
-                        foreach (var gf in gameFonts)
-                            options.Add("[Game] " + gf);
-                        // Known from the translation but not in memory right now — see
-                        // FontManager.GetKnownUnloadedFontNames. Without them, a font used as a
-                        // fallback in a past session could not be picked again.
-                        foreach (var kf in knownFonts)
-                            options.Add("[Game] " + kf + FontManager.UnloadedMarker);
-                    }
+            });
 
-                    if (_systemFonts != null && _systemFonts.Length > 0)
-                    {
-                        options.Add("--- System Fonts ---");
-                        availableFonts = _systemFonts;
-                    }
+            _fillingRows = true;
+            try
+            {
+                // Font name and type
+                row.Say("font", $"{fontInfo.Name} ({fontInfo.Type})");
+
+                // How present this font is on the screen right now — the figure that tells the user
+                // whether a font is worth configuring. -1 means the count couldn't be taken; say
+                // nothing rather than show a misleading zero.
+                if (fontInfo.SceneCount >= 0)
+                {
+                    var count = row.Label("SceneCount");
+                    row.Say("sceneCount", $"{fontInfo.SceneCount} " + Tr("in scene"));
+                    count.Tone = fontInfo.SceneCount > 0 ? Tone.Secondary : Tone.Muted;
+                    count.Visible = true;
+                }
+
+                // Enable toggle
+                var enableToggle = row.Toggle("EnableToggle");
+                enableToggle.IsOn = fontInfo.Enabled;
+                Pending.Track(enableToggle, () => FontFieldChanged(capturedFontName, (p, i) => p.enabled != i.enabled), "fonts");
+
+                // RTL alignment (only when this translation involves right-to-left text): mirror the
+                // component's alignment to follow the reading direction, or keep the game's own —
+                // per font and shared with the translation, refinable per rule below.
+                if (_rtlControlsVisible)
+                {
+                    row.Host("RtlRow").Visible = true;
+                    var rtlToggle = row.Toggle("RtlMirrorToggle");
+                    rtlToggle.IsOn = GetEffectiveFontSettings(capturedFontName).mirrorRtl;
+                    Pending.Track(rtlToggle, () => FontFieldChanged(capturedFontName, (p, i) => p.mirrorRtl != i.mirrorRtl), "fonts");
+                }
+
+                if (fontInfo.SupportsFallback)
+                {
+                    row.Host("FallbackRow").Visible = true;
+                    FillFallback(row, fontInfo, capturedFontName);
                 }
                 else
                 {
-                    // Unity Font: game fonts first (with [Game] prefix), then system fonts
-                    var gameUnityFonts = FontManager.GetGameUnityFontNames();
-                    var knownFonts = FontManager.GetKnownUnloadedFontNames(tmpFamily: false);
-                    if (gameUnityFonts.Length > 0 || knownFonts.Length > 0)
-                    {
-                        options.Add("--- Game Fonts ---");
-                        foreach (var gf in gameUnityFonts)
-                            options.Add("[Game] " + gf);
-                        foreach (var kf in knownFonts)
-                            options.Add("[Game] " + kf + FontManager.UnloadedMarker);
-                    }
+                    // Show hint for non-TMP fonts
+                    row.Label("NoFallbackLabel").Visible = true;
+                }
+
+                // Size — the DELIBERATE size percent (fit/readability, e.g. a longer cross-script
+                // translation vs the HUD). Orthogonal to the auto design-scale: the two combine
+                // multiplicatively (Model B). 100% = native. Always active; it does NOT replace the
+                // auto design-scale, it applies on top of it.
+                var scaleSlider = row.Slider("Scale");
+                scaleSlider.Value = Math.Min(2.0f, FontManager.GetFontSizePercent(capturedFontName));
+                Pending.Track(scaleSlider, () => FontFieldChanged(capturedFontName, (p, i) => Math.Abs(p.sizePercent - i.sizePercent) > 0.001f), "fonts");
+
+                // Auto design-scale toggle — folds the font's native design-scale into the size as a
+                // baseline (so an imported font matches the game's original size), on top of which the
+                // slider % still applies. Default ON for freshly detected TMP fonts. HIDDEN for font
+                // types where the design-scale has no meaning (UI.Text / non-TMP clone-atlas preserves
+                // the game's metrics). Commits on Apply only (UX rule: no immediate application).
+                if (FontManager.SupportsDesignScale(fontInfo.Type))
+                {
+                    var autoToggle = row.Toggle("AutoScale");
+                    autoToggle.Visible = true;
+                    autoToggle.IsOn = FontManager.GetFontSettings(capturedFontName)?.scale_auto ?? false;
+                    Pending.Track(autoToggle, () => FontFieldChanged(capturedFontName, (p, i) => p.scaleAuto != i.scaleAuto), "fonts");
+                }
+            }
+            finally { _fillingRows = false; }
+        }
+
+        /// <summary>
+        /// The fallback picker of one font: the game's fonts first, then the system's, then the
+        /// custom ones — grouped by origin — with the configured fallback found among them.
+        /// </summary>
+        private void FillFallback(BuiltScreen row, FontDisplayInfo fontInfo, string capturedFontName)
+        {
+            // Build options array based on font type
+            var options = new List<string> { "(None)" };
+            string[] availableFonts = null;
+            bool isTMPFont = fontInfo.Type == "TMP" || fontInfo.Type == "TextMeshPro" || fontInfo.Type == "TMP (alt)";
+
+            if (fontInfo.Type == "TMP (alt)")
+            {
+                // For alternate TMP (TMProOld, etc.), show game fonts + system fonts
+                var altFonts = TranslatorPatches.GetAlternateTMPFontNames();
+                if (altFonts != null && altFonts.Length > 0)
+                {
+                    options.Add("--- Game Fonts ---");
+                    foreach (var af in altFonts)
+                        options.Add("[Game] " + af);
+                }
+
+                if (_systemFonts != null && _systemFonts.Length > 0)
+                {
+                    options.Add("--- System Fonts ---");
                     availableFonts = _systemFonts;
                 }
-
-                if (availableFonts != null && availableFonts.Length > 0)
+            }
+            else if (isTMPFont)
+            {
+                var gameFonts = FontManager.GetGameFontNames();
+                var knownFonts = FontManager.GetKnownUnloadedFontNames(tmpFamily: true);
+                if (gameFonts.Length > 0 || knownFonts.Length > 0)
                 {
-                    if (options.Count > 1)
-                        options.Add("--- System Fonts ---");
-                    options.AddRange(availableFonts);
+                    options.Add("--- Game Fonts ---");
+                    foreach (var gf in gameFonts)
+                        options.Add("[Game] " + gf);
+                    // Known from the translation but not in memory right now — see
+                    // FontManager.GetKnownUnloadedFontNames. Without them, a font used as a
+                    // fallback in a past session could not be picked again.
+                    foreach (var kf in knownFonts)
+                        options.Add("[Game] " + kf + FontManager.UnloadedMarker);
                 }
 
-                // Add custom fonts (user-provided fonts from fonts/ folder)
-                string[] customFonts = FontManager.GetCustomFontNames();
-                if (customFonts != null && customFonts.Length > 0)
+                if (_systemFonts != null && _systemFonts.Length > 0)
                 {
-                    if (options.Count > 1)
-                        options.Add("--- Custom Fonts ---");
-                    foreach (var customFont in customFonts)
-                        options.Add("[Custom] " + customFont);
+                    options.Add("--- System Fonts ---");
+                    availableFonts = _systemFonts;
                 }
-
-                // If no fonts available at all
-                if (options.Count <= 1)
-                {
-                    Labels.Create(fallbackRow, "NoFontsLabel", "(no fonts available)", TextRole.Small,
-                        tone: Tone.Muted, policy: TextPolicy.Excluded);
-                    return;
-                }
-
-                // Determine initial value.
-                // Matched against the options AS DISPLAYED but marker-insensitive: the same font
-                // shows as "[Game] X" or "[Game] X (not loaded)" depending on what the game has
-                // loaded right now, and a configured fallback must find its entry either way.
-                // The selected value must BE one of the options, otherwise the list opens with
-                // nothing highlighted and the user cannot see what is currently set.
-                string initialValue = "(None)";
-                if (!string.IsNullOrEmpty(fontInfo.FallbackFont))
-                {
-                    string match = FindOption(options, fontInfo.FallbackFont)
-                        // Migration: old JSON might have a game font name without [Game] prefix
-                        ?? FindOption(options, "[Game] " + fontInfo.FallbackFont);
-
-                    if (match == null)
-                    {
-                        match = fontInfo.FallbackFont + FontManager.IncompatibleMarker;
-                        options.Add(match);
-                    }
-
-                    initialValue = match;
-                }
-
-                // Create searchable dropdown with filter
-                var dropdown = new SearchableDropdown(
-                    $"Fallback_{capturedFontName}",
-                    options.ToArray(),
-                    initialValue,
-                    popupHeight: 250
-                );
-                dropdown.CategoryProvider = FontManager.GetFontOrigin;
-
-                var dropdownHost = dropdown.CreateUI(fallbackRow, (selectedValue) =>
-                {
-                    // Markers are display only — what gets stored is the font name
-                    selectedValue = FontManager.StripOptionMarker(selectedValue);
-                    string fallback = selectedValue == "(None)" ? null : selectedValue;
-                    OnFontFallbackChanged(capturedFontName, fallback);
-                }, width: 350);
-
-                _fallbackDropdowns.Add(dropdown);
-                Pending.Track(dropdownHost, () => FontFieldChanged(capturedFontName, (p, i) => p.fallback != i.fallback), "fonts");
             }
             else
             {
-                // Show hint for non-TMP fonts
-                Labels.Create(row, "NoFallbackLabel", "Fallback not supported for this font type", TextRole.Small,
-                    tone: Tone.Muted, policy: TextPolicy.Excluded);
+                // Unity Font: game fonts first (with [Game] prefix), then system fonts
+                var gameUnityFonts = FontManager.GetGameUnityFontNames();
+                var knownFonts = FontManager.GetKnownUnloadedFontNames(tmpFamily: false);
+                if (gameUnityFonts.Length > 0 || knownFonts.Length > 0)
+                {
+                    options.Add("--- Game Fonts ---");
+                    foreach (var gf in gameUnityFonts)
+                        options.Add("[Game] " + gf);
+                    foreach (var kf in knownFonts)
+                        options.Add("[Game] " + kf + FontManager.UnloadedMarker);
+                }
+                availableFonts = _systemFonts;
             }
 
-            // Size row (for all fonts) — the DELIBERATE size percent (fit/readability, e.g. a longer
-            // cross-script translation vs the HUD). Orthogonal to the auto design-scale: the two
-            // combine multiplicatively (Model B). 100% = native.
-            var scaleRow = Stacks.Row(row, "ScaleRow", spacing: 5, minHeight: UIStyles.RowHeightNormal);
-
-            // Size slider (1% to 200%) = the deliberate percent. Always active; it does NOT replace
-            // the auto design-scale, it applies on top of it.
-            float sizePercent = FontManager.GetFontSizePercent(capturedFontName);
-            var scaleSlider = Sliders.Labelled(scaleRow, $"Scale_{capturedFontName}", "Size:", 0.01f, 2.0f,
-                Math.Min(2.0f, sizePercent),
-                v => $"{(int)(Math.Round(v, 2) * 100)}%",
-                v => OnFontScaleChanged(capturedFontName, (float)Math.Round(v, 2)),
-                captionWidth: 55);
-            Pending.Track(scaleSlider, () => FontFieldChanged(capturedFontName, (p, i) => Math.Abs(p.sizePercent - i.sizePercent) > 0.001f), "fonts");
-
-            // Auto design-scale toggle — folds the font's native design-scale into the size as a
-            // baseline (so an imported font matches the game's original size), on top of which the
-            // slider % still applies. Default ON for freshly detected TMP fonts. HIDDEN for font
-            // types where the design-scale has no meaning (UI.Text / non-TMP clone-atlas preserves
-            // the game's metrics). Commits on Apply only (UX rule: no immediate application).
-            if (FontManager.SupportsDesignScale(fontInfo.Type))
+            if (availableFonts != null && availableFonts.Length > 0)
             {
-                bool fontScaleAuto = FontManager.GetFontSettings(capturedFontName)?.scale_auto ?? false;
-                var autoToggle = CheckBoxes.Create(scaleRow, $"AutoScale_{capturedFontName}", "Auto", fontScaleAuto,
-                    (isOn) => OnFontAutoScaleChanged(capturedFontName, isOn));
-                Pending.Track(autoToggle, () => FontFieldChanged(capturedFontName, (p, i) => p.scaleAuto != i.scaleAuto), "fonts");
+                if (options.Count > 1)
+                    options.Add("--- System Fonts ---");
+                options.AddRange(availableFonts);
             }
+
+            // Add custom fonts (user-provided fonts from fonts/ folder)
+            string[] customFonts = FontManager.GetCustomFontNames();
+            if (customFonts != null && customFonts.Length > 0)
+            {
+                if (options.Count > 1)
+                    options.Add("--- Custom Fonts ---");
+                foreach (var customFont in customFonts)
+                    options.Add("[Custom] " + customFont);
+            }
+
+            var dropdown = row.Dropdown("Fallback");
+
+            // If no fonts available at all
+            if (options.Count <= 1)
+            {
+                dropdown.Handle.Visible = false;
+                row.Label("NoFontsLabel").Visible = true;
+                return;
+            }
+
+            // Determine initial value.
+            // Matched against the options AS DISPLAYED but marker-insensitive: the same font
+            // shows as "[Game] X" or "[Game] X (not loaded)" depending on what the game has
+            // loaded right now, and a configured fallback must find its entry either way.
+            // The selected value must BE one of the options, otherwise the list opens with
+            // nothing highlighted and the user cannot see what is currently set.
+            string initialValue = "(None)";
+            if (!string.IsNullOrEmpty(fontInfo.FallbackFont))
+            {
+                string match = FindOption(options, fontInfo.FallbackFont)
+                    // Migration: old JSON might have a game font name without [Game] prefix
+                    ?? FindOption(options, "[Game] " + fontInfo.FallbackFont);
+
+                if (match == null)
+                {
+                    match = fontInfo.FallbackFont + FontManager.IncompatibleMarker;
+                    options.Add(match);
+                }
+
+                initialValue = match;
+            }
+
+            dropdown.CategoryProvider = FontManager.GetFontOrigin;
+            dropdown.SetOptions(options.ToArray());
+            dropdown.SelectedValue = initialValue;
+
+            _fallbackDropdowns.Add(dropdown);
+            Pending.Track(dropdown.Handle, () => FontFieldChanged(capturedFontName, (p, i) => p.fallback != i.fallback), "fonts");
         }
 
         /// <summary>
@@ -1555,15 +1531,16 @@ namespace UnityGameTranslator.Core.UI.Panels
                 bool fileExists = ImageReplacer.HasReplacementFile(spriteName);
                 var capturedName = spriteName;
 
-                // Row container
-                var row = Stacks.Horizontal(_imagesList.Rows, "Row_" + spriteName, spacing: 5, pad: Pad.All(2),
-                    minHeight: UIStyles.RowHeightNormal);
+                var row = _screen.Instantiate("ImageRow", _imagesList.Rows, act => act == "remove" ? (Action)(() =>
+                {
+                    ImageReplacer.RemoveReplacement(capturedName);
+                    TranslatorCore.SaveCache();
+                    RefreshImageReplacementsList();
+                    _imagesStatus.Show(Tr("Removed:") + $" {capturedName}");
+                    _imagesStatus.Tone = Tone.Secondary;
+                }) : null);
 
-                // Info
-                var infoCol = Stacks.Vertical(row, "Info", fill: Fill.Stretch);
-
-                Labels.Create(infoCol, "Name", $"{spriteName} ({entry.OriginalWidth}x{entry.OriginalHeight})",
-                    TextRole.Small, policy: TextPolicy.Excluded, fill: Fill.Stretch).Bold = true;
+                row.Say("name", $"{spriteName} ({entry.OriginalWidth}x{entry.OriginalHeight})");
 
                 // Status
                 string statusText; Tone statusTone;
@@ -1582,20 +1559,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                     statusText = "Edit the exported PNG, then Load All";
                     statusTone = Tone.Muted;
                 }
-
-                Labels.Create(infoCol, "Status", statusText, TextRole.Caption, tone: statusTone,
-                    policy: TextPolicy.Excluded, fill: Fill.Stretch);
-
-                // Remove button
-                var removeBtn = Buttons.Secondary(row, "Remove_" + spriteName, "X", 30);
-                removeBtn.Clicked += () =>
-                {
-                    ImageReplacer.RemoveReplacement(capturedName);
-                    TranslatorCore.SaveCache();
-                    RefreshImageReplacementsList();
-                    _imagesStatus.Show(Tr("Removed:") + $" {capturedName}");
-                    _imagesStatus.Tone = Tone.Secondary;
-                };
+                row.Say("status", statusText);
+                row.Label("Status").Tone = statusTone;
             }
 
             _imagesList.Filled();
@@ -1659,9 +1624,6 @@ namespace UnityGameTranslator.Core.UI.Panels
                 {
                     foreach (var candidate in candidates)
                     {
-                        var row = Stacks.Horizontal(_scanResultsList.Rows, "Candidate", spacing: 5, pad: Pad.All(2),
-                            minHeight: UIStyles.RowHeightSmall);
-
                         // Show the matched value: with partial matches (composed display
                         // strings like "seedA-seedB"), the path alone doesn't tell the
                         // user which piece of the text each candidate holds.
@@ -1670,11 +1632,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                         string display = $"{candidate.ClassName}.{candidate.FieldPath} = \"{valPreview}\"";
                         if (candidate.IsStatic) display += " (static)";
 
-                        Labels.Create(row, "Label", display, TextRole.Small, policy: TextPolicy.Excluded, fill: Fill.Stretch);
-
                         var capturedCandidate = candidate;
-                        var addBtn = Buttons.Secondary(row, "Add", "+", 30);
-                        addBtn.Clicked += () =>
+                        var row = _screen.Instantiate("ScanCandidate", _scanResultsList.Rows, act => act == "add" ? (Action)(() =>
                         {
                             // Prompt for a name — use the field name as default
                             string varName = capturedCandidate.FieldPath.Split('.').Last();
@@ -1683,7 +1642,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                             RefreshVariablesList();
                             _variablesStatus.Show($"Added: {varName} ({capturedCandidate.ClassName}.{capturedCandidate.FieldPath})");
                             _variablesStatus.Tone = Tone.Success;
-                        };
+                        }) : null);
+                        row.Say("label", display);
                     }
 
                     _scanResultsList.Filled();
@@ -1718,31 +1678,22 @@ namespace UnityGameTranslator.Core.UI.Panels
                 int stableId = def.Id;
                 string currentVal = VariableManager.GetValue(stableId);
 
-                var row = Stacks.Horizontal(_variablesList.Rows, "Var_" + stableId, spacing: 5, pad: Pad.All(2),
-                    minHeight: UIStyles.RowHeightNormal);
-
-                // Info
-                var infoCol = Stacks.Vertical(row, "Info", fill: Fill.Stretch);
-
-                Labels.Create(infoCol, "Name", $"[!STR*{stableId}] {def.Name}", TextRole.Small,
-                    policy: TextPolicy.Excluded, fill: Fill.Stretch).Bold = true;
-
-                string pathStr = $"{def.ClassName}.{def.FieldPath}";
-                string valStr = currentVal != null ? $" = \"{currentVal}\"" : " = (not resolved)";
-                Labels.Create(infoCol, "Detail", pathStr + valStr, TextRole.Caption,
-                    tone: currentVal != null ? Tone.Secondary : Tone.Warning, policy: TextPolicy.Excluded, fill: Fill.Stretch);
-
-                // Remove button
                 int capturedId = stableId;
-                var removeBtn = Buttons.Secondary(row, "Remove_" + stableId, "X", 30);
-                removeBtn.Clicked += () =>
+                var row = _screen.Instantiate("VariableRow", _variablesList.Rows, act => act == "remove" ? (Action)(() =>
                 {
                     VariableManager.RemoveVariable(capturedId);
                     TranslatorCore.SaveCache();
                     RefreshVariablesList();
                     _variablesStatus.Say("Variable removed");
                     _variablesStatus.Tone = Tone.Secondary;
-                };
+                }) : null);
+
+                row.Say("name", $"[!STR*{stableId}] {def.Name}");
+
+                string pathStr = $"{def.ClassName}.{def.FieldPath}";
+                string valStr = currentVal != null ? $" = \"{currentVal}\"" : " = (not resolved)";
+                row.Say("detail", pathStr + valStr);
+                row.Label("Detail").Tone = currentVal != null ? Tone.Secondary : Tone.Warning;
             }
 
             _variablesList.Filled();

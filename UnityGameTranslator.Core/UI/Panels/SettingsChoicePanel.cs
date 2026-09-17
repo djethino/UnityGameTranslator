@@ -118,24 +118,12 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             foreach (var plan in decisions)
             {
-                var row = Stacks.Horizontal(sections, $"Row_{plan.Section}", spacing: 8,
-                                            pad: Pad.Of(10, 6), placement: Placement.MiddleLeft,
-                                            surface: Surface.Elevated, minHeight: UIStyles.RowHeightLarge);
-
-                // Ticked by default: the downloaded version is the one the
-                // player just asked for, and their own settings are recoverable
-                _toggles[plan.Section] = CheckBoxes.Bare(row, $"Toggle_{plan.Section}", initial: true);
-
-                var infoCol = Stacks.Vertical(row, "Info", spacing: 2);
-
-                var nameLabel = Labels.Create(infoCol, "Name",
-                    $"{plan.DisplayName}  ({plan.OursCount} here / {plan.TheirsCount} downloaded)",
-                    TextRole.Body, policy: TextPolicy.Excluded, minHeight: UIStyles.RowHeightSmall);
-                nameLabel.Bold = true;
-
-                var descLabel = Labels.Create(infoCol, "Desc", plan.Description, TextRole.Hint,
-                                              policy: TextPolicy.Excluded);
-                descLabel.Italic = false;
+                // Ticked by default (the document says so): the downloaded version is the one
+                // the player just asked for, and their own settings are recoverable.
+                var row = _screen.Instantiate("SectionRow", sections, _ => null);
+                _toggles[plan.Section] = row.Toggle("Toggle");
+                row.Say("name", $"{plan.DisplayName}  ({plan.OursCount} here / {plan.TheirsCount} downloaded)");
+                row.Say("description", plan.Description);
             }
         }
 

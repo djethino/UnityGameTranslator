@@ -57,6 +57,9 @@ namespace UnityGameTranslator.Core.UI.Components
         /// <summary>The bar container. Null until CreateUI has run.</summary>
         internal GameObject Root => _root;
 
+        /// <summary>The bar, as a component holds it — to describe it in a help bar.</summary>
+        public Host Handle => new Host(_root);
+
         /// <summary>The bar, as a panel holds it.</summary>
         public Host Bar => new Host(_root);
 

@@ -632,32 +632,31 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         private void CreateTextEditRow((object component, string text, string originalKey, string tag, string childPath, Dictionary<int, string> liveNumbers) entry)
         {
-            var row = Stacks.Vertical(_textEditList.Rows, "TextEditEntry", spacing: 3, surface: Surface.Card);
-
-            // Original key: full text, word-wrapped (translating needs the whole source).
+            // One editable line, from the document's template. Its three verbs are answered by
+            // handlers written below, once everything they reach exists.
             //
-            // ⚠ richText: false, and this is the whole point of the row. Left on, the label RENDERS
-            // `<color=#FF0000>` instead of showing it, so a decorated line appeared coloured with
-            // its markup invisible, and there was no way to see what had to be preserved while
-            // editing. What is edited here is the file's exact text; that is what has to be on
-            // screen. The rendering is shown separately below.
-            // 🔴 The tag as a CHIP, not as `[H] ` in front of the key.
-            //
-            // Written into the key's own label, it was grey text among grey text — the one thing
-            // on the row that carries a colour everyone has already learnt on the site's tables,
-            // and it carried none. It cannot be rich text either: this label deliberately renders
-            // markup literally (see above), so `<color=…>` would show as characters.
-            //
-            // Hence a row: the chip, then the key. The colours come from the shared library, so
-            // changing how a tag looks is one edit there rather than three across the products.
-            var keyRow = Stacks.Horizontal(row, "KeyRow", spacing: 6, placement: Placement.TopLeft,
-                                           minHeight: UIStyles.RowHeightSmall);
+            // 🔴 The tag as a CHIP, not as `[H] ` in front of the key: written into the key's own
+            // label it was grey text among grey text — the one thing on the row that carries a
+            // colour everyone has already learnt on the site's tables, and it carried none. The key
+            // itself renders its markup literally (richText false in the document): what is edited
+            // here is the file's exact text, and `<color=…>` has to be seen to be preserved. The
+            // rendering is shown separately, right under the field.
+            Action save = null, retranslate = null, revert = null;
+            var row = _screen.Instantiate("TextEditEntry", _textEditList.Rows, act =>
+            {
+                switch (act)
+                {
+                    case "save": return () => save?.Invoke();
+                    case "retranslate": return () => retranslate?.Invoke();
+                    case "revert": return () => revert?.Invoke();
+                    default: return null;
+                }
+            });
 
-            var tagChip = TagChips.Create(keyRow, entry.tag);
-
-            var keyLabel = Labels.Create(keyRow, "Key", entry.originalKey, TextRole.Small,
-                policy: TextPolicy.Excluded, richText: false, fill: Fill.Stretch,
-                minHeight: UIStyles.RowHeightSmall);
+            var tagChip = row.Chip("Tag");
+            tagChip.Retag(entry.tag);
+            var keyLabel = row.Label("Key");
+            row.Say("key", entry.originalKey);
 
             // Live values of the [!v*N] placeholders, as currently displayed in-game
             if (entry.liveNumbers != null && entry.liveNumbers.Count > 0)
@@ -665,25 +664,18 @@ namespace UnityGameTranslator.Core.UI.Panels
                 var parts = new List<string>();
                 foreach (var kv in entry.liveNumbers)
                     parts.Add($"[!v*{kv.Key}] = {kv.Value}");
-                Labels.Create(row, "LiveValues",
-                    $"Keep placeholders as-is. Current values: {string.Join("   ", parts)}", TextRole.Caption,
-                    tone: Tone.Accent, policy: TextPolicy.Excluded, richText: false, fill: Fill.Stretch,
-                    minHeight: UIStyles.RowHeightSmall);
+                row.Say("liveValues", $"Keep placeholders as-is. Current values: {string.Join("   ", parts)}");
+                row.Label("LiveValues").Visible = true;
             }
 
             // Editable translation field — raw text, markup included, exactly as the file holds it
-            var input = Fields.Create(row, "TranslationInput", "Enter translation...",
-                FieldKind.Multiline, minHeight: 40, richText: false);
+            var input = row.Field("TranslationInput");
             input.Text = entry.text;
 
             // …and right under it, the same string RENDERED. One shows what you are editing, the
             // other what the game will draw — a colour tag broken while typing shows up here
             // immediately, instead of on a screen you have to go back to.
-            var previewLabel = Labels.Create(row, "Preview", "", TextRole.Small, tone: Tone.Secondary,
-                policy: TextPolicy.Excluded, fill: Fill.Stretch, minHeight: UIStyles.RowHeightSmall);
-
-            // Buttons row
-            var btnRow = Stacks.Horizontal(row, "BtnRow", spacing: 4, minHeight: UIStyles.RowHeightNormal);
+            var previewLabel = row.Label("Preview");
 
             // Everything this row needs, in one place: its handlers, the answer that arrives
             // seconds later on another thread, and the button-state refresh all work from it.
@@ -702,19 +694,9 @@ namespace UnityGameTranslator.Core.UI.Panels
             object capturedComponent = entry.component;
             var capturedNumbers = entry.liveNumbers;
 
-            // ⚠ policy: Excluded on all three — none of these three labels was ever registered for
-            // translation in the original either (no RegisterUIText call reached them), unlike
-            // every other button in this panel. Preserved as-is; see the migration report.
-            var saveBtn = Buttons.Compact(btnRow, "SaveBtn", "Save (H)", ButtonTone.Success,
-                minWidth: 80, policy: TextPolicy.Excluded);
-
-            var retranslateBtn = Buttons.Compact(btnRow, "RetranslateBtn", "Retranslate (AI)", ButtonTone.Primary,
-                minWidth: 110, policy: TextPolicy.Excluded);
-
-            var revertBtn = Buttons.Compact(btnRow, "RevertBtn", "Revert", ButtonTone.Secondary,
-                minWidth: 70, policy: TextPolicy.Excluded);
-            _helpZone?.Describe(revertBtn,
-                "Put the field back to what the translation file holds, discarding what you typed or what the AI proposed.");
+            var saveBtn = row.Button("SaveBtn");
+            var retranslateBtn = row.Button("RetranslateBtn");
+            var revertBtn = row.Button("RevertBtn");
 
             rowState.SaveBtn = saveBtn;
             rowState.RetranslateBtn = retranslateBtn;
@@ -722,7 +704,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // Both buttons exist before either handler is written: each one has to be able to put
             // the other back in its right state, and a lambda cannot reach a local declared later.
-            saveBtn.Clicked += () =>
+            save = () =>
             {
                 string newValue = input.Text;
                 if (string.IsNullOrEmpty(newValue)) return;
@@ -769,7 +751,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 RefreshRow(rowState);
             };
 
-            retranslateBtn.Clicked += () =>
+            retranslate = () =>
             {
                 if (TranslatorCore.Config == null || !TranslatorCore.Config.IsTranslationEnabled)
                 {
@@ -785,7 +767,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 StartRetranslate(rowState);
             };
 
-            revertBtn.Clicked += () =>
+            revert = () =>
             {
                 // Back to what the file holds — the AI's proposal and anything typed both go.
                 input.Text = TranslatorCore.GetTranslationValue(capturedKey) ?? capturedKey;

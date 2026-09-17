@@ -377,14 +377,12 @@ namespace UnityGameTranslator.Core.UI.Panels
                 int confidence = item.Confidence;
 
                 // Name, source in brackets, mark — the socle's row, the same one the Manager lists.
-                var btn = Buttons.Create(list.Rows, $"Game_{game.Id}",
-                                         GameCandidates.Row(game.Name, game.Source, confidence),
-                                         tone: ConfidenceTone(confidence), size: ButtonSize.Compact,
-                                         fill: Fill.Stretch, policy: TextPolicy.Excluded);
-
-                // Capture game in closure
+                // The tone says how sure the match is: a rule, so it is set here.
                 var capturedGame = game;
-                btn.Clicked += () => OnGameSelected(capturedGame);
+                var row = _screen.Instantiate("GameBtn", list.Rows, act => act == "pick" ? (Action)(() => OnGameSelected(capturedGame)) : null);
+                var btn = row.Button("GameBtn");
+                btn.Label = GameCandidates.Row(game.Name, game.Source, confidence);
+                btn.Tone = ConfidenceTone(confidence);
             }
 
             list.Filled();

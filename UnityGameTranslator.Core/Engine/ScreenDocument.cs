@@ -52,12 +52,18 @@ namespace UnityGameTranslator.Core
     public sealed class ScreenDocument
     {
         /// <summary>The closed vocabulary. The same list as the schema's enum — a check says so.</summary>
-        public static readonly string[] Kinds = { "card", "stack", "row", "spacer", "label", "button", "status", "section", "field", "dropdown", "list", "tabs", "tab", "callout", "collapsible", "title", "checkbox", "toast", "slider" };
+        public static readonly string[] Kinds = { "card", "stack", "row", "spacer", "label", "button", "status", "section", "field", "dropdown", "list", "tabs", "tab", "callout", "collapsible", "title", "checkbox", "toast", "slider", "choice", "chip" };
 
         /// <summary>What the help bar says over this piece, or null.</summary>
         public static string HelpOf(ScreenNode node) => node.Word("help");
 
         public string Name { get; private set; }
+        /// <summary>
+        /// A PART: templates alone, with no size, chrome, header, body or footer — a piece several
+        /// screens hold (the status card, the community list), described once in screens/parts/
+        /// and instantiated by its component into the host a screen leaves for it.
+        /// </summary>
+        public bool IsPart { get; private set; }
         public int Width { get; private set; }
         public int Height { get; private set; }
         public int MinWidth { get; private set; }
@@ -78,14 +84,23 @@ namespace UnityGameTranslator.Core
         public readonly List<ScreenNode> Body = new List<ScreenNode>();
         public readonly List<ScreenNode> Footer = new List<ScreenNode>();
 
+        private readonly PieceSet _own = new PieceSet();
+
         /// <summary>The slots the code writes, by name, each with the piece that holds it.</summary>
-        public readonly Dictionary<string, ScreenNode> Binds = new Dictionary<string, ScreenNode>(StringComparer.Ordinal);
+        public Dictionary<string, ScreenNode> Binds => _own.Binds;
 
         /// <summary>The verbs the code handles, by name, each with the button that asks for it.</summary>
-        public readonly Dictionary<string, ScreenNode> Acts = new Dictionary<string, ScreenNode>(StringComparer.Ordinal);
+        public Dictionary<string, ScreenNode> Acts => _own.Acts;
 
         /// <summary>Every piece by name, in document order.</summary>
-        public readonly Dictionary<string, ScreenNode> Nodes = new Dictionary<string, ScreenNode>(StringComparer.Ordinal);
+        public Dictionary<string, ScreenNode> Nodes => _own.Nodes;
+
+        /// <summary>
+        /// The templates: pieces the document describes but does not place — the code instantiates
+        /// one per element of a list (a conflict, a font, a backup), into the host it names, with
+        /// the acts of that element. Each has its own names, slots and acts.
+        /// </summary>
+        public readonly Dictionary<string, ScreenTemplate> Templates = new Dictionary<string, ScreenTemplate>(StringComparer.Ordinal);
 
         public static ScreenDocument Parse(JObject root)
         {
@@ -94,6 +109,18 @@ namespace UnityGameTranslator.Core
 
             doc.Name = (string)root["name"];
             if (string.IsNullOrEmpty(doc.Name)) throw new ScreenDocumentException("a screen has a name");
+
+            doc.IsPart = (bool?)root["part"] ?? false;
+            if (doc.IsPart)
+            {
+                foreach (var window in new[] { "size", "chrome", "header", "body", "footer" })
+                    if (root[window] != null)
+                        throw new ScreenDocumentException($"{doc.Name}: a part has no {window} — only templates");
+                if (!(root["templates"] is JArray parts) || parts.Count == 0)
+                    throw new ScreenDocumentException($"{doc.Name}: a part declares at least one template");
+                doc.ReadTemplates(parts);
+                return doc;
+            }
 
             var size = root["size"] as JObject ?? throw new ScreenDocumentException($"{doc.Name}: a screen has a size");
             doc.Width = Required(size, "width", doc.Name);
@@ -114,10 +141,30 @@ namespace UnityGameTranslator.Core
             }
             if (doc.CardWidth <= 0) doc.CardWidth = doc.Width - 40;
 
-            if (root["header"] is JArray header) doc.ReadInto(doc.Header, header);
-            doc.ReadInto(doc.Body, root["body"] as JArray ?? throw new ScreenDocumentException($"{doc.Name}: a screen has a body"));
-            doc.ReadInto(doc.Footer, root["footer"] as JArray ?? throw new ScreenDocumentException($"{doc.Name}: a screen has a footer"));
+            if (root["header"] is JArray header) doc.ReadInto(doc.Header, header, doc._own);
+            doc.ReadInto(doc.Body, root["body"] as JArray ?? throw new ScreenDocumentException($"{doc.Name}: a screen has a body"), doc._own);
+            doc.ReadInto(doc.Footer, root["footer"] as JArray ?? throw new ScreenDocumentException($"{doc.Name}: a screen has a footer"), doc._own);
+
+            if (root["templates"] is JArray templates) doc.ReadTemplates(templates);
             return doc;
+        }
+
+        private void ReadTemplates(JArray templates)
+        {
+            foreach (var item in templates)
+            {
+                // One template = one root piece, read into a set of its own: its names, slots
+                // and acts are the instance's, and may repeat from one template to the next.
+                var set = new PieceSet();
+                var roots = new List<ScreenNode>();
+                ReadInto(roots, new JArray(item), set, parentKind: "templates");
+                var template = new ScreenTemplate { Name = roots[0].Name, Root = roots[0], Pieces = set };
+                if (Templates.ContainsKey(template.Name))
+                    throw new ScreenDocumentException($"{Name}: the template '{template.Name}' is declared twice");
+                if (Nodes.ContainsKey(template.Name))
+                    throw new ScreenDocumentException($"{Name}: the template '{template.Name}' shares its name with a piece of the screen");
+                Templates[template.Name] = template;
+            }
         }
 
         public static ScreenDocument FromFile(string path)
@@ -126,6 +173,7 @@ namespace UnityGameTranslator.Core
         /// <summary>
         /// The document as shipped inside the assembly: the spec's screens are embedded at build
         /// time under <c>screens/&lt;name&gt;.json</c>, so the one DLL the mod is carries its own screens.
+        /// A part is reached the same way, under its folder: <c>FromEmbedded("parts/status-card")</c>.
         /// </summary>
         public static ScreenDocument FromEmbedded(string screen)
         {
@@ -140,7 +188,7 @@ namespace UnityGameTranslator.Core
             }
         }
 
-        private void ReadInto(List<ScreenNode> into, JArray nodes, string parentKind = null)
+        private void ReadInto(List<ScreenNode> into, JArray nodes, PieceSet set, string parentKind = null)
         {
             foreach (var item in nodes)
             {
@@ -156,9 +204,13 @@ namespace UnityGameTranslator.Core
                     throw new ScreenDocumentException($"{Name}: '{node.Name ?? "?"}' is of kind '{node.Kind}', which the vocabulary does not have");
                 if (string.IsNullOrEmpty(node.Name))
                     throw new ScreenDocumentException($"{Name}: a {node.Kind} has a name");
-                if (Nodes.ContainsKey(node.Name))
+                if (set.Nodes.ContainsKey(node.Name))
                     throw new ScreenDocumentException($"{Name}: the name '{node.Name}' is used twice");
-                Nodes[node.Name] = node;
+                set.Nodes[node.Name] = node;
+
+                // A template is one piece with what it holds; a title has no place in a row.
+                if (parentKind == "templates" && node.Kind == "title")
+                    throw new ScreenDocumentException($"{Name}: the template '{node.Name}' is a title, which only a screen carries");
 
                 // A tab is nothing else's child, and a row of tabs holds nothing else.
                 if (node.Kind == "tab" && parentKind != "tabs")
@@ -196,10 +248,17 @@ namespace UnityGameTranslator.Core
                         // may ask for an act as they change, or be read by the code when it needs them.
                         if (node.Act != null)
                         {
-                            if (Acts.ContainsKey(node.Act))
+                            if (set.Acts.ContainsKey(node.Act))
                                 throw new ScreenDocumentException($"{Name}: the act '{node.Act}' is asked for by two pieces");
-                            Acts[node.Act] = node;
+                            set.Acts[node.Act] = node;
                         }
+                        break;
+                    case "choice":
+                        // The words are the choice's own — two or more verbs of equal standing.
+                        if (!(node.Props["options"] is JArray choiceOptions) || choiceOptions.Count < 2)
+                            throw new ScreenDocumentException($"{Name}: the choice '{node.Name}' offers at least two words");
+                        goto case "field";
+                    case "chip":
                         break;
                     case "label":
                     case "button":
@@ -207,17 +266,17 @@ namespace UnityGameTranslator.Core
                             throw new ScreenDocumentException($"{Name}: '{node.Name}' has a text or a bind");
                         if (node.Bind != null)
                         {
-                            if (Binds.ContainsKey(node.Bind))
+                            if (set.Binds.ContainsKey(node.Bind))
                                 throw new ScreenDocumentException($"{Name}: the bind '{node.Bind}' is written into two pieces");
-                            Binds[node.Bind] = node;
+                            set.Binds[node.Bind] = node;
                         }
                         if (node.Kind == "button")
                         {
                             if (string.IsNullOrEmpty(node.Act))
                                 throw new ScreenDocumentException($"{Name}: the button '{node.Name}' asks for no act");
-                            if (Acts.ContainsKey(node.Act))
+                            if (set.Acts.ContainsKey(node.Act))
                                 throw new ScreenDocumentException($"{Name}: the act '{node.Act}' is asked for by two buttons");
-                            Acts[node.Act] = node;
+                            set.Acts[node.Act] = node;
                         }
                         break;
                     case "spacer":
@@ -231,9 +290,9 @@ namespace UnityGameTranslator.Core
                             throw new ScreenDocumentException($"{Name}: the dropdown '{node.Name}' says where its choices come from");
                         if (string.IsNullOrEmpty(node.Act))
                             throw new ScreenDocumentException($"{Name}: the dropdown '{node.Name}' asks for no act");
-                        if (Acts.ContainsKey(node.Act))
+                        if (set.Acts.ContainsKey(node.Act))
                             throw new ScreenDocumentException($"{Name}: the act '{node.Act}' is asked for by two pieces");
-                        Acts[node.Act] = node;
+                        set.Acts[node.Act] = node;
                         break;
                 }
 
@@ -244,9 +303,10 @@ namespace UnityGameTranslator.Core
                 {
                     if (node.Kind == "label" || node.Kind == "button" || node.Kind == "spacer" || node.Kind == "status"
                         || node.Kind == "field" || node.Kind == "dropdown" || node.Kind == "list"
-                        || node.Kind == "title" || node.Kind == "checkbox" || node.Kind == "toast" || node.Kind == "slider")
+                        || node.Kind == "title" || node.Kind == "checkbox" || node.Kind == "toast" || node.Kind == "slider"
+                        || node.Kind == "choice" || node.Kind == "chip")
                         throw new ScreenDocumentException($"{Name}: a {node.Kind} holds nothing");
-                    ReadInto(node.Children, children, node.Kind);
+                    ReadInto(node.Children, children, set, node.Kind);
                 }
                 else if (node.Kind == "tabs")
                 {
@@ -261,6 +321,25 @@ namespace UnityGameTranslator.Core
         {
             return (int?)size[prop] ?? throw new ScreenDocumentException($"{name}: size.{prop} is required");
         }
+    }
+
+    /// <summary>The names, slots and acts of one described thing — a screen, or one of its templates.</summary>
+    public sealed class PieceSet
+    {
+        public readonly Dictionary<string, ScreenNode> Nodes = new Dictionary<string, ScreenNode>(StringComparer.Ordinal);
+        public readonly Dictionary<string, ScreenNode> Binds = new Dictionary<string, ScreenNode>(StringComparer.Ordinal);
+        public readonly Dictionary<string, ScreenNode> Acts = new Dictionary<string, ScreenNode>(StringComparer.Ordinal);
+    }
+
+    /// <summary>
+    /// A piece the document describes and the code instantiates as many times as a list has
+    /// elements — a row, a block, a card — each instance with the acts of its element.
+    /// </summary>
+    public sealed class ScreenTemplate
+    {
+        public string Name;
+        public ScreenNode Root;
+        public PieceSet Pieces;
     }
 
     public sealed class ScreenDocumentException : Exception

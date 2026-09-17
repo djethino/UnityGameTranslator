@@ -345,6 +345,9 @@ namespace UnityGameTranslator.Core.UI.Panels
             _toast.Show(message, paletteTone);
 
             _toastHideTime = Clock.Now + TOAST_DURATION;
+
+            // A long message wraps: the window takes the toast's height, not whatever it had.
+            AdjustHeight();
         }
 
         private void HideNonToastBoxes()
@@ -572,7 +575,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                         hint = branchHalf + " • "
                                + (notice.ForkClosed != null
                                    ? Tr(notice.ForkClosed)
-                                   : Tr("Fork: start your own independent translation"));
+                                   : Tr("Fork: keep them as your own translation"));
                     }
 
                     _syncHintLabel.Show(hint);
@@ -747,7 +750,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // 🔴 Every box of the stack, the site's notification included: left out of this list,
             // it was drawn without a height of its own, over the buttons of the box above it.
-            foreach (var box in new[] { _modUpdateBox, _syncBox, _webNotifBox, _aiBox, _connectionBox })
+            foreach (var box in new[] { _modUpdateBox, _syncBox, _webNotifBox, _aiBox, _connectionBox, _toast?.Handle })
             {
                 if (box == null || !box.Visible) continue;
 
@@ -791,6 +794,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (_webNotifBox != null && _webNotifBox.Visible) height += 60;
             if (_aiBox != null && _aiBox.Visible) height += 50;
             if (_connectionBox != null && _connectionBox.Visible) height += 20;
+            if (_toast != null && _toast.Visible) height += 50;
             return height;
         }
 

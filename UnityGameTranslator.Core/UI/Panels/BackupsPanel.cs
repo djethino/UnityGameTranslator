@@ -493,7 +493,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                                 // holds lines, so how many the game holds today has no say in it.
                                 Intents.Toast(
                                     Backups.WhyNoRoom(TranslationBackups.List())
-                                    ?? "This one could not be kept.", ToastTone.Off);
+                                    ?? "Backup failed.", ToastTone.Off);
                             }
 
                             Redraw();
@@ -665,7 +665,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             {
                 Intents.Toast(
                     Backups.WhyCannotSave(TranslationBackups.List(), NowLines())
-                    ?? "It could not be kept.", ToastTone.Off);
+                    ?? "Backup failed.", ToastTone.Off);
             }
 
             Redraw();
@@ -691,7 +691,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 () =>
                 {
                     if (!TranslationBackups.Restore(entry.Id))
-                        Intents.Toast("It could not be put back.", ToastTone.Off);
+                        Intents.Toast("Restore failed.", ToastTone.Off);
 
                     Redraw();
                 });

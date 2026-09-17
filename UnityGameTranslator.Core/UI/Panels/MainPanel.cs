@@ -1340,7 +1340,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                             // only way to cut it now is from the site.
                             TranslatorUIManager.RunOnMainThread(() =>
                                 Intents.Toast(
-                                    "Signed out here, but the site could not be reached. Cut this access from Linked devices on your account.",
+                                    "Signed out in the game. The site could not be reached: remove this device from Linked devices on the site.",
                                     ToastTone.Off));
                         });
 

@@ -157,7 +157,25 @@ namespace UnityGameTranslator.Core.UI
 
         private static string _countingRemoteFor;
         private static string _countedRemoteFor;
-        private static int _countedRemote;
+        private static int _countedRemote, _countedHere, _countedDiffering;
+
+        /// <summary>
+        /// The count on the Compare button: how many lines the comparison page will list — every
+        /// line that differs between this file and the published copy, once counted from that
+        /// copy; this machine's own count of what changed since the sync until then. Null when
+        /// nothing differs, so the button carries no number.
+        /// </summary>
+        public static int? CompareCount
+        {
+            get
+            {
+                var state = TranslatorCore.ServerState;
+                int n = state != null && state.LinesChangedFor == state.Hash && state.LinesDifferingFromCopy is int differing
+                    ? differing
+                    : TranslatorCore.LocalChangesCount + (state?.LinesChanged ?? 0);
+                return n > 0 ? n : (int?)null;
+            }
+        }
 
         /// <summary>
         /// How many lines the published copy changed since this machine last synced — counted
@@ -181,6 +199,8 @@ namespace UnityGameTranslator.Core.UI
             if (_countedRemoteFor == state.Hash)
             {
                 state.LinesChanged = _countedRemote;
+                state.LinesChangedHere = _countedHere;
+                state.LinesDifferingFromCopy = _countedDiffering;
                 state.LinesChangedFor = state.Hash;
                 return;
             }
@@ -207,12 +227,20 @@ namespace UnityGameTranslator.Core.UI
                     // Superseded while the copy travelled: the next refresh asks again.
                     if (!ReferenceEquals(TranslatorCore.ServerState, state)) return;
 
+                    // The merge classifies every key: a line both sides added identically is
+                    // Unchanged, and counts nowhere — the comparison page will not list it either.
                     var stats = TranslationMerger.MergeWithTags(TranslatorCore.TranslationCache, remote, TranslatorCore.AncestorCache).Statistics;
-                    state.LinesChanged = stats.RemoteAddedCount + stats.RemoteUpdatedCount + stats.DeletedCount + stats.ConflictCount;
+                    int there = stats.RemoteAddedCount + stats.RemoteUpdatedCount + stats.DeletedCount;
+                    int here = stats.LocalOnlyCount + stats.LocalModifiedCount;
+                    state.LinesChanged = there + stats.ConflictCount;
+                    state.LinesChangedHere = here + stats.ConflictCount;
+                    state.LinesDifferingFromCopy = here + there + stats.ConflictCount;
                     state.LinesChangedFor = state.Hash;
                     _countedRemoteFor = state.Hash;
                     _countedRemote = state.LinesChanged.Value;
-                    TranslatorCore.LogInfo($"[Sync] The published copy changed {state.LinesChanged} line(s) since the last sync");
+                    _countedHere = state.LinesChangedHere.Value;
+                    _countedDiffering = state.LinesDifferingFromCopy.Value;
+                    TranslatorCore.LogInfo($"[Sync] Against the published copy: {state.LinesChangedHere} line(s) differ here, {state.LinesChanged} there, {state.LinesDifferingFromCopy} in all");
 
                     Intents.StateChanged();
                     StatusOverlay?.RefreshOverlay();
@@ -3142,7 +3170,7 @@ namespace UnityGameTranslator.Core.UI
                     // Debug only: the URL carries a one-time login token
                     TranslatorCore.LogInfo($"[Compare] Opening {(toLocal ? "local" : "publish")} comparison — "
                                            + $"{TranslatorCore.LocalChangesCount} local change(s), metadata dirty: {TranslatorCore.MetadataDirty}, "
-                                           + $"site changed {TranslatorCore.ServerState?.LinesChanged?.ToString() ?? "?"} line(s)");
+                                           + $"site changed {TranslatorCore.ServerState?.LinesChanged?.ToString() ?? "?"} line(s), {CompareCount?.ToString() ?? "0"} differing");
                     TranslatorCore.OpenUrlSafe(ApiClient.GetMergePreviewFullUrl(url));
 
                     if (!string.IsNullOrEmpty(token))

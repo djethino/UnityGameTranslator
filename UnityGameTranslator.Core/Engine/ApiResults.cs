@@ -599,6 +599,7 @@ namespace UnityGameTranslator.Core
                 BranchesWithWork = state.BranchesWithWork,
                 LinesAvailable = state.LinesAvailable,
                 LinesChanged = state.LinesChangedFor == state.Hash ? state.LinesChanged : null,
+                LinesChangedHere = state.LinesChangedFor == state.Hash ? state.LinesChangedHere : null,
                 AcceptsBranches = state.AcceptsBranches,
                 MainMissing = state.MainMissing,
                 MainAbandoned = state.MainAbandoned,
@@ -637,6 +638,15 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public int? LinesChanged { get; set; }
         public string LinesChangedFor { get; set; }
+
+        /// <summary>
+        /// From the same comparison: how many lines here differ from the published copy, and how
+        /// many lines differ at all (a line changed on both sides counts once) — what the
+        /// comparison page will list. ⚠ Not LocalChangesCount: a line added here that the site
+        /// also added, identically, changed since the sync and differs from nothing.
+        /// </summary>
+        public int? LinesChangedHere { get; set; }
+        public int? LinesDifferingFromCopy { get; set; }
         /// <summary>True if translation exists on server</summary>
         public bool Exists { get; set; } = false;
         /// <summary>True if current user owns the translation</summary>

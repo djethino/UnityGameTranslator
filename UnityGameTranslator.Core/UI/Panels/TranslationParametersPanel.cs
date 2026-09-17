@@ -198,6 +198,19 @@ namespace UnityGameTranslator.Core.UI.Panels
             _failSaveBtn = _screen.Button("FailSaveBtn");
             _proposals = _screen.Collapsible("Proposals");
             _gameText = _screen.Collapsible("GameText");
+            _prevAttemptBtn = _screen.Button("PrevAttemptBtn");
+            _nextAttemptBtn = _screen.Button("NextAttemptBtn");
+            _useAttemptBtn = _screen.Button("UseAttemptBtn");
+            _failInput = _screen.Field("FailInput");
+            _failStatus = _screen.Label("FailStatus");
+
+            // 🔴 Everything below USES a handle fetched above — nothing may be moved over the
+            // fetches. Twice a line was inserted a few lines too high: a null reference in this
+            // constructor, every panel built after this one never built, and this window open
+            // over the whole screen at launch.
+
+            // FieldHandle.Changed, never a raw InputField event — see UIHelpers.
+            _failInput.Changed += _ => OnFailInputChanged();
             // The bars between the areas: the rule divides, the person may move the seams; the
             // seams go back when the window closes (SetActive).
             _failShares.Attach(_screen.Splitter("ListSplit"), _failuresList, _sourceList);
@@ -205,15 +218,6 @@ namespace UnityGameTranslator.Core.UI.Panels
             _failShares.Attach(_screen.Splitter("FieldSplit"), _attemptList, _failInput.Area);
             // A tab in a fixed window: a lone list stops at its rows rather than taking the body.
             _failShares.CapAtContent = true;
-            _prevAttemptBtn = _screen.Button("PrevAttemptBtn");
-            _nextAttemptBtn = _screen.Button("NextAttemptBtn");
-            _useAttemptBtn = _screen.Button("UseAttemptBtn");
-            _failInput = _screen.Field("FailInput");
-            // FieldHandle.Changed, never a raw InputField event — see UIHelpers. After the handle
-            // exists: subscribed a line too early, this threw in the constructor and left every
-            // panel built after this one unbuilt, with this window open over the whole screen.
-            _failInput.Changed += _ => OnFailInputChanged();
-            _failStatus = _screen.Label("FailStatus");
             // The tab's heights are posed when it is the one shown — a hidden hierarchy measures nothing.
             _tabBar.OnTabChanged += (_, name) => { if (name == "Failures") ShareFailures(); };
             // Noted from the worker thread, settled from this one: the event marshals.

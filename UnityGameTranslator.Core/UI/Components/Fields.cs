@@ -93,16 +93,19 @@ namespace UnityGameTranslator.Core.UI.Components
         /// <param name="fieldFill">Forwarded to <see cref="Create"/>.</param>
         /// <summary>
         /// A scrolling field as a shared area: what it holds is its text laid out at its width —
-        /// measured the way UniverseLib's scroller sizes its content, on the WHOLE text, because
-        /// the field's own label only ever carries the lines in view — and never less than the
-        /// height it was made with.
+        /// the scroller's own measure of the WHOLE text (InputFieldScroller.MeasureContentHeight),
+        /// because the field's own label only ever carries the lines in view — and never less
+        /// than the height it was made with.
+        ///
+        /// 🔴 Measured BY the scroller, never here: building Unity's TextGenerationSettings from
+        /// this assembly is a TypeLoadException on IL2CPP ("value type mismatch"), thrown at the
+        /// click that opened a line. UniverseLib is compiled for that runtime; this is not.
         /// </summary>
         private sealed class FieldArea : ISharedArea
         {
             private readonly GameObject _box;
             private readonly InputFieldScroller _scroller;
             private readonly int _floor;
-            private Canvas _canvas;
 
             internal FieldArea(GameObject box, InputFieldScroller scroller, int floor)
             {
@@ -115,14 +118,8 @@ namespace UnityGameTranslator.Core.UI.Components
             {
                 get
                 {
-                    var text = _scroller?.InputField?.Component?.textComponent;
-                    if (text == null) return _floor;
-                    if (_canvas == null) _canvas = text.GetComponentInParent<Canvas>();
-                    var settings = text.GetGenerationSettings(text.rectTransform.rect.size);
-                    settings.generateOutOfBounds = false;
-                    settings.scaleFactor = _canvas != null ? _canvas.scaleFactor : 1f;
-                    float wanted = text.cachedTextGeneratorForLayout.GetPreferredHeight(_scroller.InputField.Text ?? "", settings) + 10f;
-                    return Math.Max(_floor, wanted);
+                    if (_scroller?.InputField?.Component == null) return _floor;
+                    return Math.Max(_floor, _scroller.MeasureContentHeight());
                 }
             }
 

@@ -219,7 +219,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             // A tab in a fixed window: a lone list stops at its rows rather than taking the body.
             _failShares.CapAtContent = true;
             // The tab's heights are posed when it is the one shown — a hidden hierarchy measures nothing.
-            _tabBar.OnTabChanged += (_, name) => { if (name == "Failures") ShareFailures(); };
+            _tabBar.OnTabChanged += (_, name) => { if (name == "Failures") { ShareFailures(); ShareFailuresSoon(); } };
             // Noted from the worker thread, settled from this one: the event marshals.
             TranslatorCore.Failures.Changed += () => TranslatorUIManager.RunOnMainThread(OnFailuresChanged);
             RefreshFailuresList();
@@ -605,6 +605,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             RegisterFailureShares();
             ShareFailures();
+            ShareFailuresSoon();
         }
 
         /// <summary>
@@ -653,6 +654,14 @@ namespace UnityGameTranslator.Core.UI.Panels
         }
 
         protected override void BodySized() => ShareFailures();
+
+        /// <summary>
+        /// The same division, on the next tick — after the layout has run over what was just
+        /// built or unfolded. A measure taken in the same frame as a rebuild sees rows at a width
+        /// that is not yet theirs, and a list capped at that content is a list too short for its
+        /// own rows ("toute ratatinée").
+        /// </summary>
+        private void ShareFailuresSoon() => TranslatorUIManager.RunOnMainThread(ShareFailures);
 
         /// <summary>Which of the two foldable blocks are open — the set of areas that share the body.</summary>
         private int OpenBlocks()
@@ -720,6 +729,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             ShowAttempt();
             RegisterFailureShares();
             ShareFailures();
+            ShareFailuresSoon();
         }
 
         /// <summary>
@@ -751,6 +761,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
             _attemptList.ToTop();
             ShareFailures();
+            ShareFailuresSoon();
         }
 
         private void OnPrevAttemptClicked()
@@ -785,6 +796,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (!_foldedForEditing && !string.IsNullOrEmpty(_failInput.Text)) FoldProposals();
             // What the field holds changed: its share of the body follows.
             ShareFailures();
+            ShareFailuresSoon();
         }
 
         private void FoldProposals()
@@ -793,6 +805,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (_proposals == null || !_proposals.Expanded) return;
             _proposals.Expanded = false;   // no callback on a set: the share is asked for here
             ShareFailures();
+            ShareFailuresSoon();
         }
 
         /// <summary>
@@ -840,6 +853,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             HighlightOpenFailure();
             RegisterFailureShares();
             ShareFailures();
+            ShareFailuresSoon();
         }
 
         private void OnFailSaveClicked()

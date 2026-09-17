@@ -716,7 +716,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                 _attemptAt = Math.Max(0, Math.Min(_attemptAt, count - 1));
                 var attempt = _failure.Attempts[_attemptAt];
                 FillText(_attemptList, _attemptRows, Readable(attempt.Value));
-                _failErrorsLabel.Show(string.Join("; ", attempt.Errors));
+                // Brief, like the line under the field: a proposal's faults can run to sixty.
+                _failErrorsLabel.Show(EditChecks.Brief(string.Join("; ", attempt.Errors)));
                 _attemptIndexLabel.Show($"{_attemptAt + 1}/{count}");
                 _prevAttemptBtn.Enabled = _attemptAt > 0;
                 _nextAttemptBtn.Enabled = _attemptAt < count - 1;

@@ -24,7 +24,24 @@ namespace UnityGameTranslator.Core.UI.Components
             return changed ? TranslatorCore.ValidateEditedPlaceholders(key, field ?? "") : null;
         }
 
-        /// <summary>The problem on the line under the field, in red — or the line hidden. True when there is one.</summary>
+        /// <summary>How many faults the line under a field names before counting the rest.</summary>
+        public const int FaultsShown = 3;
+
+        /// <summary>
+        /// A problem line stays a LINE: the first faults and how many more, never the whole list.
+        /// A proposal that had dropped sixty placeholders listed sixty sentences under the field
+        /// and pushed everything else off the screen (2026-09-17). Three say what kind of thing is
+        /// wrong; the count says how much.
+        /// </summary>
+        public static string Brief(string problem)
+        {
+            if (string.IsNullOrEmpty(problem)) return problem;
+            var faults = problem.Split(new[] { "; " }, System.StringSplitOptions.None);
+            if (faults.Length <= FaultsShown) return problem;
+            return string.Join("; ", faults, 0, FaultsShown) + $" … and {faults.Length - FaultsShown} more";
+        }
+
+        /// <summary>The problem on the line under the field, in red and brief — or the line hidden. True when there is one.</summary>
         public static bool Show(LabelHandle line, string problem)
         {
             if (line == null) return problem != null;
@@ -35,7 +52,7 @@ namespace UnityGameTranslator.Core.UI.Components
             }
             line.Visible = true;
             line.Tone = Tone.Error;
-            line.Show(problem);
+            line.Show(Brief(problem));
             return true;
         }
     }

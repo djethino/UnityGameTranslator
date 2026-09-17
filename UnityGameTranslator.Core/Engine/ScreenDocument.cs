@@ -52,7 +52,7 @@ namespace UnityGameTranslator.Core
     public sealed class ScreenDocument
     {
         /// <summary>The closed vocabulary. The same list as the schema's enum — a check says so.</summary>
-        public static readonly string[] Kinds = { "card", "stack", "row", "spacer", "label", "button", "status", "section", "field", "dropdown", "list", "tabs", "tab", "callout", "collapsible", "title", "checkbox", "toast", "slider", "choice", "chip" };
+        public static readonly string[] Kinds = { "card", "stack", "row", "spacer", "label", "button", "status", "section", "field", "dropdown", "list", "tabs", "tab", "callout", "collapsible", "title", "checkbox", "toast", "slider", "choice", "chip", "splitter" };
 
         /// <summary>What the help bar says over this piece, or null.</summary>
         public static string HelpOf(ScreenNode node) => node.Word("help");
@@ -309,7 +309,7 @@ namespace UnityGameTranslator.Core
                     if (node.Kind == "label" || node.Kind == "button" || node.Kind == "spacer" || node.Kind == "status"
                         || node.Kind == "field" || node.Kind == "dropdown" || node.Kind == "list"
                         || node.Kind == "title" || node.Kind == "checkbox" || node.Kind == "toast" || node.Kind == "slider"
-                        || node.Kind == "choice" || node.Kind == "chip")
+                        || node.Kind == "choice" || node.Kind == "chip" || node.Kind == "splitter")
                         throw new ScreenDocumentException($"{Name}: a {node.Kind} holds nothing");
                     ReadInto(node.Children, children, set, node.Kind);
                 }

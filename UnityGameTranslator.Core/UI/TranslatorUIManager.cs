@@ -1305,7 +1305,11 @@ namespace UnityGameTranslator.Core.UI
             // Only while a panel is open (nothing to hover otherwise). Event-based hover
             // (injected IPointerEnterHandler) is silent on IL2CPP, so we poll instead.
             if (panelsVisible)
+            {
                 Components.HelpZone.PollHover();
+                // The seams between shared scroll areas watch the mouse the same way (Splitters).
+                Components.Splitters.Tick();
+            }
 
         }
 

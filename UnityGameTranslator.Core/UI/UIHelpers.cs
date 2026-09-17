@@ -150,6 +150,44 @@ namespace UnityGameTranslator.Core.UI
         /// Adds a click listener to a Button.
         /// On IL2CPP, uses ButtonRef (compiled inside UniverseLib with correct platform defines).
         /// </summary>
+        // ── Geometry ────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// IL2CPP-safe screen-point containment: builds the rect's screen-space AABB from
+        /// TransformPoint corners (never GetWorldCorners/RectTransformUtility — those take an
+        /// array param that becomes an Il2CppStructArray and pulls Il2Cppmscorlib / crashes).
+        /// Exact for unrotated uGUI controls, which is all of ours. Same pattern as
+        /// InspectorPanel.GetScreenBounds.
+        /// </summary>
+        public static bool ContainsScreenPoint(RectTransform rect, Canvas canvas, Vector2 screen)
+        {
+            Rect lr = rect.rect;
+            Vector3 c0 = rect.TransformPoint(new Vector3(lr.xMin, lr.yMin, 0f));
+            Vector3 c1 = rect.TransformPoint(new Vector3(lr.xMin, lr.yMax, 0f));
+            Vector3 c2 = rect.TransformPoint(new Vector3(lr.xMax, lr.yMax, 0f));
+            Vector3 c3 = rect.TransformPoint(new Vector3(lr.xMax, lr.yMin, 0f));
+
+            // Overlay canvases: world coords ARE screen pixels. Otherwise project via the camera.
+            if (canvas != null && canvas.renderMode != RenderMode.ScreenSpaceOverlay)
+            {
+                Camera cam = canvas.worldCamera;
+                if (cam != null)
+                {
+                    c0 = cam.WorldToScreenPoint(c0);
+                    c1 = cam.WorldToScreenPoint(c1);
+                    c2 = cam.WorldToScreenPoint(c2);
+                    c3 = cam.WorldToScreenPoint(c3);
+                }
+            }
+
+            float minX = Mathf.Min(Mathf.Min(c0.x, c1.x), Mathf.Min(c2.x, c3.x));
+            float maxX = Mathf.Max(Mathf.Max(c0.x, c1.x), Mathf.Max(c2.x, c3.x));
+            float minY = Mathf.Min(Mathf.Min(c0.y, c1.y), Mathf.Min(c2.y, c3.y));
+            float maxY = Mathf.Max(Mathf.Max(c0.y, c1.y), Mathf.Max(c2.y, c3.y));
+
+            return screen.x >= minX && screen.x <= maxX && screen.y >= minY && screen.y <= maxY;
+        }
+
         public static void AddButtonListener(Button button, Action callback)
         {
             if (button == null) return;

@@ -103,6 +103,9 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// </summary>
         private readonly ListShares _shares = new ListShares();
 
+        /// <summary>The list the last Group built, or null when it had no rows — what the bar between the groups is attached to.</summary>
+        private ScrollList _lastGroupList;
+
         private BuiltScreen _screen;
         private ButtonHandle _saveBtn;
         private HelpZone _helpZone;
@@ -199,17 +202,24 @@ namespace UnityGameTranslator.Core.UI.Panels
             // from a guess, inside a layout system that knows the real sizes and re-runs on every
             // resize. The heights are posed in BodySized, from a body that has been MEASURED, and
             // posed again whenever that body moves.
-            _shares.Forget();
+            // Bars too: the gap between the groups is instantiated with them, so the old bar
+            // goes with the old lists.
+            _shares.Forget(handlesToo: true);
 
             Group(Backups.SavedHeading, $"{saved.Count} of {Backups.SavedKept}", saved,
                   "No backups yet. Take one before you try something, and you can walk back out "
                   + "of whatever you try.",
                   saved: true);
+            var savedList = _lastGroupList;
 
-            _screen.Instantiate("GroupGap", ListHost, _ => null);
+            // The seam between the two groups: the rule divides the body, the bar lets the person
+            // move it. A group with no rows has no list, and the bar then moves nothing.
+            var gap = _screen.Instantiate("GroupGap", ListHost, _ => null);
 
             Group(Backups.AutomaticHeading, Backups.AutomaticNote, automatic,
                   "Nothing yet. One is taken whenever something replaces your translation.");
+
+            _shares.Attach(gap.Splitter("GroupGap"), savedList, _lastGroupList);
 
             // ⚠ Straight away when the body already has a height — a redraw after a backup or a
             // restore is not a first show, and waiting for a resize would leave both lists at two
@@ -326,6 +336,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // copy there, and hiding it until a copy exists would hide it from everybody who
                 // has never made one.
                 AddSaveButton(block, saved);
+                _lastGroupList = null;
 
                 // ⚠ Nothing is recorded for it. A block with no rows is a sentence, not a scroll
                 // area: it takes its own height, and BodySized counts it as chrome without being
@@ -347,6 +358,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             int rows = entries.Count;
             _shares.Add(list, () => rows, RowSpace, ListPad);
+            _lastGroupList = list;
 
             foreach (var entry in entries) Row(list.Rows, entry);
 

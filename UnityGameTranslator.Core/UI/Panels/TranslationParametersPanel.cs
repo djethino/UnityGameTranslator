@@ -92,9 +92,10 @@ namespace UnityGameTranslator.Core.UI.Panels
         private Host _failureEditor, _failExcludeRow;
         private LabelHandle _failElementLabel, _attemptIndexLabel, _failErrorsLabel, _failInputCheck, _failStatus;
         private ButtonHandle _prevAttemptBtn, _nextAttemptBtn, _useAttemptBtn, _failSaveBtn;
+        private Collapsible _gameText;                 // the line as the game shows it, foldable for room
         private Collapsible _proposals;                // the AI's answers, folded once the field is being written
         private bool _foldedForEditing;                // folded once for this line; reopened by hand, it stays open
-        private bool _sharesForExpanded;               // the proposals' state the scroll areas were last registered for
+        private int _sharesForBlocks;                  // which blocks were open when the scroll areas were last registered
         private FieldHandle _failInput;
         // The rows of each text area — one per piece of text a label can draw (TextChunks) —
         // written in place when their number holds, rebuilt when it does not.
@@ -196,6 +197,11 @@ namespace UnityGameTranslator.Core.UI.Panels
             _failInputCheck = _screen.Label("FailInputCheck");
             _failSaveBtn = _screen.Button("FailSaveBtn");
             _proposals = _screen.Collapsible("Proposals");
+            _gameText = _screen.Collapsible("GameText");
+            // The bars between the areas: the rule divides, the person may move the seams; the
+            // seams go back when the window closes (SetActive).
+            _failShares.Attach(_screen.Splitter("ListSplit"), _failuresList, _sourceList);
+            _failShares.Attach(_screen.Splitter("TextSplit"), _sourceList, _attemptList);
             _prevAttemptBtn = _screen.Button("PrevAttemptBtn");
             _nextAttemptBtn = _screen.Button("NextAttemptBtn");
             _useAttemptBtn = _screen.Button("UseAttemptBtn");
@@ -601,12 +607,13 @@ namespace UnityGameTranslator.Core.UI.Panels
         private void RegisterFailureShares()
         {
             _failShares.Forget();
-            _sharesForExpanded = _proposals.Expanded;
+            _sharesForBlocks = OpenBlocks();
             int lines = TranslatorCore.Failures.Count;
             _failShares.Add(_failuresList, () => Math.Max(1, lines), UIStyles.RowHeightNormal + 4, 8);
             if (_failure == null) return;
-            _failShares.Add(_sourceList, () => LinesIn(_sourceList), UIStyles.RowHeightSmall, 8);
             // A folded block holds nothing to divide: its list is left out until it opens again.
+            if (_gameText.Expanded)
+                _failShares.Add(_sourceList, () => LinesIn(_sourceList), UIStyles.RowHeightSmall, 8);
             if (_proposals.Expanded)
                 _failShares.Add(_attemptList, () => LinesIn(_attemptList), UIStyles.RowHeightSmall, 8);
         }
@@ -626,12 +633,16 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (_tabBar == null || _tabBar.SelectedName != "Failures") return;
             // The person opened or folded the proposals since the areas were registered: the
             // set that shares the body is not the same set.
-            if (_failure != null && _proposals != null && _proposals.Expanded != _sharesForExpanded)
+            if (_failure != null && OpenBlocks() != _sharesForBlocks)
                 RegisterFailureShares();
             _failShares.Share(BodyHeight, BodyContentHeight, 0f);
         }
 
         protected override void BodySized() => ShareFailures();
+
+        /// <summary>Which of the two foldable blocks are open — the set of areas that share the body.</summary>
+        private int OpenBlocks()
+            => (_gameText != null && _gameText.Expanded ? 1 : 0) + (_proposals != null && _proposals.Expanded ? 2 : 0);
 
         /// <summary>Game text on one line, for a list row: line breaks would make the row as tall as the text.</summary>
         private static string OneLine(string text, int max)
@@ -684,6 +695,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             // The proposals open for a new line; they fold once the field is written or a
             // proposal used, and stay as the person leaves them after that.
             _foldedForEditing = false;
+            _gameText.Expanded = true;
             _proposals.Expanded = true;
 
             _failInput.Text = "";
@@ -2125,6 +2137,10 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (active && !wasActive)
             {
                 LoadCurrentState();
+
+                // The seams between the Failures tab's areas go back to the rule's division: a
+                // window opened again is opened afresh.
+                _failShares.ResetHandles();
 
                 // Keeps the window from resizing when the visitor switches tabs — both rows of
                 // them, since the font settings carry their own

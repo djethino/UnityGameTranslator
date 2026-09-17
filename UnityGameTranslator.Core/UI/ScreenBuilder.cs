@@ -62,6 +62,9 @@ namespace UnityGameTranslator.Core.UI
         private readonly Dictionary<string, ToggleHandle> _toggles = new Dictionary<string, ToggleHandle>(StringComparer.Ordinal);
         public ToggleHandle Toggle(string name) => _toggles.TryGetValue(name, out var t) ? t : throw new ScreenDocumentException($"{_name}: no checkbox named '{name}'");
         internal void Add(string name, Toasts toast) => _toasts[name] = toast;
+        internal void Add(string name, SplitterHandle splitter) => _splitters[name] = splitter;
+        private readonly Dictionary<string, SplitterHandle> _splitters = new Dictionary<string, SplitterHandle>(StringComparer.Ordinal);
+        public SplitterHandle Splitter(string name) => _splitters.TryGetValue(name, out var s) ? s : throw new ScreenDocumentException($"{_name}: no splitter named '{name}'");
         private readonly Dictionary<string, Toasts> _toasts = new Dictionary<string, Toasts>(StringComparer.Ordinal);
         internal void Add(string name, SliderHandle slider) => _sliders[name] = slider;
         private readonly Dictionary<string, SliderHandle> _sliders = new Dictionary<string, SliderHandle>(StringComparer.Ordinal);
@@ -332,6 +335,13 @@ namespace UnityGameTranslator.Core.UI
                 case "spacer":
                     built.Add(node.Name, Stacks.Spacer(parent, node.Int("height") ?? 0, node.Name));
                     break;
+                case "splitter":
+                {
+                    var bar = Splitters.Create(parent, node.Name);
+                    built.Add(node.Name, bar);
+                    Describe(site, node, bar.Handle);
+                    break;
+                }
                 case "status":
                     built.Add(node.Name, StatusLine.Create(parent, node.Name, node.Flag("centred") ?? true));
                     break;

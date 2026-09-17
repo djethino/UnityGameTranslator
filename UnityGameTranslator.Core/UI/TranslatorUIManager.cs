@@ -3186,7 +3186,7 @@ namespace UnityGameTranslator.Core.UI
             // hidden by default on a publishing comparison, where they are not a decision.
             bool both = !toLocal && BothMoved;
 
-            var result = await ApiClient.InitMergePreview(translationId, TranslatorCore.TranslationCache, toLocal);
+            var result = await ApiClient.InitMergePreview(translationId, TranslatorCore.BuildTranslationDocument(), toLocal);
 
             // After the await we may be off the main thread (IL2CPP)
             var success = result.Success;

@@ -1553,37 +1553,21 @@ namespace UnityGameTranslator.Core
         /// translation we do not own — a branch measuring itself against its Main — since
         /// publishing there is refused.
         /// </param>
-        public static async Task<MergePreviewInitResult> InitMergePreview(int translationId, Dictionary<string, TranslationEntry> localContent, bool toLocal = false)
+        /// <param name="localDocument">
+        /// The file as the mod would upload it (TranslatorCore.BuildTranslationDocument): the
+        /// lines AND the settings sections, so the page compares fonts, exclusions and variables
+        /// as well as lines. Sent as lines alone, it compared settings against a file with none.
+        /// </param>
+        public static async Task<MergePreviewInitResult> InitMergePreview(int translationId, JObject localDocument, bool toLocal = false)
         {
             try
             {
-                // Convert TranslationEntry to simple format for API.
-                // "i" (capture-order index) is omitted when absent — an anonymous
-                // type would serialize "i": null, which the server rejects
-                var contentForApi = new Dictionary<string, object>();
-                foreach (var kvp in localContent)
-                {
-                    if (kvp.Key.StartsWith("_")) continue; // Skip metadata
-
-                    var entry = new Dictionary<string, object>
-                    {
-                        ["v"] = kvp.Value.Value,
-                        ["t"] = kvp.Value.Tag
-                    };
-                    if (kvp.Value.Index.HasValue)
-                    {
-                        entry["i"] = kvp.Value.Index.Value;
-                    }
-                    contentForApi[kvp.Key] = entry;
-                }
-
                 var payload = new
                 {
                     translation_id = translationId,
-                    local_content = contentForApi,
+                    local_content = localDocument,
                     destination = toLocal ? "local" : "server"
                 };
-
                 var jsonPayload = JsonConvert.SerializeObject(payload);
                 var content = CompressJson(jsonPayload);
 

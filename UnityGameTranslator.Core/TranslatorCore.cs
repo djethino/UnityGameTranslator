@@ -6557,6 +6557,76 @@ namespace UnityGameTranslator.Core
             });
         }
 
+        /// <summary>
+        /// What this translation IS — uuid, languages, game — written into a document. The file,
+        /// the upload and the comparison all start here, so they cannot say three things.
+        /// </summary>
+        private static void WriteIdentityInto(JObject output)
+        {
+            output["_uuid"] = FileUuid;
+
+            // 🔴 **What this translation IS, written into it.** A uuid has a source and a
+            // target; they settle at the first line and publishing freezes them. Until
+            // now only config.json held them — a preference standing in for a fact — so
+            // restoring a backup restored lines without their language, and a file copied
+            // anywhere arrived anonymous. See TranslationLanguages.
+            //
+            // ⚠ Only when SETTLED: "auto" is a mode, not a language, and writing it would
+            // make the file claim an answer nobody gave.
+            //
+            // ⚠ Underscore keys are excluded from the content hash on both sides
+            // (ContentHash.Of, Translation::hashFile), so this cannot make a single
+            // installed mod believe the server moved. A mod too old to know the key drops
+            // it on its next save — a loss of credit, never a breakage, exactly like
+            // _forked_from.
+            if (Languages.IsSettled(FileSourceLanguage))
+                output["_source_language"] = FileSourceLanguage;
+            if (Languages.IsSettled(FileTargetLanguage))
+                output["_target_language"] = FileTargetLanguage;
+
+            if (CurrentGame != null)
+            {
+                output["_game"] = new JObject
+                {
+                    ["name"] = CurrentGame.name,
+                    ["steam_id"] = CurrentGame.steam_id
+                };
+            }
+        }
+
+        /// <summary>The settings sections that travel with the translation, each by the code that reads it back.</summary>
+        private static void WriteSectionsInto(JObject output)
+        {
+            foreach (var section in SettingsSections.All)
+            {
+                var token = BuildSettingsSection(section);
+                if (token != null)
+                    output[SettingsSections.JsonKey(section)] = token;
+            }
+        }
+
+        /// <summary>
+        /// The translation as it is SENT — identity, settings, lines; never the sync stamps, which
+        /// are this machine's business.
+        ///
+        /// 🔴 One builder for the upload and the comparison. The upload assembled its own copy and
+        /// had lost the font rules on the way; the comparison sent the lines alone, so the site
+        /// compared settings against a file that had none — "Fonts: 0 / 8" — and an exclusion
+        /// added a minute earlier was nowhere to be seen (2026-09-17). What the file holds is
+        /// what leaves this machine, section for section.
+        /// </summary>
+        public static JObject BuildTranslationDocument()
+        {
+            var output = new JObject();
+            lock (lockObj)
+            {
+                WriteIdentityInto(output);
+                WriteSectionsInto(output);
+                TranslationFileEntries.WriteInto(output, TranslationCache);
+            }
+            return output;
+        }
+
         /// <summary>The document and the snapshot, under <c>lockObj</c>. Null when it could not be built — said, and the flag kept.</summary>
         private static PreparedSave PrepareSave()
         {
@@ -6584,35 +6654,7 @@ namespace UnityGameTranslator.Core
 
                 // Metadata
                 output["_engine_version"] = CurrentEngineVersion;
-                output["_uuid"] = FileUuid;
-
-                // 🔴 **What this translation IS, written into it.** A uuid has a source and a
-                // target; they settle at the first line and publishing freezes them. Until
-                // now only config.json held them — a preference standing in for a fact — so
-                // restoring a backup restored lines without their language, and a file copied
-                // anywhere arrived anonymous. See TranslationLanguages.
-                //
-                // ⚠ Only when SETTLED: "auto" is a mode, not a language, and writing it would
-                // make the file claim an answer nobody gave.
-                //
-                // ⚠ Underscore keys are excluded from the content hash on both sides
-                // (ContentHash.Of, Translation::hashFile), so this cannot make a single
-                // installed mod believe the server moved. A mod too old to know the key drops
-                // it on its next save — a loss of credit, never a breakage, exactly like
-                // _forked_from.
-                if (Languages.IsSettled(FileSourceLanguage))
-                    output["_source_language"] = FileSourceLanguage;
-                if (Languages.IsSettled(FileTargetLanguage))
-                    output["_target_language"] = FileTargetLanguage;
-
-                if (CurrentGame != null)
-                {
-                    output["_game"] = new JObject
-                    {
-                        ["name"] = CurrentGame.name,
-                        ["steam_id"] = CurrentGame.steam_id
-                    };
-                }
+                WriteIdentityInto(output);
 
                 // _source (hash, main_hash, site_id), _forked_from, _local_changes — the stamps
                 // as the store holds them, recounted just above.
@@ -6626,14 +6668,7 @@ namespace UnityGameTranslator.Core
                 // Settings sections, built by the same code that reads and
                 // replaces them (see the "Settings sections" region). An
                 // empty section is omitted: its absence means "nothing set".
-                foreach (var section in SettingsSections.All)
-                {
-                    var token = BuildSettingsSection(section);
-                    if (token != null)
-                    {
-                        output[SettingsSections.JsonKey(section)] = token;
-                    }
-                }
+                WriteSectionsInto(output);
 
 
                 // The lines as they stand this instant, copied: the document is finished and

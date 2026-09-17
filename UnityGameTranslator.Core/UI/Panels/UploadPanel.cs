@@ -860,7 +860,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                     AcceptsBranches = ContributionsUnknownHere
                         ? (bool?) null
                         : (_acceptBranchesToggle != null && _acceptBranchesToggle.IsOn),
-                    Content = BuildTranslationContent(),
+                    // The file as it stands, section for section — the same document the
+                    // comparison sends (TranslatorCore.BuildTranslationDocument).
+                    Content = TranslatorCore.BuildTranslationDocument().ToString(Newtonsoft.Json.Formatting.None),
                     Notes = notes,
                     ResourcesUrl = string.IsNullOrEmpty(resourcesUrl) ? null : resourcesUrl
                 };
@@ -1032,106 +1034,5 @@ namespace UnityGameTranslator.Core.UI.Panels
             });
         }
 
-        private string BuildTranslationContent()
-        {
-            var output = new System.Collections.Generic.Dictionary<string, object>();
-            output["_uuid"] = TranslatorCore.FileUuid;
-
-            // What this translation IS, sent with it. The server keeps the languages a lineage was
-            // published with and ignores any sent as request fields, so this changes nothing there
-            // — it is for whoever DOWNLOADS the file: they get one that states its own languages
-            // before any server has answered, instead of borrowing whatever their machine is set
-            // to. Excluded from the content hash on both sides, so it cannot move a file_hash.
-            if (Languages.IsSettled(TranslatorCore.FileSourceLanguage))
-                output["_source_language"] = TranslatorCore.FileSourceLanguage;
-            if (Languages.IsSettled(TranslatorCore.FileTargetLanguage))
-                output["_target_language"] = TranslatorCore.FileTargetLanguage;
-
-            if (TranslatorCore.CurrentGame != null)
-            {
-                output["_game"] = new System.Collections.Generic.Dictionary<string, string>
-                {
-                    ["name"] = TranslatorCore.CurrentGame.name,
-                    ["steam_id"] = TranslatorCore.CurrentGame.steam_id
-                };
-            }
-
-            // Include per-font settings (fallback, scale, enabled, type)
-            if (TranslatorCore.FontSettingsMap.Count > 0)
-            {
-                var fontsObj = new System.Collections.Generic.Dictionary<string, object>();
-                foreach (var kvp in TranslatorCore.FontSettingsMap)
-                {
-                    var fontObj = new System.Collections.Generic.Dictionary<string, object>
-                    {
-                        ["enabled"] = kvp.Value.enabled,
-                        ["fallback"] = kvp.Value.fallback,
-                        ["type"] = kvp.Value.type
-                    };
-                    // Effective scale for older mods (they read only this); Phase B decomposition
-                    // for newer mods (recompute from live design-scale × deliberate percent).
-                    if (System.Math.Abs(kvp.Value.scale - 1.0f) > 0.001f)
-                    {
-                        fontObj["scale"] = kvp.Value.scale;
-                    }
-                    if (kvp.Value.scale_auto)
-                        fontObj["scale_auto"] = true;
-                    if (System.Math.Abs(kvp.Value.size_percent - 1.0f) > 0.001f)
-                        fontObj["size_percent"] = kvp.Value.size_percent;
-                    fontsObj[kvp.Key] = fontObj;
-                }
-                output["_fonts"] = fontsObj;
-            }
-
-            // Include exclusions
-            var exclusions = TranslatorCore.UserExclusions;
-            if (exclusions.Count > 0)
-            {
-                var exclusionsArray = new System.Collections.Generic.List<string>();
-                foreach (var pattern in exclusions)
-                    exclusionsArray.Add(pattern);
-                output["_exclusions"] = exclusionsArray;
-            }
-
-            // Settings that travel with the translation. These describe the GAME, not a personal
-            // preference: whoever worked out that a game needs the EventSystem left alone, or that
-            // its text is typewritten, spares everyone else the same diagnosis. Only non-default
-            // values are written, same convention as SaveCache.
-            var sharedSettings = new System.Collections.Generic.Dictionary<string, object>();
-
-            if (TranslatorCore.DisableEventSystemOverride)
-                sharedSettings["disable_eventsystem_override"] = true;
-            if (!TranslatorCore.TypewritingDetection)
-                sharedSettings["typewriting_detection"] = false;
-            if (!TranslatorCore.ConcatDetection)
-                sharedSettings["concat_detection"] = false;
-
-            // ⚠ The mod's interface font used to be published here. It is a MOD setting: it says
-            // how our own window renders, not how the game's text does, and sending it filed a
-            // local preference inside somebody else's game translation. It lives in
-            // modui-translate.json now, which is never uploaded.
-
-            if (sharedSettings.Count > 0)
-                output["_settings"] = sharedSettings;
-
-            // Include image replacements
-            var imgReplacements = ImageReplacer.SaveToJson();
-            if (imgReplacements != null)
-                output["_image_replacements"] = imgReplacements;
-
-            // Include variable definitions
-            var variables = VariableManager.SaveToJson();
-            if (variables != null)
-                output["_variables"] = variables;
-
-            // 🔴 The SAME writer the file is saved with, not a copy of it. This was a fourth
-            // transcription of {"v","t","i"} — and the one that reaches the server, so a rule
-            // corrected in the other three and not here is a rule corrected for nobody.
-            var lines = new Newtonsoft.Json.Linq.JObject();
-            TranslationFileEntries.WriteInto(lines, TranslatorCore.TranslationCache);
-            foreach (var line in lines.Properties()) output[line.Name] = line.Value;
-
-            return Newtonsoft.Json.JsonConvert.SerializeObject(output, Newtonsoft.Json.Formatting.None);
-        }
     }
 }

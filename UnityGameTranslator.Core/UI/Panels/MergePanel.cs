@@ -579,7 +579,8 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             try
             {
-                var result = await ApiClient.InitMergePreview(translationId, TranslatorCore.TranslationCache);
+                // The file as it stands, settings included — the same document every comparison sends.
+                var result = await ApiClient.InitMergePreview(translationId, TranslatorCore.BuildTranslationDocument());
 
                 // After await, we may be on a background thread (IL2CPP)
                 var success = result.Success;

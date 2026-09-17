@@ -1747,8 +1747,11 @@ namespace UnityGameTranslator.Core.UI.Panels
             else if (canCompare)
             {
                 _compareWithServerBtn.Enabled = isLoggedIn;
-                // How many lines the comparison is about, on the button that opens it.
-                _compareWithServerBtn.Label = $"Compare ({TranslatorCore.LocalChangesCount})";
+                // How many lines the comparison is about, on the button that opens it — the lines
+                // changed here. When only the site moved, what it is about is on the site, and a
+                // count this machine cannot know is not written as zero.
+                int changes = TranslatorCore.LocalChangesCount;
+                _compareWithServerBtn.Label = changes > 0 ? $"Compare ({changes})" : "Compare";
             }
         }
 

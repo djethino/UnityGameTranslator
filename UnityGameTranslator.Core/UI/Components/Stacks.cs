@@ -106,7 +106,10 @@ namespace UnityGameTranslator.Core.UI.Components
         public static void Highlight(Host host, bool chosen)
         {
             if (host?.Object == null) return;
-            UIStyles.SetBackground(host.Object, chosen ? UIStyles.ItemBackgroundSelected : UIStyles.ItemBackground);
+            // The row's own shape, stated: a box that has become a button (Host.Pressed) would
+            // otherwise be rounded like a control on every repaint.
+            UIStyles.SetBackground(host.Object, chosen ? UIStyles.ItemBackgroundSelected : UIStyles.ItemBackground,
+                                   UIFactory.Shapes.Small);
         }
 
         /// <summary>

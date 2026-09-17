@@ -512,6 +512,9 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         public void UpdateAccountStatus()
         {
+            // The community rows say what each lineage is to the account; a new account, new rows.
+            _translationList?.Refresh();
+
             bool isLoggedIn = !string.IsNullOrEmpty(TranslatorCore.Config.api_token);
 
             if (isLoggedIn)

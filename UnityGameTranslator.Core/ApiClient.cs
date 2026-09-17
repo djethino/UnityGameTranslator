@@ -709,6 +709,33 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// The account's own library: every lineage it holds a row in, in one call. Read by the
+        /// community list to say, per row, whether the reader leads it or contributes to it.
+        /// </summary>
+        public static async Task<MyTranslationsResult> GetMyTranslations()
+        {
+            try
+            {
+                var response = await client.GetAsync($"{DefaultBaseUrl}/me/translations");
+                if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
+                {
+                    return new MyTranslationsResult { Success = false, TokenRefused = true, Error = "HTTP 401" };
+                }
+                if (!response.IsSuccessStatusCode)
+                {
+                    return new MyTranslationsResult { Success = false, Error = $"HTTP {response.StatusCode}" };
+                }
+
+                return ApiReaders.ReadMyTranslations(ParseJsonSafe(await response.Content.ReadAsStringAsync()));
+            }
+            catch (Exception e)
+            {
+                TranslatorCore.LogWarning($"[ApiClient] Library error: {e.Message}");
+                return new MyTranslationsResult { Success = false, Error = Connectivity.Describe(e) };
+            }
+        }
+
+        /// <summary>
         /// Mark notifications as read on the website (all of them when ids is null).
         /// </summary>
         public static async Task<bool> MarkNotificationsReadAsync(List<string> ids = null)

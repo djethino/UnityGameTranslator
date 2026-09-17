@@ -103,7 +103,7 @@ namespace UnityGameTranslator.Core.Checks
             "search_by_steam_id", "search_by_name", "check", "check_uuid", "branches", "upload",
             "details", "vote", "games", "games_external", "access_code", "notifications",
             "device_flow", "merge_preview_init", "merge_preview_result", "edit_session_init",
-            "edit_session_update", "edit_session_state", "error",
+            "edit_session_update", "edit_session_state", "error", "my_translations",
         };
 
         /// <summary>
@@ -122,6 +122,19 @@ namespace UnityGameTranslator.Core.Checks
                     d["Success"] = r.Success;
                     d["Count"] = r.Count;
                     Rows(d, r.Translations);
+                    return d;
+                }
+                case "my_translations":
+                {
+                    var r = ApiReaders.ReadMyTranslations(body);
+                    d["Success"] = r.Success;
+                    d["Rows.Count"] = r.Rows.Count;
+                    for (int i = 0; i < r.Rows.Count; i++)
+                    {
+                        d[$"Rows.{i}.Id"] = r.Rows[i].Id;
+                        d[$"Rows.{i}.FileUuid"] = r.Rows[i].FileUuid;
+                        d[$"Rows.{i}.IsMain"] = r.Rows[i].IsMain;
+                    }
                     return d;
                 }
                 case "search_by_name":

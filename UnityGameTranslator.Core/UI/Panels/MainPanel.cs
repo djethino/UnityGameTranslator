@@ -523,6 +523,9 @@ namespace UnityGameTranslator.Core.UI.Panels
             // silences notifications without blinding the interface.
             TranslatorUIManager.EnsureServerStateKnown();
 
+            // The community rows say what each lineage is to the account; a new account, new rows.
+            _translationList?.Refresh();
+
             RedrawFromFacts();
         }
 

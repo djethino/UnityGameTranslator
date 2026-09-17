@@ -286,6 +286,28 @@ namespace UnityGameTranslator.Core.UI.Components
             }
         }
 
+        /// <summary>
+        /// Answer a press anywhere on this box that no control of its own takes — a list row chosen
+        /// by a click on its words. The box becomes a button whose face is its own surface, so it
+        /// lights on hover and dips on press like every control; Retint and Highlight go on painting
+        /// it, through the ColorBlock a control is painted with.
+        ///
+        /// ⚠ Its own controls keep their clicks: the event system hands a press to the nearest
+        /// handler up from what was hit, so a tick box or a vote arrow inside takes its own and this
+        /// takes the rest — the words, the bar, the empty room.
+        /// </summary>
+        public void Pressed(Action act)
+        {
+            if (_object == null || act == null) return;
+            var image = _object.GetComponent<Image>();
+            var button = _object.GetComponent<Button>() ?? _object.AddComponent<Button>();
+            button.targetGraphic = image;
+            // The colour the surface was painted with moves into the ColorBlock the button now
+            // paints it through, and the shape the row had stays its shape.
+            if (image != null) UIStyles.SetBackground(_object, image.color, image.sprite);
+            UIHelpers.AddButtonListener(button, act);
+        }
+
         /// <summary>Put this host last among its siblings — drawn on top, laid out last.</summary>
         public void ToBack() { _object?.transform.SetAsLastSibling(); }
 

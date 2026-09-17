@@ -321,6 +321,8 @@ namespace UnityGameTranslator.Core.UI
                                                  Enum(node.Word("fill"), Fill.Stretch),
                                                  MinHeight(node), minWidth: node.Int("minWidth"));
                     }
+                    // Pressed as a whole: the row answers a click anywhere its own controls do not take.
+                    if (node.Act != null) host.Pressed(Act(site, node));
                     host.Visible = node.StartsVisible;
                     built.Add(node.Name, host);
                     Describe(site, node, host);

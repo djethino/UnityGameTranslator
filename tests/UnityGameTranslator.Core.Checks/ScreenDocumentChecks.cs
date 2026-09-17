@@ -295,15 +295,18 @@ namespace UnityGameTranslator.Core.Checks
                   && community.Templates["Rows"].Root.Int("minHeight") == 200 && community.Templates["Rows"].Root.Flag("fill") != false,
                 "the list and its status line are leaves placed once; the list states its floor and takes the spare height", "the two screens holding it used to pass the same figure");
             var row = community.Templates["Row"];
-            check(row.Pieces.Acts.Keys.SequenceEqual(new[] { "select" }) && row.Pieces.Acts["select"].Kind == "checkbox" && row.Pieces.Acts["select"].Text == null,
-                "a row's one act is its bare tick box", "ticked by the person it becomes the choice; written by the code it is not one");
+            check(row.Pieces.Acts.Keys.OrderBy(k => k).SequenceEqual(new[] { "pick", "select" }) && row.Pieces.Acts["select"].Kind == "checkbox"
+                  && row.Pieces.Acts["select"].Text == null && row.Pieces.Acts["pick"].Kind == "row" && row.Pieces.Acts["pick"] == row.Root,
+                "a row is chosen by pressing it anywhere, or its bare tick box", "two doors to one choice; written by the code, the box is not one");
             check(row.Root.Word("surface") == "Item" && row.Pieces.Nodes["Accent"].Int("minWidth") == 3 && row.Pieces.Nodes["Accent"].Flag("fillHeight") == true
                   && row.Pieces.Nodes["Accent"].Word("surface") == null,
                 "a row sits on the item surface with a stripe three wide down its full height, painted by the code", "the stripe says 'the player's own' in the accent; which row that is, is a rule");
             check(row.Pieces.Binds.Keys.OrderBy(k => k).SequenceEqual(new[] { "author", "details", "facts", "note", "origin", "title" })
                   && new[] { "Title", "Origin", "Facts", "Note", "Composition", "Arrow" }.All(n => !row.Pieces.Nodes[n].StartsVisible)
-                  && row.Pieces.Nodes["From"].Children.Count == 0 && row.Pieces.Nodes["Into"].Children.Count == 0 && row.Pieces.Nodes["Votes"].Children.Count == 0,
-                "a row's optional lines start hidden; its flags, its bar and its votes have hosts", "what the server sent decides which of them show");
+                  && row.Pieces.Nodes["From"].Children.Count == 0 && row.Pieces.Nodes["Into"].Children.Count == 0 && row.Pieces.Nodes["Votes"].Children.Count == 0
+                  && row.Pieces.Nodes["Marks"].Children.Count == 0 && row.Pieces.Nodes["Pair"].Children.Any(n => n.Name == "Marks"),
+                "a row's optional lines start hidden; its flags, its marks, its bar and its votes have hosts", "what the server sent, and the reader's own library, decide which of them show");
+            Refuses(check, "a row asking for an act a box already asks for", @"{""name"":""X"",""size"":{""width"":400,""height"":200},""body"":[{""kind"":""row"",""name"":""R"",""act"":""go"",""children"":[{""kind"":""checkbox"",""name"":""C"",""act"":""go""}]}],""footer"":[]}", "two pieces");
 
             // ── The components that own a part build it, and answer its acts ──
             string components = Find("UnityGameTranslator", "UnityGameTranslator.Core", "UI", "Components");

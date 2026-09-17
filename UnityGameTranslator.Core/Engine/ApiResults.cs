@@ -39,6 +39,28 @@ namespace UnityGameTranslator.Core
         public List<TranslationInfo> Translations { get; set; }
     }
 
+    /// <summary>
+    /// The account's own library (<c>GET /me/translations</c>): which lineages it holds a row in,
+    /// and on which side. One call for all of them — asking check-uuid per row of a list would
+    /// spend the account's budget on a question one answer covers, as the Manager already reads it.
+    /// </summary>
+    public class MyTranslationsResult
+    {
+        public bool Success { get; set; }
+        public string Error { get; set; }
+        /// <summary>The site refused the token: signed out on its side.</summary>
+        public bool TokenRefused { get; set; }
+        public List<LineagePosition> Rows { get; set; } = new List<LineagePosition>();
+    }
+
+    /// <summary>One row the account holds: the lineage, and whether the account leads it.</summary>
+    public class LineagePosition
+    {
+        public int Id { get; set; }
+        public string FileUuid { get; set; }
+        public bool IsMain { get; set; }
+    }
+
     public class TranslationInfo
     {
         public int Id { get; set; }

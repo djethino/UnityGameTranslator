@@ -558,6 +558,26 @@ namespace UnityGameTranslator.Core
             return data?["access_code"]?.Value<string>();
         }
 
+        /// <summary><c>GET /me/translations</c>: every row the account holds, with its side of the lineage.</summary>
+        public static MyTranslationsResult ReadMyTranslations(JObject data)
+        {
+            var result = new MyTranslationsResult { Success = true };
+            if (data["translations"] is JArray rows)
+            {
+                foreach (var row in rows)
+                {
+                    result.Rows.Add(new LineagePosition
+                    {
+                        Id = row["id"]?.Value<int>() ?? 0,
+                        FileUuid = row["file_uuid"]?.Value<string>(),
+                        // The site's word for the side: `main` leads, anything else contributes.
+                        IsMain = row["role"]?.Value<string>() == "main",
+                    });
+                }
+            }
+            return result;
+        }
+
         /// <summary><c>GET /me/notifications</c>.</summary>
         public static ModNotificationsResult ReadNotifications(JObject data)
         {

@@ -253,6 +253,11 @@ namespace UnityGameTranslator.Core
                             set.Acts[node.Act] = node;
                         }
                         break;
+                    case "row":
+                        // A row pressed as a whole — a list row chosen by a click on its words. Its
+                        // controls keep their own acts; the row's fires everywhere else on it.
+                        if (node.Act != null) goto case "field";
+                        break;
                     case "choice":
                         // The words are the choice's own — two or more verbs of equal standing.
                         if (!(node.Props["options"] is JArray choiceOptions) || choiceOptions.Count < 2)

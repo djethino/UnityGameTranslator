@@ -34,8 +34,25 @@ namespace UnityGameTranslator.Core.UI.Components
         private ScrollList _list;
         private LabelHandle _statusLabel;
 
-        /// <summary>The tick box of each row shown, by the translation's id — for RefreshSelection.</summary>
-        private readonly List<KeyValuePair<int, ToggleHandle>> _rowToggles = new List<KeyValuePair<int, ToggleHandle>>();
+        /// <summary>Each row shown: the translation's id, its tick box, its box — for RefreshSelection.</summary>
+        private readonly List<ShownRow> _rows = new List<ShownRow>();
+
+        private struct ShownRow
+        {
+            public int Id;
+            public ToggleHandle Select;
+            public Host Root;
+        }
+
+        /// <summary>
+        /// The account's own library, by lineage: true where it leads, false where it contributes.
+        /// Null until read for the current token — and null is "not said yet", never "nothing":
+        /// a row shows no role chip at all rather than a guess. Read once per token, as the
+        /// Manager does, since check-uuid per row would spend the account's budget on one question.
+        /// </summary>
+        private Dictionary<string, bool> _library;
+        private string _libraryFor;
+        private bool _refreshing;
 
         /// <summary>
         /// Set while the rows are being built or their boxes put right: writing a box's value from
@@ -138,12 +155,10 @@ namespace UnityGameTranslator.Core.UI.Components
         public void SetTranslations(List<TranslationInfo> translations)
         {
             _translations = translations ?? new List<TranslationInfo>();
+            // ⚠ Nothing chosen until the person chooses. The first row used to come ticked, which
+            // armed Download on a candidate nobody had looked at — the best-ranked one, which is
+            // not the same thing as the one wanted.
             _selectedTranslation = null;
-
-            if (_translations.Count > 0)
-            {
-                _selectedTranslation = _translations[0];
-            }
 
             Populate();
         }
@@ -159,14 +174,74 @@ namespace UnityGameTranslator.Core.UI.Components
         }
 
         /// <summary>
-        /// Refresh the list UI (e.g., after login status change).
+        /// Signed in or out: the roles on the rows are about a person, and the person changed. The
+        /// library is read again for the new token, then the rows are redrawn with it. Cheap when
+        /// nothing changed, which is how often it is called.
         /// </summary>
         public void Refresh()
         {
-            if (_translations.Count > 0)
+            string token = TranslatorCore.Config?.api_token;
+            bool stale = string.IsNullOrEmpty(token) ? _library != null : (_library == null || _libraryFor != token);
+            if (!stale || _refreshing) return;
+            _refreshing = true;
+            _ = RefreshAsync();
+        }
+
+        private async System.Threading.Tasks.Task RefreshAsync()
+        {
+            try
             {
-                Populate();
+                await EnsureLibraryAsync();
             }
+            finally
+            {
+                _refreshing = false;
+            }
+            TranslatorUIManager.RunOnMainThread(() =>
+            {
+                if (_translations.Count > 0) Populate();
+            });
+        }
+
+        /// <summary>
+        /// The account's library for the current token, read once. Signed out, there is none.
+        /// A failed read leaves it unknown: the rows then say nothing about the reader's role,
+        /// which is right — "not yours" on the strength of a timeout would be a guess.
+        /// </summary>
+        private async System.Threading.Tasks.Task EnsureLibraryAsync()
+        {
+            string token = TranslatorCore.Config?.api_token;
+            if (string.IsNullOrEmpty(token))
+            {
+                _library = null;
+                _libraryFor = null;
+                return;
+            }
+            if (_library != null && _libraryFor == token) return;
+
+            var answer = await ApiClient.GetMyTranslations();
+            if (!answer.Success)
+            {
+                TranslatorCore.LogWarning($"[TranslationList] Library not read: {answer.Error}");
+                _library = null;
+                _libraryFor = null;
+                return;
+            }
+
+            var index = new Dictionary<string, bool>(StringComparer.Ordinal);
+            foreach (var row in answer.Rows)
+            {
+                if (!string.IsNullOrEmpty(row.FileUuid)) index[row.FileUuid] = row.IsMain;
+            }
+            _library = index;
+            _libraryFor = token;
+        }
+
+        /// <summary>What the reader is to a lineage: leads it, contributes to it, or nothing known.</summary>
+        private bool? RoleIn(string uuid)
+        {
+            if (_library == null || string.IsNullOrEmpty(uuid)) return null;
+            return _library.TryGetValue(uuid, out bool isMain) ? (bool?)isMain : null;
         }
 
         /// <summary>
@@ -182,6 +257,9 @@ namespace UnityGameTranslator.Core.UI.Components
 
             try
             {
+                // The reader's own library, alongside the search: the rows say what each lineage
+                // is to them, and that answer must be there when the rows are drawn.
+                var library = EnsureLibraryAsync();
                 TranslationSearchResult result = null;
 
                 // Try Steam ID first
@@ -195,6 +273,8 @@ namespace UnityGameTranslator.Core.UI.Components
                 {
                     result = await ApiClient.SearchByGameName(gameName, targetLanguage);
                 }
+
+                await library;
 
                 // After the awaits we may be on a background thread (IL2CPP). All UI access
                 // (SetStatus = the label's text, SetTranslations -> Populate -> Destroy/Create
@@ -241,7 +321,7 @@ namespace UnityGameTranslator.Core.UI.Components
         private void ClearUI()
         {
             _list?.Clear();
-            _rowToggles.Clear();
+            _rows.Clear();
         }
 
         private void Populate()
@@ -346,22 +426,22 @@ namespace UnityGameTranslator.Core.UI.Components
             bool hasComposition = translation.HumanCount + translation.ValidatedCount +
                 translation.AiCount + translation.SkippedCount + translation.CaptureCount > 0;
 
-            // The row's one act is its tick box: ticked by the person, this becomes the choice.
-            // ⚠ The box is reached after the row exists, so the act reads it through a local the
-            // row fills in; and a value written by code (Populate, RefreshSelection) is not a click.
+            // Two doors to one choice: the row pressed anywhere, or its tick box. A box ticked by
+            // the person is the choice; one written by code (Populate, RefreshSelection) is not.
+            // ⚠ The box is reached after the row exists, so its act reads it through a local the
+            // row fills in.
             ToggleHandle select = null;
-            var row = ScreenBuilder.Part(Part, "Row", _list.Rows, act => act == "select"
-                ? (Action)(() =>
+            var row = ScreenBuilder.Part(Part, "Row", _list.Rows, act =>
+            {
+                switch (act)
                 {
-                    if (_fillingRows || select == null || !select.IsOn) return;
-                    _selectedTranslation = translation;
-                    RefreshSelection();
-                    _onSelectionChanged?.Invoke(translation);
-                })
-                : null, _help);
+                    case "pick": return () => { if (!_fillingRows) Choose(translation); };
+                    case "select": return () => { if (!_fillingRows && select != null && select.IsOn) Choose(translation); };
+                    default: return null;
+                }
+            }, _help);
             select = row.Toggle("Select");
-            select.IsOn = _selectedTranslation == translation;
-            _rowToggles.Add(new KeyValuePair<int, ToggleHandle>(translation.Id, select));
+            _rows.Add(new ShownRow { Id = translation.Id, Select = select, Root = row.Root });
 
             // The player's own translation is marked by a stripe down the left edge rather than
             // by flooding the row with colour. A full purple wash fought every text colour on
@@ -397,10 +477,14 @@ namespace UnityGameTranslator.Core.UI.Components
             // pair would name one language and leave the other missing.
             if (!marked)
             {
-                row.Host("Pair").Visible = false;
                 row.Say("title", languages);
                 row.Label("Title").Visible = true;
             }
+
+            // What this row is to the reader, in the socle's chips: the one this game holds, and
+            // whether they lead the lineage or contribute to it. Silent when neither is known.
+            var marks = Badges.InListing(isLineageMatch, RoleIn(translation.FileUuid));
+            if (marks.Count > 0) BadgeStrip.Create(row.Host("Marks"), "Marks", marks, 220f);
 
             // ⚠ One form for the whole ecosystem, composed in `common`: "@name", and "@name (you)"
             // on your own. The mark is a WORD and not a colour — this row already spends colour on
@@ -411,9 +495,8 @@ namespace UnityGameTranslator.Core.UI.Components
             // the review stage and the download count are already there in plain words.
             if (translation.IsNewAt(DateTime.UtcNow)) by += "  ·  " + TranslatorCore.TranslateOwnUIDynamic("new");
             if (IsFurthest(translation)) by += "  ·  " + TranslatorCore.TranslateOwnUIDynamic("goes furthest");
-            // Says in words what the stripe says in colour — a mark nobody can name is a mark
-            // nobody can act on.
-            if (isLineageMatch) by += "  ·  " + TranslatorCore.TranslateOwnUIDynamic("installed");
+            // "installed" used to be a third word here; it is the Installed chip on the first line
+            // now, beside the reader's role, where the eye lands before it reads the author.
 
             // 🔴 **Never the accent on the author line.** It was ButtonPrimary — purple-600, a FILL
             // colour used as text — which scores 1.86 against this row and is simply unreadable.
@@ -660,17 +743,30 @@ namespace UnityGameTranslator.Core.UI.Components
             return translation.Type ?? "unknown";
         }
 
+        /// <summary>The person chose a row: remember it, show it, tell the panel.</summary>
+        private void Choose(TranslationInfo translation)
+        {
+            _selectedTranslation = translation;
+            RefreshSelection();
+            _onSelectionChanged?.Invoke(translation);
+        }
+
         /// <summary>
-        /// Put every row's box in step with the choice: one ticked, the others not. Written by code,
-        /// so the act stays quiet (see _fillingRows).
+        /// Put every row in step with the choice: one ticked and lit, the others not. Written by
+        /// code, so the box's act stays quiet (see _fillingRows). The tint is the one every chosen
+        /// row of this mod wears — a tick alone was too small a mark to find the chosen candidate.
         /// </summary>
         private void RefreshSelection()
         {
             _fillingRows = true;
             try
             {
-                foreach (var pair in _rowToggles)
-                    pair.Value.IsOn = _selectedTranslation != null && _selectedTranslation.Id == pair.Key;
+                foreach (var row in _rows)
+                {
+                    bool chosen = _selectedTranslation != null && _selectedTranslation.Id == row.Id;
+                    row.Select.IsOn = chosen;
+                    Stacks.Highlight(row.Root, chosen);
+                }
             }
             finally
             {

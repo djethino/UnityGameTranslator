@@ -231,7 +231,17 @@ namespace UnityGameTranslator.Core
         /// Used to detect if server has changed since our last sync.
         /// Stored in translations.json as _source.hash
         /// </summary>
-        public static string LastSyncedHash { get => Store.SourceHash; set => Store.SourceHash = value; }
+        public static string LastSyncedHash
+        {
+            get => Store.SourceHash;
+            set
+            {
+                Store.SourceHash = value;
+                // A sync landed: what was counted against the published copy is no longer a
+                // difference (ServerTranslationState.ForgetComparison).
+                ServerState?.ForgetComparison();
+            }
+        }
 
         /// <summary>
         /// Hash of the MAIN as it stood the last time this branch merged from it.

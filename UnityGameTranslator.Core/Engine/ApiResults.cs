@@ -647,6 +647,21 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public int? LinesChangedHere { get; set; }
         public int? LinesDifferingFromCopy { get; set; }
+
+        /// <summary>
+        /// The comparison is about a copy this machine has not taken in. Once a sync lands on
+        /// the hash it was counted for — a merge, a download, an upload — the file and the copy
+        /// no longer differ by those lines, and the counts would go on saying they do: Compare
+        /// read "(8)" over a file that had just merged the 3 lines it counted. Forgotten at the
+        /// sync, counted again only if the site moves on.
+        /// </summary>
+        public void ForgetComparison()
+        {
+            LinesChanged = null;
+            LinesChangedHere = null;
+            LinesDifferingFromCopy = null;
+            LinesChangedFor = null;
+        }
         /// <summary>True if translation exists on server</summary>
         public bool Exists { get; set; } = false;
         /// <summary>True if current user owns the translation</summary>

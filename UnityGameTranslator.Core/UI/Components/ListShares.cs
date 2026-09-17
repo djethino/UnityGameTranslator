@@ -29,14 +29,25 @@ namespace UnityGameTranslator.Core.UI.Components
         /// <summary>One list and what it was last given: the height is not settled when the list is built.</summary>
         private sealed class Slice
         {
-            public ScrollList List;
+            public ISharedArea List;
 
             /// <summary>How many rows it holds NOW — a count, or lines of text measured at the current width.</summary>
             public Func<int> Rows;
 
             /// <summary>What it was last given — what the measured chrome is worked out against.</summary>
             public int Given;
+
+            /// <summary>A floor of its own, over the rule's two rows: the height a field was made with.</summary>
+            public int Least;
         }
+
+        /// <summary>
+        /// A lone area stops at its content instead of taking the body. The rule hands a list
+        /// alone everything it is given — right for a window that sizes itself on its lists,
+        /// where the spare room is the window's to shed — and wrong for a tab in a fixed window,
+        /// where a one-row list drawn over the whole body is a trough under one row.
+        /// </summary>
+        public bool CapAtContent { get; set; }
 
         private readonly List<Slice> _slices = new List<Slice>();
 
@@ -47,7 +58,7 @@ namespace UnityGameTranslator.Core.UI.Components
         private sealed class Handle
         {
             public SplitterHandle Bar;
-            public ScrollList Above, Below;
+            public ISharedArea Above, Below;
 
             /// <summary>Height moved from the list below to the list above, after the rule divided. Zero: the rule's own division.</summary>
             public double Offset;
@@ -84,7 +95,7 @@ namespace UnityGameTranslator.Core.UI.Components
         /// what each can show and the least it can be shown in. The lists it names may come and
         /// go with their blocks; while one is not registered the bar does nothing.
         /// </summary>
-        public void Attach(SplitterHandle bar, ScrollList above, ScrollList below)
+        public void Attach(SplitterHandle bar, ISharedArea above, ISharedArea below)
         {
             if (bar == null) return;
             var handle = new Handle { Bar = bar, Above = above, Below = below };
@@ -105,7 +116,7 @@ namespace UnityGameTranslator.Core.UI.Components
             Share(_lastBody, _lastContent, _lastAround);
         }
 
-        private int IndexOf(ScrollList list)
+        private int IndexOf(ISharedArea list)
         {
             for (var i = 0; i < _slices.Count; i++)
                 if (ReferenceEquals(_slices[i].List, list)) return i;
@@ -117,12 +128,12 @@ namespace UnityGameTranslator.Core.UI.Components
         /// <paramref name="rowSpace"/> plus <paramref name="pad"/>, and no flexible share, so the
         /// sum of what the body asks for stays under the body itself until <see cref="Share"/>.
         /// </summary>
-        public void Add(ScrollList list, Func<int> rows, int rowSpace, int pad)
+        public void Add(ISharedArea list, Func<int> rows, int rowSpace, int pad, int least = 0)
         {
             if (list == null || rows == null) return;
-            int floor = (int)ListRooms.For(Math.Max(1, rows()), rowSpace, pad).Least;
+            int floor = Math.Max(least, (int)ListRooms.For(Math.Max(1, rows()), rowSpace, pad).Least);
             list.SetHeight(floor, fill: false);
-            _slices.Add(new Slice { List = list, Rows = rows, Given = floor });
+            _slices.Add(new Slice { List = list, Rows = rows, Given = floor, Least = least });
         }
 
         /// <summary>
@@ -167,6 +178,8 @@ namespace UnityGameTranslator.Core.UI.Components
                 var content = _slices[i].List.ContentHeight;
                 int rows = Math.Max(1, _slices[i].Rows());
                 var room = ListRooms.Of(content, rows, content / rows);
+                // An area's own floor, never above its content: the rule's word on that stands.
+                room.Least = Math.Max(room.Least, Math.Min(room.Whole, _slices[i].Least));
                 rooms.Add(room);
                 least += room.Least;
                 whole += room.Whole;
@@ -176,6 +189,9 @@ namespace UnityGameTranslator.Core.UI.Components
             Ceiling = (int)Math.Ceiling(around + chrome + whole);
 
             var heights = ListRooms.Share(rooms, bodyHeight - chrome);
+
+            if (CapAtContent)
+                for (var i = 0; i < heights.Count; i++) heights[i] = Math.Min(heights[i], rooms[i].Whole);
 
             _lastBody = bodyHeight;
             _lastContent = bodyContentHeight;

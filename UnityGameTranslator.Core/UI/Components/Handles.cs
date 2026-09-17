@@ -551,6 +551,13 @@ namespace UnityGameTranslator.Core.UI.Components
     {
         internal readonly InputFieldRef Ref;
 
+        /// <summary>
+        /// The field as an area a body divides its height between — only a field that scrolls
+        /// (<c>scroll: true</c>) has one; a growing field takes what its text asks for and is
+        /// nobody's to divide.
+        /// </summary>
+        public ISharedArea Area { get; internal set; }
+
         internal FieldHandle(InputFieldRef field) { Ref = field; }
 
         internal override GameObject Object => Ref?.Component != null ? Ref.Component.gameObject : null;

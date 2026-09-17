@@ -1,7 +1,9 @@
 using System;
 using UnityEngine.UI;
+using UnityEngine;
 using UniverseLib.UI;
 using UniverseLib.UI.Models;
+using UniverseLib.UI.Widgets;
 
 namespace UnityGameTranslator.Core.UI.Components
 {
@@ -51,6 +53,12 @@ namespace UnityGameTranslator.Core.UI.Components
                                            flexibleHeight: 0, flexibleWidth: fill == Fill.Stretch ? 9999 : 0);
                 UIStyles.SetBackground(box, UIStyles.InputBackground);
                 input = scroller.InputField;
+
+                var scrolling = new FieldHandle(input) { Area = new FieldArea(box, scroller, height) };
+                if (!richText && input.Component.textComponent != null)
+                    input.Component.textComponent.supportRichText = false;
+                if (onChanged != null) scrolling.Changed += onChanged;
+                return scrolling;
             }
             else
             {
@@ -83,6 +91,58 @@ namespace UnityGameTranslator.Core.UI.Components
         /// <param name="fieldMinWidth">Forwarded to <see cref="Create"/> — a floor for a short field
         /// beside its caption (an attempt count, a temperature), instead of filling the row.</param>
         /// <param name="fieldFill">Forwarded to <see cref="Create"/>.</param>
+        /// <summary>
+        /// A scrolling field as a shared area: what it holds is its text laid out at its width —
+        /// measured the way UniverseLib's scroller sizes its content, on the WHOLE text, because
+        /// the field's own label only ever carries the lines in view — and never less than the
+        /// height it was made with.
+        /// </summary>
+        private sealed class FieldArea : ISharedArea
+        {
+            private readonly GameObject _box;
+            private readonly InputFieldScroller _scroller;
+            private readonly int _floor;
+            private Canvas _canvas;
+
+            internal FieldArea(GameObject box, InputFieldScroller scroller, int floor)
+            {
+                _box = box;
+                _scroller = scroller;
+                _floor = floor;
+            }
+
+            public float ContentHeight
+            {
+                get
+                {
+                    var text = _scroller?.InputField?.Component?.textComponent;
+                    if (text == null) return _floor;
+                    if (_canvas == null) _canvas = text.GetComponentInParent<Canvas>();
+                    var settings = text.GetGenerationSettings(text.rectTransform.rect.size);
+                    settings.generateOutOfBounds = false;
+                    settings.scaleFactor = _canvas != null ? _canvas.scaleFactor : 1f;
+                    float wanted = text.cachedTextGeneratorForLayout.GetPreferredHeight(_scroller.InputField.Text ?? "", settings) + 10f;
+                    return Math.Max(_floor, wanted);
+                }
+            }
+
+            public bool AtTop => _scroller?.ContentRect == null || _scroller.ContentRect.anchoredPosition.y <= 0.5f;
+
+            public void ToTop()
+            {
+                var content = _scroller?.ContentRect;
+                if (content == null) return;
+                content.anchoredPosition = new Vector2(content.anchoredPosition.x, 0f);
+            }
+
+            public void SetHeight(int height, bool fill)
+            {
+                if (_box == null) return;
+                UIFactory.SetLayoutElement(_box, minHeight: height, preferredHeight: height,
+                                           flexibleHeight: fill ? 9999 : 0, flexibleWidth: 9999);
+            }
+        }
+
         public static FieldHandle Captioned(Host parent, string name, string caption, out LabelHandle captionLabel,
                                             string placeholder = "", FieldKind kind = FieldKind.Text,
                                             int captionWidth = 120, Action<string> onChanged = null,

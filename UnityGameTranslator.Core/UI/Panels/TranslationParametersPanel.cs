@@ -202,6 +202,9 @@ namespace UnityGameTranslator.Core.UI.Panels
             // seams go back when the window closes (SetActive).
             _failShares.Attach(_screen.Splitter("ListSplit"), _failuresList, _sourceList);
             _failShares.Attach(_screen.Splitter("TextSplit"), _sourceList, _attemptList);
+            _failShares.Attach(_screen.Splitter("FieldSplit"), _attemptList, _failInput.Area);
+            // A tab in a fixed window: a lone list stops at its rows rather than taking the body.
+            _failShares.CapAtContent = true;
             _prevAttemptBtn = _screen.Button("PrevAttemptBtn");
             _nextAttemptBtn = _screen.Button("NextAttemptBtn");
             _useAttemptBtn = _screen.Button("UseAttemptBtn");
@@ -616,10 +619,17 @@ namespace UnityGameTranslator.Core.UI.Panels
                 _failShares.Add(_sourceList, () => LinesIn(_sourceList), UIStyles.RowHeightSmall, 8);
             if (_proposals.Expanded)
                 _failShares.Add(_attemptList, () => LinesIn(_attemptList), UIStyles.RowHeightSmall, 8);
+            // 🔴 The field is an area like the others, weighed by what it holds: the person
+            // writing in it is the one the room is for, and a fixed strip under three lists left
+            // them the lists' leftovers. Its floor is the height it was made with.
+            _failShares.Add(_failInput.Area, () => LinesIn(_failInput.Area), UIStyles.RowHeightSmall, 8, least: FieldFloor);
         }
 
+        /// <summary>The field's height as the document states it — what it never shrinks under.</summary>
+        private static int FieldFloor => Doc.Nodes["FailInput"].Int("minHeight") ?? UIStyles.MultiLineMedium;
+
         /// <summary>A text area's rows are its lines at the current width: the floor of two rows is two lines of text.</summary>
-        private static int LinesIn(ScrollList list)
+        private static int LinesIn(ISharedArea list)
             => Math.Max(1, (int)Math.Ceiling(list.ContentHeight / UIStyles.RowHeightSmall));
 
         /// <summary>
@@ -769,6 +779,8 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             CheckFailInput();
             if (!_foldedForEditing && !string.IsNullOrEmpty(_failInput.Text)) FoldProposals();
+            // What the field holds changed: its share of the body follows.
+            ShareFailures();
         }
 
         private void FoldProposals()

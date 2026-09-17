@@ -11,7 +11,7 @@ namespace UnityGameTranslator.Core.UI.Components
     /// sizing, its layout group, its trough colour, its scrollbar, a loop destroying its rows
     /// and a label for "nothing here". Here that is one object.
     /// </summary>
-    public sealed class ScrollList
+    public sealed class ScrollList : ISharedArea
     {
         private readonly GameObject _scroll;
         private readonly GameObject _rows;

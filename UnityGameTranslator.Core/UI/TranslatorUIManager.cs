@@ -169,7 +169,7 @@ namespace UnityGameTranslator.Core.UI
         {
             try
             {
-                var result = await ApiClient.Download(state.SiteId.Value);
+                var result = await ApiClient.Download(state.SiteId.Value, update: true);
                 if (!result.Success || string.IsNullOrEmpty(result.Content))
                 {
                     TranslatorCore.LogWarning($"[Sync] Could not fetch the published copy to count its changes: {result.Error}");
@@ -2355,7 +2355,8 @@ namespace UnityGameTranslator.Core.UI
             int mainId = state.MainSiteId.Value;
             string expectedHash = state.MainHash;
 
-            var result = await ApiClient.Download(mainId);
+            // The Main this branch hangs from: a lineage this game holds, refreshed, not taken.
+            var result = await ApiClient.Download(mainId, update: true);
 
             var success = result.Success;
             var content = result.Content;
@@ -3205,8 +3206,8 @@ namespace UnityGameTranslator.Core.UI
                     return;
                 }
 
-                // Auto-download the merged translation
-                var result = await ApiClient.Download(translationId);
+                // Auto-download the merged translation — our own lineage, refreshed.
+                var result = await ApiClient.Download(translationId, update: true);
 
                 // After await, we may be on a background thread (IL2CPP issue)
                 var success = result.Success;
@@ -4823,7 +4824,7 @@ namespace UnityGameTranslator.Core.UI
 
             try
             {
-                var result = await ApiClient.Download(siteId);
+                var result = await ApiClient.Download(siteId, update: true);
 
                 // After await, we may be on a background thread (IL2CPP issue)
                 var success = result.Success;
@@ -4914,7 +4915,7 @@ namespace UnityGameTranslator.Core.UI
 
             try
             {
-                var result = await ApiClient.Download(siteId);
+                var result = await ApiClient.Download(siteId, update: true);
 
                 // After await, we may be on a background thread (IL2CPP issue)
                 var success = result.Success;
@@ -5187,7 +5188,7 @@ namespace UnityGameTranslator.Core.UI
 
             try
             {
-                var result = await ApiClient.Download(translationId);
+                var result = await ApiClient.Download(translationId, update: TranslatorCore.IsUuidMatch(translation.FileUuid));
 
                 // After await, we may be on a background thread (IL2CPP issue)
                 var success = result.Success;
@@ -5317,7 +5318,7 @@ namespace UnityGameTranslator.Core.UI
 
             try
             {
-                var result = await ApiClient.Download(translationId);
+                var result = await ApiClient.Download(translationId, update: TranslatorCore.IsUuidMatch(translation.FileUuid));
 
                 // After await, we may be on a background thread (IL2CPP issue)
                 var success = result.Success;

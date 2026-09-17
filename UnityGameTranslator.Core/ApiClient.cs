@@ -819,11 +819,18 @@ namespace UnityGameTranslator.Core
         /// <summary>
         /// Download a translation file
         /// </summary>
-        public static async Task<TranslationDownloadResult> Download(int translationId, string currentHash = null)
+        /// <param name="update">
+        /// This game already holds the lineage and is refreshing its copy — a Main published from
+        /// elsewhere, the Main of a branch, a comparison. Said to the site, which then counts no
+        /// download: "downloads" there counts players who took a lineage, not the times a copy was
+        /// refreshed. False on a first take from the community list.
+        /// </param>
+        public static async Task<TranslationDownloadResult> Download(int translationId, string currentHash = null, bool update = false)
         {
             try
             {
-                var request = new HttpRequestMessage(HttpMethod.Get, $"{DefaultBaseUrl}/translations/{translationId}/download");
+                string url = $"{DefaultBaseUrl}/translations/{translationId}/download" + (update ? "?update=1" : "");
+                var request = new HttpRequestMessage(HttpMethod.Get, url);
 
                 if (!string.IsNullOrEmpty(currentHash))
                 {

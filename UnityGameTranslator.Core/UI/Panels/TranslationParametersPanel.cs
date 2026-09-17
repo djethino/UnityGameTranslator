@@ -90,11 +90,13 @@ namespace UnityGameTranslator.Core.UI.Panels
         // Failures — the lines the AI gave up on this session, settled one by one
         private ScrollList _failuresList, _sourceList, _attemptList;
         private Host _failureEditor, _failExcludeRow;
-        private LabelHandle _failElementLabel, _attemptIndexLabel, _failStatus;
+        private LabelHandle _failElementLabel, _attemptIndexLabel, _failErrorsLabel, _failStatus;
         private ButtonHandle _prevAttemptBtn, _nextAttemptBtn, _useAttemptBtn;
         private FieldHandle _failInput;
         private BuiltScreen _sourceRow, _attemptRow;   // the one row of each text area, written in place
+        private readonly List<KeyValuePair<string, BuiltScreen>> _failureRows = new List<KeyValuePair<string, BuiltScreen>>();
         private FailedLine _failure;                   // the one open in the editor, or null
+        private PreparedText? _failurePrepared;        // the open line as the model was given it: what an answer is restored against
         private int _attemptAt;                        // which proposal the pager shows
 
         /// <summary>The three scroll areas of the Failures tab — the lines, the game text, the proposal — sharing the body.</summary>
@@ -181,6 +183,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _failExcludeRow = _screen.Host("FailExcludeRow");
             _failElementLabel = _screen.Label("FailElement");
             _attemptIndexLabel = _screen.Label("AttemptIndex");
+            _failErrorsLabel = _screen.Label("FailErrors");
             _prevAttemptBtn = _screen.Button("PrevAttemptBtn");
             _nextAttemptBtn = _screen.Button("NextAttemptBtn");
             _useAttemptBtn = _screen.Button("UseAttemptBtn");
@@ -558,15 +561,18 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             if (_failuresList == null) return;
             _failuresList.Clear();
+            _failureRows.Clear();
             foreach (var line in TranslatorCore.Failures.All)
             {
                 var captured = line;
                 var row = _screen.Instantiate("FailureRow", _failuresList.Rows,
                     act => act == "pick" ? (Action)(() => OpenFailure(captured)) : null);
-                row.Say("source", OneLine(captured.Source ?? captured.Key, 90));
+                row.Say("source", OneLine(captured.Source ?? captured.Key, 80));
                 row.Say("attempts", Tr($"{captured.Attempts.Count} attempts"));
+                _failureRows.Add(new KeyValuePair<string, BuiltScreen>(captured.Key, row));
             }
             _failuresList.Filled();
+            HighlightOpenFailure();
 
             RegisterFailureShares();
             ShareFailures();
@@ -612,9 +618,31 @@ namespace UnityGameTranslator.Core.UI.Panels
             return flat.Length > max ? flat.Substring(0, max) + "…" : flat;
         }
 
+        /// <summary>The open line's row stands out in the list — the same mark as a chosen community row.</summary>
+        private void HighlightOpenFailure()
+        {
+            foreach (var pair in _failureRows)
+                Stacks.Highlight(pair.Value.Root, _failure != null && pair.Key == _failure.Key);
+        }
+
+        /// <summary>
+        /// A proposal as the model gave it is in wire form — [!nl] for a line break, [!t*N] for a
+        /// tag — and read that way it is a wall. Restored the way a valid answer would have been
+        /// (Backends.Restore), it reads as text: the breaks are breaks, the tags are tags, and
+        /// what the model dropped is simply missing. The same text goes into the field on Use, so
+        /// what is saved is compared to the game text in the same form.
+        /// </summary>
+        private string Readable(string proposal)
+        {
+            if (string.IsNullOrEmpty(proposal) || _failurePrepared == null) return proposal ?? "";
+            return Backends.Restore(_failurePrepared.Value, proposal, AnswerFrom.Model) ?? proposal;
+        }
+
         private void OpenFailure(FailedLine line)
         {
             _failure = line;
+            _failurePrepared = Backends.Prepare(line.Key);
+            HighlightOpenFailure();
 
             // The game text, in a scroll area of its own: raw, tags and placeholders as the model
             // has to keep them — rendered as rich text, a tag the model broke would swallow the rest.
@@ -633,7 +661,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // One row for the proposal shown; the pager writes into it rather than rebuilding it.
             _attemptList.Clear();
-            _attemptRow = _screen.Instantiate("AttemptText", _attemptList.Rows, _ => null);
+            _attemptRow = _screen.Instantiate("TextRow", _attemptList.Rows, _ => null);
             _attemptList.Filled();
             _attemptAt = 0;
 
@@ -656,8 +684,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             int count = _failure.Attempts.Count;
             if (count == 0)
             {
-                _attemptRow.Say("value", "");
-                _attemptRow.Say("errors", Tr("No proposal kept"));
+                _attemptRow.Say("text", "");
+                _failErrorsLabel.Show(Tr("No proposal kept"));
                 _attemptIndexLabel.Show("0/0");
                 _prevAttemptBtn.Enabled = _nextAttemptBtn.Enabled = _useAttemptBtn.Enabled = false;
             }
@@ -665,8 +693,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             {
                 _attemptAt = Math.Max(0, Math.Min(_attemptAt, count - 1));
                 var attempt = _failure.Attempts[_attemptAt];
-                _attemptRow.Say("value", attempt.Value ?? "");
-                _attemptRow.Say("errors", string.Join("; ", attempt.Errors));
+                _attemptRow.Say("text", Readable(attempt.Value));
+                _failErrorsLabel.Show(string.Join("; ", attempt.Errors));
                 _attemptIndexLabel.Show($"{_attemptAt + 1}/{count}");
                 _prevAttemptBtn.Enabled = _attemptAt > 0;
                 _nextAttemptBtn.Enabled = _attemptAt < count - 1;
@@ -693,15 +721,17 @@ namespace UnityGameTranslator.Core.UI.Panels
         private void OnUseAttemptClicked()
         {
             if (_failure == null || _attemptAt >= _failure.Attempts.Count) return;
-            _failInput.Text = _failure.Attempts[_attemptAt].Value ?? "";
+            _failInput.Text = Readable(_failure.Attempts[_attemptAt].Value);
         }
 
         private void CloseFailureEditor()
         {
             _failure = null;
+            _failurePrepared = null;
             _sourceRow = null;
             _attemptRow = null;
             _failureEditor.Visible = false;
+            HighlightOpenFailure();
             RegisterFailureShares();
             ShareFailures();
         }

@@ -1,6 +1,7 @@
 using System;
 using UnityEngine.UI;
 using UniverseLib.UI;
+using UniverseLib.UI.Models;
 
 namespace UnityGameTranslator.Core.UI.Components
 {
@@ -27,17 +28,37 @@ namespace UnityGameTranslator.Core.UI.Components
         /// with <see cref="Fill.Content"/>. Null leaves the width to <paramref name="fill"/> alone,
         /// as before this parameter existed.
         /// </param>
+        /// <param name="scroll">
+        /// A multiline field that keeps its height and scrolls inside it, instead of growing with
+        /// what it holds: a paragraph pasted into a growing field pushed everything under it off
+        /// the screen and gave the whole window a scrollbar instead of the field.
+        /// </param>
         public static FieldHandle Create(Host parent, string name, string placeholder = "",
                                          FieldKind kind = FieldKind.Text, int? minHeight = null,
                                          Fill fill = Fill.Stretch, Action<string> onChanged = null,
-                                         bool richText = true, int? minWidth = null)
+                                         bool richText = true, int? minWidth = null, bool scroll = false)
         {
-            var input = UIFactory.CreateInputField(parent.Object, name, placeholder ?? "");
-
             int height = minHeight ?? (kind == FieldKind.Multiline ? UIStyles.MultiLineMedium : UIStyles.InputHeight);
-            UIFactory.SetLayoutElement(input.Component.gameObject, minWidth: minWidth, minHeight: height,
-                                       flexibleWidth: fill == Fill.Stretch ? (int?)9999 : null);
-            UIStyles.SetBackground(input.Component.gameObject, UIStyles.InputBackground);
+
+            InputFieldRef input;
+            if (scroll && kind == FieldKind.Multiline)
+            {
+                // UniverseLib's scrolling input: a viewport, the field as its content, a slider that
+                // appears when the text outgrows the box. The box itself is held at its height —
+                // the factory hands it a flexible height, which is exactly what must not happen here.
+                var box = UIFactory.CreateScrollInputField(parent.Object, name, placeholder ?? "", out var scroller);
+                UIFactory.SetLayoutElement(box, minWidth: minWidth, minHeight: height, preferredHeight: height,
+                                           flexibleHeight: 0, flexibleWidth: fill == Fill.Stretch ? 9999 : 0);
+                UIStyles.SetBackground(box, UIStyles.InputBackground);
+                input = scroller.InputField;
+            }
+            else
+            {
+                input = UIFactory.CreateInputField(parent.Object, name, placeholder ?? "");
+                UIFactory.SetLayoutElement(input.Component.gameObject, minWidth: minWidth, minHeight: height,
+                                           flexibleWidth: fill == Fill.Stretch ? (int?)9999 : null);
+                UIStyles.SetBackground(input.Component.gameObject, UIStyles.InputBackground);
+            }
 
             switch (kind)
             {

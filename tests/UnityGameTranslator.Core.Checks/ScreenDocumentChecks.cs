@@ -256,7 +256,7 @@ namespace UnityGameTranslator.Core.Checks
 
             // ── Templates: the rows of every list, described once, instantiated per element ──
             var templated = new Dictionary<string, int> {
-                { "merge", 2 }, { "settings-choice", 1 }, { "upload-setup", 1 }, { "inspector", 1 }, { "tools", 11 }, { "backups", 5 } };
+                { "merge", 2 }, { "settings-choice", 1 }, { "upload-setup", 1 }, { "inspector", 1 }, { "tools", 10 }, { "backups", 5 } };
             foreach (var pair in templated)
             {
                 var doc = ScreenDocument.FromFile(Path.Combine(folder, pair.Key + ".json"));

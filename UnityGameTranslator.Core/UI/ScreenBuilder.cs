@@ -430,7 +430,8 @@ namespace UnityGameTranslator.Core.UI
                                         minHeight: MinHeight(node),
                                         fill: Enum(node.Word("fill"), Fill.Stretch),
                                         richText: node.Flag("richText") ?? true,
-                                        minWidth: node.Int("minWidth"));
+                                        minWidth: node.Int("minWidth"),
+                                        scroll: node.Flag("scroll") ?? false);
                     if (node.Act != null)
                     {
                         var changed = Act(site, node);

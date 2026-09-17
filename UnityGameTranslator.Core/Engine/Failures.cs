@@ -113,6 +113,23 @@ namespace UnityGameTranslator.Core
             return removed;
         }
 
+        /// <summary>
+        /// Drops every line <paramref name="settled"/> says is — the reconciliation at load: a
+        /// key the translation now holds a line for was translated since (downloaded, restored,
+        /// written by hand) and is no failure any more. Returns how many left; one event at most.
+        /// </summary>
+        public int Settle(Func<string, bool> settled)
+        {
+            if (settled == null) throw new ArgumentNullException(nameof(settled));
+            int removed;
+            lock (_gate)
+            {
+                removed = _lines.RemoveAll(line => settled(line.Key));
+            }
+            if (removed > 0) Changed?.Invoke();
+            return removed;
+        }
+
         public void Clear()
         {
             bool had;

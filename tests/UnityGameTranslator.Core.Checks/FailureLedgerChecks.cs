@@ -46,6 +46,14 @@ namespace UnityGameTranslator.Core.Checks
             snapshot.Clear();
             check(ledger.Count == 1, "the list handed out is a copy", "a screen clearing its rows must not empty the ledger");
 
+            ledger.Note(Failed("Menu", "Menu", "Menü [!nl]", "token [!nl] appears 1 time(s) instead of 0"));
+            ledger.Note(Failed("Options", "Options", "Optionen [!nl]", "token [!nl] appears 1 time(s) instead of 0"));
+            before = changes;
+            int settled = ledger.Settle(key => key == "Menu" || key == "Nobody");
+            check(settled == 1 && !ledger.Holds("Menu") && ledger.Holds("Options") && changes == before + 1,
+                  "settling against the file drops the lines it now holds, in one event", "the reconciliation at load: a key translated since is no failure any more");
+            check(ledger.Settle(_ => false) == 0 && changes == before + 1, "settling nothing is silent", "a launch with nothing changed must not rewrite the file");
+
             ledger.Clear();
             check(ledger.Count == 0, "clear empties it", "a new session starts with nothing to settle");
         }

@@ -635,6 +635,49 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static readonly FailureLedger Failures = new FailureLedger();
 
+        /// <summary>The ledger's file beside the translation (FailureStore); rebuilt at every load.</summary>
+        private static FailureStore _failureStore;
+
+        /// <summary>
+        /// The failed lines beside the file, read back at every load — so a text that failed
+        /// yesterday is skipped today at once, instead of costing its attempts again while the
+        /// lines that would translate wait behind it. Reconciled first: a key the file now
+        /// translates is settled and dropped. Then the queue's give-up list is rebuilt from what
+        /// is left, and the ledger writes itself on every change from here on.
+        /// </summary>
+        private static void LoadFailures()
+        {
+            Failures.Changed -= SaveFailures;
+            _failureStore = new FailureStore(CachePath);
+            int read = 0;
+            try
+            {
+                read = _failureStore.Load(Failures);
+            }
+            catch (Exception e)
+            {
+                // Not the translation: said, and gone on without — the lines will fail again and
+                // be written afresh.
+                Adapter?.LogWarning($"[Failures] Could not read {_failureStore.Path}: {e.Message}");
+                Failures.Clear();
+            }
+
+            int settled = Failures.Settle(key => TranslationCache.TryGetValue(key, out var entry) && entry != null && !entry.IsEmpty);
+            foreach (var line in Failures.All) _queue.NoteRefused(line.Key);
+            if (read > 0)
+                Adapter?.LogInfo($"[Failures] {Failures.Count} line(s) kept from earlier launches, skipped until settled" + (settled > 0 ? $" ({settled} settled since)" : ""));
+
+            Failures.Changed += SaveFailures;
+            if (settled > 0) SaveFailures();
+        }
+
+        /// <summary>The ledger to its file, on every change, from whichever thread changed it.</summary>
+        private static void SaveFailures()
+        {
+            try { _failureStore?.Save(Failures); }
+            catch (Exception e) { Adapter?.LogWarning($"[Failures] Could not write {_failureStore?.Path}: {e.Message}"); }
+        }
+
         // ⚠ What lockObj still guards: the translation caches, the capture-order counter and the
         // retranslation requests. The queue is no longer among them.
         private static object lockObj = new object();
@@ -2503,6 +2546,7 @@ namespace UnityGameTranslator.Core
                 FileUuid = Guid.NewGuid().ToString();
                 Adapter.LogInfo($"No cache file found, starting fresh with UUID: {FileUuid}");
                 SaveCache(); // Save immediately to persist UUID
+                LoadFailures();
                 return;
             }
 
@@ -2609,6 +2653,10 @@ namespace UnityGameTranslator.Core
 
                 // Load ancestor cache if exists (for 3-way merge support)
                 LoadAncestorCache();
+
+                // The lines the AI gave up on, beside the file: reconciled against what was just
+                // read, and kept off the queue.
+                LoadFailures();
 
                 // ── The interface lines this file was still carrying ──────────────────
                 // The rule is ModUiMigration.Decide — pure, and checked there rather than here.
@@ -6421,8 +6469,11 @@ namespace UnityGameTranslator.Core
             // Clear pattern match failure cache (in case patterns changed)
             patternMatchFailures.Clear();
 
-            // Give validation-failed texts another chance (model/language may have changed)
+            // Give validation-failed texts another chance (model/language may have changed) —
+            // except the ones kept on file: those cost minutes each at every launch, and are
+            // asked again only by hand, from the Failures tab (Retranslate), never by a reload.
             _queue.ForgetAllRefused();
+            foreach (var line in Failures.All) _queue.NoteRefused(line.Key);
 
             // Clear user exclusion cache (instance IDs change between scenes)
             ClearUserExclusionCache();

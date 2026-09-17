@@ -819,9 +819,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             // row whose key is the RTL pipeline's own display output can never be saved, whatever
             // is put in the field. It said so after the click, on a status line at the other end of
             // the panel; it now says so on the row, from the moment the row exists.
-            string problem = TextShaping.RtlText.ContainsPresentationForms(row.Key)
-                ? "this row's key is display-shaped text, not a source text — nothing typed here can be saved"
-                : changed ? TranslatorCore.ValidateEditedPlaceholders(row.Key, field) : null;
+            string problem = EditChecks.Problem(row.Key, field, changed);
 
             if (row.SaveBtn != null) row.SaveBtn.Enabled = changed && problem == null;
 
@@ -839,13 +837,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // there is nothing useful to preview about a line the game would break on. A row of
                 // its own for each would cost height per entry in a list that routinely holds a
                 // dozen, and this panel was reported as too short.
-                if (problem != null)
-                {
-                    row.PreviewLabel.Visible = true;
-                    row.PreviewLabel.Tone = Tone.Error;
-                    row.PreviewLabel.Show(problem);
-                    return;
-                }
+                if (EditChecks.Show(row.PreviewLabel, problem)) return;
 
                 row.PreviewLabel.Tone = Tone.Secondary;
 

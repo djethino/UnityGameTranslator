@@ -90,8 +90,11 @@ namespace UnityGameTranslator.Core.UI.Panels
         // Failures — the lines the AI gave up on this session, settled one by one
         private ScrollList _failuresList, _sourceList, _attemptList;
         private Host _failureEditor, _failExcludeRow;
-        private LabelHandle _failElementLabel, _attemptIndexLabel, _failErrorsLabel, _failStatus;
-        private ButtonHandle _prevAttemptBtn, _nextAttemptBtn, _useAttemptBtn;
+        private LabelHandle _failElementLabel, _attemptIndexLabel, _failErrorsLabel, _failInputCheck, _failStatus;
+        private ButtonHandle _prevAttemptBtn, _nextAttemptBtn, _useAttemptBtn, _failSaveBtn;
+        private Collapsible _proposals;                // the AI's answers, folded once the field is being written
+        private bool _foldedForEditing;                // folded once for this line; reopened by hand, it stays open
+        private bool _sharesForExpanded;               // the proposals' state the scroll areas were last registered for
         private FieldHandle _failInput;
         // The rows of each text area — one per piece of text a label can draw (TextChunks) —
         // written in place when their number holds, rebuilt when it does not.
@@ -155,7 +158,10 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             Layout(out var body, out var footer, Doc.Width - 40);
             _helpZone = CreateHelpZone(footer, Doc.Help);
-            _screen = ScreenBuilder.Build(Doc, body, footer, ActOf, header: FixedHeader(), help: _helpZone);
+            // A collapsible opening or folding changes what the body holds: the Failures tab
+            // divides its height between scroll areas again (ShareFailures).
+            _screen = ScreenBuilder.Build(Doc, body, footer, ActOf, header: FixedHeader(), help: _helpZone,
+                                          layoutChanged: ShareFailures);
 
             _tabBar = _screen.Tabs("Tabs");
             _fontsSubTabHost = _screen.Host("FontsSubTabHost");
@@ -187,6 +193,11 @@ namespace UnityGameTranslator.Core.UI.Panels
             _failElementLabel = _screen.Label("FailElement");
             _attemptIndexLabel = _screen.Label("AttemptIndex");
             _failErrorsLabel = _screen.Label("FailErrors");
+            _failInputCheck = _screen.Label("FailInputCheck");
+            _failSaveBtn = _screen.Button("FailSaveBtn");
+            _proposals = _screen.Collapsible("Proposals");
+            // FieldHandle.Changed, never a raw InputField event — see UIHelpers.
+            _failInput.Changed += _ => OnFailInputChanged();
             _prevAttemptBtn = _screen.Button("PrevAttemptBtn");
             _nextAttemptBtn = _screen.Button("NextAttemptBtn");
             _useAttemptBtn = _screen.Button("UseAttemptBtn");
@@ -588,11 +599,14 @@ namespace UnityGameTranslator.Core.UI.Panels
         private void RegisterFailureShares()
         {
             _failShares.Forget();
+            _sharesForExpanded = _proposals.Expanded;
             int lines = TranslatorCore.Failures.Count;
             _failShares.Add(_failuresList, () => Math.Max(1, lines), UIStyles.RowHeightNormal + 4, 8);
             if (_failure == null) return;
             _failShares.Add(_sourceList, () => LinesIn(_sourceList), UIStyles.RowHeightSmall, 8);
-            _failShares.Add(_attemptList, () => LinesIn(_attemptList), UIStyles.RowHeightSmall, 8);
+            // A folded block holds nothing to divide: its list is left out until it opens again.
+            if (_proposals.Expanded)
+                _failShares.Add(_attemptList, () => LinesIn(_attemptList), UIStyles.RowHeightSmall, 8);
         }
 
         /// <summary>A text area's rows are its lines at the current width: the floor of two rows is two lines of text.</summary>
@@ -608,6 +622,10 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             if (UIRoot == null || !UIRoot.activeInHierarchy) return;
             if (_tabBar == null || _tabBar.SelectedName != "Failures") return;
+            // The person opened or folded the proposals since the areas were registered: the
+            // set that shares the body is not the same set.
+            if (_failure != null && _proposals != null && _proposals.Expanded != _sharesForExpanded)
+                RegisterFailureShares();
             _failShares.Share(BodyHeight, BodyContentHeight, 0f);
         }
 
@@ -661,9 +679,15 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             _attemptAt = 0;
 
+            // The proposals open for a new line; they fold once the field is written or a
+            // proposal used, and stay as the person leaves them after that.
+            _foldedForEditing = false;
+            _proposals.Expanded = true;
+
             _failInput.Text = "";
             _failStatus.Say("");
             _failureEditor.Visible = true;
+            CheckFailInput();
 
             ShowAttempt();
             RegisterFailureShares();
@@ -718,6 +742,41 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             if (_failure == null || _attemptAt >= _failure.Attempts.Count) return;
             _failInput.Text = Readable(_failure.Attempts[_attemptAt].Value);
+            FoldProposals();
+        }
+
+        /// <summary>
+        /// Typed into, or filled by Use: the field is checked as it stands, and the proposals
+        /// fold the first time the field holds something — the room is the field's then. Opened
+        /// again by hand to use another proposal, they are not folded a second time.
+        /// </summary>
+        private void OnFailInputChanged()
+        {
+            CheckFailInput();
+            if (!_foldedForEditing && !string.IsNullOrEmpty(_failInput.Text)) FoldProposals();
+        }
+
+        private void FoldProposals()
+        {
+            _foldedForEditing = true;
+            if (_proposals == null || !_proposals.Expanded) return;
+            _proposals.Expanded = false;   // no callback on a set: the share is asked for here
+            ShareFailures();
+        }
+
+        /// <summary>
+        /// Said while it is typed, not after the click — the same check and the same words as
+        /// the in-game text editor (EditChecks): Save greys, the line under the field says which
+        /// placeholder is missing or doubled.
+        /// </summary>
+        private void CheckFailInput()
+        {
+            if (_failure == null || _failInput == null) return;
+            string field = _failInput.Text ?? "";
+            bool has = !string.IsNullOrEmpty(field);
+            string problem = EditChecks.Problem(_failure.Key, field, changed: has);
+            if (_failSaveBtn != null) _failSaveBtn.Enabled = has && problem == null;
+            EditChecks.Show(_failInputCheck, problem);
         }
 
         /// <summary>
@@ -762,9 +821,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                 _failStatus.Tone = Tone.Warning;
                 return;
             }
-            // The same check the inspector's Save makes: a placeholder missing here is exactly
-            // what the AI was refused for.
-            string broken = TranslatorCore.ValidateEditedPlaceholders(_failure.Key, value);
+            // A belt: the button is grey while the line under the field says what is wrong
+            // (CheckFailInput), and a greyed button is a hint, not a guarantee.
+            string broken = EditChecks.Problem(_failure.Key, value, changed: true);
             if (broken != null)
             {
                 _failStatus.Say(broken);

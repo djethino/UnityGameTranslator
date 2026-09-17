@@ -148,8 +148,10 @@ namespace UnityGameTranslator.Core.Checks
 
             // 🔴 Every key SaveCache writes is read by the record — the strong one. It is how the
             // family comes back: a block written from memory that nothing reads from the file.
-            string saving = BodyOf(text, "public static void SaveCache()");
-            check(saving != null, "SaveCache is found", "without it the round trip cannot be checked");
+            // The metadata is written by PrepareSave, the half of the save that runs under the
+            // lock; SaveCache and SaveCacheInBackground only decide which thread writes it.
+            string saving = BodyOf(text, "private static PreparedSave PrepareSave()");
+            check(saving != null, "PrepareSave is found", "without it the round trip cannot be checked");
             if (saving != null)
             {
                 var written = new List<string>();
@@ -160,8 +162,8 @@ namespace UnityGameTranslator.Core.Checks
                     if (!record.Contains("\"" + key + "\"", StringComparison.Ordinal)) unread.Add(key);
                 check(written.Count > 0 && unread.Count == 0,
                     unread.Count == 0
-                        ? $"every one of the {written.Count} metadata keys SaveCache writes is read back by the record"
-                        : "WRITTEN BY SAVECACHE, READ BY NOBODY: " + string.Join(", ", unread),
+                        ? $"every one of the {written.Count} metadata keys the save writes is read back by the record"
+                        : "WRITTEN BY THE SAVE, READ BY NOBODY: " + string.Join(", ", unread),
                     "a key written and never read is one file's answer carried into the next, with nothing on disk to say so");
             }
 

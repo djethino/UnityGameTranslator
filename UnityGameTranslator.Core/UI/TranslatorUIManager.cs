@@ -160,6 +160,30 @@ namespace UnityGameTranslator.Core.UI
         private static int _countedRemote, _countedHere, _countedDiffering;
 
         /// <summary>
+        /// The copy fetched to count, kept until the update that needs it: taking the update or
+        /// merging it used to fetch the same file again. Held by its hash — served only while it
+        /// is the version the site still holds — and dropped once served or superseded.
+        /// </summary>
+        private static TranslationDownloadResult _countedCopy;
+
+        /// <summary>
+        /// The published copy for an update: the one already read to count when it is still the
+        /// site's version, fetched otherwise. Same result shape either way.
+        /// </summary>
+        private static async Task<TranslationDownloadResult> FetchPublishedCopy(int siteId, string expectedHash)
+        {
+            var held = _countedCopy;
+            if (held != null && !string.IsNullOrEmpty(expectedHash)
+                && string.Equals(held.FileHash, expectedHash, StringComparison.OrdinalIgnoreCase))
+            {
+                _countedCopy = null;
+                TranslatorCore.LogDebug("[Sync] Update served from the copy read to count");
+                return held;
+            }
+            return await ApiClient.Download(siteId, update: true);
+        }
+
+        /// <summary>
         /// The count on the Compare button: how many lines the comparison page will list — every
         /// line that differs between this file and the published copy, once counted from that
         /// copy; this machine's own count of what changed since the sync until then. Null when
@@ -226,6 +250,10 @@ namespace UnityGameTranslator.Core.UI
                 {
                     // Superseded while the copy travelled: the next refresh asks again.
                     if (!ReferenceEquals(TranslatorCore.ServerState, state)) return;
+
+                    // Kept for the update this count announces; a copy of another version is
+                    // replaced, never served.
+                    _countedCopy = string.Equals(result.FileHash, state.Hash, StringComparison.OrdinalIgnoreCase) ? result : null;
 
                     // The merge classifies every key: a line both sides added identically is
                     // Unchanged, and counts nowhere — the comparison page will not list it either.
@@ -4886,7 +4914,7 @@ namespace UnityGameTranslator.Core.UI
 
             try
             {
-                var result = await ApiClient.Download(siteId, update: true);
+                var result = await FetchPublishedCopy(siteId, serverState.Hash);
 
                 // After await, we may be on a background thread (IL2CPP issue)
                 var success = result.Success;
@@ -4977,7 +5005,7 @@ namespace UnityGameTranslator.Core.UI
 
             try
             {
-                var result = await ApiClient.Download(siteId, update: true);
+                var result = await FetchPublishedCopy(siteId, serverState.Hash);
 
                 // After await, we may be on a background thread (IL2CPP issue)
                 var success = result.Success;

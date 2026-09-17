@@ -1976,7 +1976,8 @@ namespace UnityGameTranslator.Core
             if ((cacheModified || modUiCacheModified) && currentTime - lastSaveTime > 30f)
             {
                 lastSaveTime = currentTime;
-                if (cacheModified) SaveCache();
+                // Off the main thread: this runs while the game is being played and translated.
+                if (cacheModified) SaveCacheInBackground();
                 SaveModUiCacheIfDirty();
             }
         }
@@ -6384,105 +6385,207 @@ namespace UnityGameTranslator.Core
             lastSeenText.Remove(id);
         }
 
+        /// <summary>
+        /// Everything a save needs, taken under the lock in one instant: the document with its
+        /// metadata, a copy of the lines, and the serial that says how recent it is. The lines
+        /// are copied entry by entry because an entry is mutable and the file is serialised
+        /// later, possibly on another thread; a torn line would be valid JSON and wrong.
+        /// </summary>
+        private sealed class PreparedSave
+        {
+            public JObject Output;
+            public Dictionary<string, TranslationEntry> Lines;
+            public int Serial;
+        }
+
+        private static readonly object cacheFileLock = new object();
+        private static readonly SaveOrder cacheSaveOrder = new SaveOrder();
+        private static Task backgroundSave;
+
+        /// <summary>
+        /// Writes the translation file now, and returns once it is on disk. For the acts that
+        /// need the file to exist when they go on — a fork, a merge, an upload, the shutdown, an
+        /// edit session about to read it. The tick's periodic save is
+        /// <see cref="SaveCacheInBackground"/>: same content, same file, off the main thread.
+        /// </summary>
         public static void SaveCache()
         {
-            lock (lockObj)
-            {
-                try
-                {
-                    // Counted here rather than trusted, so what the file says is true of the file.
-                    //
-                    // ⚠ _local_changes was going stale on disk, and it took an outside reader to
-                    // notice: in-game everything looked right because every panel reads the counter
-                    // in memory, while the file still claimed changes that had been published. The
-                    // cause was ordering — a save ran, and only afterwards did the ancestor move and
-                    // the count drop to zero, with nothing writing the file again.
-                    //
-                    // Recounting at the moment of writing removes the whole class of mistake: no
-                    // caller can leave the number behind, because the number is not carried here. It
-                    // also corrects a second, quieter error — the running counter is incremented on
-                    // every edit, so editing one line ten times counted ten changes.
-                    //
-                    // Cost: two walks of the dictionaries, against serialising the whole file, at
-                    // most once every thirty seconds.
-                    RecalculateLocalChanges();
+            PreparedSave prepared;
+            lock (lockObj) { prepared = PrepareSave(); }
+            if (prepared == null) return;
 
-                    // Create output with metadata first, then sorted translations
-                    var output = new JObject();
-
-                    // Metadata
-                    output["_engine_version"] = CurrentEngineVersion;
-                    output["_uuid"] = FileUuid;
-
-                    // 🔴 **What this translation IS, written into it.** A uuid has a source and a
-                    // target; they settle at the first line and publishing freezes them. Until
-                    // now only config.json held them — a preference standing in for a fact — so
-                    // restoring a backup restored lines without their language, and a file copied
-                    // anywhere arrived anonymous. See TranslationLanguages.
-                    //
-                    // ⚠ Only when SETTLED: "auto" is a mode, not a language, and writing it would
-                    // make the file claim an answer nobody gave.
-                    //
-                    // ⚠ Underscore keys are excluded from the content hash on both sides
-                    // (ContentHash.Of, Translation::hashFile), so this cannot make a single
-                    // installed mod believe the server moved. A mod too old to know the key drops
-                    // it on its next save — a loss of credit, never a breakage, exactly like
-                    // _forked_from.
-                    if (Languages.IsSettled(FileSourceLanguage))
-                        output["_source_language"] = FileSourceLanguage;
-                    if (Languages.IsSettled(FileTargetLanguage))
-                        output["_target_language"] = FileTargetLanguage;
-
-                    if (CurrentGame != null)
-                    {
-                        output["_game"] = new JObject
-                        {
-                            ["name"] = CurrentGame.name,
-                            ["steam_id"] = CurrentGame.steam_id
-                        };
-                    }
-
-                    // _source (hash, main_hash, site_id), _forked_from, _local_changes — the stamps
-                    // as the store holds them, recounted just above.
-                    Store.WriteStampsInto(output);
-
-                    if (MetadataDirty)
-                    {
-                        output["_metadata_dirty"] = true;
-                    }
-
-                    // Settings sections, built by the same code that reads and
-                    // replaces them (see the "Settings sections" region). An
-                    // empty section is omitted: its absence means "nothing set".
-                    foreach (var section in SettingsSections.All)
-                    {
-                        var token = BuildSettingsSection(section);
-                        if (token != null)
-                        {
-                            output[SettingsSections.JsonKey(section)] = token;
-                        }
-                    }
-
-                    // The lines, sorted, in the shape reading gives back — the two are written
-                    // together in Engine/TranslationFileEntries so the round trip can be checked.
-                    TranslationFileEntries.WriteInto(output, TranslationCache);
-
-                    string json = output.ToString(Formatting.Indented);
-                    File.WriteAllText(CachePath, json);
-                    cacheModified = false;
-
-                    if (DebugMode)
-                        Adapter?.LogInfo($"Saved {TranslationCache.Count} cache entries with UUID: {FileUuid}");
-                }
-                catch (Exception e)
-                {
-                    Adapter?.LogError($"Failed to save cache: {e.Message}");
-                }
-            }
+            WriteSave(prepared);
 
             // Live edit session: the host pushes the change to the browser editor
             // (debounced + hash-checked there, no-op otherwise)
             Host?.LocalFileChanged();
+        }
+
+        /// <summary>
+        /// The tick's save: snapshot on the main thread, serialise and write on a worker.
+        ///
+        /// 🔴 Serialising the whole file on the main thread every thirty seconds is the mod's
+        /// real ceiling, before any network cost: invisible at a few hundred kilobytes, seconds
+        /// of frozen game at tens of megabytes, while an AI is filling the file. Only the copy
+        /// of the lines stays on the main thread — references into a new dictionary, one small
+        /// object per line — and the JObject, the text and the disk all move off it. One save
+        /// in flight at a time: while it runs, the flag stays set and the next tick asks again.
+        /// </summary>
+        public static void SaveCacheInBackground()
+        {
+            if (backgroundSave != null && !backgroundSave.IsCompleted) return;
+
+            PreparedSave prepared;
+            lock (lockObj) { prepared = PrepareSave(); }
+            if (prepared == null) return;
+
+            backgroundSave = Task.Run(() =>
+            {
+                WriteSave(prepared);
+                Host?.LocalFileChanged();
+            });
+        }
+
+        /// <summary>The document and the snapshot, under <c>lockObj</c>. Null when it could not be built — said, and the flag kept.</summary>
+        private static PreparedSave PrepareSave()
+        {
+            try
+            {
+                // Counted here rather than trusted, so what the file says is true of the file.
+                //
+                // ⚠ _local_changes was going stale on disk, and it took an outside reader to
+                // notice: in-game everything looked right because every panel reads the counter
+                // in memory, while the file still claimed changes that had been published. The
+                // cause was ordering — a save ran, and only afterwards did the ancestor move and
+                // the count drop to zero, with nothing writing the file again.
+                //
+                // Recounting at the moment of writing removes the whole class of mistake: no
+                // caller can leave the number behind, because the number is not carried here. It
+                // also corrects a second, quieter error — the running counter is incremented on
+                // every edit, so editing one line ten times counted ten changes.
+                //
+                // Cost: two walks of the dictionaries, against serialising the whole file, at
+                // most once every thirty seconds.
+                RecalculateLocalChanges();
+
+                // Create output with metadata first, then sorted translations
+                var output = new JObject();
+
+                // Metadata
+                output["_engine_version"] = CurrentEngineVersion;
+                output["_uuid"] = FileUuid;
+
+                // 🔴 **What this translation IS, written into it.** A uuid has a source and a
+                // target; they settle at the first line and publishing freezes them. Until
+                // now only config.json held them — a preference standing in for a fact — so
+                // restoring a backup restored lines without their language, and a file copied
+                // anywhere arrived anonymous. See TranslationLanguages.
+                //
+                // ⚠ Only when SETTLED: "auto" is a mode, not a language, and writing it would
+                // make the file claim an answer nobody gave.
+                //
+                // ⚠ Underscore keys are excluded from the content hash on both sides
+                // (ContentHash.Of, Translation::hashFile), so this cannot make a single
+                // installed mod believe the server moved. A mod too old to know the key drops
+                // it on its next save — a loss of credit, never a breakage, exactly like
+                // _forked_from.
+                if (Languages.IsSettled(FileSourceLanguage))
+                    output["_source_language"] = FileSourceLanguage;
+                if (Languages.IsSettled(FileTargetLanguage))
+                    output["_target_language"] = FileTargetLanguage;
+
+                if (CurrentGame != null)
+                {
+                    output["_game"] = new JObject
+                    {
+                        ["name"] = CurrentGame.name,
+                        ["steam_id"] = CurrentGame.steam_id
+                    };
+                }
+
+                // _source (hash, main_hash, site_id), _forked_from, _local_changes — the stamps
+                // as the store holds them, recounted just above.
+                Store.WriteStampsInto(output);
+
+                if (MetadataDirty)
+                {
+                    output["_metadata_dirty"] = true;
+                }
+
+                // Settings sections, built by the same code that reads and
+                // replaces them (see the "Settings sections" region). An
+                // empty section is omitted: its absence means "nothing set".
+                foreach (var section in SettingsSections.All)
+                {
+                    var token = BuildSettingsSection(section);
+                    if (token != null)
+                    {
+                        output[SettingsSections.JsonKey(section)] = token;
+                    }
+                }
+
+
+                // The lines as they stand this instant, copied: the document is finished and
+                // written later, possibly on another thread, while the game goes on translating.
+                var lines = new Dictionary<string, TranslationEntry>(TranslationCache.Count);
+                foreach (var kvp in TranslationCache)
+                {
+                    lines[kvp.Key] = new TranslationEntry
+                    {
+                        Value = kvp.Value.Value,
+                        Tag = kvp.Value.Tag,
+                        Index = kvp.Value.Index,
+                    };
+                }
+
+                // Cleared at the snapshot, not at the write: a change made while the file is
+                // being written is a change the file does not hold, and the next tick must save.
+                cacheModified = false;
+
+                return new PreparedSave { Output = output, Lines = lines, Serial = cacheSaveOrder.Take() };
+            }
+            catch (Exception e)
+            {
+                Adapter?.LogError($"Failed to prepare the cache for saving: {e.Message}");
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Serialises and writes one prepared save — on whichever thread called. Writes are
+        /// serialised on <c>cacheFileLock</c>, and an older save arriving after a newer one is
+        /// skipped (<see cref="SaveOrder"/>) rather than putting older content back on disk.
+        /// The file is replaced whole (<see cref="AtomicFile"/>), never truncated first.
+        /// </summary>
+        private static void WriteSave(PreparedSave prepared)
+        {
+            try
+            {
+                // The lines, sorted, in the shape reading gives back — the two are written
+                // together in Engine/TranslationFileEntries so the round trip can be checked.
+                TranslationFileEntries.WriteInto(prepared.Output, prepared.Lines);
+
+                string json = prepared.Output.ToString(Formatting.Indented);
+
+                lock (cacheFileLock)
+                {
+                    if (!cacheSaveOrder.MayWrite(prepared.Serial))
+                    {
+                        LogDebug($"[Cache] Save #{prepared.Serial} skipped: a newer one is already on disk");
+                        return;
+                    }
+                    AtomicFile.WriteAllText(CachePath, json);
+                }
+
+                if (DebugMode)
+                    Adapter?.LogInfo($"Saved {prepared.Lines.Count} cache entries with UUID: {FileUuid}");
+            }
+            catch (Exception e)
+            {
+                Adapter?.LogError($"Failed to save cache: {e.Message}");
+                // What was not written is still owed: the next tick tries again.
+                cacheModified = true;
+            }
         }
 
         /// <summary>

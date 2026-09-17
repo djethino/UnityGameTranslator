@@ -191,6 +191,14 @@
     <Compile Include="../../UnityGameTranslator.Core/CompanionFiles.cs" />
     <!-- The file's own facts and the moments they move at: download, upload, merge, fork, write, load. -->
     <Compile Include="../../UnityGameTranslator.Core/Engine/TranslationStore.cs" />
+    <!--
+      How a file reaches the disk (whole, never truncated first) and which of two saves may
+      land (the newer, never an older content over it); and the rule that lets a big file cross
+      a slow link — a limit per step of a transfer, never on the whole.
+    -->
+    <Compile Include="../../UnityGameTranslator.Core/Engine/AtomicFile.cs" />
+    <Compile Include="../../UnityGameTranslator.Core/Engine/SaveOrder.cs" />
+    <Compile Include="../../UnityGameTranslator.Core/Engine/StallGuard.cs" />
     <!-- The screens' sequence rules: which window is up after which act. No Unity: a view is an IScreen. -->
     <Compile Include="../../UnityGameTranslator.Core/Engine/Screens.cs" />
     <!-- What the engine asks of its host. No Unity: the day it needs one, this stops compiling. -->

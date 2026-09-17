@@ -350,7 +350,7 @@ namespace UnityGameTranslator.Core
                     output[prop.Name] = prop.Value.DeepClone();
             }
 
-            File.WriteAllText(path, output.ToString(Formatting.Indented));
+            AtomicFile.WriteAllText(path, output.ToString(Formatting.Indented));
         }
 
         /// <summary>The lines of an ancestor file: the `{v, t}` form, and the bare-string form older files carry.</summary>

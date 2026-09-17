@@ -274,7 +274,7 @@ namespace UnityGameTranslator.Core
                     output[key] = obj;
                 }
 
-                File.WriteAllText(Path.Combine(folder, ModUi.FileName), output.ToString(Formatting.Indented));
+                AtomicFile.WriteAllText(Path.Combine(folder, ModUi.FileName), output.ToString(Formatting.Indented));
                 Modified = false;
                 return true;
             }

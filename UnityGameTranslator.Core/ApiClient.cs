@@ -122,6 +122,87 @@ namespace UnityGameTranslator.Core
         /// out instead of showing a signed-in account whose every action silently fails. A single
         /// handler covers all call sites, including ones added later.
         /// </summary>
+        /// <summary>How long one step of a transfer may stand still: the headers, one piece sent, one read.</summary>
+        private static readonly TimeSpan StallLimit = TimeSpan.FromSeconds(30);
+
+        /// <summary>
+        /// Bounds each step of a request instead of the request: the answer's headers within
+        /// the limit, then every piece of a body sent and every read of a body received within
+        /// it. A transfer that keeps moving is never cut, however big; one that stops is.
+        /// </summary>
+        private class StallGuardHandler : DelegatingHandler
+        {
+            private readonly TimeSpan _limit;
+
+            public StallGuardHandler(HttpMessageHandler inner, TimeSpan limit) : base(inner)
+            {
+                _limit = limit;
+            }
+
+            protected override async Task<HttpResponseMessage> SendAsync(
+                HttpRequestMessage request, System.Threading.CancellationToken cancellationToken)
+            {
+                if (request.Content != null && !(request.Content is StallGuardContent))
+                    request.Content = await StallGuardContent.Wrap(request.Content, _limit);
+
+                // The headers: cancelled when they do not come in time. The timer is disarmed
+                // once they have, so a body still streaming is never aborted by it — the body
+                // has its own guard, read by read.
+                var headers = System.Threading.CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                headers.CancelAfter(_limit);
+                HttpResponseMessage response;
+                try
+                {
+                    response = await base.SendAsync(request, headers.Token);
+                }
+                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                {
+                    throw new TimeoutException($"No answer from the server within {_limit.TotalSeconds:0} s");
+                }
+                headers.CancelAfter(System.Threading.Timeout.InfiniteTimeSpan);
+
+                if (response.Content != null)
+                {
+                    var body = await response.Content.ReadAsStreamAsync();
+                    var guarded = new StreamContent(new StallGuardStream(body, _limit));
+                    foreach (var header in response.Content.Headers)
+                        guarded.Headers.TryAddWithoutValidation(header.Key, header.Value);
+                    response.Content = guarded;
+                }
+                return response;
+            }
+        }
+
+        /// <summary>A body sent in bounded pieces (see <see cref="StallGuard.WriteInPieces"/>), carrying the original's headers.</summary>
+        private class StallGuardContent : HttpContent
+        {
+            private readonly byte[] _bytes;
+            private readonly TimeSpan _limit;
+
+            private StallGuardContent(byte[] bytes, TimeSpan limit)
+            {
+                _bytes = bytes;
+                _limit = limit;
+            }
+
+            public static async Task<StallGuardContent> Wrap(HttpContent original, TimeSpan limit)
+            {
+                var wrapped = new StallGuardContent(await original.ReadAsByteArrayAsync(), limit);
+                foreach (var header in original.Headers)
+                    wrapped.Headers.TryAddWithoutValidation(header.Key, header.Value);
+                return wrapped;
+            }
+
+            protected override Task SerializeToStreamAsync(System.IO.Stream stream, System.Net.TransportContext context)
+                => StallGuard.WriteInPieces(stream, _bytes, _limit);
+
+            protected override bool TryComputeLength(out long length)
+            {
+                length = _bytes.Length;
+                return true;
+            }
+        }
+
         private class AuthRejectionHandler : DelegatingHandler
         {
             /// <summary>
@@ -215,9 +296,15 @@ namespace UnityGameTranslator.Core
             };
             // SetAuthToken puts the account's token in this client's default headers, so every call
             // it makes is authenticated whether or not the request says so itself.
+            // 🔴 The limit is per STEP, never on the whole request (Engine/StallGuard). One
+            // figure on the whole used to cover the headers, the upload and the download at once:
+            // a translation of a few megabytes gzipped could not be published from a slow uplink,
+            // and the failure read as a network fault. StallGuardHandler gives the headers the
+            // same 30 s, then bounds every piece sent and every read received by it.
             client = new HttpClient(new AuthRejectionHandler(
-                handler, () => client.DefaultRequestHeaders.Contains("Authorization")));
-            client.Timeout = TimeSpan.FromSeconds(30);
+                new StallGuardHandler(handler, StallLimit),
+                () => client.DefaultRequestHeaders.Contains("Authorization")));
+            client.Timeout = System.Threading.Timeout.InfiniteTimeSpan;
 
             // ⚠ Every other call in this file reads its body straight into a string. Now that the
             // handler inflates, a hostile server could answer a few kilobytes that become

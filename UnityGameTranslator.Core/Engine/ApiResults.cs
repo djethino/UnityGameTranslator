@@ -288,6 +288,12 @@ namespace UnityGameTranslator.Core
         /// <summary>Role assigned by the server (Main for public, Branch for contributor)</summary>
         public LineageRole Role { get; set; } = LineageRole.None;
         public string WebUrl { get; set; }
+
+        /// <summary>
+        /// The origin as the site RECORDED it: a pointer the caller could not have held is dropped
+        /// there, and this is where the client learns that. Null when none.
+        /// </summary>
+        public Origin? Origin { get; set; }
     }
 
     public class UuidCheckResult
@@ -398,6 +404,13 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public string Status { get; set; }
         public string Notes { get; set; }
+
+        /// <summary>
+        /// Where this row came from when it is a fork of somebody else's work — the same block
+        /// the listing carries, so the card in the game credits the source the way the site's
+        /// page does. Null when it started from nobody's, or on a site that predates the field.
+        /// </summary>
+        public Origin? Origin { get; set; }
 
         /// <summary>
         /// The link to show: this translation's own, or the Main's when a branch has none.
@@ -629,6 +642,14 @@ namespace UnityGameTranslator.Core
         /// them, so it is recorded rather than guessed.
         /// </summary>
         public bool AskedAsAccount { get; set; } = false;
+
+        /// <summary>
+        /// Where this account's row came from when it is a fork — what the card's "Forked from
+        /// @x" chip is read from, the same block the community list already credits. Kept from
+        /// the previous state when an answer does not carry the key (an older site): absent is
+        /// unknown, never "started from nobody".
+        /// </summary>
+        public Origin? Origin { get; set; }
 
         /// <summary>
         /// How many lines the published copy changed since this machine last synced, and the

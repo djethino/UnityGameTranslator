@@ -357,6 +357,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                             Hash = result.ExistingTranslation?.FileHash,
                             ResourcesUrl = result.ExistingTranslation?.ResourcesUrl,
                             Status = result.ExistingTranslation?.Status,
+                            Origin = result.ExistingTranslation?.Origin,
                             AcceptsBranches = result.AcceptsBranches,
                             // ⚠ Carried over like AcceptsBranches, or this rebuild WIPED them and
                             // the card lost the notice about a Main gone or closed.
@@ -890,6 +891,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                         // Type is now auto-calculated by server from HVASM tags
                         Notes = notes,
                         ResourcesUrl = string.IsNullOrEmpty(resourcesUrl) ? null : resourcesUrl,
+                        // As the site recorded it, which is not always as it was declared.
+                        Origin = result.Origin,
 
                         // What was just sent IS what the site now holds — reading it back would
                         // cost a round trip to learn something this client decided a second ago.

@@ -355,7 +355,10 @@ namespace UnityGameTranslator.Core
                     OwnResourcesUrl = t["resources_url_own"]?.Value<string>(),
                     LineCount = t["line_count"]?.Value<int>() ?? 0,
                     FileHash = t["file_hash"]?.Value<string>(),
-                    UpdatedAt = t["updated_at"]?.Value<string>()
+                    UpdatedAt = t["updated_at"]?.Value<string>(),
+                    // Null on a site that predates the field, and null when the row started
+                    // from nobody's work — the card shows no credit either way.
+                    Origin = ReadOrigin(t["origin"])
                 };
             }
 
@@ -458,7 +461,8 @@ namespace UnityGameTranslator.Core
                 FileHash = translation?["file_hash"]?.Value<string>(),
                 LineCount = translation?["line_count"]?.Value<int>() ?? 0,
                 Role = RoleOf(translation?["role"]?.Value<string>()),
-                WebUrl = translation?["web_url"]?.Value<string>()
+                WebUrl = translation?["web_url"]?.Value<string>(),
+                Origin = ReadOrigin(translation?["origin"])
             };
         }
 
@@ -883,6 +887,13 @@ namespace UnityGameTranslator.Core
                 // all along, and only an upload made from THIS machine used to write them back.
                 serverState.SourceLanguage = translation["source_language"]?.Value<string>();
                 serverState.TargetLanguage = translation["target_language"]?.Value<string>();
+
+                // Only when the row carries the KEY: a JSON null says "started from nobody",
+                // an absent key says an older site that cannot say — and then what the fuller
+                // answer established is kept.
+                serverState.Origin = translation["origin"] != null
+                    ? ReadOrigin(translation["origin"])
+                    : previous?.Origin;
 
                 // Only when the row carries it: the lineage answer is already in from the top
                 // level above, and an absent key here must not wipe it.

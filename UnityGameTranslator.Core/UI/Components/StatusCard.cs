@@ -408,6 +408,12 @@ namespace UnityGameTranslator.Core.UI.Components
                                  // that never sent it — unknown is not "solo work".
                                  acceptsContributions: TranslatorCore.ServerState?.AcceptsBranches,
 
+                                 // Where this row came from, when it is a fork: the credit the
+                                 // site's page and the community list already give, and this card
+                                 // gave nowhere — the same file read "Forked from @x" in a browser
+                                 // and a bare "Main" in the game (2026-09-17).
+                                 origin: TranslatorCore.ServerState?.Origin,
+
                                  // Named in the "Not yours" sentence, so somebody holding a
                                  // community translation is told WHOSE it is and that publishing
                                  // sends them a contribution rather than creating anything.

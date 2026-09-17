@@ -141,6 +141,20 @@ namespace UnityGameTranslator.Core.UI
         /// </summary>
         public static bool ComparisonGoesToLocal => ServerCopyMoved;
 
+        /// <summary>Both sides moved since the last sync — the socle's Merge verdict, from the same facts.</summary>
+        public static bool BothMoved
+        {
+            get
+            {
+                var state = TranslatorCore.ServerState;
+                if (state == null || !state.Exists || string.IsNullOrEmpty(state.Hash)) return false;
+                return Sync.Decide(TranslatorCore.ComputeContentHash() ?? "", state.Hash,
+                                   TranslatorCore.LastSyncedHash ?? "",
+                                   TranslatorCore.LocalChangesCount > 0 || TranslatorCore.MetadataDirty)
+                       == SyncDirection.Merge;
+            }
+        }
+
         private static string _countingRemoteFor;
         private static string _countedRemoteFor;
         private static int _countedRemote;
@@ -3108,11 +3122,16 @@ namespace UnityGameTranslator.Core.UI
         /// </summary>
         public static async Task OpenComparison(int translationId, bool toLocal)
         {
+            // Both sides moved: the page is told, so it opens with the site's own additions shown —
+            // hidden by default on a publishing comparison, where they are not a decision.
+            bool both = !toLocal && BothMoved;
+
             var result = await ApiClient.InitMergePreview(translationId, TranslatorCore.TranslationCache, toLocal);
 
             // After the await we may be off the main thread (IL2CPP)
             var success = result.Success;
             var url = result.Url;
+            if (both && !string.IsNullOrEmpty(url)) url += (url.Contains("?") ? "&" : "?") + "both=1";
             var token = result.Token;
             var error = result.Error;
 

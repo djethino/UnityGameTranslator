@@ -49,6 +49,7 @@ namespace UnityGameTranslator.Core.Checks
             }
             public void Store(string key, string value, string tag) => Calls.Add($"store:{key}={value}:{tag}");
             public void Notify(string original, string shown, List<object> targets) => Calls.Add($"notify:{original}→{shown}:{targets?.Count ?? 0}");
+            public void Refused(string normalized, List<object> targets) => Calls.Add($"refused:{normalized}:{targets?.Count ?? 0}");
             public void Backoff(float seconds) => Calls.Add("backoff:" + seconds.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture));
             public void Debug(string line) => Said.Add("debug:" + line);
             public void Info(string line) => Said.Add("info:" + line);

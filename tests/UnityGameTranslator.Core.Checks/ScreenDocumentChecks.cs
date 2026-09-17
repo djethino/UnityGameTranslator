@@ -122,11 +122,11 @@ namespace UnityGameTranslator.Core.Checks
             var main = ScreenDocument.FromFile(Path.Combine(folder, "main.json"));
             check(main.Acts.Keys.OrderBy(k => k).SequenceEqual(new[] {
                       "backups", "close", "compare", "contribute", "createIndependent", "ctaLogin", "download", "downloadLatest",
-                      "editDetails", "fork", "loginLogout", "mergeWithMain", "modManager", "modUpdate", "options", "resourcesOpen",
+                      "editDetails", "fix", "fork", "loginLogout", "mergeWithMain", "modManager", "modUpdate", "options", "resourcesOpen",
                       "review", "search", "transParams", "updateFromMain", "upload" }),
-                "main.json asks for the twenty-one acts its code handles", $"got {string.Join(",", main.Acts.Keys)}");
+                "main.json asks for the twenty-two acts its code handles", $"got {string.Join(",", main.Acts.Keys)}");
             check(main.Binds.Keys.OrderBy(k => k).SequenceEqual(new[] {
-                      "account", "aiStatus", "backups", "branchDesc", "communityGame", "downloadDesc", "entries", "guidance",
+                      "account", "aiStatus", "backups", "branchDesc", "communityGame", "downloadDesc", "entries", "failures", "failuresFix", "guidance",
                       "loginLogout", "mergeDesc", "modManager", "modUpdate", "modUpdateVerb", "resourcesBy", "resourcesUrl",
                       "role", "roleActionsHint", "source", "syncStatus", "target", "upload", "uploadHint" }),
                 "its slots are the lines the code writes on every redraw", $"got {string.Join(",", main.Binds.Keys)}");
@@ -173,12 +173,12 @@ namespace UnityGameTranslator.Core.Checks
             check(overlay.Body.Count == 1 && overlay.Body[0].Kind == "stack" && overlay.Body[0].Int("pad") != null && overlay.Body[0].Int("spacing") != null,
                 "one stack, whose spacing and padding the document states in pixels", "the code sizes the window from them — read there, never copied");
             check(overlay.Body[0].Children.All(b => !b.StartsVisible || b.Kind == "toast")
-                  && overlay.Body[0].Children.Count(b => b.Kind == "callout") == 4 && overlay.Nodes["ToastBox"].Kind == "toast",
-                "every box starts hidden: four callouts, a connection line, a toast", "the code shows each when its moment comes");
+                  && overlay.Body[0].Children.Count(b => b.Kind == "callout") == 5 && overlay.Nodes["ToastBox"].Kind == "toast",
+                "every box starts hidden: five callouts, a connection line, a toast", "the code shows each when its moment comes");
             check(overlay.Acts.Keys.OrderBy(k => k).SequenceEqual(new[] {
-                      "modDownload", "modIgnore", "modManager", "syncAction", "syncBranch", "syncCompare", "syncFork",
+                      "failuresFix", "failuresIgnore", "modDownload", "modIgnore", "modManager", "syncAction", "syncBranch", "syncCompare", "syncFork",
                       "syncIgnore", "syncSettings", "webNotifDismiss", "webNotifView" }),
-                "overlay.json asks for the eleven acts its code handles", $"got {string.Join(",", overlay.Acts.Keys)}");
+                "overlay.json asks for the thirteen acts its code handles", $"got {string.Join(",", overlay.Acts.Keys)}");
             check(overlay.Nodes["ConnectionDot"].Flag("wrap") == false && overlay.Nodes["ConnectionDot"].Int("minWidth") == 12,
                 "the connection dot keeps its own glyph's width and never folds", "it is what keeps the words flush against it on the right");
             check(!upload.Pinned && upload.TitleBar && ScreenDocument.Parse(JObject.Parse(@"{""name"":""X"",""size"":{""width"":500,""height"":200},""body"":[],""footer"":[]}")).TitleBar,
@@ -219,20 +219,20 @@ namespace UnityGameTranslator.Core.Checks
 
             // ── Tools and options: the two big tabbed screens ─────────────────────
             var tools = ScreenDocument.FromFile(Path.Combine(folder, "tools.json"));
-            check(tools.Header.Count == 2 && tools.Header[0].Kind == "tabs" && tools.Header[0].Children.Count == 5
+            check(tools.Header.Count == 2 && tools.Header[0].Kind == "tabs" && tools.Header[0].Children.Count == 6
                   && tools.Header[1].Kind == "stack" && tools.Header[1].Children.Count == 1 && tools.Header[1].Children[0].Kind == "tabs"
                   && tools.Header[1].Children[0].Word("contentsIn") == "FontsTab" && tools.Header[1].Children[0].Int("rowHeight") == 26
                   && tools.Nodes["FontsTab"].Children.Count == 0,
-                "tools.json: five tabs, and a row of sub-tabs in a header host whose contents go into the Fonts tab",
+                "tools.json: six tabs, and a row of sub-tabs in a header host whose contents go into the Fonts tab",
                 "the sub-tab buttons are chrome, shown only while Fonts is open; the Fonts tab holds nothing but what they show");
             check(tools.Nodes.Values.Where(n => n.Kind == "list").All(n => n.Int("preferredHeight") != null)
-                  && tools.Nodes.Values.Count(n => n.Kind == "list") == 8
+                  && tools.Nodes.Values.Count(n => n.Kind == "list") == 10
                   && tools.Nodes.Values.Where(n => n.Kind == "list" && !n.StartsVisible).All(n => n.Flag("fill") == false),
-                "every one of the eight lists states its preferred height, and the hidden find lists take no spare height",
+                "every one of the ten lists states its preferred height, and the hidden find lists take no spare height",
                 "ScrollingListHeightRule: a list weighed at its minimum leaves the panel no slack");
-            check(tools.Acts.Count == 19 && tools.Nodes["FontSharpness"].Word("options") == "code"
+            check(tools.Acts.Count == 24 && tools.Nodes["FontSharpness"].Word("options") == "code"
                   && (bool)tools.Nodes["TextEditorBtn"].Props["scope"]["onThisMachine"] && !(bool)tools.Nodes["TextEditorBtn"].Props["scope"]["yourPublishedCopy"],
-                "tools.json asks for 19 acts; the sharpness choices are the GPU's; the editors write locally", $"got {tools.Acts.Count} acts");
+                "tools.json asks for 24 acts (five of them settle a failed line); the sharpness choices are the GPU's; the editors write locally", $"got {tools.Acts.Count} acts");
 
             var options = ScreenDocument.FromFile(Path.Combine(folder, "options.json"));
             check(options.Header.Count == 1 && options.Header[0].Kind == "tabs" && options.Header[0].Children.Count == 5 && options.Body.Count == 0,
@@ -256,7 +256,7 @@ namespace UnityGameTranslator.Core.Checks
 
             // ── Templates: the rows of every list, described once, instantiated per element ──
             var templated = new Dictionary<string, int> {
-                { "merge", 2 }, { "settings-choice", 1 }, { "upload-setup", 1 }, { "inspector", 1 }, { "tools", 8 }, { "backups", 5 } };
+                { "merge", 2 }, { "settings-choice", 1 }, { "upload-setup", 1 }, { "inspector", 1 }, { "tools", 10 }, { "backups", 5 } };
             foreach (var pair in templated)
             {
                 var doc = ScreenDocument.FromFile(Path.Combine(folder, pair.Key + ".json"));

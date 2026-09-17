@@ -76,6 +76,9 @@ namespace UnityGameTranslator.Core.UI.Panels
         private LabelHandle _roleLabel;
         private LabelHandle _syncStatusLabel;
         private LabelHandle _aiStatusLabel;
+        private Host _failuresRow;
+        private LabelHandle _failuresLabel;
+        private ButtonHandle _fixBtn;
 
         // UI references - Resources link
         private Host _resourcesLinkSection;
@@ -256,6 +259,10 @@ namespace UnityGameTranslator.Core.UI.Panels
             _roleLabel = _screen.Label("RoleLabel");
             _syncStatusLabel = _screen.Label("SyncStatusLabel");
             _aiStatusLabel = _screen.Label("AIStatusLabel");
+            _failuresRow = _screen.Host("FailuresRow");
+            _failuresLabel = _screen.Label("FailuresLabel");
+            _fixBtn = _screen.Button("FixBtn");
+            TranslatorCore.Failures.Changed += () => TranslatorUIManager.RunOnMainThread(RefreshFailuresRow);
 
             _syncActionsRow = _screen.Host("SyncActionsRow");
             _uploadBtn = _screen.Button("UploadBtn");
@@ -349,6 +356,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // a window has to be told, afterwards, that the window is there — and that it is
                 // gone again. See RefreshOpenerStates.
                 case "transParams": return () => Intents.Toggle(ScreenId.TranslationParameters);
+                case "fix": return () => Intents.OpenTranslationParameters(ParametersTab.Failures);
                 case "options": return () => Intents.Toggle(ScreenId.Options);
                 case "close": return () => SetActive(false);
                 default: return null;
@@ -1203,6 +1211,23 @@ namespace UnityGameTranslator.Core.UI.Panels
             {
                 _aiStatusLabel.Show("");
             }
+
+            RefreshFailuresRow();
+        }
+
+        /// <summary>
+        /// Lines the AI gave up on this session, and the way to them: the same fact as the corner
+        /// notice, here because this card is where the eye is when reading how the translation
+        /// stands. The count is on the button too, where the decision is taken.
+        /// </summary>
+        private void RefreshFailuresRow()
+        {
+            if (_failuresRow == null) return;
+            int failed = TranslatorCore.Failures.Count;
+            _failuresRow.Visible = failed > 0;
+            if (failed == 0) return;
+            _failuresLabel.Show(Tr(failed == 1 ? "1 line could not be translated" : $"{failed} lines could not be translated"));
+            _fixBtn.Label = $"Fix ({failed})";
         }
 
         private void RefreshActionsSection()

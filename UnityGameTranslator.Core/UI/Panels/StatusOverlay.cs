@@ -70,6 +70,12 @@ namespace UnityGameTranslator.Core.UI.Panels
         private LabelHandle _aiStatusLabel;
         private LabelHandle _aiQueueLabel;
 
+        // Lines the AI gave up on this session: the fact, and the way to the Failures tab
+        private Host _failuresBox;
+        private LabelHandle _failuresLabel;
+        private ButtonHandle _failuresFixBtn;
+        private int _failuresIgnoredAt = -1;   // the count Ignore was pressed at; another failure shows the box again
+
         // UI elements - SSE connection indicator
         private Host _connectionBox;
         private LabelHandle _connectionLabel;
@@ -256,6 +262,10 @@ namespace UnityGameTranslator.Core.UI.Panels
             _modManagerBtn = _screen.Button("ModManagerBtn");
 
             _syncBox = _screen.Host("SyncBox");
+            _failuresBox = _screen.Host("FailuresBox");
+            _failuresLabel = _screen.Label("FailuresLabel");
+            _failuresFixBtn = _screen.Button("FailuresFixBtn");
+            TranslatorCore.Failures.Changed += () => TranslatorUIManager.RunOnMainThread(RefreshOverlay);
             _syncLabel = _screen.Label("SyncLabel");
             _syncBranchBtn = _screen.Button("SyncBranchBtn");
             _syncForkBtn = _screen.Button("SyncForkBtn");
@@ -297,6 +307,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                 case "syncIgnore": return OnSyncIgnoreClicked;
                 case "webNotifView": return OnWebNotifViewClicked;
                 case "webNotifDismiss": return OnWebNotifDismissClicked;
+                case "failuresFix": return OnFailuresFixClicked;
+                case "failuresIgnore": return OnFailuresIgnoreClicked;
                 default: return null;
             }
         }
@@ -646,6 +658,17 @@ namespace UnityGameTranslator.Core.UI.Panels
                 if (_syncBox != null) _syncBox.Visible = false;
             }
 
+            // 2b. Lines the AI could not translate this session — the fact and the verb, like
+            // every other box; they are settled in Translation Tools, on the Failures tab.
+            int failed = TranslatorCore.Failures.Count;
+            bool showFailures = failed > 0 && failed != _failuresIgnoredAt;
+            if (_failuresBox != null) _failuresBox.Visible = showFailures;
+            if (showFailures)
+            {
+                _failuresLabel?.Show(Tr(failed == 1 ? "1 line could not be translated" : $"{failed} lines could not be translated"));
+                if (_failuresFixBtn != null) _failuresFixBtn.Label = $"Fix ({failed})";
+            }
+
             // 3. AI queue status
             bool aiEnabled = TranslatorCore.Config.IsTranslationEnabled;
             int queueCount = TranslatorCore.QueueCount;
@@ -801,7 +824,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // 🔴 Every box of the stack, the site's notification included: left out of this list,
             // it was drawn without a height of its own, over the buttons of the box above it.
-            foreach (var box in new[] { _modUpdateBox, _syncBox, _webNotifBox, _aiBox, _connectionBox, _toast?.Handle })
+            foreach (var box in new[] { _modUpdateBox, _syncBox, _webNotifBox, _failuresBox, _aiBox, _connectionBox, _toast?.Handle })
             {
                 if (box == null || !box.Visible) continue;
 
@@ -843,6 +866,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (_modUpdateBox != null && _modUpdateBox.Visible) height += 60;
             if (_syncBox != null && _syncBox.Visible) height += 60;
             if (_webNotifBox != null && _webNotifBox.Visible) height += 60;
+            if (_failuresBox != null && _failuresBox.Visible) height += 60;
             if (_aiBox != null && _aiBox.Visible) height += 50;
             if (_connectionBox != null && _connectionBox.Visible) height += 20;
             if (_toast != null && _toast.Visible) height += 50;
@@ -965,6 +989,14 @@ namespace UnityGameTranslator.Core.UI.Panels
             {
                 RefreshOverlay();
             });
+        }
+
+        private void OnFailuresFixClicked() => Intents.OpenTranslationParameters(ParametersTab.Failures);
+
+        private void OnFailuresIgnoreClicked()
+        {
+            _failuresIgnoredAt = TranslatorCore.Failures.Count;
+            RefreshOverlay();
         }
 
         private void OnSyncIgnoreClicked()

@@ -222,6 +222,7 @@ namespace UnityGameTranslator.Core.Checks
         {
             Section("Companion files (ancestors, images)", CompanionFilesChecks.Run);
             Section("Translation store (the moments of the file)", TranslationStoreChecks.Run);
+            Section("Failed lines (kept to be settled by hand)", FailureLedgerChecks.Run);
             Section("Saving (whole or not at all, newest wins)", SavingChecks.Run);
             Section("Transfers (a limit per step, never on the whole)", StallGuardChecks.Run);
         }

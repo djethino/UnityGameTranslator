@@ -7,7 +7,7 @@ namespace UnityGameTranslator.Core.UI
     public enum ToastTone { Info, On, Off }
 
     /// <summary>The tabs of the translation-parameters window a screen may ask to land on.</summary>
-    public enum ParametersTab { Exclusions, Images, Tools, FontOverrides }
+    public enum ParametersTab { Exclusions, Images, Tools, FontOverrides, Failures }
 
     /// <summary>
     /// What a screen may ASK for — and the one place that knows which panel answers.
@@ -86,6 +86,7 @@ namespace UnityGameTranslator.Core.UI
                 case ParametersTab.Images: panel.OpenOnBitmapReplaceTab(); break;
                 case ParametersTab.Tools: panel.OpenOnToolsTab(); break;
                 case ParametersTab.FontOverrides: panel.OpenOnFontOverridesTab(); break;
+                case ParametersTab.Failures: panel.OpenOnFailuresTab(); break;
                 default: panel.OpenOnExclusionsTab(); break;
             }
         }

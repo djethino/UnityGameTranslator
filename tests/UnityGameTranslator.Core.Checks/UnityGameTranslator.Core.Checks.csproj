@@ -197,6 +197,8 @@
       a slow link — a limit per step of a transfer, never on the whole.
     -->
     <Compile Include="../../UnityGameTranslator.Core/Engine/AtomicFile.cs" />
+    <!-- The lines the AI gave up on this session, kept to be settled by hand instead of refused in the log. -->
+    <Compile Include="../../UnityGameTranslator.Core/Engine/Failures.cs" />
     <Compile Include="../../UnityGameTranslator.Core/Engine/SaveOrder.cs" />
     <Compile Include="../../UnityGameTranslator.Core/Engine/StallGuard.cs" />
     <!-- The screens' sequence rules: which window is up after which act. No Unity: a view is an IScreen. -->

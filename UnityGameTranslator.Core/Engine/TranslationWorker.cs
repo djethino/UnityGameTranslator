@@ -24,6 +24,12 @@ namespace UnityGameTranslator.Core
         /// <summary>Tell whoever is waiting — the components, the screen — what this text now reads.</summary>
         void Notify(string original, string shown, List<object> targets);
 
+        /// <summary>
+        /// The backend gave this text up for the session (it is now on the queue's give-up list):
+        /// the host may record which elements showed it, so the line can be excluded by hand.
+        /// </summary>
+        void Refused(string normalized, List<object> targets);
+
         /// <summary>Wait before asking again, in a way that can still be interrupted by a shutdown.</summary>
         void Backoff(float seconds);
 
@@ -227,6 +233,11 @@ namespace UnityGameTranslator.Core
                 host.Backoff(delaySec);
                 return WorkerOutcome.RateLimited;
             }
+
+            // Given up this session, just now: the elements it came from are the one thing the
+            // failure record cannot get from the backend.
+            if (translation == null && ctx.Queue.WasRefused(normalizedOriginal))
+                host.Refused(normalizedOriginal, item.Targets);
 
             if (string.IsNullOrEmpty(translation))
                 return WorkerOutcome.NoAnswer;

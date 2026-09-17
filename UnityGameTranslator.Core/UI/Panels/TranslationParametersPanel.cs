@@ -87,6 +87,13 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// </summary>
         private bool _fillingRows;
 
+        // Failures — the lines the AI gave up on this session, settled one by one
+        private ScrollList _failuresList, _attemptsList;
+        private Host _failureEditor, _failExcludeRow;
+        private LabelHandle _failKeyLabel, _failElementLabel, _failStatus;
+        private FieldHandle _failInput;
+        private FailedLine _failure;   // the one open in the editor, or null
+
         // Images section
         private ScrollList _imagesList;
         private LabelHandle _imagesStatus;
@@ -159,6 +166,19 @@ namespace UnityGameTranslator.Core.UI.Panels
             _findResultsList = _screen.List("FindResultsScroll");
             _exclusionsList = _screen.List("ExclusionsScroll");
             _exclusionsStatus = _screen.Label("ExclusionsStatus");
+
+            // Failures
+            _failuresList = _screen.List("FailuresScroll");
+            _attemptsList = _screen.List("AttemptsScroll");
+            _failureEditor = _screen.Host("FailureEditor");
+            _failExcludeRow = _screen.Host("FailExcludeRow");
+            _failKeyLabel = _screen.Label("FailKey");
+            _failElementLabel = _screen.Label("FailElement");
+            _failInput = _screen.Field("FailInput");
+            _failStatus = _screen.Label("FailStatus");
+            // Noted from the worker thread, settled from this one: the event marshals.
+            TranslatorCore.Failures.Changed += () => TranslatorUIManager.RunOnMainThread(OnFailuresChanged);
+            RefreshFailuresList();
 
             // Fonts — global
             _enableFontReplacementToggle = _screen.Toggle("EnableFontReplacementToggle");
@@ -238,6 +258,11 @@ namespace UnityGameTranslator.Core.UI.Panels
                 case "startInspector": return OnStartInspectorClicked;
                 case "addPattern": return OnAddManualPatternClicked;
                 case "findByValue": return OnFindByValueClicked;
+                case "failSave": return OnFailSaveClicked;
+                case "failRetranslate": return OnFailRetranslateClicked;
+                case "failSkip": return OnFailSkipClicked;
+                case "failExcludeElement": return OnFailExcludeElementClicked;
+                case "failExcludePattern": return OnFailExcludePatternClicked;
                 case "fontReplacementChanged": return OnEnableFontReplacementChanged;
                 case "sharpnessChanged": return OnFontSharpnessChanged;
                 // Explicit user request: this is the one place the ranking is allowed to re-rank.
@@ -493,6 +518,172 @@ namespace UnityGameTranslator.Core.UI.Panels
             _tabBar?.SelectTab("Exclusions");
         }
 
+        public void OpenOnFailuresTab()
+        {
+            SetActive(true);
+            _tabBar?.SelectTab("Failures");
+            RefreshFailuresList();
+        }
+
+        // ── Failures ──────────────────────────────────────────────────────
+
+        private void OnFailuresChanged()
+        {
+            RefreshFailuresList();
+            if (_failure != null && !TranslatorCore.Failures.Holds(_failure.Key))
+            {
+                // Settled elsewhere — translated after all, or written from the inspector.
+                CloseFailureEditor();
+                _failStatus.Say("Line settled");
+                _failStatus.Tone = Tone.Success;
+            }
+        }
+
+        private void RefreshFailuresList()
+        {
+            if (_failuresList == null) return;
+            _failuresList.Clear();
+            foreach (var line in TranslatorCore.Failures.All)
+            {
+                var captured = line;
+                var row = _screen.Instantiate("FailureRow", _failuresList.Rows,
+                    act => act == "pick" ? (Action)(() => OpenFailure(captured)) : null);
+                row.Say("source", OneLine(captured.Source ?? captured.Key, 90));
+                row.Say("attempts", Tr($"{captured.Attempts.Count} attempts"));
+            }
+            _failuresList.Filled();
+        }
+
+        /// <summary>Game text on one line, for a list row: line breaks would make the row as tall as the text.</summary>
+        private static string OneLine(string text, int max)
+        {
+            if (string.IsNullOrEmpty(text)) return "";
+            string flat = text.Replace("\r", " ").Replace("\n", " ");
+            return flat.Length > max ? flat.Substring(0, max) + "…" : flat;
+        }
+
+        private void OpenFailure(FailedLine line)
+        {
+            _failure = line;
+            _failKeyLabel.Show(line.Source ?? line.Key);
+
+            // The exclusion buttons need an element; the worker only knows one once the text has
+            // been shown in this session, which a line failed at launch may not have been yet.
+            bool known = line.Elements.Count > 0;
+            _failElementLabel.Show(known
+                ? string.Join("\n", line.Elements)
+                : Tr("Element not seen yet: it is known once the text shows in-game"));
+            _failExcludeRow.Visible = known;
+
+            _attemptsList.Clear();
+            foreach (var attempt in line.Attempts)
+            {
+                var captured = attempt;
+                var row = _screen.Instantiate("AttemptRow", _attemptsList.Rows,
+                    act => act == "use" ? (Action)(() => { _failInput.Text = captured.Value ?? ""; }) : null);
+                row.Say("value", captured.Value ?? "");
+                row.Say("errors", string.Join("; ", captured.Errors));
+            }
+            _attemptsList.Filled();
+
+            _failInput.Text = "";
+            _failStatus.Say("");
+            _failureEditor.Visible = true;
+        }
+
+        private void CloseFailureEditor()
+        {
+            _failure = null;
+            _failureEditor.Visible = false;
+        }
+
+        private void OnFailSaveClicked()
+        {
+            if (_failure == null) return;
+            string value = _failInput.Text;
+            if (string.IsNullOrEmpty(value))
+            {
+                _failStatus.Say("Enter a translation first");
+                _failStatus.Tone = Tone.Warning;
+                return;
+            }
+            // The same check the inspector's Save makes: a placeholder missing here is exactly
+            // what the AI was refused for.
+            string broken = TranslatorCore.ValidateEditedPlaceholders(_failure.Key, value);
+            if (broken != null)
+            {
+                _failStatus.Say(broken);
+                _failStatus.Tone = Tone.Error;
+                return;
+            }
+
+            // The write door settles the line (Failures.Remove inside it).
+            TranslatorCore.SetTranslationFromEditor(_failure.Key, value, "H");
+            CloseFailureEditor();
+            _failStatus.Say("Saved as a human translation");
+            _failStatus.Tone = Tone.Success;
+        }
+
+        private void OnFailRetranslateClicked()
+        {
+            if (_failure == null) return;
+            // The same door as the inspector's Retranslate; it forgets the give-up mark itself. A
+            // passing attempt removes the line from this list, a failing one replaces its record.
+            if (!TranslatorCore.RemoveTranslationForRetranslate(_failure.Key))
+            {
+                _failStatus.Say("Translation is switched off — turn it on in Options first");
+                _failStatus.Tone = Tone.Warning;
+                return;
+            }
+            _failStatus.Say("Asked again");
+            _failStatus.Tone = Tone.Secondary;
+        }
+
+        private void OnFailSkipClicked()
+        {
+            if (_failure == null) return;
+            string key = _failure.Key;
+            // Kept as the game shows it and no longer asked: the filing of a line the AI declines
+            // (Answers.Filing.KeptAsIs), decided here by a person. Until the game changes the
+            // text — a new version writes a new key — which is what the exclusion is for.
+            TranslatorCore.AddToCache(key, key, "S");
+            TranslatorCore.SaveCache();
+            TranslatorCore.Failures.Remove(key);
+            CloseFailureEditor();
+            _failStatus.Say("Skipped: kept as the game shows it");
+            _failStatus.Tone = Tone.Success;
+        }
+
+        private void OnFailExcludeElementClicked() => ExcludeFailedElements(path => path);
+
+        private void OnFailExcludePatternClicked() => ExcludeFailedElements(path => "**/" + LeafOf(path));
+
+        /// <summary>
+        /// Through the one door every exclusion takes on this screen — pending until Apply, listed
+        /// in Exclusions with the added mark — never straight into the file as the inspector does:
+        /// this window applies, so what it queues is seen and undone like any other change.
+        /// </summary>
+        private void ExcludeFailedElements(Func<string, string> patternOf)
+        {
+            if (_failure == null || _failure.Elements.Count == 0) return;
+            int added = 0;
+            foreach (string path in _failure.Elements)
+                if (AddPendingExclusion(patternOf(path), quiet: true)) added++;
+
+            TranslatorCore.Failures.Remove(_failure.Key);
+            CloseFailureEditor();
+            _failStatus.Say(added > 0 ? "Added to Exclusions: applied on Apply" : "Already in Exclusions");
+            _failStatus.Tone = Tone.Secondary;
+            RefreshExclusionsList();
+            UpdateApplyButtonText();
+        }
+
+        private static string LeafOf(string path)
+        {
+            int at = path.LastIndexOf('/');
+            return at >= 0 ? path.Substring(at + 1) : path;
+        }
+
         public void OpenOnBitmapReplaceTab()
         {
             SetActive(true);
@@ -541,27 +732,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 return;
             }
 
-            // Check if already exists (in current list or pending adds)
-            bool alreadyExists = TranslatorCore.UserExclusions.Contains(pattern) ||
-                                 _pendingExclusionAdds.Contains(pattern);
-            bool wasRemoved = _pendingExclusionRemoves.Contains(pattern);
-
-            if (alreadyExists && !wasRemoved)
-            {
-                _exclusionsStatus.Say("Pattern already exists");
-                _exclusionsStatus.Tone = Tone.Warning;
-                return;
-            }
-
-            // If it was pending removal, just cancel the removal
-            if (wasRemoved)
-            {
-                _pendingExclusionRemoves.Remove(pattern);
-            }
-            else
-            {
-                _pendingExclusionAdds.Add(pattern);
-            }
+            if (!AddPendingExclusion(pattern)) return;
 
             _manualPatternInput.Text = "";
             _exclusionsStatus.Say("Pattern will be added on Apply");
@@ -569,6 +740,33 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             RefreshExclusionsList();
             UpdateApplyButtonText();
+        }
+
+        /// <summary>
+        /// Queues a pattern for Apply — the one door every addition on this screen takes, whether
+        /// typed, picked from a search, or taken from a failed line. False when it is already
+        /// there; said on the Exclusions status unless <paramref name="quiet"/>.
+        /// </summary>
+        private bool AddPendingExclusion(string pattern, bool quiet = false)
+        {
+            bool alreadyExists = TranslatorCore.UserExclusions.Contains(pattern) ||
+                                 _pendingExclusionAdds.Contains(pattern);
+            bool wasRemoved = _pendingExclusionRemoves.Contains(pattern);
+
+            if (alreadyExists && !wasRemoved)
+            {
+                if (!quiet)
+                {
+                    _exclusionsStatus.Say("Pattern already exists");
+                    _exclusionsStatus.Tone = Tone.Warning;
+                }
+                return false;
+            }
+
+            // If it was pending removal, just cancel the removal
+            if (wasRemoved) _pendingExclusionRemoves.Remove(pattern);
+            else _pendingExclusionAdds.Add(pattern);
+            return true;
         }
 
         private void OnFindByValueClicked()

@@ -628,6 +628,13 @@ namespace UnityGameTranslator.Core
         // on its own.
         private static readonly TranslationQueue _queue = new TranslationQueue();
 
+        /// <summary>
+        /// The lines the AI could not translate this session, with what it proposed and why each
+        /// proposal was refused — to be settled one by one from Translation Tools (Failures).
+        /// The queue's give-up list keeps them from being asked again; this keeps them in sight.
+        /// </summary>
+        public static readonly FailureLedger Failures = new FailureLedger();
+
         // ⚠ What lockObj still guards: the translation caches, the capture-order counter and the
         // retranslation requests. The queue is no longer among them.
         private static object lockObj = new object();
@@ -3596,6 +3603,11 @@ namespace UnityGameTranslator.Core
             if (string.IsNullOrEmpty(key) || string.IsNullOrEmpty(newValue)) return;
             if (string.IsNullOrEmpty(tag)) tag = "H";
 
+            // A line written by hand is settled, wherever it was written from — the inspector,
+            // the Failures tab — and may be asked again if it ever changes.
+            Failures.Remove(key);
+            _queue.ForgetRefused(key);
+
             // 🔴 D8 at the last door: a key in Arabic presentation forms is the RTL pipeline's
             // DISPLAY output read back — it can never match any source text again and pollutes
             // the shared file irreversibly. It happened once (an editor row resolved to a shaped
@@ -4041,6 +4053,10 @@ namespace UnityGameTranslator.Core
 
             // Only a request that actually wrote has anything to save. A proposal deliberately
             // leaves the file alone, so there is nothing to push to a browser either.
+            // Translated after all: nothing left to settle by hand.
+            if (outcome == RetranslateOutcome.Replaced)
+                Failures.Remove(request.Key);
+
             if (outcome == RetranslateOutcome.Replaced && request.StoreResult)
                 SaveCache();
 
@@ -4990,6 +5006,9 @@ namespace UnityGameTranslator.Core
                 //            deterministic basin that failed twice.
                 string translation = null;
                 List<string> validationErrors = null;
+                // Every refused answer, kept for the Failures tab: what came back and what was wrong
+                // with it are the two things somebody needs to settle the line by hand.
+                var attempts = new List<FailedAttempt>();
                 string failedResponse = null;
                 bool isValid = false;
 
@@ -5094,6 +5113,7 @@ namespace UnityGameTranslator.Core
                     if (!isValid)
                     {
                         failedResponse = translation;
+                        attempts.Add(new FailedAttempt { Value = translation, Errors = new List<string>(validationErrors ?? new List<string>()) });
                         Adapter?.LogWarning($"[AI] Attempt {attempt + 1}/{maxAttempts}: invalid placeholders ({string.Join("; ", validationErrors)}) for: {textToTranslate.Substring(0, Math.Min(60, textToTranslate.Length))}...");
                     }
                 }
@@ -5103,6 +5123,7 @@ namespace UnityGameTranslator.Core
                     // Never cache the corruption. In-memory marker only:
                     // left untranslated this session, retried on next launch.
                     _queue.NoteRefused(textWithPlaceholders);
+                    Failures.Note(new FailedLine { Key = textWithPlaceholders, Source = textToTranslate, Attempts = attempts });
                     Adapter?.LogWarning($"[AI] Placeholder validation failed after {maxAttempts} attempts, left untranslated: {textToTranslate.Substring(0, Math.Min(60, textToTranslate.Length))}...");
                     return null;
                 }
@@ -5426,6 +5447,13 @@ namespace UnityGameTranslator.Core
                     else
                     {
                         _queue.NoteRefused(textWithPlaceholders);
+                        // One answer, one refusal: the API is asked once, so the record holds one attempt.
+                        Failures.Note(new FailedLine
+                        {
+                            Key = textWithPlaceholders,
+                            Source = textToTranslate,
+                            Attempts = new List<FailedAttempt> { new FailedAttempt { Value = translation, Errors = new List<string>(apiErrors) } },
+                        });
                         Adapter?.LogWarning($"[API] Invalid placeholders ({string.Join("; ", apiErrors)}), left untranslated: {textToTranslate.Substring(0, Math.Min(60, textToTranslate.Length))}...");
                         return null;
                     }
@@ -5902,6 +5930,28 @@ namespace UnityGameTranslator.Core
 
             public void Notify(string original, string shown, List<object> targets)
                 => OnTranslationComplete?.Invoke(original, shown, targets);
+
+            /// <summary>
+            /// The elements that showed a line the AI gave up on, named by path so the Failures
+            /// tab can offer to exclude them. On the main thread: a path is read from the
+            /// transform, and the worker thread holds only the component references.
+            /// </summary>
+            public void Refused(string normalized, List<object> targets)
+            {
+                if (targets == null || targets.Count == 0) return;
+                var held = new List<object>(targets);
+                Host?.RunOnMainThread(() =>
+                {
+                    var paths = new List<string>();
+                    foreach (var target in held)
+                    {
+                        var component = target as Component;
+                        if (component == null || component.gameObject == null) continue;
+                        paths.Add(GetGameObjectPath(component.gameObject));
+                    }
+                    Failures.AttachElements(normalized, paths);
+                });
+            }
 
             public void Backoff(float seconds)
             {

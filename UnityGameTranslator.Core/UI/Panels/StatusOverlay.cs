@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using UnityGameTranslator.Common;
 using UniverseLib.UI;
 using UnityGameTranslator.Core.UI.Components;
@@ -61,13 +62,8 @@ namespace UnityGameTranslator.Core.UI.Panels
         private LabelHandle _webNotifTitle;
         private ButtonHandle _webNotifViewBtn;
 
-        /// <summary>
-        /// Where View leads for the notification shown: the Main of this game, when the
-        /// notification is a wall on the very translation the game holds. The site's page for it
-        /// offers a convert-and-download by hand, which nobody does when the game's own screen
-        /// states the fact and its own Fork settles it, locally.
-        /// </summary>
-        private bool _webNotifOpensMain;
+        /// <summary>The notifications shown in this corner, of all the site sent — what Dismiss puts away.</summary>
+        private readonly List<string> _webNotifShown = new List<string>();
 
         // UI elements - AI queue status
         private Host _aiBox;
@@ -399,51 +395,80 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (_webNotifBox == null) return;
 
             var result = TranslatorUIManager.WebsiteNotifications;
-            bool show = !TranslatorUIManager.WebsiteNotificationsDismissed &&
-                        result != null && result.Unread > 0 && result.Items.Count > 0;
 
+            // 🔴 **Current is current** (the user, 2026-09-17). This corner speaks of the translation
+            // the game HOLDS and of nothing else. A contribution sent, closed, merged or orphaned
+            // on another lineage — even another lineage of this same game — is that lineage's
+            // business: it is read on its row of the community list, or on the site. Announced
+            // here it read as a fact about the translation in use, and the reader, Main of the
+            // one installed, was told their Main had been removed.
+            //
+            // ⚠ And what the sync box already states about the installed one is not said a second
+            // time by the site's copy: a wall (the card states the fact, Fork is the way out) and
+            // contributions waiting for review (the sync box has its Review). What is left for the
+            // site to say here is what the game cannot know on its own — lines of the installed
+            // contribution merged by its Main — and what is not about a lineage at all.
+            _webNotifShown.Clear();
+            ModNotificationItem first = null;
+            if (result != null)
+            {
+                foreach (var item in result.Items)
+                {
+                    if (!ThisCornerSays(item)) continue;
+                    if (first == null) first = item;
+                    _webNotifShown.Add(item.Id);
+                }
+            }
+
+            bool show = !TranslatorUIManager.WebsiteNotificationsDismissed && first != null;
             _webNotifBox.Visible = show;
             if (show)
             {
-                var item = result.Items[0];
-
                 // Comes from the website, so it may carry line breaks — same one-line rule
-                string text = Flatten(item.Text);
-                if (result.Unread > 1)
+                string text = Flatten(first.Text);
+                if (_webNotifShown.Count > 1)
                 {
-                    text += " " + Tr($"(+{result.Unread - 1} more)");
+                    text += " " + Tr($"(+{_webNotifShown.Count - 1} more)");
                 }
                 _webNotifTitle.Show(text);
-
-                // A wall on THIS game's translation is answered here, in the Main: the card states
-                // the fact, Fork is the way out, and nothing leaves the machine. A wall on another
-                // lineage has nothing to open from here — the sentence names whose it is, and the
-                // way out is in the game holding it. Anything else has its page on the site.
-                bool aboutThisFile = item.Uuid != null && TranslatorCore.IsUuidMatch(item.Uuid);
-                _webNotifOpensMain = item.IsWall && aboutThisFile;
-                _webNotifViewBtn.Visible = _webNotifOpensMain || (!item.IsWall && item.Url != null);
+                _webNotifViewBtn.Visible = first.Url != null;
             }
 
             // A box that appeared or went, a sentence that may wrap: the window is sized again.
             AdjustHeight();
         }
 
+        /// <summary>
+        /// Whether a notification of the site belongs in this corner: not about a lineage at all
+        /// (an announcement), or about the lineage this game holds and not already stated by the
+        /// game itself. A server that predates the lineage field says nothing about it, and
+        /// nothing is shown rather than a guess.
+        /// </summary>
+        private static bool ThisCornerSays(ModNotificationItem item)
+        {
+            if (item.Type == "announcement") return true;
+            if (item.Uuid == null || !TranslatorCore.IsUuidMatch(item.Uuid)) return false;
+            // Told by the sync box already: a wall, and contributions waiting for review.
+            if (item.IsWall || item.Type == "branch_submitted") return false;
+            return true;
+        }
+
         private void OnWebNotifViewClicked()
         {
-            if (_webNotifOpensMain)
-            {
-                Intents.ShowMain();
-                return;
-            }
-
             var result = TranslatorUIManager.WebsiteNotifications;
-            string url = result?.Items.Count > 0 ? result.Items[0].Url : null;
+            string url = null;
+            if (result != null && _webNotifShown.Count > 0)
+            {
+                foreach (var item in result.Items)
+                    if (item.Id == _webNotifShown[0]) { url = item.Url; break; }
+            }
             TranslatorCore.OpenUrlSafe(url ?? $"{ApiClient.WebsiteBaseUrl}/notifications");
         }
 
+        /// <summary>Puts away what this corner showed — and only that: the rest was never this game's to read.</summary>
         private void OnWebNotifDismissClicked()
         {
-            TranslatorUIManager.MarkWebsiteNotificationsRead();
+            TranslatorUIManager.MarkWebsiteNotificationsRead(new List<string>(_webNotifShown));
             if (_webNotifBox != null) _webNotifBox.Visible = false;
         }
 

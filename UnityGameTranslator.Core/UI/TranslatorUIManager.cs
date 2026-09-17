@@ -1809,13 +1809,15 @@ namespace UnityGameTranslator.Core.UI
         }
 
         /// <summary>
-        /// Mark all website notifications as read (called from the overlay's dismiss).
+        /// Mark website notifications as read (called from the overlay's dismiss) — the ones the
+        /// corner showed, never the whole list: what it did not show was another lineage's, and
+        /// stays unread for the screen that does show it.
         /// </summary>
-        public static async void MarkWebsiteNotificationsRead()
+        public static async void MarkWebsiteNotificationsRead(List<string> ids)
         {
             WebsiteNotificationsDismissed = true;
             WebsiteNotifications = null;
-            await ApiClient.MarkNotificationsReadAsync();
+            await ApiClient.MarkNotificationsReadAsync(ids);
         }
 
         #endregion

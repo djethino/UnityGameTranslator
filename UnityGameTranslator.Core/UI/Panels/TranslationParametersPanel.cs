@@ -937,6 +937,17 @@ namespace UnityGameTranslator.Core.UI.Panels
             _failStatus.Tone = Tone.Secondary;
             RefreshExclusionsList();
             UpdateApplyButtonText();
+
+            // 🔴 Taken to where the decision now waits. The pattern was queued on another tab, and
+            // Apply lit there, with nothing on this one saying that a click was still owed: the
+            // exclusion sat pending until somebody noticed the count on the button. The
+            // Exclusions tab shows the row with its added mark, and its status line says so.
+            if (added > 0)
+            {
+                _tabBar?.SelectTab("Exclusions");
+                _exclusionsStatus.Say(added == 1 ? "1 exclusion added from Failures: applied on Apply" : $"{added} exclusions added from Failures: applied on Apply");
+                _exclusionsStatus.Tone = Tone.Secondary;
+            }
         }
 
         private static string LeafOf(string path)

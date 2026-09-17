@@ -142,6 +142,8 @@ namespace UnityGameTranslator.Core.UI
         public static bool ComparisonGoesToLocal => ServerCopyMoved;
 
         private static string _countingRemoteFor;
+        private static string _countedRemoteFor;
+        private static int _countedRemote;
 
         /// <summary>
         /// How many lines the published copy changed since this machine last synced — counted
@@ -159,6 +161,15 @@ namespace UnityGameTranslator.Core.UI
             if (state == null || !state.Exists || !state.IsOwner || !state.SiteId.HasValue || string.IsNullOrEmpty(state.Hash)) return;
             if (state.LinesChangedFor == state.Hash || _countingRemoteFor == state.Hash) return;
             if (string.Equals(state.Hash, TranslatorCore.LastSyncedHash, StringComparison.OrdinalIgnoreCase)) return;
+
+            // Counted already for this hash, on a state the sync stream has since replaced: the
+            // answer is the same, and the copy is not fetched a second time for it.
+            if (_countedRemoteFor == state.Hash)
+            {
+                state.LinesChanged = _countedRemote;
+                state.LinesChangedFor = state.Hash;
+                return;
+            }
             if (!TranslatorCore.Config.online_mode) return;
 
             _countingRemoteFor = state.Hash;
@@ -185,6 +196,8 @@ namespace UnityGameTranslator.Core.UI
                     var stats = TranslationMerger.MergeWithTags(TranslatorCore.TranslationCache, remote, TranslatorCore.AncestorCache).Statistics;
                     state.LinesChanged = stats.RemoteAddedCount + stats.RemoteUpdatedCount + stats.DeletedCount + stats.ConflictCount;
                     state.LinesChangedFor = state.Hash;
+                    _countedRemoteFor = state.Hash;
+                    _countedRemote = state.LinesChanged.Value;
                     TranslatorCore.LogInfo($"[Sync] The published copy changed {state.LinesChanged} line(s) since the last sync");
 
                     Intents.StateChanged();
@@ -3108,7 +3121,9 @@ namespace UnityGameTranslator.Core.UI
                 if (success && !string.IsNullOrEmpty(url))
                 {
                     // Debug only: the URL carries a one-time login token
-                    TranslatorCore.LogDebug($"[Compare] Opening {(toLocal ? "local" : "publish")} comparison");
+                    TranslatorCore.LogInfo($"[Compare] Opening {(toLocal ? "local" : "publish")} comparison — "
+                                           + $"{TranslatorCore.LocalChangesCount} local change(s), metadata dirty: {TranslatorCore.MetadataDirty}, "
+                                           + $"site changed {TranslatorCore.ServerState?.LinesChanged?.ToString() ?? "?"} line(s)");
                     TranslatorCore.OpenUrlSafe(ApiClient.GetMergePreviewFullUrl(url));
 
                     if (!string.IsNullOrEmpty(token))

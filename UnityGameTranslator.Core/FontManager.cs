@@ -2613,7 +2613,10 @@ namespace UnityGameTranslator.Core
                     RecomputeEffectiveScale(msSettings, originalFontName);
                     if (Math.Abs(msSettings.scale - before) > 0.001f)
                     {
-                        TranslatorCore.SetMetadataDirty();
+                        // ⚠ Not marked dirty: this is a value DERIVED from the font at hand, written
+                        // for older readers, not a change anybody made. Marking it turned every
+                        // session that met the font into "settings changed — not uploaded yet", and
+                        // a copy that had only the site's update to take into a conflict to merge.
                         TranslatorCore.LogDebug($"[DesignScale] materialized effective scale={msSettings.scale:F3} for '{originalFontName}' (auto, ds={ds:F3} × {msSettings.size_percent:F2})");
                     }
                 }

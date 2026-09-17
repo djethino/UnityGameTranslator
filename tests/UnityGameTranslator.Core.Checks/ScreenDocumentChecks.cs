@@ -226,13 +226,13 @@ namespace UnityGameTranslator.Core.Checks
                 "tools.json: six tabs, and a row of sub-tabs in a header host whose contents go into the Fonts tab",
                 "the sub-tab buttons are chrome, shown only while Fonts is open; the Fonts tab holds nothing but what they show");
             check(tools.Nodes.Values.Where(n => n.Kind == "list").All(n => n.Int("preferredHeight") != null)
-                  && tools.Nodes.Values.Count(n => n.Kind == "list") == 10
+                  && tools.Nodes.Values.Count(n => n.Kind == "list") == 11
                   && tools.Nodes.Values.Where(n => n.Kind == "list" && !n.StartsVisible).All(n => n.Flag("fill") == false),
-                "every one of the ten lists states its preferred height, and the hidden find lists take no spare height",
+                "every one of the eleven lists states its preferred height, and the hidden find lists take no spare height",
                 "ScrollingListHeightRule: a list weighed at its minimum leaves the panel no slack");
-            check(tools.Acts.Count == 24 && tools.Nodes["FontSharpness"].Word("options") == "code"
+            check(tools.Acts.Count == 27 && tools.Nodes["FontSharpness"].Word("options") == "code"
                   && (bool)tools.Nodes["TextEditorBtn"].Props["scope"]["onThisMachine"] && !(bool)tools.Nodes["TextEditorBtn"].Props["scope"]["yourPublishedCopy"],
-                "tools.json asks for 24 acts (five of them settle a failed line); the sharpness choices are the GPU's; the editors write locally", $"got {tools.Acts.Count} acts");
+                "tools.json asks for 27 acts (eight of them settle a failed line, three turning its pages); the sharpness choices are the GPU's; the editors write locally", $"got {tools.Acts.Count} acts");
 
             var options = ScreenDocument.FromFile(Path.Combine(folder, "options.json"));
             check(options.Header.Count == 1 && options.Header[0].Kind == "tabs" && options.Header[0].Children.Count == 5 && options.Body.Count == 0,
@@ -256,7 +256,7 @@ namespace UnityGameTranslator.Core.Checks
 
             // ── Templates: the rows of every list, described once, instantiated per element ──
             var templated = new Dictionary<string, int> {
-                { "merge", 2 }, { "settings-choice", 1 }, { "upload-setup", 1 }, { "inspector", 1 }, { "tools", 10 }, { "backups", 5 } };
+                { "merge", 2 }, { "settings-choice", 1 }, { "upload-setup", 1 }, { "inspector", 1 }, { "tools", 11 }, { "backups", 5 } };
             foreach (var pair in templated)
             {
                 var doc = ScreenDocument.FromFile(Path.Combine(folder, pair.Key + ".json"));

@@ -67,25 +67,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// "le panneau s'ouvre trop petit". This tells the measure what the lists could show, and
         /// the base then opens the window at that, or at what the screen allows.
         /// </summary>
-        protected override float ContentHeightFloor
-        {
-            get
-            {
-                if (_slices.Count == 0) return 0f;
-
-                var content = BodyContentHeight;
-                if (content <= 0f) return 0f;
-
-                double given = 0, whole = 0;
-                for (var i = 0; i < _slices.Count; i++)
-                {
-                    given += _slices[i].Given;
-                    whole += _slices[i].List.ContentHeight;
-                }
-
-                return (float)(content - given + whole);
-            }
-        }
+        protected override float ContentHeightFloor => _shares.ContentWhole(BodyContentHeight);
 
         /// <summary>
         /// The window's floor and ceiling as last measured — both lists at their least rows, both
@@ -116,25 +98,10 @@ namespace UnityGameTranslator.Core.UI.Panels
         // ⚠ What a resize does is pose HEIGHTS, in BodySized, from the room that was measured.
 
         /// <summary>
-        /// One list and what it was last given — kept because the height is not settled when the
-        /// list is built: it is settled once the body has a measured size, and again every time
-        /// that size changes.
+        /// The two lists and the heights they were given — the arbitration itself is
+        /// <see cref="ListShares"/>, shared with every screen that divides a body between lists.
         /// </summary>
-        private sealed class Slice
-        {
-            public ScrollList List;
-
-            /// <summary>How many rows it holds — what the floor is worked out from.</summary>
-            public int Rows;
-
-            /// <summary>What it was last given — what the measured chrome is worked out against.</summary>
-            public int Given;
-        }
-
-        private readonly List<Slice> _slices = new List<Slice>();
-
-        /// <summary>Whether the lists have been given their height since the last redraw.</summary>
-        private bool _shared;
+        private readonly ListShares _shares = new ListShares();
 
         private BuiltScreen _screen;
         private ButtonHandle _saveBtn;
@@ -232,8 +199,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             // from a guess, inside a layout system that knows the real sizes and re-runs on every
             // resize. The heights are posed in BodySized, from a body that has been MEASURED, and
             // posed again whenever that body moves.
-            _slices.Clear();
-            _shared = false;
+            _shares.Forget();
 
             Group(Backups.SavedHeading, $"{saved.Count} of {Backups.SavedKept}", saved,
                   "No backups yet. Take one before you try something, and you can walk back out "
@@ -276,50 +242,14 @@ namespace UnityGameTranslator.Core.UI.Panels
             var body = BodyHeight;
             if (body <= 1f) return;
 
-            // 🔴 **The chrome is MEASURED, and nothing about it is written down here.** Everything
-            // the body carries that is not a list — two headings, the verb under one of them, the
-            // padding of the card, the gap between the blocks, a whole block reduced to a sentence
-            // when its list is empty — is the difference between what the content asks for and what
-            // the lists were last given. Declaring those figures instead is what left a band of
-            // empty card under the lists when it overshot, and a scrollbar around the whole screen
-            // when it fell short. The same for what the window carries around its body: title bar,
-            // header, help bar, footer — the window's height less the body's.
-            double given = 0;
-            for (var i = 0; i < _slices.Count; i++) given += _slices[i].Given;
+            // 🔴 **The chrome is MEASURED, and nothing about it is written down here** — see
+            // ListShares.Share: everything the body carries that is not a list is the difference
+            // between what the content asks for and what the lists were last given, and what the
+            // window carries around its body is its height less the body's.
+            if (!_shares.Share(body, BodyContentHeight, Rect.rect.height - body)) return;
 
-            var chrome = BodyContentHeight - given;
-            var around = Rect.rect.height - body;
-
-            var rooms = new List<ListRoom>();
-            double least = 0, whole = 0;
-            for (var i = 0; i < _slices.Count; i++)
-            {
-                var content = _slices[i].List.ContentHeight;
-                var room = ListRooms.Of(content, _slices[i].Rows, content / _slices[i].Rows);
-                rooms.Add(room);
-                least += room.Least;
-                whole += room.Whole;
-            }
-
-            _floor = (int)Math.Ceiling(around + chrome + least);
-            _ceiling = (int)Math.Ceiling(around + chrome + whole);
-
-            var heights = ListRooms.Share(rooms, body - chrome);
-
-            for (var i = 0; i < _slices.Count; i++)
-            {
-                // 🔴 **A list nobody has scrolled stays at its first row; one somebody is reading
-                // is left alone.** Read before the height is posed, and put back after: a rebuilt
-                // list is put back whatever it showed, since it is not the same list.
-                var atTop = _slices[i].List.AtTop;
-
-                _slices[i].Given = (int)Math.Max(0, heights[i]);
-                _slices[i].List.SetHeight(_slices[i].Given, fill: false);
-
-                if (!_shared || atTop) _slices[i].List.ToTop();
-            }
-
-            _shared = true;
+            _floor = _shares.Floor;
+            _ceiling = _shares.Ceiling;
 
             // ⚠ A window restored from a preference, or one whose content changed while it was
             // hidden, can be under the floor or over the ceiling that were just measured. Under,
@@ -412,13 +342,11 @@ namespace UnityGameTranslator.Core.UI.Panels
             // this body asks for stays under the body itself and the panel never grows a scrollbar
             // of its own. The real height is posed in BodySized, from the measured room and the
             // measured rows.
-            var floor = (int)ListRooms.For(entries.Count, RowSpace, ListPad).Least;
-
             var list = block.List("Rows");
-            list.SetHeight(floor, fill: false);
             list.Visible = true;
 
-            _slices.Add(new Slice { List = list, Rows = entries.Count, Given = floor });
+            int rows = entries.Count;
+            _shares.Add(list, () => rows, RowSpace, ListPad);
 
             foreach (var entry in entries) Row(list.Rows, entry);
 

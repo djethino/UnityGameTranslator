@@ -88,11 +88,17 @@ namespace UnityGameTranslator.Core.UI.Panels
         private bool _fillingRows;
 
         // Failures — the lines the AI gave up on this session, settled one by one
-        private ScrollList _failuresList, _attemptsList;
+        private ScrollList _failuresList, _sourceList, _attemptList;
         private Host _failureEditor, _failExcludeRow;
-        private LabelHandle _failKeyLabel, _failElementLabel, _failStatus;
+        private LabelHandle _failElementLabel, _attemptIndexLabel, _failStatus;
+        private ButtonHandle _prevAttemptBtn, _nextAttemptBtn, _useAttemptBtn;
         private FieldHandle _failInput;
-        private FailedLine _failure;   // the one open in the editor, or null
+        private BuiltScreen _sourceRow, _attemptRow;   // the one row of each text area, written in place
+        private FailedLine _failure;                   // the one open in the editor, or null
+        private int _attemptAt;                        // which proposal the pager shows
+
+        /// <summary>The three scroll areas of the Failures tab — the lines, the game text, the proposal — sharing the body.</summary>
+        private readonly ListShares _failShares = new ListShares();
 
         // Images section
         private ScrollList _imagesList;
@@ -169,13 +175,19 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // Failures
             _failuresList = _screen.List("FailuresScroll");
-            _attemptsList = _screen.List("AttemptsScroll");
+            _sourceList = _screen.List("SourceScroll");
+            _attemptList = _screen.List("AttemptScroll");
             _failureEditor = _screen.Host("FailureEditor");
             _failExcludeRow = _screen.Host("FailExcludeRow");
-            _failKeyLabel = _screen.Label("FailKey");
             _failElementLabel = _screen.Label("FailElement");
+            _attemptIndexLabel = _screen.Label("AttemptIndex");
+            _prevAttemptBtn = _screen.Button("PrevAttemptBtn");
+            _nextAttemptBtn = _screen.Button("NextAttemptBtn");
+            _useAttemptBtn = _screen.Button("UseAttemptBtn");
             _failInput = _screen.Field("FailInput");
             _failStatus = _screen.Label("FailStatus");
+            // The tab's heights are posed when it is the one shown — a hidden hierarchy measures nothing.
+            _tabBar.OnTabChanged += (_, name) => { if (name == "Failures") ShareFailures(); };
             // Noted from the worker thread, settled from this one: the event marshals.
             TranslatorCore.Failures.Changed += () => TranslatorUIManager.RunOnMainThread(OnFailuresChanged);
             RefreshFailuresList();
@@ -263,6 +275,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                 case "failSkip": return OnFailSkipClicked;
                 case "failExcludeElement": return OnFailExcludeElementClicked;
                 case "failExcludePattern": return OnFailExcludePatternClicked;
+                case "prevAttempt": return OnPrevAttemptClicked;
+                case "nextAttempt": return OnNextAttemptClicked;
+                case "useAttempt": return OnUseAttemptClicked;
                 case "fontReplacementChanged": return OnEnableFontReplacementChanged;
                 case "sharpnessChanged": return OnFontSharpnessChanged;
                 // Explicit user request: this is the one place the ranking is allowed to re-rank.
@@ -552,7 +567,42 @@ namespace UnityGameTranslator.Core.UI.Panels
                 row.Say("attempts", Tr($"{captured.Attempts.Count} attempts"));
             }
             _failuresList.Filled();
+
+            RegisterFailureShares();
+            ShareFailures();
         }
+
+        /// <summary>
+        /// The scroll areas of this tab, registered afresh: the list of lines always, the game
+        /// text and the proposal while a line is open. A rebuilt list is not the same list.
+        /// </summary>
+        private void RegisterFailureShares()
+        {
+            _failShares.Forget();
+            int lines = TranslatorCore.Failures.Count;
+            _failShares.Add(_failuresList, () => Math.Max(1, lines), UIStyles.RowHeightNormal + 4, 8);
+            if (_failure == null) return;
+            _failShares.Add(_sourceList, () => LinesIn(_sourceList), UIStyles.RowHeightSmall, 8);
+            _failShares.Add(_attemptList, () => LinesIn(_attemptList), UIStyles.RowHeightSmall, 8);
+        }
+
+        /// <summary>A text area's rows are its lines at the current width: the floor of two rows is two lines of text.</summary>
+        private static int LinesIn(ScrollList list)
+            => Math.Max(1, (int)Math.Ceiling(list.ContentHeight / UIStyles.RowHeightSmall));
+
+        /// <summary>
+        /// Poses the heights of the tab's scroll areas from the measured body, when this tab is
+        /// the one shown — asked on every resize (BodySized), after every redraw, and when the
+        /// pager turns a page, since the proposal's height is part of what is divided.
+        /// </summary>
+        private void ShareFailures()
+        {
+            if (UIRoot == null || !UIRoot.activeInHierarchy) return;
+            if (_tabBar == null || _tabBar.SelectedName != "Failures") return;
+            _failShares.Share(BodyHeight, BodyContentHeight, 0f);
+        }
+
+        protected override void BodySized() => ShareFailures();
 
         /// <summary>Game text on one line, for a list row: line breaks would make the row as tall as the text.</summary>
         private static string OneLine(string text, int max)
@@ -565,7 +615,13 @@ namespace UnityGameTranslator.Core.UI.Panels
         private void OpenFailure(FailedLine line)
         {
             _failure = line;
-            _failKeyLabel.Show(line.Source ?? line.Key);
+
+            // The game text, in a scroll area of its own: raw, tags and placeholders as the model
+            // has to keep them — rendered as rich text, a tag the model broke would swallow the rest.
+            _sourceList.Clear();
+            _sourceRow = _screen.Instantiate("TextRow", _sourceList.Rows, _ => null);
+            _sourceRow.Say("text", line.Source ?? line.Key);
+            _sourceList.Filled();
 
             // The exclusion buttons need an element; the worker only knows one once the text has
             // been shown in this session, which a line failed at launch may not have been yet.
@@ -575,26 +631,79 @@ namespace UnityGameTranslator.Core.UI.Panels
                 : Tr("Element not seen yet: it is known once the text shows in-game"));
             _failExcludeRow.Visible = known;
 
-            _attemptsList.Clear();
-            foreach (var attempt in line.Attempts)
-            {
-                var captured = attempt;
-                var row = _screen.Instantiate("AttemptRow", _attemptsList.Rows,
-                    act => act == "use" ? (Action)(() => { _failInput.Text = captured.Value ?? ""; }) : null);
-                row.Say("value", captured.Value ?? "");
-                row.Say("errors", string.Join("; ", captured.Errors));
-            }
-            _attemptsList.Filled();
+            // One row for the proposal shown; the pager writes into it rather than rebuilding it.
+            _attemptList.Clear();
+            _attemptRow = _screen.Instantiate("AttemptText", _attemptList.Rows, _ => null);
+            _attemptList.Filled();
+            _attemptAt = 0;
 
             _failInput.Text = "";
             _failStatus.Say("");
             _failureEditor.Visible = true;
+
+            ShowAttempt();
+            RegisterFailureShares();
+            ShareFailures();
+        }
+
+        /// <summary>
+        /// The proposal the pager is on, written into the same row: turning a page changes the
+        /// words and the heights, and nothing flashes. The arrows grey at either end.
+        /// </summary>
+        private void ShowAttempt()
+        {
+            if (_failure == null || _attemptRow == null) return;
+            int count = _failure.Attempts.Count;
+            if (count == 0)
+            {
+                _attemptRow.Say("value", "");
+                _attemptRow.Say("errors", Tr("No proposal kept"));
+                _attemptIndexLabel.Show("0/0");
+                _prevAttemptBtn.Enabled = _nextAttemptBtn.Enabled = _useAttemptBtn.Enabled = false;
+            }
+            else
+            {
+                _attemptAt = Math.Max(0, Math.Min(_attemptAt, count - 1));
+                var attempt = _failure.Attempts[_attemptAt];
+                _attemptRow.Say("value", attempt.Value ?? "");
+                _attemptRow.Say("errors", string.Join("; ", attempt.Errors));
+                _attemptIndexLabel.Show($"{_attemptAt + 1}/{count}");
+                _prevAttemptBtn.Enabled = _attemptAt > 0;
+                _nextAttemptBtn.Enabled = _attemptAt < count - 1;
+                _useAttemptBtn.Enabled = true;
+            }
+            _attemptList.ToTop();
+            ShareFailures();
+        }
+
+        private void OnPrevAttemptClicked()
+        {
+            if (_attemptAt <= 0) return;
+            _attemptAt--;
+            ShowAttempt();
+        }
+
+        private void OnNextAttemptClicked()
+        {
+            if (_failure == null || _attemptAt >= _failure.Attempts.Count - 1) return;
+            _attemptAt++;
+            ShowAttempt();
+        }
+
+        private void OnUseAttemptClicked()
+        {
+            if (_failure == null || _attemptAt >= _failure.Attempts.Count) return;
+            _failInput.Text = _failure.Attempts[_attemptAt].Value ?? "";
         }
 
         private void CloseFailureEditor()
         {
             _failure = null;
+            _sourceRow = null;
+            _attemptRow = null;
             _failureEditor.Visible = false;
+            RegisterFailureShares();
+            ShareFailures();
         }
 
         private void OnFailSaveClicked()

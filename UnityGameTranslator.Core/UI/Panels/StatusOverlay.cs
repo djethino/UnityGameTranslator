@@ -400,6 +400,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                 }
                 _webNotifTitle.Show(text);
             }
+
+            // A box that appeared or went, a sentence that may wrap: the window is sized again.
+            AdjustHeight();
         }
 
         private void OnWebNotifViewClicked()
@@ -742,7 +745,9 @@ namespace UnityGameTranslator.Core.UI.Panels
             int height = StackPadding;
             int shown = 0;
 
-            foreach (var box in new[] { _modUpdateBox, _syncBox, _aiBox, _connectionBox })
+            // 🔴 Every box of the stack, the site's notification included: left out of this list,
+            // it was drawn without a height of its own, over the buttons of the box above it.
+            foreach (var box in new[] { _modUpdateBox, _syncBox, _webNotifBox, _aiBox, _connectionBox })
             {
                 if (box == null || !box.Visible) continue;
 
@@ -783,6 +788,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             int height = 10;
             if (_modUpdateBox != null && _modUpdateBox.Visible) height += 60;
             if (_syncBox != null && _syncBox.Visible) height += 60;
+            if (_webNotifBox != null && _webNotifBox.Visible) height += 60;
             if (_aiBox != null && _aiBox.Visible) height += 50;
             if (_connectionBox != null && _connectionBox.Visible) height += 20;
             return height;

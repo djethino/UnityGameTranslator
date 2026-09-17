@@ -526,6 +526,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             // from the same sync state. Fetched on demand here, so the choice
             // silences notifications without blinding the interface.
             TranslatorUIManager.EnsureServerStateKnown();
+            TranslatorUIManager.EnsureRemoteChangesCounted();
 
             // The community rows say what each lineage is to the account; a new account, new rows.
             _translationList?.Refresh();
@@ -749,7 +750,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                     if (_downloadDesc != null)
                     {
                         _downloadDesc.Say(ownerBehind
-                            ? "Replaces this file with the copy on the site. Compare shows what changed first."
+                            ? (_server.LinesChanged is int onTheSite
+                                ? "Replaces this file with the copy on the site (" + onTheSite + " lines changed). Compare shows them first."
+                                : "Replaces this file with the copy on the site. Compare shows what changed first.")
                             : serverMoved
                                 ? "Replaces this file with the Main's — your own lines are dropped"
                                 : "You already have the Main's version");
@@ -1750,7 +1753,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // How many lines the comparison is about, on the button that opens it — the lines
                 // changed here. When only the site moved, what it is about is on the site, and a
                 // count this machine cannot know is not written as zero.
-                int changes = TranslatorCore.LocalChangesCount;
+                // The lines changed here and, once counted, the lines changed on the site.
+                int changes = TranslatorCore.LocalChangesCount + (_server.LinesChanged ?? 0);
                 _compareWithServerBtn.Label = changes > 0 ? $"Compare ({changes})" : "Compare";
             }
         }

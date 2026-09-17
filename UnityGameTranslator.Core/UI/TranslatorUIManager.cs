@@ -141,6 +141,66 @@ namespace UnityGameTranslator.Core.UI
         /// </summary>
         public static bool ComparisonGoesToLocal => ServerCopyMoved;
 
+        private static string _countingRemoteFor;
+
+        /// <summary>
+        /// How many lines the published copy changed since this machine last synced — counted
+        /// here, from the copy fetched once per server hash, because the site only says THAT it
+        /// moved and somebody asked "what changes?" before deciding. Nothing is written: the copy
+        /// is read, counted against this file and its ancestor, and dropped. The screens say
+        /// "moved" until the count arrives, then the count.
+        ///
+        /// ⚠ Only for this account's own row: the site does not count an author fetching their
+        /// own file as a download, and it would count anybody else's.
+        /// </summary>
+        public static void EnsureRemoteChangesCounted()
+        {
+            var state = TranslatorCore.ServerState;
+            if (state == null || !state.Exists || !state.IsOwner || !state.SiteId.HasValue || string.IsNullOrEmpty(state.Hash)) return;
+            if (state.LinesChangedFor == state.Hash || _countingRemoteFor == state.Hash) return;
+            if (string.Equals(state.Hash, TranslatorCore.LastSyncedHash, StringComparison.OrdinalIgnoreCase)) return;
+            if (!TranslatorCore.Config.online_mode) return;
+
+            _countingRemoteFor = state.Hash;
+            _ = CountRemoteChangesAsync(state);
+        }
+
+        private static async Task CountRemoteChangesAsync(ServerTranslationState state)
+        {
+            try
+            {
+                var result = await ApiClient.Download(state.SiteId.Value);
+                if (!result.Success || string.IsNullOrEmpty(result.Content))
+                {
+                    TranslatorCore.LogWarning($"[Sync] Could not fetch the published copy to count its changes: {result.Error}");
+                    return;
+                }
+
+                var remote = TranslatorCore.ParseTranslationsFromJson(result.Content);
+                RunOnMainThread(() =>
+                {
+                    // Superseded while the copy travelled: the next refresh asks again.
+                    if (!ReferenceEquals(TranslatorCore.ServerState, state)) return;
+
+                    var stats = TranslationMerger.MergeWithTags(TranslatorCore.TranslationCache, remote, TranslatorCore.AncestorCache).Statistics;
+                    state.LinesChanged = stats.RemoteAddedCount + stats.RemoteUpdatedCount + stats.DeletedCount + stats.ConflictCount;
+                    state.LinesChangedFor = state.Hash;
+                    TranslatorCore.LogInfo($"[Sync] The published copy changed {state.LinesChanged} line(s) since the last sync");
+
+                    Intents.StateChanged();
+                    StatusOverlay?.RefreshOverlay();
+                });
+            }
+            catch (Exception e)
+            {
+                TranslatorCore.LogWarning($"[Sync] Could not count the published copy's changes: {e.Message}");
+            }
+            finally
+            {
+                _countingRemoteFor = null;
+            }
+        }
+
         // Panels
         public static Panels.WizardPanel WizardPanel { get; private set; }
         public static Panels.MainPanel MainPanel { get; private set; }

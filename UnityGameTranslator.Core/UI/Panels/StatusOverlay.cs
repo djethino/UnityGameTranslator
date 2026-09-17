@@ -1037,7 +1037,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 _syncCompareBtn.Enabled = true;
                 // The same label as on the main panel: how many lines the comparison is about,
                 // and no count when only the site moved — that count is the site's.
-                int changes = TranslatorCore.LocalChangesCount;
+                int changes = TranslatorCore.LocalChangesCount + (TranslatorCore.ServerState?.LinesChanged ?? 0);
                 _syncCompareBtn.Label = changes > 0 ? $"Compare ({changes})" : "Compare";
             }
         }

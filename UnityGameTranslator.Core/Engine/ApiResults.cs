@@ -598,6 +598,7 @@ namespace UnityGameTranslator.Core
                 BranchesCount = state.BranchesCount,
                 BranchesWithWork = state.BranchesWithWork,
                 LinesAvailable = state.LinesAvailable,
+                LinesChanged = state.LinesChangedFor == state.Hash ? state.LinesChanged : null,
                 AcceptsBranches = state.AcceptsBranches,
                 MainMissing = state.MainMissing,
                 MainAbandoned = state.MainAbandoned,
@@ -627,6 +628,15 @@ namespace UnityGameTranslator.Core
         /// them, so it is recorded rather than guessed.
         /// </summary>
         public bool AskedAsAccount { get; set; } = false;
+
+        /// <summary>
+        /// How many lines the published copy changed since this machine last synced, and the
+        /// server hash that count was made for — counted by the interface from the copy it
+        /// fetched once (see TranslatorUIManager.EnsureRemoteChangesCounted). Read as unknown
+        /// whenever the hash moved on.
+        /// </summary>
+        public int? LinesChanged { get; set; }
+        public string LinesChangedFor { get; set; }
         /// <summary>True if translation exists on server</summary>
         public bool Exists { get; set; } = false;
         /// <summary>True if current user owns the translation</summary>

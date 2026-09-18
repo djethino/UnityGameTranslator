@@ -226,9 +226,13 @@ namespace UnityGameTranslator.Core.Checks
                 "tools.json: six tabs, and a row of sub-tabs in a header host whose contents go into the Fonts tab",
                 "the sub-tab buttons are chrome, shown only while Fonts is open; the Fonts tab holds nothing but what they show");
             check(tools.Nodes.Values.Where(n => n.Kind == "list").All(n => n.Int("preferredHeight") != null)
-                  && tools.Nodes.Values.Count(n => n.Kind == "list") == 11
+                  && tools.Nodes.Values.Count(n => n.Kind == "list") == 10
                   && tools.Nodes.Values.Where(n => n.Kind == "list" && !n.StartsVisible).All(n => n.Flag("fill") == false),
-                "every one of the eleven lists states its preferred height, and the hidden find lists take no spare height",
+                // Ten since 2026-09-19: the Failures tab's game text stopped being a list of
+                // labels and became one read-only field, so that a placeholder can be selected
+                // out of it — a selection has to run across the line, and a list cut it at every
+                // TextChunks boundary.
+                "every one of the ten lists states its preferred height, and the hidden find lists take no spare height",
                 "ScrollingListHeightRule: a list weighed at its minimum leaves the panel no slack");
             check(tools.Acts.Count == 27 && tools.Nodes["FontSharpness"].Word("options") == "code"
                   && (bool)tools.Nodes["TextEditorBtn"].Props["scope"]["onThisMachine"] && !(bool)tools.Nodes["TextEditorBtn"].Props["scope"]["yourPublishedCopy"],

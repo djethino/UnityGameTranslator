@@ -35,10 +35,25 @@ namespace UnityGameTranslator.Core.UI.Components
         /// what it holds: a paragraph pasted into a growing field pushed everything under it off
         /// the screen and gave the whole window a scrollbar instead of the field.
         /// </param>
+        /// <param name="readOnly">
+        /// Selectable and copyable, never typed into — text the code shows and the person needs to
+        /// take characters out of, a placeholder out of a game's line being the case it was built
+        /// for (2026-09-19).
+        ///
+        /// 🔴 **Not <c>interactable = false</c>**, which is the reflex and is wrong: a disabled
+        /// field cannot be selected either, so it would take away the one thing this is for.
+        ///
+        /// ⚠ It is painted as a TROUGH, against the letter of UIStyles' "a field is not a trough"
+        /// — deliberately. That rule keeps an INPUT off the recessed colour; this is not an input,
+        /// it is a box that receives content, and where it is used it replaces a list, whose look
+        /// it has to keep. Painting it like the field below it would invite typing into something
+        /// that refuses every key, which is the defect the rule exists to prevent, one level up.
+        /// </param>
         public static FieldHandle Create(Host parent, string name, string placeholder = "",
                                          FieldKind kind = FieldKind.Text, int? minHeight = null,
                                          Fill fill = Fill.Stretch, Action<string> onChanged = null,
-                                         bool richText = true, int? minWidth = null, bool scroll = false)
+                                         bool richText = true, int? minWidth = null, bool scroll = false,
+                                         bool readOnly = false)
         {
             int height = minHeight ?? (kind == FieldKind.Multiline ? UIStyles.MultiLineMedium : UIStyles.InputHeight);
 
@@ -51,8 +66,9 @@ namespace UnityGameTranslator.Core.UI.Components
                 var box = UIFactory.CreateScrollInputField(parent.Object, name, placeholder ?? "", out var scroller);
                 UIFactory.SetLayoutElement(box, minWidth: minWidth, minHeight: height, preferredHeight: height,
                                            flexibleHeight: 0, flexibleWidth: fill == Fill.Stretch ? 9999 : 0);
-                UIStyles.SetBackground(box, UIStyles.InputBackground);
+                UIStyles.SetBackground(box, readOnly ? UIStyles.TroughBackground : UIStyles.InputBackground);
                 input = scroller.InputField;
+                if (readOnly) input.Component.readOnly = true;
 
                 var scrolling = new FieldHandle(input) { Area = new FieldArea(box, scroller, height) };
                 if (!richText && input.Component.textComponent != null)
@@ -65,7 +81,9 @@ namespace UnityGameTranslator.Core.UI.Components
                 input = UIFactory.CreateInputField(parent.Object, name, placeholder ?? "");
                 UIFactory.SetLayoutElement(input.Component.gameObject, minWidth: minWidth, minHeight: height,
                                            flexibleWidth: fill == Fill.Stretch ? (int?)9999 : null);
-                UIStyles.SetBackground(input.Component.gameObject, UIStyles.InputBackground);
+                UIStyles.SetBackground(input.Component.gameObject,
+                                       readOnly ? UIStyles.TroughBackground : UIStyles.InputBackground);
+                if (readOnly) input.Component.readOnly = true;
             }
 
             switch (kind)

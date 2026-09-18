@@ -441,7 +441,8 @@ namespace UnityGameTranslator.Core.UI
                                         fill: Enum(node.Word("fill"), Fill.Stretch),
                                         richText: node.Flag("richText") ?? true,
                                         minWidth: node.Int("minWidth"),
-                                        scroll: node.Flag("scroll") ?? false);
+                                        scroll: node.Flag("scroll") ?? false,
+                                        readOnly: node.Flag("readOnly") ?? false);
                     if (node.Act != null)
                     {
                         var changed = Act(site, node);

@@ -88,7 +88,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         private bool _fillingRows;
 
         // Failures — the lines the AI gave up on this session, settled one by one
-        private ScrollList _failuresList, _sourceList, _attemptList;
+        private ScrollList _failuresList, _attemptList;
         private Host _failureEditor, _failExcludeRow;
         private LabelHandle _failElementLabel, _attemptIndexLabel, _failErrorsLabel, _failInputCheck, _failStatus;
         private ButtonHandle _prevAttemptBtn, _nextAttemptBtn, _useAttemptBtn, _failSaveBtn, _failRetranslateBtn;
@@ -97,9 +97,16 @@ namespace UnityGameTranslator.Core.UI.Panels
         private bool _foldedForEditing;                // folded once for this line; reopened by hand, it stays open
         private int _sharesForBlocks;                  // which blocks were open when the scroll areas were last registered
         private FieldHandle _failInput;
-        // The rows of each text area — one per piece of text a label can draw (TextChunks) —
+        /// <summary>
+        /// The game's own line — a read-only field rather than a list of labels, so that a
+        /// placeholder can be selected and copied out of it (2026-09-19). One field for the whole
+        /// text, not one per piece: a selection has to run across the line, and TextChunks would
+        /// have cut it at every boundary. It is a shared area like the input below, weighed by
+        /// what it holds.
+        /// </summary>
+        private FieldHandle _sourceText;
+        // The rows of the proposals area — one per piece of text a label can draw (TextChunks) —
         // written in place when their number holds, rebuilt when it does not.
-        private readonly List<BuiltScreen> _sourceRows = new List<BuiltScreen>();
         private readonly List<BuiltScreen> _attemptRows = new List<BuiltScreen>();
         private readonly List<KeyValuePair<string, BuiltScreen>> _failureRows = new List<KeyValuePair<string, BuiltScreen>>();
         private FailedLine _failure;                   // the one open in the editor, or null
@@ -188,7 +195,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // Failures
             _failuresList = _screen.List("FailuresScroll");
-            _sourceList = _screen.List("SourceScroll");
+            _sourceText = _screen.Field("SourceText");
             _attemptList = _screen.List("AttemptScroll");
             _failureEditor = _screen.Host("FailureEditor");
             _failExcludeRow = _screen.Host("FailExcludeRow");
@@ -215,8 +222,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             _failInput.Changed += _ => OnFailInputChanged();
             // The bars between the areas: the rule divides, the person may move the seams; the
             // seams go back when the window closes (SetActive).
-            _failShares.Attach(_screen.Splitter("ListSplit"), _failuresList, _sourceList);
-            _failShares.Attach(_screen.Splitter("TextSplit"), _sourceList, _attemptList);
+            _failShares.Attach(_screen.Splitter("ListSplit"), _failuresList, _sourceText.Area);
+            _failShares.Attach(_screen.Splitter("TextSplit"), _sourceText.Area, _attemptList);
             _failShares.Attach(_screen.Splitter("FieldSplit"), _attemptList, _failInput.Area);
             // The tab's heights are posed when it is the one shown — a hidden hierarchy measures nothing.
             _tabBar.OnTabChanged += (_, name) => { if (name == "Failures") { ShareFailures(); ShareFailuresSoon(); } };
@@ -628,7 +635,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (_failure == null) return;
             // A folded block holds nothing to divide: its list is left out until it opens again.
             if (_gameText.Expanded)
-                _failShares.Add(_sourceList, () => LinesIn(_sourceList), UIStyles.RowHeightSmall, 8);
+                _failShares.Add(_sourceText.Area, () => LinesIn(_sourceText.Area), UIStyles.RowHeightSmall, 8);
             if (_proposals.Expanded)
                 _failShares.Add(_attemptList, () => LinesIn(_attemptList), UIStyles.RowHeightSmall, 8);
             // 🔴 The field is an area like the others, weighed by what it holds: the person
@@ -710,7 +717,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // The game text, in a scroll area of its own: raw, tags and placeholders as the model
             // has to keep them — rendered as rich text, a tag the model broke would swallow the rest.
-            FillText(_sourceList, _sourceRows, line.Source ?? line.Key);
+            _sourceText.Text = line.Source ?? line.Key;
 
             // The exclusion buttons need an element; the worker only knows one once the text has
             // been shown in this session, which a line failed at launch may not have been yet.
@@ -856,7 +863,6 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             _failure = null;
             _failurePrepared = null;
-            _sourceRows.Clear();
             _attemptRows.Clear();
             _failureEditor.Visible = false;
             HighlightOpenFailure();

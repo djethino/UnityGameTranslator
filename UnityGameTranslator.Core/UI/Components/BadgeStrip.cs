@@ -59,7 +59,11 @@ namespace UnityGameTranslator.Core.UI.Components
                 case BadgeTone.Attention: return UIStyles.StatusWarning;
                 case BadgeTone.Wrong: return UIStyles.StatusError;
                 case BadgeTone.Quiet: return UIStyles.TextMuted;
-                default: return UIStyles.TextSecondary;
+                // The ordinary fact in the primary text colour, as the site's gray-300 on its
+                // pill: in the secondary colour "Main (you)" read dimmer than the amber
+                // "Branch (you)" beside it, and the one row that was the reader's own was the
+                // hardest to find (2026-09-18).
+                default: return UIStyles.TextPrimary;
             }
         }
 

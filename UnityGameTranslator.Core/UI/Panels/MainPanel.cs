@@ -1363,13 +1363,29 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // Merge with Main — a branch only. Shown even when nothing new is
                 // known upstream: the very first merge is what teaches the mod where
                 // the Main stood, so it must be reachable before any notice exists.
+                //
+                // ⚠ But greyed once the Main is KNOWN not to have moved since the last merge:
+                // the same rule as the "Take Main's version" rows — an act with no effect, and
+                // a button that promises one is worse than none. It stayed live on a branch in
+                // step with its Main, where the Manager's card says "up to date" (2026-09-18).
+                // Unknown — never merged, or an older site — keeps it reachable, as before.
                 if (_updateFromMainBtn != null)
                 {
                     bool canUpdateFromMain = isBranch && state.MainSiteId.HasValue;
                     _updateFromMainBtn.Visible = canUpdateFromMain;
                     if (canUpdateFromMain && !_updateFromMainInFlight)
                     {
-                        _updateFromMainBtn.Enabled = isLoggedIn && TranslatorCore.Config.online_mode;
+                        bool mainKnownUnchanged = !string.IsNullOrEmpty(state.MainHash)
+                                                  && !string.IsNullOrEmpty(TranslatorCore.LastMergedMainHash)
+                                                  && state.MainHash == TranslatorCore.LastMergedMainHash;
+                        _updateFromMainBtn.Enabled = isLoggedIn && TranslatorCore.Config.online_mode
+                                                     && !mainKnownUnchanged;
+
+                        // The help bar says why it is grey, in the words of the other Merge with
+                        // Main; live again, the document's own sentence comes back.
+                        _helpZone.Describe(_updateFromMainBtn, mainKnownUnchanged
+                            ? "Nothing new in the Main to take in"
+                            : ScreenDocument.HelpOf(Doc.Nodes["UpdateFromMainBtn"]));
                     }
                 }
 

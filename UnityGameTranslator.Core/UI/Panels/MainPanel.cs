@@ -1335,8 +1335,13 @@ namespace UnityGameTranslator.Core.UI.Panels
                     }
                 }
 
-                // Fork button - only for Branch role
-                _forkBtn.Visible = isBranch;
+                // Fork button - only for Branch role.
+                //
+                // 🔴 And never beside the upload slot when a wall has already turned THAT into
+                // Fork: a branch whose Main closed, vanished or lost its account showed two Fork
+                // buttons ten centimetres apart, one saying the way out and one saying "continue on
+                // your own" (2026-09-18). One act, one door — the slot's, which carries the wall.
+                _forkBtn.Visible = isBranch && _uploadAct != UploadAct.Fork;
 
                 // ⚠ Never gated on an account: forking is local from end to end (a new lineage on
                 // this machine, nothing sent), and it is publishing that needs a name. This asked
@@ -1353,7 +1358,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                     string hint = "";
                     if (isBranch && TranslatorUIManager.HasMainUpdate())
                         hint = Tr("The original translation has changed — Merge with Main brings it in");
-                    else if (isBranch)
+                    else if (isBranch && _uploadAct != UploadAct.Fork)
                         hint = Tr("Fork = continue on your own, leaving the translation of")
                                + " " + People.MentionOf(state.MainUsername ?? state.Uploader,
                                                            TranslatorCore.Config.api_user);

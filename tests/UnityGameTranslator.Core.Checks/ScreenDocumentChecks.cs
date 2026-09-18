@@ -304,9 +304,8 @@ namespace UnityGameTranslator.Core.Checks
             check(row.Pieces.Binds.Keys.OrderBy(k => k).SequenceEqual(new[] { "author", "details", "facts", "note", "title" })
                   && new[] { "Title", "Facts", "Note", "Composition", "Arrow" }.All(n => !row.Pieces.Nodes[n].StartsVisible)
                   && row.Pieces.Nodes["From"].Children.Count == 0 && row.Pieces.Nodes["Into"].Children.Count == 0 && row.Pieces.Nodes["Votes"].Children.Count == 0
-                  && row.Pieces.Nodes["Marks"].Children.Count == 0 && row.Pieces.Nodes["Pair"].Children.Any(n => n.Name == "Marks")
-                  && row.Pieces.Nodes["Badges"].Children.Count == 0,
-                "a row's optional lines start hidden; its flags, its marks, its chips, its bar and its votes have hosts", "what the server sent, and the reader's own library, decide which of them show — and a fork's origin is a chip, not a line");
+                  && !row.Pieces.Nodes.ContainsKey("Marks") && row.Pieces.Nodes["Badges"].Children.Count == 0,
+                "a row's optional lines start hidden; its flags, its chips, its bar and its votes have hosts — and the pair line holds nothing but the pair", "what the server sent, and the reader's own library, decide which of them show; marks beside the languages squeezed them into each other");
             Refuses(check, "a row asking for an act a box already asks for", @"{""name"":""X"",""size"":{""width"":400,""height"":200},""body"":[{""kind"":""row"",""name"":""R"",""act"":""go"",""children"":[{""kind"":""checkbox"",""name"":""C"",""act"":""go""}]}],""footer"":[]}", "two pieces");
 
             // ── The components that own a part build it, and answer its acts ──

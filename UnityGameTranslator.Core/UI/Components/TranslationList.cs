@@ -475,11 +475,6 @@ namespace UnityGameTranslator.Core.UI.Components
                 row.Label("Title").Visible = true;
             }
 
-            // What this row is to the reader, in the socle's chips: the one this game holds, and
-            // whether they lead the lineage or contribute to it. Silent when neither is known.
-            var marks = Badges.InListing(isLineageMatch, RoleIn(translation.FileUuid));
-            if (marks.Count > 0) BadgeStrip.Create(row.Host("Marks"), "Marks", marks, 220f, Surface.Item);
-
             // ⚠ One form for the whole ecosystem, composed in `common`: "@name", and "@name (you)"
             // on your own. The mark is a WORD and not a colour — this row already spends colour on
             // the lineage stripe, and a second meaning on the same channel reads as neither.
@@ -515,7 +510,10 @@ namespace UnityGameTranslator.Core.UI.Components
             // this list is on the site, and which one is held is the Installed mark on the first
             // line — "Not downloaded" on eight rows out of nine would say nothing. The votes: the
             // column on the right is theirs.
-            var chips = new List<Badge>();
+            // ⚠ One strip, the reader's marks first: the one this game holds, and whether they lead
+            // the lineage or contribute to it (Badges.InListing). They used to sit on the pair
+            // line, beside the languages, and two of them squeezed the names into each other.
+            var chips = Badges.InListing(isLineageMatch, RoleIn(translation.FileUuid));
             foreach (var badge in Badges.For(
                          Publications.Of(hereOnDisk: isLineageMatch, onTheSite: true),
                          isMain: null, branchesWaiting: null, mainMissing: false, sync: null,

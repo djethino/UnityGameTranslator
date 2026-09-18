@@ -1886,8 +1886,13 @@ namespace UnityGameTranslator.Core.UI
         {
             try
             {
-                // Wait a bit to let the game initialize
-                await Task.Delay(3000);
+                // ⚠ No wait here, and there never needed to be one: this method is called
+                // from InitializeUIState, which runs once the interface exists — the game IS
+                // initialised by then. "Wait a bit to let the game initialize" was three seconds
+                // spent proving something the call site already guaranteed (2026-09-18).
+                //
+                // Everything below is fire-and-forget (`async void`, each returning at its first
+                // await), so nothing holds the caller either.
 
                 // Check for mod updates first (non-blocking, independent of auth)
                 if (TranslatorCore.Config.online_mode && TranslatorCore.Config.sync.check_mod_updates)

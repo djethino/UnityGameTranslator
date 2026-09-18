@@ -235,10 +235,11 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // Start watching for updates now that we're authenticated
                 TranslatorUIManager.StartSyncWatch();
 
-                TranslatorUIManager.RunDelayed(2f, () =>
-                {
-                    SetActive(false);
-                });
+                // ⚠ Closed at once: the window has nothing left to say, and what it just said
+                // is carried out by the corner notification instead of by two seconds of an open
+                // panel (2026-09-18).
+                SetActive(false);
+                Intents.Toast(Tr("Logged in as") + $" {userName}", ToastTone.On);
             }
             catch (Exception e)
             {
@@ -293,14 +294,11 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (!string.IsNullOrEmpty(_userCode))
             {
                 Platform.CopyToClipboard(_userCode);
+                // ⚠ It stays "Copied!", and that is the honest state: the code IS in the
+                // clipboard until something else replaces it, and pressing the button again
+                // copies it again. Reverting after two seconds was a lie on a timer — the label
+                // went back to saying the copy had not happened (2026-09-18).
                 CopyCodeBtn.Label = "Copied!";
-
-                // Reset button text after 2 seconds
-                TranslatorUIManager.RunDelayed(2f, () =>
-                {
-                    if (_screen != null)
-                        CopyCodeBtn.Label = "Copy";
-                });
             }
         }
 

@@ -952,20 +952,17 @@ namespace UnityGameTranslator.Core.UI.Panels
                     string successMsg = uploadMode == UploadMode.Update ? "Updated" :
                                        (uploadMode == UploadMode.Branch ? "Contributed" : "Uploaded");
 
-                    // Update UI on main thread
-                    TranslatorUIManager.RunOnMainThread(() =>
-                    {
-                        _status.Show(Tr(successMsg + "!") + $" ID: {translationId}", Tone.Success);
-                    });
-
-                    await System.Threading.Tasks.Task.Delay(2000);
-
-                    // Close panel and refresh on main thread
+                    // ⚠ Closed at once, and the confirmation survives the closing as a corner
+                    // notification. It used to hold the window open two seconds so the sentence
+                    // inside it could be read — a wait invented to keep a message alive, where
+                    // the mod already has a place for a message that outlives its screen
+                    // (2026-09-18).
                     TranslatorUIManager.RunOnMainThread(() =>
                     {
                         _isUploading = false;
                         _uploadBtn.Enabled = true;
                         SetActive(false);
+                        Intents.Toast(Tr(successMsg) + $" · #{translationId}", ToastTone.On);
                         Intents.StateChanged();
                     });
                     return; // Skip finally block UI updates (already done above)

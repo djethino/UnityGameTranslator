@@ -2301,29 +2301,6 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// Schedule a delayed scan to apply font replacements to TMP components.
-        /// Called after scene change to catch early-initialized text.
-        /// </summary>
-        public static void ScheduleDelayedFontScan(float delaySeconds = 0.5f)
-        {
-            try
-            {
-                UniverseLib.RuntimeHelper.StartCoroutine(DelayedFontScanCoroutine(delaySeconds));
-            }
-            catch (Exception ex)
-            {
-                TranslatorCore.LogError($"[FontScan] Failed to schedule: {ex.Message}");
-            }
-        }
-
-        private static System.Collections.IEnumerator DelayedFontScanCoroutine(float delaySeconds)
-        {
-            // Realtime: a font scan must not be held hostage by a paused game.
-            yield return new WaitForSecondsRealtime(delaySeconds);
-            ScanAndApplyFontReplacements();
-        }
-
-        /// <summary>
         /// Scan all alternate TMP components and apply font replacements where needed.
         /// Only applies if: translation enabled for the font AND fallback configured.
         /// </summary>

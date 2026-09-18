@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Reflection;
 using System.Runtime.CompilerServices;
@@ -438,11 +439,63 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// What a type has just taught us about its fontSize setter: how many times in a row it
+        /// threw, and until when we leave it alone.
+        /// </summary>
+        private sealed class FontSizeRoute
+        {
+            public int ConsecutiveFailures;
+        }
+
+        /// <summary>
+        /// The types whose fontSize setter is throwing on this runtime, and the pause we give them.
+        ///
+        /// 🔴 **Keyed by the TYPE, never globally and never by instance** (2026-09-18). Whether a
+        /// property setter works is decided by the type and the runtime, not by the object: it
+        /// threw 1 660 times in a single font refresh on one game, each throw caught, logged and
+        /// immediately retried on the next component — a frame of seven seconds. A game using
+        /// several text families has several routes, and each keeps its own first attempt.
+        ///
+        /// 🔴 **It lasts one PASS, and nothing about it is a clock.** A permanent refusal answers
+        /// the burst and creates a worse bug: three failures during a scene teardown, and a
+        /// component of that type spawned later never gets its size, silently, for the rest of the
+        /// session. A cooldown in seconds answers it no better — the number would be invented, and
+        /// nothing about this failure has anything to do with elapsed time.
+        ///
+        /// What the failure actually belongs to is the **pass**. The setter throws while a font is
+        /// being swapped underneath it, so every component in that sweep throws the same way, and
+        /// the next sweep starts in another state. So the count is cleared when a caller opens a
+        /// run (<see cref="BeginFontSizeRun"/>), and within one run a type that has thrown three
+        /// times running is left alone until the run ends. Worst case, three throws per type per
+        /// pass instead of one per component; and a component created at any moment is served by
+        /// the next pass, which begins with a clean slate.
+        ///
+        /// ⚠ Consecutive, counted on the type: a success resets it, so a destroyed object throwing
+        /// here and there never adds up to a route being set aside.
+        /// </summary>
+        private static readonly ConcurrentDictionary<Type, FontSizeRoute> _fontSizeRoutes =
+            new ConcurrentDictionary<Type, FontSizeRoute>();
+
+        /// <summary>Failures in a row on one type before it is set aside for the rest of the run.</summary>
+        private const int FontSizeGiveUpAfter = 3;
+
+        /// <summary>
+        /// A caller is about to set the size on many components: what the last run learnt does not
+        /// apply to this one, so everything is asked again.
+        /// </summary>
+        public static void BeginFontSizeRun() => _fontSizeRoutes.Clear();
+
+        /// <summary>
         /// Set fontSize on a text component (TMP_Text or UI.Text).
         /// </summary>
         public static void SetFontSize(object component, float size)
         {
             if (component == null) return;
+
+            var refusedType = component.GetType();
+            var route = _fontSizeRoutes.GetOrAdd(refusedType, _ => new FontSizeRoute());
+
+            if (route.ConsecutiveFailures >= FontSizeGiveUpAfter) return;
 
             try
             {
@@ -466,12 +519,31 @@ namespace UnityGameTranslator.Core
                         prop.SetValue(component, (int)Math.Round(size), null);
                     else
                         prop.SetValue(component, size, null);
+
+                    // ⚠ CONSECUTIVE, which is what makes three the right number: a success clears
+                    // the count, so a destroyed object throwing here and there never adds up to a
+                    // route being abandoned. Only a type that fails three times running is one
+                    // this runtime cannot set a size on.
+                    if (route.ConsecutiveFailures != 0) route.ConsecutiveFailures = 0;
                     return;
                 }
             }
             catch (Exception ex)
             {
-                TranslatorCore.LogWarning($"[TypeHelper] SetFontSize error: {ex.Message}");
+                // The inner one, because the wrapper always says the same thing — "exception has
+                // been thrown by the target of an invocation" names the mechanism and never the
+                // cause. Said once per type, on the failure that settles it.
+                route.ConsecutiveFailures++;
+                if (route.ConsecutiveFailures == FontSizeGiveUpAfter)
+                {
+                    // Once per type and per run, and the INNER exception: the wrapper always says
+                    // the same thing — "exception has been thrown by the target of an invocation"
+                    // names the mechanism and never the cause.
+                    var cause = ex.InnerException ?? ex;
+                    TranslatorCore.LogWarning(
+                        $"[TypeHelper] fontSize threw three times running on {refusedType.Name} "
+                        + $"({cause.GetType().Name}: {cause.Message}) — left alone until the next pass.");
+                }
             }
         }
 
@@ -759,6 +831,34 @@ namespace UnityGameTranslator.Core
         /// <summary>
         /// Call ForceMeshUpdate() on a TMP component via reflection.
         /// </summary>
+        /// <summary>
+        /// A no-argument method of a type, found once and kept — including when the answer is
+        /// "this type has none", which is an answer worth keeping too.
+        ///
+        /// 🔴 **Measured, not supposed** (2026-09-18): the refresh pass spent 1 948 ms of a
+        /// 1 969 ms frame in <see cref="ForceMeshUpdate"/> and <see cref="SetAllDirty"/> over
+        /// 1 095 components, while the property write beside them cost 6 ms. It was never the
+        /// mesh rebuild: it was two uncached reflection searches per component, redone every
+        /// second, and the one that returns null for a type without the method was redone most
+        /// of all.
+        ///
+        /// ⚠ Keyed by type, so a type met later is looked up on its own merits.
+        /// </summary>
+        private static MethodInfo NoArgMethodOf(ConcurrentDictionary<Type, MethodInfo> memo, Type type, string name)
+        {
+            if (type == null) return null;
+
+            MethodInfo method;
+            if (memo.TryGetValue(type, out method)) return method;
+
+            method = type.GetMethod(name, BindingFlags.Public | BindingFlags.Instance, null, Type.EmptyTypes, null);
+            memo[type] = method;
+            return method;
+        }
+
+        private static readonly ConcurrentDictionary<Type, MethodInfo> _forceMeshUpdateByType = new ConcurrentDictionary<Type, MethodInfo>();
+        private static readonly ConcurrentDictionary<Type, MethodInfo> _setAllDirtyByType = new ConcurrentDictionary<Type, MethodInfo>();
+
         public static void ForceMeshUpdate(object component)
         {
             if (component == null) return;
@@ -772,10 +872,8 @@ namespace UnityGameTranslator.Core
                 }
 
                 // Fallback: try by type
-                var type = component.GetType();
-                var method = type.GetMethod("ForceMeshUpdate",
-                    BindingFlags.Public | BindingFlags.Instance, null, Type.EmptyTypes, null);
-                method?.Invoke(component, null);
+                NoArgMethodOf(_forceMeshUpdateByType, component.GetType(), "ForceMeshUpdate")
+                    ?.Invoke(component, null);
             }
             catch { }
         }
@@ -1299,9 +1397,9 @@ namespace UnityGameTranslator.Core
 
             try
             {
-                var type = component.GetType();
-                var method = type.GetMethod("SetAllDirty", BindingFlags.Public | BindingFlags.Instance, null, Type.EmptyTypes, null);
-                method?.Invoke(component, null);
+                // Looked up once per type — see NoArgMethodOf.
+                NoArgMethodOf(_setAllDirtyByType, component.GetType(), "SetAllDirty")
+                    ?.Invoke(component, null);
             }
             catch { }
         }

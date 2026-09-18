@@ -329,6 +329,9 @@ namespace UnityGameTranslator.Core
         private static long _scanProfRefreshTicks = 0;
         private static long _scanProfBatchTicks = 0;
         private static int _scanProfCount = 0;
+        /// <summary>Under this, a pass nobody notices; over it, the one line that says what it cost.</summary>
+        private const double FeltMs = 100.0;
+
         private static int _scanProfRefreshCount = 0;
         private static float _scanProfLastLog = 0f;
 
@@ -1697,10 +1700,37 @@ namespace UnityGameTranslator.Core
         /// Returns the number of components touched (refreshed + restored) so callers
         /// can detect a too-early pass that found nothing (issue #21).
         /// </summary>
-        public static int ForceRefreshAllText(bool reapplyAllScales = false)
+        /// <param name="glyphsChanged">
+        /// 🔴 **Whether the PICTURES changed, not the strings.** A font was created or an atlas
+        /// grew: every component must rebuild its mesh even though its text is word for word what
+        /// it was, or it keeps rendering the old glyphs. That is the one case worth the price.
+        ///
+        /// False — the ordinary case, after a batch of translations landed — means only the
+        /// components whose text actually changed need their mesh back. Measured on a game with
+        /// a thousand of them (2026-09-18): the rebuild cost 1 678 ms of a 1 720 ms frame, while
+        /// **twelve** components out of 952 had anything new to show. The rest were rebuilt to
+        /// draw exactly what they were already drawing.
+        /// </param>
+        public static int ForceRefreshAllText(bool reapplyAllScales = false, bool glyphsChanged = true)
         {
             int refreshed = 0;
             int restored = 0;
+
+            // 🔴 **Measured before being fixed** (2026-09-18). This pass runs to completion on the
+            // main thread, outside the incremental budget the scan itself obeys, and a game with
+            // thousands of components showed one frame of several seconds after every batch of
+            // translations. What the numbers have to answer, before any change: which of the two
+            // passes costs, what a component costs, and therefore **how many frames** a budgeted
+            // version would take — the length of that spread is the real price of the fix, and
+            // guessing it ("a fraction of a second") is what this probe replaces.
+            //
+            // ⚠ Not behind DebugMode: the freeze is what a player feels, and the diagnostic
+            // logging that mode turns on inflates every figure here. It says nothing until a pass
+            // is slow enough to be felt.
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            long pass1Ticks = 0;
+            int pass1Count = 0, pass2Seen = 0, pass2Rewritten = 0, pass2AlreadyDone = 0;
+            long lookupTicks = 0, writeTicks = 0, dirtyTicks = 0;
 
             bool globalRestore = !TranslatorCore.TranslationsActive;
 
@@ -1727,8 +1757,11 @@ namespace UnityGameTranslator.Core
                         int id = GetComponentInstanceId(obj);
                         if (id != -1) processedIds.Add(id);
                         RefreshComponent(obj, type, globalRestore, ref refreshed, ref restored);
+                        pass1Count++;
                     }
                 }
+
+                pass1Ticks = watch.ElapsedTicks;
 
                 // Pass 2: components seen by the patch but not in scanner cache.
                 // These are components in inactive GameObjects that got their text set
@@ -1741,17 +1774,74 @@ namespace UnityGameTranslator.Core
                 {
                     if (processedIds.Contains(kvp.Key)) continue;
                     if (kvp.Value == null) continue;
+                    pass2Seen++;
                     try
                     {
+                        // ⚠ Second probe (2026-09-18): pass 2 costs 1.65 ms per component and the
+                        // remedy depends on WHERE. Looking the property up again for every
+                        // component is ours to cache and changes no behaviour; the write re-enters
+                        // the setter prefix, so its cost is a whole translate + font + scale cycle
+                        // and removing it means not rewriting a text already up to date — which
+                        // does change behaviour. The three buckets say which fix is enough.
+                        long tMark = watch.ElapsedTicks;
+
                         // Re-set text via property to trigger the setter prefix (translation + font + scale)
-                        var textProp = kvp.Value.GetType().GetProperty("text",
-                            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+                        //
+                        // 🔴 **Looked up once per TYPE.** There are two or three distinct types
+                        // among these components and the lookup was redone for every one of them,
+                        // every second: a reflection search that answers the same thing each time.
+                        // Measured at 1.65 ms per component before anything was cached
+                        // (2026-09-18).
+                        var textProp = TextPropertyOf(kvp.Value.GetType());
                         if (textProp?.GetMethod != null && textProp?.SetMethod != null)
                         {
                             string currentText = textProp.GetValue(kvp.Value, null) as string;
+                            lookupTicks += watch.ElapsedTicks - tMark;
                             if (!string.IsNullOrEmpty(currentText))
                             {
+                                pass2Rewritten++;
+
+                                // Already showing what the write would put there? Counted, never
+                                // skipped: this probe measures what a skip WOULD save, and a
+                                // measurement that changes the behaviour it measures proves
+                                // nothing about the behaviour that shipped.
+                                // ⚠ Through the reverse index, never a scan of the cache's values:
+                                // ContainsValue is linear, and asking it once per component would
+                                // cost more than the pass being measured.
+                                if (TranslatorCore.IsReadbackOfOwnTranslation(currentText))
+                                    pass2AlreadyDone++;
+
+                                tMark = watch.ElapsedTicks;
                                 textProp.SetValue(kvp.Value, currentText, null);
+                                writeTicks += watch.ElapsedTicks - tMark;
+                                tMark = watch.ElapsedTicks;
+
+                                // Did the write change anything? Two questions, and the second
+                                // exists because the first cannot answer alone.
+                                //
+                                // 🔴 **The getter is patched and translates on READ.** So the
+                                // string this loop holds is already the translated one, and
+                                // reading it back after the write compares a translation with
+                                // itself — blind to a component that just went from the original
+                                // to the translation. That case is named instead of guessed: the
+                                // value is one of ours, which the reverse index answers in
+                                // constant time. Measured on the game that showed the freeze: 12
+                                // components out of 952, so the rebuild stays where it matters
+                                // and goes from 1 678 ms to about 20 (2026-09-18).
+                                bool showsSomethingNew = glyphsChanged
+                                                         || TranslatorCore.IsReadbackOfOwnTranslation(currentText);
+                                if (!showsSomethingNew)
+                                {
+                                    var after = textProp.GetValue(kvp.Value, null) as string;
+                                    showsSomethingNew = !string.Equals(after, currentText, StringComparison.Ordinal);
+                                }
+                                if (!showsSomethingNew)
+                                {
+                                    dirtyTicks += watch.ElapsedTicks - tMark;
+                                    refreshed++;
+                                    continue;
+                                }
+
                                 // Pass 2 covers components seen by the patch but missed by
                                 // the scanner pass — typically because their GameObject was
                                 // inactive at scan time. On IL2CPP the property setter alone
@@ -1759,6 +1849,7 @@ namespace UnityGameTranslator.Core
                                 // explicitly force both here too.
                                 TypeHelper.ForceMeshUpdate(kvp.Value);
                                 TypeHelper.SetAllDirty(kvp.Value);
+                                dirtyTicks += watch.ElapsedTicks - tMark;
                                 refreshed++;
                             }
                         }
@@ -1779,6 +1870,24 @@ namespace UnityGameTranslator.Core
                     TranslatorCore.LogDebug($"[Scanner] Restored {restored} original texts, refreshed {refreshed} components (incl. patch refs)");
                 else
                     TranslatorCore.LogDebug($"[Scanner] Force refreshed {refreshed} text components (incl. patch refs)");
+
+                // One line, and only when the pass was long enough for somebody to feel it. The
+                // budget is printed beside the total because the two together give the length of
+                // the spread a resumable version would need: total / budget frames.
+                double freq = System.Diagnostics.Stopwatch.Frequency;
+                double totalMs = watch.ElapsedTicks / freq * 1000.0;
+                if (totalMs >= FeltMs)
+                {
+                    double p1 = pass1Ticks / freq * 1000.0;
+                    TranslatorCore.LogWarning(
+                        $"[FORCE-REFRESH] {totalMs:F0}ms in ONE frame | "
+                        + $"pass1 (scanner cache) {p1:F0}ms/{pass1Count} comps | "
+                        + $"pass2 (patch refs) {totalMs - p1:F0}ms/{pass2Seen} seen, {pass2Rewritten} rewritten | "
+                        + $"[lookup {lookupTicks / freq * 1000:F0}ms, write {writeTicks / freq * 1000:F0}ms, "
+                        + $"dirty {dirtyTicks / freq * 1000:F0}ms, {pass2AlreadyDone} already up to date] | "
+                        + $"budget now {ComputeAdaptiveBudgetMs():F2}ms/frame "
+                        + $"-> spread would take ~{(totalMs / Math.Max(0.5, ComputeAdaptiveBudgetMs())):F0} frames");
+                }
             }
             catch (Exception ex)
             {
@@ -1791,6 +1900,27 @@ namespace UnityGameTranslator.Core
         /// <summary>
         /// Refresh a single component: either restore original or trigger re-translation.
         /// </summary>
+        /// <summary>
+        /// The `text` property of a type, found once and kept.
+        ///
+        /// ⚠ Keyed by the type, which is what decides the answer — never by the component. A type
+        /// met later gets its own first look, so a component appearing mid-game is not blinded by
+        /// what was learnt about another.
+        /// </summary>
+        private static readonly Dictionary<Type, PropertyInfo> _textProperties = new Dictionary<Type, PropertyInfo>();
+
+        private static PropertyInfo TextPropertyOf(Type type)
+        {
+            if (type == null) return null;
+
+            PropertyInfo prop;
+            if (_textProperties.TryGetValue(type, out prop)) return prop;
+
+            prop = type.GetProperty("text", BindingFlags.Public | BindingFlags.Instance);
+            _textProperties[type] = prop;   // null is an answer too, and worth keeping
+            return prop;
+        }
+
         private static void RefreshComponent(UnityEngine.Object obj, RegisteredTextType type, bool globalRestore, ref int refreshed, ref int restored)
         {
             try
@@ -2474,12 +2604,24 @@ namespace UnityGameTranslator.Core
             // After API translations complete, refresh all text so static components pick up cached translations
             if (TranslatorCore.PendingVisualRefresh)
             {
-                TranslatorCore.PendingVisualRefresh = false;
                 float now2 = Time.realtimeSinceStartup;
                 if (now2 - _lastForceRefreshTime > 1f)
                 {
+                    // 🔴 **Consumed only once the work is done** (2026-09-18). The flag was
+                    // cleared before the rate limit was even consulted, so a translation landing
+                    // less than a second after the previous pass had its request DROPPED, not
+                    // deferred: the static components showing that text stayed in the source
+                    // language until some later translation happened to sweep them. The font
+                    // request ten lines below had it right all along — it rearms itself when it
+                    // is refused, "don't lose the request".
+                    //
+                    // ⚠ That is the whole discipline of a coalescing flag: any number of events
+                    // raise it, one cycle acts on it, and nothing clears it but the act itself.
+                    TranslatorCore.PendingVisualRefresh = false;
                     _lastForceRefreshTime = now2;
-                    ForceRefreshAllText();
+
+                    // Translations landed: the strings may have changed, the glyphs did not.
+                    ForceRefreshAllText(glyphsChanged: false);
                 }
             }
 

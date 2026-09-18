@@ -577,8 +577,10 @@ namespace UnityGameTranslator.Core.UI.Panels
 
                     if (success)
                     {
-                        // Auto-advance to complete after successful download
-                        TranslatorUIManager.RunDelayed(1.5f, () => ShowStep(WizardStep.Complete));
+                        // The download finishing IS the event; the step it leads to says so
+                        // itself. Waiting 1.5 s so the line above could be read held the person
+                        // on a screen that had nothing more to tell them (2026-09-18).
+                        ShowStep(WizardStep.Complete);
                     }
                     else
                     {

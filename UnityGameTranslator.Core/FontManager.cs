@@ -3535,6 +3535,10 @@ namespace UnityGameTranslator.Core
                 var allTexts = TypeHelper.FindAllObjectsOfType(textType);
                 int refreshed = 0;
 
+                // A new sweep: what the last one learnt about a throwing setter does not apply
+                // here, and a component created since then deserves its own attempt.
+                TypeHelper.BeginFontSizeRun();
+
                 foreach (var textObj in allTexts)
                 {
                     if (textObj == null) continue;

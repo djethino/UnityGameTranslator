@@ -4099,14 +4099,20 @@ namespace UnityGameTranslator.Core
             if (request == null) return;
             lock (lockObj) { retranslateRequests.Remove(request.Key); }
 
-            // Only a request that actually wrote has anything to save. A proposal deliberately
-            // leaves the file alone, so there is nothing to push to a browser either.
-            // Translated after all: nothing left to settle by hand.
-            if (outcome == RetranslateOutcome.Replaced)
-                Failures.Remove(request.Key);
-
+            // 🔴 **A line leaves the ledger when it has been TRANSLATED, never when a proposal
+            // merely came back** (2026-09-19). A proposal deliberately writes nothing, so removing
+            // it here made the line vanish from the Failures tab while no translation existed
+            // anywhere — reported as "they disappeared and were never saved", and the ledger was
+            // right to be suspected: it had been emptied by something that wrote nothing.
+            //
+            // Whoever keeps the proposal settles the line through SetTranslationFromEditor, which
+            // removes it from the ledger itself. Whoever drops it leaves the line where it was,
+            // which is the whole point of proposing.
             if (outcome == RetranslateOutcome.Replaced && request.StoreResult)
+            {
+                Failures.Remove(request.Key);
                 SaveCache();
+            }
 
             try
             {

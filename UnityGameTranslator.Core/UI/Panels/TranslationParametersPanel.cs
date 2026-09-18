@@ -91,7 +91,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         private ScrollList _failuresList, _sourceList, _attemptList;
         private Host _failureEditor, _failExcludeRow;
         private LabelHandle _failElementLabel, _attemptIndexLabel, _failErrorsLabel, _failInputCheck, _failStatus;
-        private ButtonHandle _prevAttemptBtn, _nextAttemptBtn, _useAttemptBtn, _failSaveBtn;
+        private ButtonHandle _prevAttemptBtn, _nextAttemptBtn, _useAttemptBtn, _failSaveBtn, _failRetranslateBtn;
         private Collapsible _gameText;                 // the line as the game shows it, foldable for room
         private Collapsible _proposals;                // the AI's answers, folded once the field is being written
         private bool _foldedForEditing;                // folded once for this line; reopened by hand, it stays open
@@ -104,6 +104,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         private readonly List<KeyValuePair<string, BuiltScreen>> _failureRows = new List<KeyValuePair<string, BuiltScreen>>();
         private FailedLine _failure;                   // the one open in the editor, or null
         private PreparedText? _failurePrepared;        // the open line as the model was given it: what an answer is restored against
+        private string _retranslateAsked;              // the key an AI answer is awaited for, or null — greys its button and routes the answer
         private int _attemptAt;                        // which proposal the pager shows
 
         /// <summary>The three scroll areas of the Failures tab — the lines, the game text, the proposal — sharing the body.</summary>
@@ -196,6 +197,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _failErrorsLabel = _screen.Label("FailErrors");
             _failInputCheck = _screen.Label("FailInputCheck");
             _failSaveBtn = _screen.Button("FailSaveBtn");
+            _failRetranslateBtn = _screen.Button("FailRetranslateBtn");
             _proposals = _screen.Collapsible("Proposals");
             _gameText = _screen.Collapsible("GameText");
             _prevAttemptBtn = _screen.Button("PrevAttemptBtn");
@@ -220,6 +222,9 @@ namespace UnityGameTranslator.Core.UI.Panels
             _tabBar.OnTabChanged += (_, name) => { if (name == "Failures") { ShareFailures(); ShareFailuresSoon(); } };
             // Noted from the worker thread, settled from this one: the event marshals.
             TranslatorCore.Failures.Changed += () => TranslatorUIManager.RunOnMainThread(OnFailuresChanged);
+            // Panels are built once for the life of the process, so this needs no matching
+            // removal — the same reasoning, and the same static event, as the inspector's.
+            TranslatorCore.OnRetranslateFinished += OnRetranslateFinished;
             RefreshFailuresList();
 
             // Fonts — global
@@ -727,6 +732,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             _failStatus.Say("");
             _failureEditor.Visible = true;
             CheckFailInput();
+            // This line may be the one an answer is still on its way for — the button says so.
+            RefreshRetranslateButton();
 
             ShowAttempt();
             RegisterFailureShares();
@@ -885,19 +892,95 @@ namespace UnityGameTranslator.Core.UI.Panels
             _failStatus.Tone = Tone.Success;
         }
 
+        /// <summary>
+        /// Ask the AI again — and it PROPOSES. The answer lands in the field and waits for Save,
+        /// which is the same door and the same contract as the inspector's Retranslate.
+        ///
+        /// 🔴 **It used to pass the default, which WRITES** (2026-09-19): the answer went straight
+        /// into the game and the line left the ledger, so nobody ever read what had been kept in
+        /// their name. Everything else about the two screens already agreed — one argument did
+        /// not, and `storeResult` defaults to the dangerous half.
+        /// </summary>
         private void OnFailRetranslateClicked()
         {
             if (_failure == null) return;
-            // The same door as the inspector's Retranslate; it forgets the give-up mark itself. A
-            // passing attempt removes the line from this list, a failing one replaces its record.
-            if (!TranslatorCore.RemoveTranslationForRetranslate(_failure.Key))
+            string key = _failure.Key;
+            // Asking twice would race two answers for one field. The button is already greyed
+            // while one is on the way; this is the belt behind it.
+            if (string.Equals(_retranslateAsked, key, StringComparison.Ordinal)) return;
+
+            if (!TranslatorCore.RemoveTranslationForRetranslate(key, storeResult: false))
             {
                 _failStatus.Say("Translation is switched off — turn it on in Options first");
                 _failStatus.Tone = Tone.Warning;
                 return;
             }
-            _failStatus.Say("Asked again");
-            _failStatus.Tone = Tone.Secondary;
+
+            _retranslateAsked = key;
+            RefreshRetranslateButton();
+            _failStatus.Say("Asking the AI for another translation...");
+            _failStatus.Tone = Tone.Accent;
+        }
+
+        /// <summary>
+        /// An answer came back. Raised on the WORKER thread — everything below touches Unity
+        /// objects, so it hops to the main thread first.
+        /// </summary>
+        private void OnRetranslateFinished(string key, string value, TranslatorCore.RetranslateOutcome outcome)
+        {
+            TranslatorUIManager.RunOnMainThread(() => ShowRetranslateResult(key, value, outcome));
+        }
+
+        /// <summary>
+        /// The proposal, into the field. ⚠ `value` is already in the file's own form — what
+        /// AddToCache would have stored — so it is NOT passed through <see cref="Readable"/>,
+        /// which restores a model's wire answer and belongs to the ledger's attempts alone.
+        /// </summary>
+        private void ShowRetranslateResult(string key, string value, TranslatorCore.RetranslateOutcome outcome)
+        {
+            // The event is static and every screen that can ask is listening: this one answers
+            // only for the line it asked about.
+            if (_retranslateAsked == null || !string.Equals(_retranslateAsked, key, StringComparison.Ordinal)) return;
+            _retranslateAsked = null;
+            RefreshRetranslateButton();
+
+            // Another line was opened while the AI was answering. The proposal wrote nothing, so
+            // nothing is damaged — but it has nowhere to land, and "I asked and got nothing" must
+            // have an explanation somewhere rather than nowhere.
+            if (_failure == null || !string.Equals(_failure.Key, key, StringComparison.Ordinal))
+            {
+                TranslatorCore.LogInfo("[Retranslate] Answer arrived after another line was opened — proposal discarded");
+                return;
+            }
+
+            if (outcome == TranslatorCore.RetranslateOutcome.Replaced && value != null)
+            {
+                _failInput.Text = value;
+                CheckFailInput();
+                if (!_foldedForEditing) FoldProposals();
+                ShareFailures();
+                ShareFailuresSoon();
+                _failStatus.Say("New translation proposed — Save to keep it");
+                _failStatus.Tone = Tone.Success;
+            }
+            else if (outcome == TranslatorCore.RetranslateOutcome.Unchanged)
+            {
+                _failStatus.Say("The AI gave the same translation again — nothing changed");
+                _failStatus.Tone = Tone.Warning;
+            }
+            else
+            {
+                _failStatus.Say("The AI could not translate this line");
+                _failStatus.Tone = Tone.Error;
+            }
+        }
+
+        /// <summary>Greyed while an answer for the open line is on its way — no second ask, no race.</summary>
+        private void RefreshRetranslateButton()
+        {
+            if (_failRetranslateBtn == null) return;
+            _failRetranslateBtn.Enabled = _failure != null
+                                          && !string.Equals(_retranslateAsked, _failure.Key, StringComparison.Ordinal);
         }
 
         private void OnFailSkipClicked()

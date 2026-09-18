@@ -819,7 +819,14 @@ namespace UnityGameTranslator.Core.UI.Panels
             // row whose key is the RTL pipeline's own display output can never be saved, whatever
             // is put in the field. It said so after the click, on a status line at the other end of
             // the panel; it now says so on the row, from the moment the row exists.
-            string problem = EditChecks.Problem(row.Key, field, changed);
+            //
+            // ⚠ **And it is judged on what the field holds, not on whether it was touched**
+            // (2026-09-19). A line saved earlier with a placeholder dropped used to say nothing
+            // until somebody retyped it, so the one moment it mattered — coming back to check —
+            // was the one moment it stayed quiet. The site marks such a row on sight; this is the
+            // same rule reaching the same verdict. Save and Revert still key off `changed`: a row
+            // nobody edited has nothing to save or put back, broken or not.
+            string problem = EditChecks.Problem(row.Key, field);
 
             if (row.SaveBtn != null) row.SaveBtn.Enabled = changed && problem == null;
 

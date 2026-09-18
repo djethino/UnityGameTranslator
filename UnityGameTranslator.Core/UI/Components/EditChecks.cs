@@ -17,11 +17,27 @@ namespace UnityGameTranslator.Core.UI.Components
     {
         public const string DisplayShapedKey = "this row's key is display-shaped text, not a source text — nothing typed here can be saved";
 
-        /// <summary>Why the field cannot be saved as it stands, or null when it can.</summary>
-        public static string Problem(string key, string field, bool changed)
+        /// <summary>
+        /// Why the field cannot be saved as it stands, or null when it can.
+        ///
+        /// 🔴 **Judged on what the field HOLDS, never on whether it was touched** (2026-09-19).
+        /// It used to take a `changed` flag and answer null when the row had not been edited, so a
+        /// line already saved with a placeholder dropped went unremarked for as long as nobody
+        /// retyped it — while the site marks it on sight (`wasBrokenOnFile`, the badge, the
+        /// banner, the "broken only" filter). Same rule, one product applying it through a filter
+        /// the others do not have: the shared corpus could not see it, since the divergence was
+        /// above the rule rather than in it.
+        ///
+        /// ⚠ The one short circuit is an EMPTY field, and it is the socle's own
+        /// (<c>Placeholders.AcceptsEdit</c>) and the site's (<c>editProblems</c>): an untranslated
+        /// line is a capture, not a translation — the game shows its source and substitutes
+        /// nothing, so there is no placeholder to keep. Held to the rule, every untranslated row
+        /// would announce its markers "missing" before a word was typed.
+        /// </summary>
+        public static string Problem(string key, string field)
         {
             if (RtlText.ContainsPresentationForms(key)) return DisplayShapedKey;
-            return changed ? TranslatorCore.ValidateEditedPlaceholders(key, field ?? "") : null;
+            return TranslatorCore.ValidateEditedPlaceholders(key, field ?? "");
         }
 
         /// <summary>How many faults the line under a field names before counting the rest.</summary>

@@ -820,7 +820,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (_failure == null || _failInput == null) return;
             string field = _failInput.Text ?? "";
             bool has = !string.IsNullOrEmpty(field);
-            string problem = EditChecks.Problem(_failure.Key, field, changed: has);
+            string problem = EditChecks.Problem(_failure.Key, field);
             if (_failSaveBtn != null) _failSaveBtn.Enabled = has && problem == null;
             EditChecks.Show(_failInputCheck, problem);
         }
@@ -870,7 +870,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
             // A belt: the button is grey while the line under the field says what is wrong
             // (CheckFailInput), and a greyed button is a hint, not a guarantee.
-            string broken = EditChecks.Problem(_failure.Key, value, changed: true);
+            string broken = EditChecks.Problem(_failure.Key, value);
             if (broken != null)
             {
                 _failStatus.Say(broken);

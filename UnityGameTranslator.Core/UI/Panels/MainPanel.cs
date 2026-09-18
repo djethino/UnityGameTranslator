@@ -808,6 +808,20 @@ namespace UnityGameTranslator.Core.UI.Panels
                 if (_createIndependentBtn != null)
                 {
                     _createIndependentBtn.Enabled = true;
+
+                    // One event, two halves. The card's "Solo work" chip states the fact, so the
+                    // hint under this button says the way out — the socle's wall, in its words,
+                    // the same the Manager writes under its Fork. Nothing said it here: the chip
+                    // stood alone and the hint kept the document's sentence (2026-09-18). With no
+                    // wall the document's sentence is the right one, and it comes back.
+                    if (_forkDesc != null)
+                    {
+                        var wall = Uploads.WallOf(_standing.Publication, Standings.OnABranch(_standing),
+                                                  _server.MainUsername ?? _server.Uploader,
+                                                  _server.AcceptsBranches, _server.MainMissing,
+                                                  _server.MainAbandoned, _server.BranchFrozen);
+                        _forkDesc.Say(wall?.WayOut ?? Doc.Nodes["ForkDesc"].Text);
+                    }
                 }
             }
 

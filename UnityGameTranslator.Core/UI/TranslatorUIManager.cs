@@ -2402,14 +2402,17 @@ namespace UnityGameTranslator.Core.UI
                 ? serverState.MainUsername
                 : (serverState?.Uploader ?? "the original owner");
 
+            // "Fork" on the window and on its button: the vocabulary's word, the one the Actions
+            // row, the corner notification and the Manager all use. This door said "independent
+            // copy" — a second name for the same act, three inches from the first (2026-09-18).
             ConfirmationPanel?.Show(
-                "Make an independent copy?",
+                "Fork this translation?",
                 "A copy of @" + ownerName + "'s translation, starting from the file in this game as "
                 + "it is now. It becomes yours."
                 + "\n\nNothing is sent to the site. Publish it when you want to, or never."
                 + "\n\nYou will no longer be told when @" + ownerName + "'s version changes, and "
                 + "you can no longer merge with it. That part cannot be undone.",
-                "Create Independent",
+                "Fork",
                 () =>
                 {
                     TranslatorCore.CreateFork();

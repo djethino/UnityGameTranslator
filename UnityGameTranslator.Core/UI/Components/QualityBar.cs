@@ -213,11 +213,12 @@ namespace UnityGameTranslator.Core.UI.Components
             int total = human + validated + ai + kept + capture;
             if (total <= 0) return string.Empty;
 
-            int humanPct = Mathf.RoundToInt(human * 100f / total);
-            int validatedPct = Mathf.RoundToInt(validated * 100f / total);
-            int aiPct = Mathf.RoundToInt(ai * 100f / total);
-            int keptPct = Mathf.RoundToInt(kept * 100f / total);
-            int capturePct = 100 - humanPct - validatedPct - aiPct - keptPct;
+            // The socle's arithmetic, not this file's. It rounded each band on its own and let
+            // the captured one — hidden when empty — absorb the remainder, so this key read
+            // 1%, 1%, 99% where the Manager read 98% on the same file (2026-09-18).
+            var shares = Composition.Shares(new[] { human, validated, ai, kept, capture });
+            int humanPct = shares[0], validatedPct = shares[1], aiPct = shares[2];
+            int keptPct = shares[3], capturePct = shares[4];
 
             // Same keys as the bar itself, or the key would name colours the bar does not show.
             //

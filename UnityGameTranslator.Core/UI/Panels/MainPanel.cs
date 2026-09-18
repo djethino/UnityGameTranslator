@@ -812,15 +812,20 @@ namespace UnityGameTranslator.Core.UI.Panels
                     // One event, two halves. The card's "Solo work" chip states the fact, so the
                     // hint under this button says the way out — the socle's wall, in its words,
                     // the same the Manager writes under its Fork. Nothing said it here: the chip
-                    // stood alone and the hint kept the document's sentence (2026-09-18). With no
-                    // wall the document's sentence is the right one, and it comes back.
+                    // stood alone and the hint kept a fixed sentence (2026-09-18). With no wall,
+                    // the sentence below is the right one.
+                    //
+                    // ⚠ A slot (`bind: forkDesc`), not a document text: a label the pipeline
+                    // writes refuses a Say from code — loudly, in the panel's constructor, which
+                    // took the whole interface down at the first launch.
                     if (_forkDesc != null)
                     {
                         var wall = Uploads.WallOf(_standing.Publication, Standings.OnABranch(_standing),
                                                   _server.MainUsername ?? _server.Uploader,
                                                   _server.AcceptsBranches, _server.MainMissing,
                                                   _server.MainAbandoned, _server.BranchFrozen);
-                        _forkDesc.Say(wall?.WayOut ?? Doc.Nodes["ForkDesc"].Text);
+                        _forkDesc.Say(wall?.WayOut
+                            ?? "A copy of this translation as it is now, yours. It keeps the credit to its author, and stops following their updates");
                     }
                 }
             }

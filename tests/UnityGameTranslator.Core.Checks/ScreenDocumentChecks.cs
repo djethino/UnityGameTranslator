@@ -126,7 +126,7 @@ namespace UnityGameTranslator.Core.Checks
                       "review", "search", "transParams", "updateFromMain", "upload" }),
                 "main.json asks for the twenty-two acts its code handles", $"got {string.Join(",", main.Acts.Keys)}");
             check(main.Binds.Keys.OrderBy(k => k).SequenceEqual(new[] {
-                      "account", "aiStatus", "backups", "branchDesc", "communityGame", "downloadDesc", "entries", "failures", "failuresFix", "guidance",
+                      "account", "aiStatus", "backups", "branchDesc", "communityGame", "downloadDesc", "entries", "failures", "failuresFix", "forkDesc", "guidance",
                       "loginLogout", "mergeDesc", "modManager", "modUpdate", "modUpdateVerb", "resourcesBy", "resourcesUrl",
                       "role", "roleActionsHint", "source", "syncStatus", "target", "upload", "uploadHint" }),
                 "its slots are the lines the code writes on every redraw", $"got {string.Join(",", main.Binds.Keys)}");

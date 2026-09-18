@@ -78,7 +78,15 @@ namespace UnityGameTranslator.Core.UI.Components
         /// side; a generous under-estimate simply breaks a line early, where an over-estimate would
         /// push a chip off the edge.
         /// </summary>
-        private const float _stripWidth = 380f;
+        /// <summary>
+        /// What the strip wraps in before the host has been laid out: the card's width at the
+        /// window's default size. The measured width replaces it from the first layout on
+        /// (<see cref="Reflow"/>), so it only ever decides the first frame.
+        /// </summary>
+        private const float _stripWidthBeforeLayout = 380f;
+
+        /// <summary>Whether a standing has been shown yet — what <see cref="Reflow"/> has to deal again.</summary>
+        private bool _standingSet;
         private LabelHandle _detailsLabel;
         private Host _qualityRow;
         private Host _stageRow;
@@ -365,9 +373,20 @@ namespace UnityGameTranslator.Core.UI.Components
         public void SetStanding(Standing standing)
         {
             _standing = standing;
+            _standingSet = true;
             if (_badgeHost == null) return;
 
             _badgeHost.Clear();
+
+            // What the file is made of, measured here: the socle's chips for it are the
+            // Manager's and the site's, and this card dropped them (see the filter below).
+            var stats = CalculateLocalStats();
+            bool captureOnly = TranslationQuality.IsCaptureOnly(stats.HumanCount, stats.ValidatedCount,
+                                                                stats.SkippedCount, stats.AiCount, stats.CaptureCount);
+            var stage = Quality.Stage(stats.HumanCount, stats.ValidatedCount, stats.SkippedCount,
+                                      stats.AiCount, stats.CaptureCount);
+            var completeness = Quality.Completeness(stats.HumanCount, stats.ValidatedCount, stats.SkippedCount,
+                                                    stats.AiCount, stats.CaptureCount);
 
             var all = Badges.For(standing.Publication, standing.Role == LineageRole.Main ? true
                                      : standing.Role == LineageRole.Branch ? (bool?)false : null,
@@ -382,7 +401,11 @@ namespace UnityGameTranslator.Core.UI.Components
                                  standing.MainMissing,
 
                                  standing.Sync,
-                                 null, null, 0, 0,
+                                 stage, completeness,
+                                 // The votes have a row of their own on this card, so their chip
+                                 // is filtered below whatever the count; the downloads have none.
+                                 // Unknown (an older site) is passed as none, which is not shown.
+                                 0, TranslatorCore.ServerState?.DownloadCount ?? 0,
                                  linesAvailable: standing.LinesAvailable,
 
                                  // The other way a lineage loses its head: the Main is still there
@@ -414,24 +437,50 @@ namespace UnityGameTranslator.Core.UI.Components
                                  // and a bare "Main" in the game (2026-09-17).
                                  origin: TranslatorCore.ServerState?.Origin,
 
+                                 // Nothing translated: the socle says it as one chip, in place of
+                                 // a stage with nothing to judge and a "0% translated".
+                                 captureOnly: captureOnly,
                                  // Named in the "Not yours" sentence, so somebody holding a
                                  // community translation is told WHOSE it is and that publishing
                                  // sends them a contribution rather than creating anything.
                                  mainOwner: standing.MainOwner);
 
+            // 🔴 Only the votes are dropped: they have a row of their own on this card, and a
+            // chip beside it would say one fact twice. The stage, the completeness and the
+            // downloads used to be dropped too, on the reasoning that the quality bar answered
+            // them — it answers the COUNTS; the stage and "Capture only" are the chips the site
+            // and the Manager show, and the mod was the one product without them (2026-09-18).
+            // The row under the bar keeps what the chips do not say: what is left to read.
             var shown = new List<Badge>();
             foreach (var badge in all)
             {
-                if (badge.Kind == BadgeKind.ReviewStage || badge.Kind == BadgeKind.Completeness
-                    || badge.Kind == BadgeKind.Votes || badge.Kind == BadgeKind.Downloads)
-                {
-                    continue;
-                }
-
+                if (badge.Kind == BadgeKind.Votes) continue;
                 shown.Add(badge);
             }
 
-            BadgeStrip.Create(_badgeHost, "Badges", shown, _stripWidth);
+            BadgeStrip.Create(_badgeHost, "Badges", shown, StripWidth());
+        }
+
+        /// <summary>
+        /// The width the chips wrap in: the host's, once it has been laid out. Zero before the
+        /// first layout, when the window's default stands in.
+        /// </summary>
+        private float StripWidth()
+        {
+            var rect = _badgeHost?.Object != null ? _badgeHost.Object.GetComponent<RectTransform>() : null;
+            float width = rect != null ? rect.rect.width : 0f;
+            return width > 1f ? width : _stripWidthBeforeLayout;
+        }
+
+        /// <summary>
+        /// The strip dealt again within the width the host has NOW — asked by the panel after
+        /// every layout and every resize, since which chips fit on a row is a fact about the
+        /// width and the chips are built long before the card is measured.
+        /// </summary>
+        public void Reflow()
+        {
+            if (!_standingSet) return;
+            SetStanding(_standing);
         }
 
         /// <summary>
@@ -681,32 +730,21 @@ namespace UnityGameTranslator.Core.UI.Components
             // top demanded retyping by hand what the AI already had right. The remaining
             // count is the part that moves as you work — that is what carries a translator
             // forward, not a grade.
+            // ⚠ The stage itself and the share translated are CHIPS now (SetStanding), as on the
+            // site and in the Manager; this row keeps only the part that moves as you work.
             string stage = stats.ReviewStage;
+            string remainder;
             if (stage == null && stats.Completeness > 0f)
-            {
-                // Still mostly untranslated: how much is done and how much is waiting says
-                // more than a review step that has nothing to judge yet.
-                _qualityLabel.Show(Mathf.RoundToInt(stats.Completeness * 100f) + "% "
-                    + TranslatorCore.TranslateOwnUIDynamic("translated")
-                    + $" · {stats.CaptureCount} " + TranslatorCore.TranslateOwnUIDynamic("waiting"));
-            }
-            else if (stage == null)
-            {
-                _qualityLabel.Show(string.Empty);
-            }
-            else if (stats.UnreviewedCount > 0)
-            {
-                _qualityLabel.Show(TranslatorCore.TranslateOwnUIDynamic(stage)
-                    + $" · {stats.UnreviewedCount} " + TranslatorCore.TranslateOwnUIDynamic("left to review"));
-            }
+                remainder = $"{stats.CaptureCount} " + TranslatorCore.TranslateOwnUIDynamic("waiting");
+            else if (stage != null && stats.UnreviewedCount > 0)
+                remainder = $"{stats.UnreviewedCount} " + TranslatorCore.TranslateOwnUIDynamic("left to review");
             else
-            {
-                _qualityLabel.Show(TranslatorCore.TranslateOwnUIDynamic(stage));
-            }
+                remainder = null;
+            _qualityLabel.Show(remainder ?? string.Empty);
 
-            // A file with nothing translated has no stage: an empty row would be a blank
-            // gap between the bar and its key.
-            _stageRow.Visible = stage != null;
+            // Nothing left to say — nothing translated, or everything read — leaves no row: an
+            // empty one would be a blank gap between the bar and its key.
+            _stageRow.Visible = remainder != null;
 
             _qualityRow.Visible = true;
             _legendRow.Visible = true;

@@ -17,21 +17,26 @@ namespace UnityGameTranslator.Core.UI.Components
     ///
     /// ⚠ **Rows are packed here because uGUI has nothing that wraps.** UniverseLib offers a
     /// horizontal group, which runs off the edge, and a grid, whose cells are all one size — useless
-    /// for chips whose width is their text. So the widths are estimated and the chips are dealt into
-    /// rows. The estimate is deliberately GENEROUS: guessing too wide costs an early line break,
-    /// guessing too narrow clips a word, and a clipped chip is a chip that lies.
+    /// for chips whose width is their text. So each chip is MEASURED and the chips are dealt into
+    /// rows within the width the caller has.
+    ///
+    /// 🔴 Measured, not estimated (2026-09-18). The width used to be guessed from the letter
+    /// count, "deliberately generous", and the strip wrapped at a constant no card was ever as
+    /// narrow as: "Solo work" sat alone on a second line under four chips that filled half the
+    /// card. A label reports its preferred width the moment it has its font — the scope switch
+    /// and the title bar already size themselves by it — so nothing here needs guessing.
+    ///
+    /// ⚠ The chip is the Manager's, in uGUI: the input surface as background, a one-pixel
+    /// subtle border, the small radius, 7×2 of padding, the hint size in the tone's colour.
+    /// A bare word in a colour on the card's own surface was the mod's alone.
     /// </summary>
     public static class BadgeStrip
     {
-        /// <summary>
-        /// Roughly how wide a character is at hint size. Measured against Unity's default font
-        /// rather than derived: a real measurement needs a layout pass that has not happened yet
-        /// when this builds.
-        /// </summary>
-        private const float CharWidth = 0.62f;
+        /// <summary>Padding inside a chip, on each side — the Manager's 7.</summary>
+        private const float ChipSide = 7f;
 
-        /// <summary>Padding inside a chip, left and right together.</summary>
-        private const float ChipPadding = 14f;
+        /// <summary>Space between two chips on a row, and between rows — the Manager's 5.</summary>
+        private const int Gap = 5;
 
         private static Color Colour(BadgeTone tone)
         {
@@ -60,7 +65,7 @@ namespace UnityGameTranslator.Core.UI.Components
         internal static GameObject Create(GameObject parent, string name, List<Badge> badges,
                                         float availableWidth)
         {
-            var strip = UIFactory.CreateVerticalGroup(parent, name, false, false, true, true, 3,
+            var strip = UIFactory.CreateVerticalGroup(parent, name, false, false, true, true, Gap,
                                                       default, default, TextAnchor.UpperLeft);
             UIFactory.SetLayoutElement(strip, flexibleWidth: 9999, flexibleHeight: 0);
             UIStyles.ClearRowBackground(strip);
@@ -75,17 +80,26 @@ namespace UnityGameTranslator.Core.UI.Components
             float used = 0f;
             int rowIndex = 0;
 
+            // The chips are built first and measured, then dealt: a chip has to exist to say how
+            // wide its word is. Built under the strip and moved to their row afterwards.
+            var chips = new List<GameObject>(badges.Count);
+            var widths = new List<float>(badges.Count);
             for (int i = 0; i < badges.Count; i++)
             {
-                var badge = badges[i];
-                float width = Width(badge.Text);
+                chips.Add(Chip(strip, name + "Chip" + i, badges[i], out float width));
+                widths.Add(width);
+            }
+
+            for (int i = 0; i < chips.Count; i++)
+            {
+                float width = widths[i];
 
                 // A chip wider than the strip goes on a line of its own rather than being shrunk:
                 // it is still readable, where a squeezed one is not.
-                if (row == null || (used > 0f && used + width > availableWidth))
+                if (row == null || (used > 0f && used + Gap + width > availableWidth))
                 {
                     row = UIFactory.CreateHorizontalGroup(strip, name + "Row" + rowIndex,
-                                                          false, false, true, true, 4,
+                                                          false, false, true, true, Gap,
                                                           default, default, TextAnchor.MiddleLeft);
                     UIFactory.SetLayoutElement(row, minHeight: UIStyles.RowHeightSmall,
                                                flexibleWidth: 9999, flexibleHeight: 0);
@@ -95,37 +109,53 @@ namespace UnityGameTranslator.Core.UI.Components
                     used = 0f;
                 }
 
-                Chip(row, name + "Chip" + i, badge, width);
-                used += width + 4f;
+                chips[i].transform.SetParent(row.transform, false);
+                used += (used > 0f ? Gap : 0f) + width;
             }
 
             return strip;
         }
 
-        /// <summary>One chip: a word in its tone, on the panel's own item background.</summary>
-        private static void Chip(GameObject row, string name, Badge badge, float width)
+        /// <summary>
+        /// One chip, as the Manager draws it: the word in its tone on the input surface, edged
+        /// and rounded. <paramref name="width"/> is what it measures, padding included.
+        /// </summary>
+        private static GameObject Chip(GameObject parent, string name, Badge badge, out float width)
         {
-            var chip = UIFactory.CreateLabel(row, name, badge.Text, TextAnchor.MiddleCenter,
-                                             supportRichText: false);
-            chip.fontSize = UIStyles.FontSizeHint;
-            chip.color = Colour(badge.Tone);
+            var chip = UIFactory.CreateUIObject(name, parent);
 
-            // flexibleWidth 0: a chip is the size of its text. Letting it stretch would spread three
-            // chips across the whole card and lose the fact that they are separate things.
-            UIFactory.SetLayoutElement(chip.gameObject, minWidth: Mathf.CeilToInt(width),
-                                       minHeight: UIStyles.RowHeightSmall,
+            // The surface has to EXIST before anything can paint it — SetBackground writes into
+            // an Image and never adds one (the tag chips paid for this once).
+            var surface = chip.AddComponent<Image>();
+            surface.raycastTarget = false;
+            UIStyles.SetBackground(chip, UIStyles.InputBackground, UIFactory.Shapes.Small);
+            UIFactory.AddBorder(chip, UIStyles.BorderSubtle, UIFactory.Shapes.BorderSmall);
+
+            var label = UIFactory.CreateLabel(chip, "Word", badge.Text, TextAnchor.MiddleCenter,
+                                              supportRichText: false);
+            label.fontSize = UIStyles.FontSizeHint;
+            label.color = Colour(badge.Tone);
+            label.raycastTarget = false;
+
+            var rect = label.GetComponent<RectTransform>();
+            rect.anchorMin = Vector2.zero;
+            rect.anchorMax = Vector2.one;
+            rect.offsetMin = new Vector2(ChipSide, 0f);
+            rect.offsetMax = new Vector2(-ChipSide, 0f);
+
+            // What the word measures at its font, plus the padding: the chip is exactly that wide,
+            // and never stretches — three chips spread across the card would lose the fact that
+            // they are separate things.
+            width = Mathf.Ceil(label.preferredWidth) + 2f * ChipSide;
+            UIFactory.SetLayoutElement(chip, minWidth: Mathf.CeilToInt(width), preferredWidth: Mathf.CeilToInt(width),
+                                       minHeight: UIStyles.RowHeightSmall, preferredHeight: UIStyles.RowHeightSmall,
                                        flexibleWidth: 0, flexibleHeight: 0);
-            UIStyles.SetBackground(chip.gameObject, UIStyles.ItemBackground);
 
             // ⚠ Never translated, like the scope switch's words: these are the product's own terms,
             // identical in three products, and translating the mod's interface must not make one of
             // the three drift.
-            TranslatorCore.RegisterExcluded(chip);
-        }
-
-        private static float Width(string text)
-        {
-            return (text ?? "").Length * UIStyles.FontSizeHint * CharWidth + ChipPadding;
+            TranslatorCore.RegisterExcluded(label);
+            return chip;
         }
     }
 }

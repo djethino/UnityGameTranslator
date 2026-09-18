@@ -194,6 +194,7 @@ namespace UnityGameTranslator.Core.Checks
                     d["ExistingTranslation.Origin"] = r.ExistingTranslation?.Origin == null ? null : "present";
                     d["ExistingTranslation.Origin.Author"] = r.ExistingTranslation?.Origin?.Author;
                     d["ExistingTranslation.Origin.Lines"] = r.ExistingTranslation?.Origin?.Lines;
+                    d["ExistingTranslation.DownloadCount"] = r.ExistingTranslation?.DownloadCount;
                     d["OriginalTranslation"] = r.OriginalTranslation == null ? null : "present";
                     d["OriginalTranslation.Uploader"] = r.OriginalTranslation?.Uploader;
                     d["OriginalTranslation.LineCount"] = r.OriginalTranslation?.LineCount;

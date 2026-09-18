@@ -358,7 +358,8 @@ namespace UnityGameTranslator.Core
                     UpdatedAt = t["updated_at"]?.Value<string>(),
                     // Null on a site that predates the field, and null when the row started
                     // from nobody's work — the card shows no credit either way.
-                    Origin = ReadOrigin(t["origin"])
+                    Origin = ReadOrigin(t["origin"]),
+                    DownloadCount = t["download_count"]?.ToObject<int?>()
                 };
             }
 
@@ -894,6 +895,9 @@ namespace UnityGameTranslator.Core
                 serverState.Origin = translation["origin"] != null
                     ? ReadOrigin(translation["origin"])
                     : previous?.Origin;
+                serverState.DownloadCount = translation["download_count"] != null
+                    ? translation["download_count"].ToObject<int?>()
+                    : previous?.DownloadCount;
 
                 // Only when the row carries it: the lineage answer is already in from the top
                 // level above, and an absent key here must not wipe it.

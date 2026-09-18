@@ -358,6 +358,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                             ResourcesUrl = result.ExistingTranslation?.ResourcesUrl,
                             Status = result.ExistingTranslation?.Status,
                             Origin = result.ExistingTranslation?.Origin,
+                            DownloadCount = result.ExistingTranslation?.DownloadCount,
                             AcceptsBranches = result.AcceptsBranches,
                             // ⚠ Carried over like AcceptsBranches, or this rebuild WIPED them and
                             // the card lost the notice about a Main gone or closed.

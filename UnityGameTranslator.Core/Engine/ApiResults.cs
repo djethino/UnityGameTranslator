@@ -412,6 +412,9 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public Origin? Origin { get; set; }
 
+        /// <summary>The site's tally, as the listing carries it. Null on a site that predates the field.</summary>
+        public int? DownloadCount { get; set; }
+
         /// <summary>
         /// The link to show: this translation's own, or the Main's when a branch has none.
         /// </summary>
@@ -650,6 +653,12 @@ namespace UnityGameTranslator.Core
         /// unknown, never "started from nobody".
         /// </summary>
         public Origin? Origin { get; set; }
+
+        /// <summary>
+        /// How many times this account's row was taken from the site — the listing's tally, now
+        /// on the own row too. Null when the answer did not carry it: unknown, never zero.
+        /// </summary>
+        public int? DownloadCount { get; set; }
 
         /// <summary>
         /// How many lines the published copy changed since this machine last synced, and the

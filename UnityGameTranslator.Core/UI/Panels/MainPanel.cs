@@ -111,6 +111,17 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         // UI references - Context-aware sections
         private StatusCard _statusCard;
+
+        /// <summary>
+        /// The body has a width: the card deals its chips again within it. Asked after the first
+        /// layout and after every resize — the chips are built before the card is measured, and
+        /// which of them fit on a row is a fact about the width, not about the chips.
+        /// </summary>
+        protected override void BodySized()
+        {
+            base.BodySized();
+            _statusCard?.Reflow();
+        }
         private Host _loginCTASection;
         private ButtonHandle _loginCTABtn;
         private Host _statusSection;

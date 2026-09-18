@@ -183,6 +183,7 @@ namespace UnityGameTranslator.Core.Checks
                     d["SiteId"] = r.SiteId; d["Uploader"] = r.Uploader; d["Hash"] = r.Hash; d["Type"] = r.Type;
                     d["Status"] = r.Status; d["Notes"] = r.Notes; d["ResourcesUrl"] = r.ResourcesUrl;
                     d["Origin"] = r.Origin == null ? null : "present"; d["Origin.Author"] = r.Origin?.Author; d["Origin.Lines"] = r.Origin?.Lines;
+                    d["DownloadCount"] = r.DownloadCount;
                     d["AcceptsBranches"] = r.AcceptsBranches; d["BranchFrozen"] = r.BranchFrozen;
                     d["MainUsername"] = r.MainUsername; d["MainMissing"] = r.MainMissing;
                     d["MainAbandoned"] = r.MainAbandoned; d["MainIgnoring"] = r.MainIgnoring;

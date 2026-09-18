@@ -37,6 +37,14 @@ namespace UnityGameTranslator.Core.UI.Components
         /// <summary>Each row shown: the translation's id, its tick box, its box — for RefreshSelection.</summary>
         private readonly List<ShownRow> _rows = new List<ShownRow>();
 
+        /// <summary>
+        /// Each row's chip strip and what it holds, so the chips can be dealt again within the
+        /// width the row HAS — rows are built before the list is laid out, and the width they
+        /// are first dealt in is a stand-in (<see cref="Reflow"/>).
+        /// </summary>
+        private sealed class Strip { public Host Host; public List<Badge> Chips; public float DealtIn; }
+        private readonly List<Strip> _strips = new List<Strip>();
+
         private struct ShownRow
         {
             public int Id;
@@ -322,11 +330,32 @@ namespace UnityGameTranslator.Core.UI.Components
         {
             _list?.Clear();
             _rows.Clear();
+            _strips.Clear();
+        }
+
+        /// <summary>
+        /// The chips of every row dealt again within the width its host measures now. Asked on
+        /// the tick after the rows were built — the first layout has happened by then — and by
+        /// the panel after every resize. A row whose width has not moved is left alone.
+        /// </summary>
+        public void Reflow()
+        {
+            foreach (var strip in _strips)
+            {
+                float width = BadgeStrip.WidthOf(strip.Host, 0f);
+                if (width < 1f || Mathf.Abs(width - strip.DealtIn) < 0.5f) continue;
+                strip.Host.Clear();
+                BadgeStrip.Create(strip.Host, "Badges", strip.Chips, width, Surface.Item);
+                strip.DealtIn = width;
+            }
         }
 
         private void Populate()
         {
             ClearUI();
+
+            // The rows built below are dealt in a stand-in width; the tick after, they have one.
+            TranslatorUIManager.RunOnMainThread(Reflow);
 
             // isLoggedIn must be based on api_token, not api_user (api_user persists after logout)
             bool isLoggedIn = !string.IsNullOrEmpty(TranslatorCore.Config.api_token);
@@ -536,9 +565,12 @@ namespace UnityGameTranslator.Core.UI.Components
             }
             if (chips.Count > 0)
             {
-                var chipHost = row.Host("Badges");
                 // On the row's own surface: the chips take the step above it (BadgeStrip.SurfaceOn).
-                BadgeStrip.Create(chipHost, "Badges", chips, BadgeStrip.WidthOf(chipHost, 360f), Surface.Item);
+                // Dealt in a stand-in width now, in the row's own once it has one (Reflow).
+                var chipHost = row.Host("Badges");
+                float dealtIn = BadgeStrip.WidthOf(chipHost, 360f);
+                BadgeStrip.Create(chipHost, "Badges", chips, dealtIn, Surface.Item);
+                _strips.Add(new Strip { Host = chipHost, Chips = chips, DealtIn = dealtIn });
             }
 
             // The size, and how much of the game it reaches: what the chips above do not say.

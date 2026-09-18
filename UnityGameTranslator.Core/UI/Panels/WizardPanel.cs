@@ -105,6 +105,13 @@ namespace UnityGameTranslator.Core.UI.Panels
         private LabelHandle _accountStatusLabel;
         private ButtonHandle _loginBtn;
         private TranslationList _translationList;
+
+        /// <summary>The body has a width: the list's rows deal their chips again within it.</summary>
+        protected override void BodySized()
+        {
+            base.BodySized();
+            _translationList?.Reflow();
+        }
         private LabelHandle _downloadStatusLabel;
         private LabelHandle _comparisonLabel;
         private ButtonHandle _downloadBtn;

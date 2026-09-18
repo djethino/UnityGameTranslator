@@ -121,6 +121,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             base.BodySized();
             _statusCard?.Reflow();
+            _translationList?.Reflow();
         }
         private Host _loginCTASection;
         private ButtonHandle _loginCTABtn;

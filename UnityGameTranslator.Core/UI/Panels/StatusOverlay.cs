@@ -95,6 +95,11 @@ namespace UnityGameTranslator.Core.UI.Panels
         // this translation's own published version
         private bool _syncActionIsUpstream = false;
         private bool _syncActionIsReview = false;
+        // Publishing a lineage that does not exist yet, and the same offer to somebody with no
+        // account: neither can be read off PendingUpdateDirection, which compares two sides and
+        // has nothing to compare here.
+        private bool _syncActionIsUpload = false;
+        private bool _syncActionIsSignIn = false;
 
         public StatusOverlay(UIBase owner) : base(owner)
         {
@@ -153,10 +158,57 @@ namespace UnityGameTranslator.Core.UI.Panels
             /// </summary>
             public bool WaitingForAccount;
 
+            /// <summary>Nothing of this lineage is on the site, and there is enough here to offer.</summary>
+            public bool NeverPublished;
+
             /// <summary>Anything at all worth showing.</summary>
             public bool Any => !WaitingForAccount
                                && (HasLocalChanges || HasMetadataChanges || HasServerUpdate
-                                   || NeedsMerge || HasMainUpdate || BranchesPendingReview > 0);
+                                   || NeedsMerge || HasMainUpdate || BranchesPendingReview > 0
+                                   || NeverPublished);
+
+            /// <summary>
+            /// Is there enough translated here to be worth offering to share?
+            ///
+            /// ⚠ **The answer is the socle's gate, not a number chosen here**:
+            /// <see cref="Quality.Completeness"/> against <see cref="Quality.TranslationFloor"/> —
+            /// the same one that decides there is enough matter to say anything at all about a
+            /// translation, and the same the website computes. A file that is nothing but capture
+            /// scores zero and stays silent, which is right: captured text is the game's own words
+            /// handed back, not work to share.
+            ///
+            /// 🔴 **Remembered, because Current() runs EVERY FRAME.** UpdateStatusOverlay calls it
+            /// from the tick to decide whether the corner shows at all, and counting the tags means
+            /// walking the whole cache — the exact shape of the freeze that cost a day
+            /// (2026-09-18). It cannot wait for RefreshOverlay either: that one only runs once the
+            /// overlay is already showing, so the verdict it produced would be the reason it never
+            /// appeared.
+            ///
+            /// ⚠ The key is two numbers the store already keeps, both read in O(1): how many
+            /// entries the cache holds — a line the AI translates adds one — and how many local
+            /// changes it counts — an edit by hand moves that. Neither is a clock: the walk happens
+            /// when the file has actually moved, and never otherwise.
+            /// </summary>
+            private static bool _sharedVerdict;
+            private static int _sharedVerdictEntries = -1;   // -1: nothing measured yet, so the first call walks
+            private static int _sharedVerdictChanges = -1;
+
+            private static bool EnoughToShare()
+            {
+                int entries = TranslatorCore.TranslationCache?.Count ?? 0;
+                int changes = TranslatorCore.LocalChangesCount;
+                if (entries == _sharedVerdictEntries && changes == _sharedVerdictChanges)
+                    return _sharedVerdict;
+
+                var stats = StatusCard.CalculateLocalStats();
+                double? completeness = Quality.Completeness(stats.HumanCount, stats.ValidatedCount,
+                                                            stats.SkippedCount, stats.AiCount, stats.CaptureCount);
+
+                _sharedVerdict = completeness.HasValue && completeness.Value >= Quality.TranslationFloor;
+                _sharedVerdictEntries = entries;
+                _sharedVerdictChanges = changes;
+                return _sharedVerdict;
+            }
 
             public static PendingSyncWork Current()
             {
@@ -191,6 +243,21 @@ namespace UnityGameTranslator.Core.UI.Panels
                     BranchesPendingReview = notifyUpdates && serverState != null
                         ? serverState.BranchesPendingReview
                         : 0,
+
+                    // Nothing of this lineage on the site — a new translation, or a fork that has
+                    // just taken its own uuid. ⚠ "Asked and answered": a null state means we have
+                    // not asked, which is not the same as "there is nothing there", and offering
+                    // to publish something already published is the one mistake to avoid here.
+                    //
+                    // ⚠ Offline is its own answer, said before the state is even consulted: with
+                    // nothing sendable, the offer would be an invitation to a refusal. Whether it
+                    // can be sent for any OTHER reason — a fork that is still its copy, no account
+                    // — is not re-derived; the socle's ClosedReason owns that, and the notice turns
+                    // the account refusal into a door.
+                    NeverPublished = TranslatorCore.Config.online_mode
+                                     && serverState != null && !serverState.Exists
+                                     && !TranslatorCore.ForkIsStillTheCopy
+                                     && EnoughToShare(),
                 };
             }
         }
@@ -571,6 +638,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                     NeedsMerge = pending.NeedsMerge,
                     HasMainUpdate = pending.HasMainUpdate,
                     BranchesPendingReview = pending.BranchesPendingReview,
+                    NeverPublished = pending.NeverPublished,
                 };
                 var standing = StandingFacts.Now(out var local, out var server, out var account);
                 var notice = Notices.Sync(work, standing, local, server, account);
@@ -647,6 +715,8 @@ namespace UnityGameTranslator.Core.UI.Panels
 
                 _syncActionIsUpstream = notice.Action == SyncAction.MergeFromMain;
                 _syncActionIsReview = notice.Action == SyncAction.Review;
+                _syncActionIsUpload = notice.Action == SyncAction.Upload;
+                _syncActionIsSignIn = notice.Action == SyncAction.SignIn;
 
                 if (showAction && notice.Verb != null)
                 {
@@ -922,6 +992,22 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // Opens the merge panel with a summary; nothing is written until
                 // the player confirms there
                 _ = TranslatorUIManager.MergeFromMain();
+                return;
+            }
+
+            if (_syncActionIsSignIn)
+            {
+                // The offer was made to somebody with no account: the button is the way to one,
+                // not a window that would refuse. Decided 2026-09-19 — see SyncAction.SignIn.
+                Intents.OpenLogin();
+                return;
+            }
+
+            if (_syncActionIsUpload)
+            {
+                // Nothing of this lineage is on the site, so publishing CREATES it. The same door
+                // as every other way in, which is what keeps the act's conditions in one place.
+                Intents.OpenUpload();
                 return;
             }
 

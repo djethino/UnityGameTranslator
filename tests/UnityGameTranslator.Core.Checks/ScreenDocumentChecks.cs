@@ -126,9 +126,9 @@ namespace UnityGameTranslator.Core.Checks
                       "review", "search", "transParams", "updateFromMain", "upload" }),
                 "main.json asks for the twenty-two acts its code handles", $"got {string.Join(",", main.Acts.Keys)}");
             check(main.Binds.Keys.OrderBy(k => k).SequenceEqual(new[] {
-                      "account", "aiStatus", "backups", "branchDesc", "communityGame", "downloadDesc", "entries", "failures", "failuresFix", "forkDesc", "guidance",
-                      "loginLogout", "mergeDesc", "modManager", "modUpdate", "modUpdateVerb", "resourcesBy", "resourcesUrl",
-                      "role", "roleActionsHint", "source", "syncStatus", "target", "upload", "uploadHint" }),
+                      "account", "backups", "branchDesc", "communityGame", "downloadDesc", "failures", "failuresFix", "forkDesc",
+                      "loginLogout", "mergeDesc", "modManager", "modUpdate", "modUpdateVerb", "noTranslation",
+                      "resourcesBy", "resourcesUrl", "roleActionsHint", "upload", "uploadHint" }),
                 "its slots are the lines the code writes on every redraw", $"got {string.Join(",", main.Binds.Keys)}");
             check(main.Body.Count == 0 && main.Header.Count == 5 && main.Header[4].Kind == "tabs" && main.Header[4].Children.Count == 2
                   && main.Header[4].Children.All(t => t.Kind == "tab" && t.Text != null && ScreenDocument.HelpOf(t) != null),

@@ -68,14 +68,16 @@ namespace UnityGameTranslator.Core.UI.Panels
         private LabelHandle _accountLabel;
         private ButtonHandle _loginLogoutBtn;
 
-        // UI references - Translation info section (legacy, hidden when StatusCard is shown)
-        private Host _translationInfoSection;
-        private LabelHandle _entriesLabel;
-        private LabelHandle _targetLabel;
-        private LabelHandle _sourceLabel;
-        private LabelHandle _roleLabel;
-        private LabelHandle _syncStatusLabel;
-        private LabelHandle _aiStatusLabel;
+        /// <summary>
+        /// What to do when this game holds no translation at all, where the card would be.
+        ///
+        /// 🔴 **The card is hidden then, so this is the section's only voice** — and the screen
+        /// used to answer with a second "Current Translation" section repeating the card's lines
+        /// as zeroes, plus a blue box under Actions that nobody scrolled to (2026-09-18, the
+        /// user's words: "cet endroit est très peu visible, il faut scroller pour le voir").
+        /// Both are gone; what they said that was worth saying is here and on the card.
+        /// </summary>
+        private LabelHandle _noTranslationLabel;
         private Host _failuresRow;
         private LabelHandle _failuresLabel;
         private ButtonHandle _fixBtn;
@@ -164,10 +166,6 @@ namespace UnityGameTranslator.Core.UI.Panels
         private ButtonHandle _contributeAsBranchBtn;
         private ButtonHandle _downloadLatestBtn;
         private ButtonHandle _createIndependentBtn;
-
-        // UI references - Guidance messages (GAP 9)
-        private Host _guidanceSection;
-        private LabelHandle _guidanceLabel;
 
         // UI references - Mod update banner
         private Host _modUpdateBanner;
@@ -264,13 +262,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _resourcesUrlLabel = _screen.Label("ResourcesUrlLabel");
             _resourcesLinkBtn = _screen.Button("ResourcesOpenBtn");
 
-            _translationInfoSection = _screen.Host("TranslationInfoSection");
-            _entriesLabel = _screen.Label("EntriesLabel");
-            _targetLabel = _screen.Label("TargetLabel");
-            _sourceLabel = _screen.Label("SourceLabel");
-            _roleLabel = _screen.Label("RoleLabel");
-            _syncStatusLabel = _screen.Label("SyncStatusLabel");
-            _aiStatusLabel = _screen.Label("AIStatusLabel");
+            _noTranslationLabel = _screen.Label("NoTranslationLabel");
             _failuresRow = _screen.Host("FailuresRow");
             _failuresLabel = _screen.Label("FailuresLabel");
             _fixBtn = _screen.Button("FixBtn");
@@ -299,9 +291,6 @@ namespace UnityGameTranslator.Core.UI.Panels
             _updateFromMainBtn = _screen.Button("UpdateFromMainBtn");
             _forkBtn = _screen.Button("ForkBtn");
             _roleActionsHint = _screen.Label("RoleActionsHint");
-
-            _guidanceSection = _screen.Host("GuidanceSection");
-            _guidanceLabel = _screen.Label("GuidanceLabel");
 
             _communitySection = _screen.Host("CommunitySection");
             _communityGameLabel = _screen.Label("GameLabel");
@@ -563,7 +552,11 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Refresh all sections
             RefreshModUpdateBanner();
             RefreshAccountSection();
-            RefreshTranslationInfo();
+            // ⚠ Called from here since the legacy section went: it used to be the last thing that
+            // section's refresh did, and the row it draws sat INSIDE it — so the failed lines and
+            // their Fix button could never appear while a translation existed, which is the only
+            // time a line can fail (found 2026-09-18).
+            RefreshFailuresRow();
             RefreshCommunitySection();
             RefreshActionsSection();
             RefreshLayoutVisibility();
@@ -645,10 +638,17 @@ namespace UnityGameTranslator.Core.UI.Panels
                 RefreshBackupsLine();
             }
 
-            // Legacy TranslationInfo section - hide when StatusCard is shown
-            if (_translationInfoSection != null)
+            // With no translation there is no card, and this line is what the section says
+            // instead. Three short sentences: where things stand, and the two ways on.
+            if (_noTranslationLabel != null)
             {
-                _translationInfoSection.Visible = !showStatusCard;
+                _noTranslationLabel.Visible = !showStatusCard;
+                if (!showStatusCard)
+                {
+                    _noTranslationLabel.Say(TranslatorCore.Config.IsTranslationEnabled
+                        ? "No translation yet. The mod writes one as you play. Community has ready-made ones."
+                        : "No translation yet. Turn on AI translation in Mod Options. Community has ready-made ones.");
+                }
             }
 
             // The three choices offered to somebody holding a lineage that is not theirs.
@@ -830,83 +830,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                 }
             }
 
-            // Guidance section (GAP 9) - show contextual messages
-            RefreshGuidanceSection();
-
             // Recalculate panel size after visibility changes
             RecalculateSize();
-        }
-
-        /// <summary>
-        /// Refreshes the guidance section with contextual messages (GAP 9).
-        /// </summary>
-        private void RefreshGuidanceSection()
-        {
-            if (_guidanceSection == null || _guidanceLabel == null) return;
-
-            string message = null;
-            var serverState = TranslatorCore.ServerState;
-            int localCount = TranslatorCore.TranslationCache.Count;
-
-            switch (_standing.Publication)
-            {
-                case Publication.NotDownloaded:
-                    // No local translation - guide user
-                    if (TranslatorCore.Config.IsTranslationEnabled)
-                    {
-                        message = "Auto-translation active. Captured text will be translated, or download a community translation.";
-                    }
-                    else
-                    {
-                        message = "Enable AI translation, or download a community translation to get started.";
-                    }
-                    break;
-
-                case Publication.NotYours:
-                    // Somebody else's lineage - show info about parent
-                    if (serverState != null)
-                    {
-                        int localChanges = TranslatorCore.LocalChangesCount;
-                        if (localChanges > 0)
-                        {
-                            // Count inline (placeholdered), uploader appended as data
-                            message = Tr($"You have {localChanges} changes compared to the translation of")
-                                      + " " + People.MentionOf(serverState.Uploader,
-                                                                  TranslatorCore.Config.api_user);
-                        }
-                    }
-                    break;
-
-                case Publication.NeverPublished:
-                    // Local only — said once the server has confirmed it knows nothing of it
-                    if (serverState != null && serverState.Checked && !serverState.Exists)
-                    {
-                        message = "Your translation is local only. Upload it to share with the community!";
-                    }
-                    break;
-            }
-
-            // ⚠ The invitation to sign up is appended, never substituted. It used to BE the message
-            // for anybody without an account, which is how somebody holding a diverged community
-            // translation was told to create an account instead of being told they had diverged.
-            if (message is null && string.IsNullOrEmpty(TranslatorCore.Config.api_token)
-                && localCount > 0)
-            {
-                message = "Create an account to publish your translation or contribute to the community.";
-            }
-
-            // Show or hide guidance section based on message
-            bool hasMessage = !string.IsNullOrEmpty(message);
-            _guidanceSection.Visible = hasMessage;
-            if (hasMessage)
-            {
-                // The NotYours branch already translated (it appends a username); the others are
-                // plain sentences translated here.
-                if (_standing.Publication == Publication.NotYours)
-                    _guidanceLabel.Show(message);
-                else
-                    _guidanceLabel.Say(message);
-            }
         }
 
         /// <summary>
@@ -1127,141 +1052,6 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // Disable login if offline mode
                 _loginLogoutBtn.Enabled = TranslatorCore.Config.online_mode;
             }
-        }
-
-        private void RefreshTranslationInfo()
-        {
-            if (_entriesLabel == null)
-            {
-                TranslatorCore.LogWarning("[MainPanel] RefreshTranslationInfo: _entriesLabel is null!");
-                return;
-            }
-
-            int entryCount = TranslatorCore.TranslationCache.Count;
-            string targetLang = TranslatorCore.Config.GetTargetLanguage();
-            var serverState = TranslatorCore.ServerState;
-            bool existsOnServer = serverState != null && serverState.Exists && serverState.SiteId.HasValue;
-
-            TranslatorCore.LogDebug($"[MainPanel] RefreshTranslationInfo: entries={entryCount}, target={targetLang}, serverState={(serverState == null ? "null" : $"checked={serverState.Checked}")}");
-
-            // Counts stay inside the string: the pipeline turns numbers into placeholders, so every
-            // count shares one cache entry. Languages, usernames and ids are concatenated instead.
-            _shownEntries = entryCount;
-            _entriesLabel.Say($"Entries: {entryCount}");
-            _targetLabel.Show(Tr("Target:") + $" {targetLang}");
-
-            if (existsOnServer)
-            {
-                _sourceLabel.Show(Tr("Source:")
-                    + $" {People.MentionOf(serverState.Uploader, TranslatorCore.Config.api_user)}"
-                    + $" (#{serverState.SiteId})");
-
-                // Role indicator.
-                //
-                // ⚠ Read through IsOwner, exactly as DetectCurrentState() does a few lines above —
-                // a role only means something about a translation we actually hold on the server.
-                // Reading Role on its own is what let this line announce "[BRANCH] Your changes are
-                // reviewed by @X" to a player who had merely downloaded @X's file, while the status
-                // card, which does consult IsOwner, correctly offered them the Branch/Fork choice.
-                // Two blocks of the same panel contradicting each other on the same state.
-                // See analyse/false-branch-role-after-download.md.
-                switch (serverState.IsOwner ? serverState.Role : LineageRole.None)
-                {
-                    case LineageRole.Main:
-                        if (serverState.BranchesCount > 0)
-                        {
-                            _roleLabel.Say($"[MAIN] {serverState.BranchesCount} contribution(s) from other players");
-                        }
-                        else
-                        {
-                            _roleLabel.Say("[MAIN] You own this translation");
-                        }
-                        _roleLabel.Tone = Tone.Success;
-                        break;
-                    case LineageRole.Branch:
-                        _roleLabel.Show("[BRANCH] "
-                            + Tr("Your changes are reviewed by")
-                            + " " + People.MentionOf(serverState.MainUsername ?? serverState.Uploader,
-                                                        TranslatorCore.Config.api_user));
-                        _roleLabel.Tone = Tone.Warning;
-                        break;
-                    default:
-                        _roleLabel.Show("");
-                        break;
-                }
-
-                // Sync status — the socle's verdict, the same one the card and the Actions row show
-                int localChanges = TranslatorCore.LocalChangesCount;
-                var sync = _standing.Sync;
-
-                if (sync == SyncDirection.Merge)
-                {
-                    _syncStatusLabel.Say($"SYNC NEEDED - Both local ({localChanges}) and server changed");
-                    _syncStatusLabel.Tone = Tone.Warning;
-                }
-                else if (sync == SyncDirection.Upload)
-                {
-                    _syncStatusLabel.Say($"OUT OF SYNC - {localChanges} local changes to upload");
-                    _syncStatusLabel.Tone = Tone.Warning;
-                }
-                else if (sync == SyncDirection.Download)
-                {
-                    int serverLines = TranslatorUIManager.PendingUpdateInfo?.LineCount ?? 0;
-                    _syncStatusLabel.Say($"OUT OF SYNC - Server has update ({serverLines} lines)");
-                    _syncStatusLabel.Tone = Tone.Warning;
-                }
-                else
-                {
-                    _syncStatusLabel.Say("SYNCED with server");
-                    _syncStatusLabel.Tone = Tone.Success;
-                }
-            }
-            else
-            {
-                // Not on server - clear role label
-                _roleLabel.Show("");
-
-                if (serverState != null && serverState.Checked)
-                {
-                    _sourceLabel.Say("Source: Local only (not on server)");
-                    _syncStatusLabel.Say($"All {entryCount} entries are local");
-                    _syncStatusLabel.Tone = Tone.Muted;
-                }
-                else if (!TranslatorCore.Config.online_mode)
-                {
-                    _sourceLabel.Say("Source: Local (offline mode)");
-                    _syncStatusLabel.Show("");
-                }
-                else if (string.IsNullOrEmpty(TranslatorCore.Config.api_token))
-                {
-                    // Online mode but not logged in - can't check server state
-                    _sourceLabel.Say("Source: Local (login to sync)");
-                    _syncStatusLabel.Show("");
-                }
-                else
-                {
-                    _sourceLabel.Say("Source: Local (checking...)");
-                    _syncStatusLabel.Show("");
-                }
-            }
-
-            // AI status
-            if (TranslatorCore.Config.IsTranslationEnabled)
-            {
-                int queueCount = TranslatorCore.QueueCount;
-                // Backend name is a brand, kept out of the translated part
-                string backendLabel = TranslatorCore.Config.translation_backend == "llm" ? "AI" :
-                    TranslatorCore.Config.translation_backend == "google" ? "Google" : "DeepL";
-                _aiStatusLabel.Show($"{backendLabel}: " + (queueCount > 0
-                    ? Tr($"{queueCount} in queue")
-                    : Tr("Ready")));
-            }
-            else
-            {
-                _aiStatusLabel.Show("");
-            }
-
-            RefreshFailuresRow();
         }
 
         /// <summary>

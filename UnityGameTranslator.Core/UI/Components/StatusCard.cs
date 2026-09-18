@@ -925,8 +925,12 @@ namespace UnityGameTranslator.Core.UI.Components
             // One translatable sentence per variant, ending just before the name — the socle's;
             // the name is appended here, as data, in the one form the ecosystem uses.
             var line = StatusCards.Secondary(standing, StandingFacts.Server(), localChanges);
+            // ⚠ The flag travels, as it does for a Main's contributions waiting: lines nobody has
+            // seen are the one thing on this card asking for a decision, and they were grey
+            // between two other grey lines (2026-09-18).
             SetSecondaryInfo(line.Text,
-                             line.Mention != null ? People.MentionOf(line.Mention, TranslatorCore.Config?.api_user) : null);
+                             line.Mention != null ? People.MentionOf(line.Mention, TranslatorCore.Config?.api_user) : null,
+                             line.NeedsAttention);
         }
 
         /// <summary>
@@ -944,8 +948,12 @@ namespace UnityGameTranslator.Core.UI.Components
             // offering exactly that sit immediately below, each with its own label. What is
             // unpublished comes first, as on a branch: the count the Manager's card states.
             var line = StatusCards.Secondary(standing, StandingFacts.Server(), localChanges);
+            // ⚠ The flag travels, as it does for a Main's contributions waiting: lines nobody has
+            // seen are the one thing on this card asking for a decision, and they were grey
+            // between two other grey lines (2026-09-18).
             SetSecondaryInfo(line.Text,
-                             line.Mention != null ? People.MentionOf(line.Mention, TranslatorCore.Config?.api_user) : null);
+                             line.Mention != null ? People.MentionOf(line.Mention, TranslatorCore.Config?.api_user) : null,
+                             line.NeedsAttention);
         }
 
         /// <summary>

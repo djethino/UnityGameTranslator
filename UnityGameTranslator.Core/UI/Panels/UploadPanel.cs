@@ -466,6 +466,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                             MainUsername = result.MainUsername,
                             SiteId = result.OriginalTranslation?.Id,
                             Uploader = result.OriginalTranslation?.Uploader,
+                            Origin = result.OriginalTranslation?.Origin,
                             Type = result.OriginalTranslation?.Type,
 
                             // ⚠ Carried over, or this rebuild WIPED it: the main panel had read the

@@ -282,6 +282,7 @@ namespace UnityGameTranslator.Core
                 // Absent on an older server: left null, which the caller reads as "unknown"
                 // and never as "published by nobody"
                 Uploader = data["uploader"]?.Value<string>(),
+                Origin = ReadOrigin(data["origin"]),
                 UpdatedAt = data["updated_at"]?.Value<string>(),
                 ETag = etag,
                 HasUpdate = !string.IsNullOrEmpty(serverHash)
@@ -371,6 +372,7 @@ namespace UnityGameTranslator.Core
                 {
                     Id = m["id"]?.Value<int>() ?? 0,
                     Uploader = m["uploader"]?.Value<string>(),
+                    Origin = ReadOrigin(m["origin"]),
                     SourceLanguage = m["source_language"]?.Value<string>(),
                     TargetLanguage = m["target_language"]?.Value<string>(),
                     Type = m["type"]?.Value<string>(),
@@ -936,6 +938,11 @@ namespace UnityGameTranslator.Core
                 serverState.SiteId = main["id"]?.Value<int>();
                 serverState.Uploader = main["uploader"]?.Value<string>();
                 serverState.MainUsername = main["uploader"]?.Value<string>();
+                // The Main IS the file held: its provenance is the held file's. Kept when an
+                // older site leaves the key out.
+                serverState.Origin = main["origin"] != null
+                    ? ReadOrigin(main["origin"])
+                    : previous?.Origin;
                 serverState.Hash = main["file_hash"]?.Value<string>();
                 serverState.ResourcesUrl = main["resources_url"]?.Value<string>();
 

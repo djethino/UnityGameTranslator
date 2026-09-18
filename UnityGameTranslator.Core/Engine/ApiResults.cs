@@ -189,6 +189,13 @@ namespace UnityGameTranslator.Core
         public string Uploader { get; set; }
 
         /// <summary>
+        /// Where the published work came from. Null on a site that predates the field, and
+        /// null when it started from nobody's — a caller sets the state's origin only from a
+        /// value, and keeps what it held otherwise.
+        /// </summary>
+        public Origin? Origin { get; set; }
+
+        /// <summary>
         /// The server answered "nothing changed". ⚠ Every other field is then EMPTY, not zero:
         /// a caller that writes them anyway blanks the very values it was trying to spare.
         /// </summary>

@@ -155,6 +155,9 @@ namespace UnityGameTranslator.Core.Checks
                     d["LineCount"] = r.LineCount;
                     d["VoteCount"] = r.VoteCount;
                     d["Uploader"] = r.Uploader;
+                    d["Origin"] = r.Origin == null ? null : "present";
+                    d["Origin.Author"] = r.Origin?.Author;
+                    d["Origin.Lines"] = r.Origin?.Lines;
                     return d;
                 }
                 case "check_uuid":
@@ -198,6 +201,9 @@ namespace UnityGameTranslator.Core.Checks
                     d["OriginalTranslation"] = r.OriginalTranslation == null ? null : "present";
                     d["OriginalTranslation.Uploader"] = r.OriginalTranslation?.Uploader;
                     d["OriginalTranslation.LineCount"] = r.OriginalTranslation?.LineCount;
+                    d["OriginalTranslation.Origin"] = r.OriginalTranslation?.Origin == null ? null : "present";
+                    d["OriginalTranslation.Origin.Author"] = r.OriginalTranslation?.Origin?.Author;
+                    d["OriginalTranslation.Origin.Lines"] = r.OriginalTranslation?.Origin?.Lines;
                     return d;
                 }
                 case "branches":

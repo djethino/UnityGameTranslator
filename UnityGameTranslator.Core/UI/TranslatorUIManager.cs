@@ -2218,6 +2218,7 @@ namespace UnityGameTranslator.Core.UI
                 var lineCount = result.LineCount;
                 var voteCount = result.VoteCount;
                 var uploader = result.Uploader;
+                var origin = result.Origin;
                 var etag = result.ETag;
 
                 RunOnMainThread(() =>
@@ -2270,6 +2271,8 @@ namespace UnityGameTranslator.Core.UI
                     // name can come from — a download leaves behind the site id and nothing else —
                     // and the panel falls back to "Website" when it is missing.
                     if (!string.IsNullOrEmpty(uploader)) state.Uploader = uploader;
+                    // Same rule: a value is taken, an absence leaves what was held.
+                    if (origin.HasValue) state.Origin = origin;
 
                     // With no account there is nothing to vote WITH, but the count is public and
                     // worth seeing: it is what tells someone the translation they installed was

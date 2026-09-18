@@ -38,6 +38,18 @@ namespace UnityGameTranslator.Core.UI.Components
         /// <summary>Space between two chips on a row, and between rows — the Manager's 5.</summary>
         private const int Gap = 5;
 
+        /// <summary>
+        /// A chip is one step lighter than what it sits on, edged one step further — the site's
+        /// gray-700 pill on its gray-800 card. On a list row, which is ITSELF the card's raised
+        /// step, the same surface vanished: the chips only showed on a highlighted row
+        /// (2026-09-18). So the step is taken from the surface underneath, never fixed.
+        /// </summary>
+        private static Color SurfaceOn(Surface under)
+            => under == Surface.Item || under == Surface.Elevated ? UIStyles.ItemBackgroundHover : UIStyles.InputBackground;
+
+        private static Color EdgeOn(Surface under)
+            => under == Surface.Item || under == Surface.Elevated ? UIStyles.BorderStrong : UIStyles.BorderSubtle;
+
         private static Color Colour(BadgeTone tone)
         {
             switch (tone)
@@ -59,8 +71,10 @@ namespace UnityGameTranslator.Core.UI.Components
         /// leave an empty band behind, and the caller is the only one that knows whether its card
         /// has other rows to fall back on.
         /// </summary>
-        public static Host Create(Host parent, string name, List<Badge> badges, float availableWidth)
-            => new Host(Create(parent.Object, name, badges, availableWidth));
+        /// <param name="under">The surface the strip sits on: a chip is one step lighter than it.</param>
+        public static Host Create(Host parent, string name, List<Badge> badges, float availableWidth,
+                                  Surface under = Surface.Card)
+            => new Host(Create(parent.Object, name, badges, availableWidth, under));
 
         /// <summary>
         /// The width a host offers the strip: what it measures once it has been laid out, and
@@ -74,7 +88,7 @@ namespace UnityGameTranslator.Core.UI.Components
         }
 
         internal static GameObject Create(GameObject parent, string name, List<Badge> badges,
-                                        float availableWidth)
+                                        float availableWidth, Surface under = Surface.Card)
         {
             var strip = UIFactory.CreateVerticalGroup(parent, name, false, false, true, true, Gap,
                                                       default, default, TextAnchor.UpperLeft);
@@ -97,7 +111,7 @@ namespace UnityGameTranslator.Core.UI.Components
             var widths = new List<float>(badges.Count);
             for (int i = 0; i < badges.Count; i++)
             {
-                chips.Add(Chip(strip, name + "Chip" + i, badges[i], out float width));
+                chips.Add(Chip(strip, name + "Chip" + i, badges[i], under, out float width));
                 widths.Add(width);
             }
 
@@ -131,7 +145,7 @@ namespace UnityGameTranslator.Core.UI.Components
         /// One chip, as the Manager draws it: the word in its tone on the input surface, edged
         /// and rounded. <paramref name="width"/> is what it measures, padding included.
         /// </summary>
-        private static GameObject Chip(GameObject parent, string name, Badge badge, out float width)
+        private static GameObject Chip(GameObject parent, string name, Badge badge, Surface under, out float width)
         {
             var chip = UIFactory.CreateUIObject(name, parent);
 
@@ -139,8 +153,8 @@ namespace UnityGameTranslator.Core.UI.Components
             // an Image and never adds one (the tag chips paid for this once).
             var surface = chip.AddComponent<Image>();
             surface.raycastTarget = false;
-            UIStyles.SetBackground(chip, UIStyles.InputBackground, UIFactory.Shapes.Small);
-            UIFactory.AddBorder(chip, UIStyles.BorderSubtle, UIFactory.Shapes.BorderSmall);
+            UIStyles.SetBackground(chip, SurfaceOn(under), UIFactory.Shapes.Small);
+            UIFactory.AddBorder(chip, EdgeOn(under), UIFactory.Shapes.BorderSmall);
 
             var label = UIFactory.CreateLabel(chip, "Word", badge.Text, TextAnchor.MiddleCenter,
                                               supportRichText: false);

@@ -478,7 +478,7 @@ namespace UnityGameTranslator.Core.UI.Components
             // What this row is to the reader, in the socle's chips: the one this game holds, and
             // whether they lead the lineage or contribute to it. Silent when neither is known.
             var marks = Badges.InListing(isLineageMatch, RoleIn(translation.FileUuid));
-            if (marks.Count > 0) BadgeStrip.Create(row.Host("Marks"), "Marks", marks, 220f);
+            if (marks.Count > 0) BadgeStrip.Create(row.Host("Marks"), "Marks", marks, 220f, Surface.Item);
 
             // ⚠ One form for the whole ecosystem, composed in `common`: "@name", and "@name (you)"
             // on your own. The mark is a WORD and not a colour — this row already spends colour on
@@ -539,7 +539,8 @@ namespace UnityGameTranslator.Core.UI.Components
             if (chips.Count > 0)
             {
                 var chipHost = row.Host("Badges");
-                BadgeStrip.Create(chipHost, "Badges", chips, BadgeStrip.WidthOf(chipHost, 360f));
+                // On the row's own surface: the chips take the step above it (BadgeStrip.SurfaceOn).
+                BadgeStrip.Create(chipHost, "Badges", chips, BadgeStrip.WidthOf(chipHost, 360f), Surface.Item);
             }
 
             // The size, and how much of the game it reaches: what the chips above do not say.

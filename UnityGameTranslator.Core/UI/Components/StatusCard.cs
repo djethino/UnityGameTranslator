@@ -933,7 +933,7 @@ namespace UnityGameTranslator.Core.UI.Components
         /// Configure card for same lineage state (same UUID, not owner, not yet uploaded).
         /// User hasn't decided yet whether to contribute (branch) or fork.
         /// </summary>
-        public void ConfigureAsHoldingAnothersLineage(Standing standing, int entryCount, string language)
+        public void ConfigureAsHoldingAnothersLineage(Standing standing, int entryCount, string language, int localChanges)
         {
             SetStanding(standing);
             SetDetails(entryCount, language);
@@ -941,8 +941,9 @@ namespace UnityGameTranslator.Core.UI.Components
 
             // Whose work this is — the socle's line, the Main named before the uploader. ⚠ It no
             // longer spells out "contribute (Branch) or go independent (Fork)": the three buttons
-            // offering exactly that sit immediately below, each with its own label.
-            var line = StatusCards.Secondary(standing, StandingFacts.Server(), localChanges: 0);
+            // offering exactly that sit immediately below, each with its own label. What is
+            // unpublished comes first, as on a branch: the count the Manager's card states.
+            var line = StatusCards.Secondary(standing, StandingFacts.Server(), localChanges);
             SetSecondaryInfo(line.Text,
                              line.Mention != null ? People.MentionOf(line.Mention, TranslatorCore.Config?.api_user) : null);
         }

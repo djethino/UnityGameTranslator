@@ -656,13 +656,21 @@ namespace UnityGameTranslator.Core.UI.Panels
             {
                 bool choosing = _standing.Publication == Publication.NotYours;
 
-                // 🔴 **An owner whose published copy moved elsewhere has one thing to do here:
-                // take it in.** The section used to be the "not yours" choice only, so a Main
-                // published from another machine left this one with a closed Upload and a way in
-                // that lived in the corner notification alone. The Download row is that way in,
-                // for the owner too; the three other rows stay the stranger's.
-                bool ownerBehind = _standing.Publication == Publication.Published
-                                   && _standing.Sync == SyncDirection.Download;
+                // 🔴 **An owner whose published copy differs from this file has one thing to do
+                // here: take it back in.** The section used to be the "not yours" choice only, so
+                // a Main published from another machine left this one with a closed Upload and a
+                // way in that lived in the corner notification alone. The Download row is that way
+                // in, for the owner too; the three other rows stay the stranger's.
+                //
+                // ⚠ Whichever way the two differ — including when only THIS side moved. That is
+                // the case where somebody wants their unpublished lines gone and nothing else to
+                // happen; the Manager offers exactly that on its card, and this screen offered it
+                // only once the site had moved (2026-09-18).
+                var sync = _standing.Sync;
+                bool differs = sync == SyncDirection.Download
+                               || sync == SyncDirection.Upload
+                               || sync == SyncDirection.Merge;
+                bool ownerBehind = _standing.Publication == Publication.Published && differs;
                 _lineageChoiceSection.Visible = choosing || ownerBehind;
                 if (_mergeRow != null) _mergeRow.Visible = choosing;
                 if (_mergeDesc != null) _mergeDesc.Visible = choosing;
@@ -755,27 +763,37 @@ namespace UnityGameTranslator.Core.UI.Panels
                     }
                 }
 
-                // ⚠ Only when the published one actually moved. It writes the local file, so it
-                // needs no account — but fetching a version identical to the one already here is
-                // an act with no effect, and a button that promises one is worse than none.
+                // ⚠ Only when this file and the published one differ. It writes the local file,
+                // so it needs no account — but fetching a version identical to the one already
+                // here is an act with no effect, and a button that promises one is worse than
+                // none. It used to ask whether the SITE had moved, which greyed it over a file
+                // holding five lines of its own: the person had "the Main's version" and five
+                // lines more, and no way to set them aside (2026-09-18).
                 if (_downloadLatestBtn != null)
                 {
-                    bool serverMoved = upstreamWorthTaking;
-
-                    _downloadLatestBtn.Enabled = serverMoved;
-                    SetDownloadLatestState(serverMoved);
+                    _downloadLatestBtn.Enabled = differs;
+                    SetDownloadLatestState(differs);
 
                     // The owner's own copy is "the site's", not "the Main's" — they ARE the Main.
                     _downloadLatestBtn.Label = ownerBehind ? "Download latest" : "Take Main's version";
                     if (_downloadDesc != null)
                     {
+                        // What becomes of the lines this file holds and the published one does
+                        // not — the Manager's words, and the truth: every path that replaces the
+                        // file wholesale backs it up first (BackupCacheFile), so they are set
+                        // aside, not lost.
+                        int unpublished = TranslatorCore.LocalChangesCount;
+                        string setAside = unpublished > 0
+                            ? " The " + unpublished + " line(s) not published are set aside under Backups, not merged."
+                            : "";
+
                         _downloadDesc.Say(ownerBehind
-                            ? (_server.LinesChanged is int onTheSite
+                            ? (sync == SyncDirection.Download && _server.LinesChanged is int onTheSite
                                 ? "Replaces this file with the copy on the site (" + onTheSite + " lines changed). Compare shows them first."
-                                : "Replaces this file with the copy on the site. Compare shows what changed first.")
-                            : serverMoved
-                                ? "Replaces this file with the Main's — your own lines are dropped"
-                                : "You already have the Main's version");
+                                : "Replaces this file with the copy on the site." + setAside)
+                            : !differs ? "You already have the Main's version"
+                            : unpublished > 0 ? "Replaces this file with the Main's." + setAside
+                            : "Replaces this file with the Main's newer version");
                     }
                 }
 
@@ -989,7 +1007,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
             else if (standing.Publication == Publication.NotYours)
             {
-                _statusCard.ConfigureAsHoldingAnothersLineage(standing, entryCount, targetLang);
+                _statusCard.ConfigureAsHoldingAnothersLineage(standing, entryCount, targetLang, localChanges);
             }
             else if (standing.Publication == Publication.NeverPublished)
             {
@@ -1627,14 +1645,17 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             int localChanges = TranslatorCore.LocalChangesCount;
 
-            // GAP 10: Warning for replacing local changes
+            // Asked only when something of this machine's is at stake. ⚠ It said "will be lost,
+            // cannot be undone" — false since every wholesale replacement is backed up first
+            // (BackupCacheFile): the lines are set aside under Backups, which is what the hint
+            // under the button and the Manager's card both say.
             if (localChanges > 0)
             {
                 Intents.Confirm(
-                    "Take the Main's version?",
-                    $"This will replace your {localChanges} local change(s) with the latest version from "
-                    + $"{People.MentionOf(serverState.Uploader, TranslatorCore.Config.api_user)}.\n\n" +
-                    "Your local changes will be lost. This cannot be undone.",
+                    serverState.IsOwner ? "Download the latest version?" : "Take the Main's version?",
+                    "Replaces this file with the version published by "
+                    + People.MentionOf(serverState.Uploader, TranslatorCore.Config.api_user) + ".\n\n"
+                    + $"The {localChanges} line(s) not published are set aside under Backups, not merged.",
                     "Replace",
                     async () => await PerformDownloadLatest(serverState),
                     isDanger: true

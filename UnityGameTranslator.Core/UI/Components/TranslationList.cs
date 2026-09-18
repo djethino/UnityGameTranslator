@@ -415,12 +415,6 @@ namespace UnityGameTranslator.Core.UI.Components
             var facts = BuildFactsLine(translation);
             string note = BuildNoteLine(translation);
 
-            // Where this one came from, when it came from somebody. Composed in the socle, so a
-            // fork credits its source in the same words in the mod, the Manager and the browser.
-            string origin = translation.Origin.HasValue
-                ? Origins.Name(translation.Origin.Value)
-                : null;
-
             // The bar is only drawn when the server gave us something to draw; an empty container
             // under every row would read as "nothing translated" instead of "nothing known".
             bool hasComposition = translation.HumanCount + translation.ValidatedCount +
@@ -509,30 +503,47 @@ namespace UnityGameTranslator.Core.UI.Components
             // saying the same thing, and the only one that cost legibility.
             row.Say("author", by);
 
-            // Right under the author, because it answers the same question — whose work is this —
-            // and a fork is otherwise indistinguishable from a translation written from scratch.
+            // 🔴 What this translation IS, in the socle's chips — the strip the Manager's
+            // community list draws (TranslationBadges.ForOnline) and the card above draws for
+            // the one file held: the stage or "Capture only", the share translated, the author's
+            // "finished", whether it takes contributions, its downloads, and whose work it started
+            // from. These were three lines of prose here — a stage in the details, "finished ·
+            // accepts contributions · N downloads" in the facts, a "Forked from" line of its own —
+            // and read as nothing to find one's way by (2026-09-18).
             //
-            // ⚠ Its own line rather than appended to the author's: that line already carries the
-            // row's own marks (new, goes furthest, installed), and a fifth item would push the
-            // whole thing past the width on any name of ordinary length.
-            if (origin != null)
+            // ⚠ Two of the socle's chips are left out, on purpose. The publication: every row of
+            // this list is on the site, and which one is held is the Installed mark on the first
+            // line — "Not downloaded" on eight rows out of nine would say nothing. The votes: the
+            // column on the right is theirs.
+            var chips = new List<Badge>();
+            foreach (var badge in Badges.For(
+                         Publications.Of(hereOnDisk: isLineageMatch, onTheSite: true),
+                         isMain: null, branchesWaiting: null, mainMissing: false, sync: null,
+                         stage: Quality.Stage(translation.HumanCount, translation.ValidatedCount,
+                                              translation.SkippedCount, translation.AiCount, translation.CaptureCount),
+                         completeness: Quality.Completeness(translation.HumanCount, translation.ValidatedCount,
+                                                            translation.SkippedCount, translation.AiCount, translation.CaptureCount),
+                         votes: translation.VoteCount,
+                         downloads: translation.DownloadCount,
+                         finished: string.IsNullOrEmpty(translation.Status)
+                             ? (bool?)null
+                             : string.Equals(translation.Status, "complete", StringComparison.OrdinalIgnoreCase),
+                         acceptsContributions: translation.AcceptsBranches,
+                         origin: translation.Origin,
+                         captureOnly: Quality.IsCaptureOnly(translation.HumanCount, translation.ValidatedCount,
+                                                            translation.SkippedCount, translation.AiCount, translation.CaptureCount)))
             {
-                // ⚠ NOT welded together, unlike the facts line. An account name has no length
-                // limit worth relying on, and a single unbreakable block runs out of the row and
-                // into the vote column; allowed to break, "Forked from" stays put and the name is
-                // what gives — with the whole sentence one hover away either way.
-                row.Say("origin", origin);
-                var originLabel = row.Label("Origin");
-                originLabel.Visible = true;
-
-                _help?.Describe(originLabel, Origins.Effect(translation.Origin.Value));
+                if (badge.Kind == BadgeKind.Publication || badge.Kind == BadgeKind.Votes) continue;
+                chips.Add(badge);
+            }
+            if (chips.Count > 0)
+            {
+                var chipHost = row.Host("Badges");
+                BadgeStrip.Create(chipHost, "Badges", chips, BadgeStrip.WidthOf(chipHost, 360f));
             }
 
-            // The verdict leads, the size follows: "has anyone read this" decides between two
-            // translations, the line count only qualifies it.
-            row.Say("details", Unbreakable(FormatQualityStats(translation))
-                + "  ·  " + Unbreakable($"{translation.LineCount} lines")
-                + FormatCoverage(translation));
+            // The size, and how much of the game it reaches: what the chips above do not say.
+            row.Say("details", Unbreakable($"{translation.LineCount} lines") + FormatCoverage(translation));
 
             // Same component, same colours and same denominator as the card and the website.
             if (hasComposition)
@@ -591,23 +602,10 @@ namespace UnityGameTranslator.Core.UI.Components
 
             string dateLabel = translation.ContentDateLabel(TimeZoneInfo.Local);
             if (!string.IsNullOrEmpty(dateLabel)) facts.Add(dateLabel);
-            // 🔴 **"finished", never "complete".** The server's own value is the string `complete`,
-            // and printing it put a fourth word on screen for a fact the strip already calls
-            // Finished — beside a coverage figure that is about completeness, a different question
-            // entirely. What the author declared is said in the ecosystem's word.
-            if (string.Equals(translation.Status, "complete", StringComparison.OrdinalIgnoreCase))
-                facts.Add("finished");
 
-            // ⚠ Said only when it is TRUE, unlike the badge strip on the current translation,
-            // which shows both states. Two different jobs: the strip describes the one file you
-            // hold, this line helps you choose between candidates — and working alone is the
-            // ordinary state, so putting "solo work" on nine rows out of ten would bury the one
-            // row that differs. Same rule as "complete" right above.
-            if (translation.AcceptsBranches == true) facts.Add("accepts contributions");
-
-            if (translation.DownloadCount > 0) facts.Add($"{translation.DownloadCount} downloads");
-
-
+            // ⚠ "finished", "accepts contributions" and the downloads are CHIPS now, on the row's
+            // own strip, said as the card and the Manager say them; what stays here is what no
+            // chip carries.
             // Names the purple segment, which has no colour key on these rows: an author who
             // kept what must stay untouched worked better than one who let the AI run over
             // everything, and a silent band of colour would not say so.
@@ -698,49 +696,6 @@ namespace UnityGameTranslator.Core.UI.Components
             if (percent >= 100) return string.Empty;
 
             return "  ·  " + Unbreakable(percent + "% " + TranslatorCore.TranslateOwnUIDynamic("of the game"));
-        }
-
-        /// <summary>
-        /// How far the translation has been reviewed, in a few words. The proportions are the
-        /// bar's job; this says whether a human has been through it at all — the one thing that
-        /// decides between two translations of the same game.
-        ///
-        /// A file that still has most of what it met in game untranslated gets its completeness
-        /// instead: reading and translating are two different jobs, and "Fully reviewed" on two
-        /// lines out of thirteen told the player the opposite of the truth.
-        /// </summary>
-        private static string FormatQualityStats(TranslationInfo translation)
-        {
-            string stage = TranslationQuality.ReviewStage(
-                translation.HumanCount, translation.ValidatedCount, translation.SkippedCount,
-                translation.AiCount, translation.CaptureCount);
-
-            if (stage != null) return TranslatorCore.TranslateOwnUIDynamic(stage);
-
-            float completeness = TranslationQuality.Completeness(
-                translation.HumanCount, translation.ValidatedCount, translation.SkippedCount,
-                translation.AiCount, translation.CaptureCount);
-
-            // Something IS translated, just not enough for a review stage to mean anything
-            if (completeness > 0f)
-            {
-                return Unbreakable(Mathf.RoundToInt(completeness * 100f) + "% "
-                    + TranslatorCore.TranslateOwnUIDynamic("translated"));
-            }
-
-            // Text met in game, none of it translated: the file hands the game's own words back.
-            // This row used to fall through to the legacy Type field and announce "human" — so a
-            // player downloaded what looked like a hand-made translation and got the original
-            // text, then built on top of it. Said before the download, not discovered after.
-            if (TranslationQuality.IsCaptureOnly(translation.HumanCount, translation.ValidatedCount,
-                    translation.SkippedCount, translation.AiCount, translation.CaptureCount))
-            {
-                return Unbreakable(TranslatorCore.TranslateOwnUIDynamic("captured only, nothing translated"));
-            }
-
-            // Nothing at all to go on: older servers send no H/V/A either, and the legacy Type
-            // field is the only thing left to say
-            return translation.Type ?? "unknown";
         }
 
         /// <summary>The person chose a row: remember it, show it, tell the panel.</summary>

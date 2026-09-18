@@ -62,6 +62,17 @@ namespace UnityGameTranslator.Core.UI.Components
         public static Host Create(Host parent, string name, List<Badge> badges, float availableWidth)
             => new Host(Create(parent.Object, name, badges, availableWidth));
 
+        /// <summary>
+        /// The width a host offers the strip: what it measures once it has been laid out, and
+        /// <paramref name="fallback"/> before — a host built this frame has no width yet.
+        /// </summary>
+        public static float WidthOf(Host host, float fallback)
+        {
+            var rect = host?.Object != null ? host.Object.GetComponent<RectTransform>() : null;
+            float width = rect != null ? rect.rect.width : 0f;
+            return width > 1f ? width : fallback;
+        }
+
         internal static GameObject Create(GameObject parent, string name, List<Badge> badges,
                                         float availableWidth)
         {

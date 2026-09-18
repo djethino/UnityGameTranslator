@@ -465,12 +465,7 @@ namespace UnityGameTranslator.Core.UI.Components
         /// The width the chips wrap in: the host's, once it has been laid out. Zero before the
         /// first layout, when the window's default stands in.
         /// </summary>
-        private float StripWidth()
-        {
-            var rect = _badgeHost?.Object != null ? _badgeHost.Object.GetComponent<RectTransform>() : null;
-            float width = rect != null ? rect.rect.width : 0f;
-            return width > 1f ? width : _stripWidthBeforeLayout;
-        }
+        private float StripWidth() => BadgeStrip.WidthOf(_badgeHost, _stripWidthBeforeLayout);
 
         /// <summary>
         /// The strip dealt again within the width the host has NOW — asked by the panel after

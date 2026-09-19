@@ -235,20 +235,35 @@ namespace UnityGameTranslator.Core
             // question that costs two field reads here would be the expensive way round.
             var renderer = go.GetComponent<Renderer>();
             if (renderer == null) return false;
-            var material = renderer.sharedMaterial;
-            if (material == null) return false;
-            if (material.mainTexture != null) return true;
 
-            // 🔴 **Asked of the MATERIAL, once, and remembered.** A lit sign carries its artwork on
-            // the emissive slot and has no main texture at all, so without this question it could
-            // not even be picked — but the question costs a string[] and a walk over every slot,
-            // and this method is asked once per CANDIDATE while somebody hovers: 33 380 times in
-            // one pass on a street. Written that way on 2026-09-19 it made the game stutter, and
-            // the allocations were the reason rather than the calls.
-            //
-            // ⚠ The saving is the same one ApplyToMaterials makes: 67 223 renderers share 3 480
-            // materials, so the honest unit of work is the material. Dropped with the rest of the
-            // image cache, on the three events that invalidate it.
+            // 🔴 **Every material it wears, not just the first.** A television is a casing and a
+            // screen, and `sharedMaterial` is `sharedMaterials[0]`: when the picture sits on the
+            // second, this answered no and the object could not be picked at all in the image
+            // inspector — while the text editor, which asks no such question, saw it perfectly.
+            // That difference is what reported this (2026-09-19).
+            var worn = new List<Material>();
+            EachMaterial(renderer, worn);
+            foreach (var material in worn)
+                if (material.mainTexture != null) return true;
+            foreach (var material in worn)
+                if (CarriesImage(material)) return true;
+            return false;
+        }
+
+        /// <summary>
+        /// Does this material carry a picture on any slot? Asked once per material and remembered.
+        ///
+        /// ⚠ The question costs a string[] and a walk over every slot, and its caller is asked once
+        /// per CANDIDATE while somebody hovers — 33 380 times in one pass on a street. Written
+        /// without this cache on 2026-09-19 it made the game stutter, and the allocations were the
+        /// reason rather than the calls. 67 223 renderers share 3 480 materials, so the honest unit
+        /// of work is the material. Dropped with the rest of the image cache.
+        /// </summary>
+        private static bool CarriesImage(Material material)
+        {
+
+            // A lit sign carries its artwork on the emissive slot and has no main texture at all,
+            // so without this question it could not even be picked.
             int id = material.GetInstanceID();
             if (_materialCarriesImage.TryGetValue(id, out bool carries)) return carries;
             carries = TexturesOf(material).Count > 0;
@@ -388,9 +403,19 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static List<MaterialTexture> TexturesOnObject(GameObject go)
         {
-            if (go == null) return new List<MaterialTexture>();
+            var found = new List<MaterialTexture>();
+            if (go == null) return found;
             var renderer = go.GetComponent<Renderer>();
-            return renderer != null ? TexturesOf(renderer.sharedMaterial) : new List<MaterialTexture>();
+            if (renderer == null) return found;
+
+            var worn = new List<Material>();
+            EachMaterial(renderer, worn);
+            var seen = new HashSet<int>();
+            foreach (var material in worn)
+                foreach (var carried in TexturesOf(material))
+                    if (seen.Add(carried.Texture.GetInstanceID()))
+                        found.Add(carried);
+            return found;
         }
 
         /// <summary>
@@ -878,6 +903,53 @@ namespace UnityGameTranslator.Core
         private static void WriteSlot(Material material, string slot, Texture texture)
             => material.SetTexture(slot, texture);
 
+        /// <inheritdoc cref="SlotNamesOf"/>
+        private static Material[] MaterialsOf(Renderer renderer) => renderer.sharedMaterials;
+
+        // Noted once: this game hands over one material per renderer and no list.
+        private static bool _materialListUnavailable;
+
+        /// <summary>
+        /// Every material a renderer wears, not just the first.
+        ///
+        /// 🔴 **`sharedMaterial` is `sharedMaterials[0]`, and a mesh usually wears several.** A
+        /// television is a casing and a screen; a sign is a post and a panel. Reading only the
+        /// first meant the picture was invisible to this class whenever it sat on the second — the
+        /// object could not be picked in the image inspector, and its texture could never have been
+        /// replaced either. Reported 2026-09-19 as "the text editor sees the television and the
+        /// image inspector does not", which is exactly what a filter on textures would do.
+        /// </summary>
+        private static void EachMaterial(Renderer renderer, List<Material> into)
+        {
+            into.Clear();
+            if (renderer == null) return;
+
+            if (!_materialListUnavailable)
+            {
+                // The try is HERE: the list comes back as an ARRAY, the family IL2CPP strips, and a
+                // guard written inside MaterialsOf would never run.
+                try
+                {
+                    var all = MaterialsOf(renderer);
+                    if (all != null)
+                    {
+                        foreach (var material in all)
+                            if (material != null) into.Add(material);
+                        return;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _materialListUnavailable = true;
+                    TranslatorCore.LogInfo($"[ImageReplacer] This game cannot list a renderer's materials "
+                                           + $"({ex.GetType().Name}); only the first one is read");
+                }
+            }
+
+            var one = renderer.sharedMaterial;
+            if (one != null) into.Add(one);
+        }
+
         // Same fact, noted once: this game cannot be written slot by slot, so only the main
         // texture is ever replaced on a material.
         private static bool _slotWriteUnavailable;
@@ -974,6 +1046,7 @@ namespace UnityGameTranslator.Core
             // enumeration is one Unity call this code cannot divide, the walk is ours to budget.
             long enumMs = sweep.ElapsedMilliseconds;
             var seenMaterials = new HashSet<int>();
+            var worn = new List<Material>();
 
             foreach (var obj in all)
             {
@@ -982,8 +1055,12 @@ namespace UnityGameTranslator.Core
                     var rend = obj as Renderer ?? TypeHelper.Il2CppCast(obj, typeof(Renderer)) as Renderer;
                     if (rend == null) continue;
 
-                    var material = rend.sharedMaterial;
-                    if (material == null) continue;
+                    // Every material it wears — `sharedMaterial` is only the first, and a mesh
+                    // usually wears several: a casing and a screen. A rule on the screen's texture
+                    // would never have been applied (2026-09-19).
+                    EachMaterial(rend, worn);
+                    foreach (var material in worn)
+                    {
                     if (!seenMaterials.Add(material.GetInstanceID())) continue;
 
                     // Every picture the material carries, not only its main one: a lit sign paints
@@ -1024,6 +1101,7 @@ namespace UnityGameTranslator.Core
                             TrackSlot(material, carried.Slot, carried.Texture);
                         }
                         applied++;
+                    }
                     }
                 }
                 catch { }

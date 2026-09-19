@@ -969,6 +969,7 @@ namespace UnityGameTranslator.Core.UI
                 BuildFrustum(camera);
 
                 GameObject bestHit = null;
+                float bestDepth = float.MaxValue;
                 float bestArea = float.MaxValue;
 
                 foreach (var obj in all)
@@ -1022,9 +1023,22 @@ namespace UnityGameTranslator.Core.UI
                         if (screenPosition.x >= minX && screenPosition.x <= maxX &&
                             screenPosition.y >= minY && screenPosition.y <= maxY)
                         {
+                            // 🔴 **The nearest wins, not the smallest** (2026-09-19). This kept
+                            // whichever box was smallest on screen, so standing in a room and
+                            // aiming at the television picked objects OUTSIDE the flat, behind
+                            // the wall: they were smaller, and distance was never asked about.
+                            // Depth first; area only settles an exact tie, which is what it was
+                            // good for — telling a label apart from the panel it sits on.
+                            //
+                            // ⚠ The depth is the box's CENTRE, not its surface. A large object
+                            // whose middle is far can still lose to a small one nearer the
+                            // camera. Bounding boxes cannot do better than that; a real
+                            // Physics.Raycast could, and would need colliders on everything.
+                            float depth = screenCenter.z;
                             float hitArea = (maxX - minX) * (maxY - minY);
-                            if (hitArea < bestArea)
+                            if (depth < bestDepth || (depth == bestDepth && hitArea < bestArea))
                             {
+                                bestDepth = depth;
                                 bestArea = hitArea;
                                 bestHit = rend.gameObject;
                             }

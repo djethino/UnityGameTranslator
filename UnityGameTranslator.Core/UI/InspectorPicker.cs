@@ -370,14 +370,13 @@ namespace UnityGameTranslator.Core.UI
             if (rend == null && go.transform.parent != null)
                 rend = go.transform.parent.GetComponentInChildren<Renderer>();
 
-            // ⚠ **And what was found must contain what the ray actually struck.** A prefab can hold
-            // several meshes; the first one a search returns is not necessarily the one under the
-            // cursor. When it does not contain the point, the collider itself is the honest answer.
-            if (rend != null && !rend.bounds.Contains(at))
-            {
-                var own = go.GetComponent<Renderer>();
-                if (own == null) return go;
-            }
+            // ⚠ **No test against the point the ray struck here — it was tried and it was wrong.**
+            // hit.point sits on the COLLIDER's surface, and a collider is rarely strictly inside the
+            // mesh's bounds, so "the renderer must contain the point" was false most of the time:
+            // every pick fell back to the bare collider, which carries no image, and the image
+            // inspector could then select nothing but the decals on the walls. Telling several
+            // meshes of one prefab apart needs their bounds one by one, and asking for them means
+            // an array — the API family IL2CPP strips. Left undone rather than guessed at.
 
             // Nothing drawn anywhere around it: the collider itself, which is what was pointed at
             // even if it cannot be seen. The highlight frames a collider too, and saying "you

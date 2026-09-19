@@ -194,7 +194,16 @@ namespace UnityGameTranslator.Core
                 _imageCacheStale = false;
             }
 
-            return _imageComponentGOIds.Contains(go.GetInstanceID());
+            if (_imageComponentGOIds.Contains(go.GetInstanceID())) return true;
+
+            // 🔴 A texture painted on a 3D material counts too (2026-09-19). It is asked directly
+            // rather than cached: the cache is built from three whole-scene sweeps, and adding a
+            // fourth over every Renderer — tens of thousands in a real scene — to answer a
+            // question that costs two field reads here would be the expensive way round.
+            var renderer = go.GetComponent<Renderer>();
+            return renderer != null
+                   && renderer.sharedMaterial != null
+                   && renderer.sharedMaterial.mainTexture != null;
         }
 
         private static void RebuildImageComponentCache()
@@ -296,6 +305,27 @@ namespace UnityGameTranslator.Core
                     var result = GetPropertySafe(originalObj, "texture");
                     if (result != null) return result;
                 }
+            }
+
+            // 🔴 **A texture painted on a 3D material** — last, so the flat cases keep priority.
+            // Reported 2026-09-19: an advertisement in English on a bus shelter, with nothing to
+            // extract or replace it. The three types above are all 2D, so a texture carried by a
+            // MeshRenderer's material existed nowhere in this class.
+            //
+            // ⚠ **sharedMaterial, deliberately, not material.** Reading `material` would make
+            // Unity clone the material for this object alone. And the sharing is what is WANTED
+            // here (user, 2026-09-19): if two objects show the same texture, translating it once
+            // must change both — leaving one poster untranslated beside a translated one is the
+            // real defect, not a side effect to avoid.
+            //
+            // ⚠ Everything downstream already copes: GetSpriteName reads `.name` by reflection,
+            // GetSpriteSize falls back to width/height, and ExportOriginal sends a bare Texture2D
+            // through TextureUtils.MakeReadableCopy — the path RawImage already uses.
+            var renderer = go.GetComponent<Renderer>();
+            if (renderer != null)
+            {
+                var material = renderer.sharedMaterial;
+                if (material != null && material.mainTexture != null) return material.mainTexture;
             }
 
             return null;

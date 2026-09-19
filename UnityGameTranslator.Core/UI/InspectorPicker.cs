@@ -250,21 +250,23 @@ namespace UnityGameTranslator.Core.UI
         /// try written HERE would never run. Measured twice on 2026-09-19 with GeometryUtility.
         /// </summary>
         /// <summary>
-        /// How many invisible layers the ray is willing to look through in one frame.
+        /// How many colliders around the eye the ray is willing to step out of in one frame.
         ///
-        /// ⚠ Not a limit on correctness — the ray advances past every hit, so it always reaches the
-        /// far plane eventually. It is a limit on how much of ONE frame a hover may spend: a
-        /// pavement, a trigger volume and a wall's collision hull is three, and a scene that stacks
-        /// a dozen invisible shells in front of the same pixel has bigger problems than picking.
+        /// ⚠ Not a limit on correctness — each step leaves one behind, so the ray always gets out.
+        /// It is a limit on how much of ONE frame a hover may spend: standing on a pavement, in a
+        /// trigger volume and inside a room's hull is three.
         /// </summary>
-        private const int MaxInvisibleLayers = 12;
+        private const int MaxSkinsAroundTheEye = 12;
 
         /// <summary>A whisker past a hit, so the next cast cannot land on the surface it just left.</summary>
         private const float PastTheHit = 0.01f;
 
         /// <summary>
-        /// Could somebody mean THIS object, in the mode we are in? Asked of what the ray finds, so
-        /// the ray goes past what the answer is no for instead of stopping on it.
+        /// Could somebody mean THIS object, in the mode we are in?
+        ///
+        /// ⚠ A no here stops the ray; it never makes it carry on. Carrying on would be picking
+        /// THROUGH whatever said no — and what says no is usually solid, so it hides everything
+        /// behind it. Nothing pickable in front means nothing pickable, not "look further".
         /// </summary>
         private bool Pickable(GameObject go)
         {
@@ -278,51 +280,61 @@ namespace UnityGameTranslator.Core.UI
             Vector3 origin = ray.origin;
             float remaining = camera.farClipPlane;
 
-            for (int layer = 0; layer < MaxInvisibleLayers && remaining > 0f; layer++)
+            // 🔴 **Only what is AROUND THE EYE is stepped over.** A ray that starts inside a
+            // collider is reported as hitting it at no distance at all, so standing on a pavement
+            // whose collision volume rises past the camera made every single pick land on the
+            // pavement. Anything nearer than the near plane is, by definition, not on screen — so
+            // it cannot be what somebody is pointing at, and stepping out of it hides nothing.
+            //
+            // ⚠ **And nothing else is stepped over.** An earlier attempt the same day skipped any
+            // collider with no mesh around it, which fixed the pavement and broke the walls: an
+            // interior wall whose collider does not carry the mesh was walked straight through, and
+            // the pick landed on the building's outer shell. A collider one is NOT inside is
+            // solid — what is behind it is not visible, whatever is or is not drawn on it.
+            for (int skin = 0; skin < MaxSkinsAroundTheEye && remaining > 0f; skin++)
             {
-                var found = FirstAlong(origin, ray.direction, remaining, pickable, out float travelled);
-                if (found != null) return found;
-                if (travelled <= 0f) return null;     // nothing further along the ray
+                RaycastHit hit;
+                if (!Physics.Raycast(origin, ray.direction, out hit, remaining)) return null;
+                if (hit.collider == null) return null;
 
-                origin += ray.direction * travelled;
-                remaining -= travelled;
+                // A trigger is a region, not a surface: it stops nothing and is never drawn.
+                bool aroundTheEye = hit.distance < camera.nearClipPlane;
+                if (!aroundTheEye && !hit.collider.isTrigger)
+                {
+                    var landed = Drawn(hit.collider.gameObject);
+                    return pickable == null || pickable(landed) ? landed : null;
+                }
+
+                float step = hit.distance + PastTheHit;
+                origin += ray.direction * step;
+                remaining -= step;
             }
             return null;
         }
 
         /// <summary>
-        /// The nearest thing along this ray that somebody could mean, or null with how far the ray
-        /// got — so the caller can carry on from there.
+        /// What is DRAWN at this collider: the collider's own object when it carries a mesh, else
+        /// the nearest one around it that does, else the collider's object itself.
         ///
-        /// 🔴 **A collider nobody can SEE cannot be what was pointed at.** Measured 2026-09-19 on a
-        /// street: the ray kept landing on 'OuterSidewalk 15 (2)', a pavement's walkable surface
-        /// carrying no mesh at all, and stopping there hid whatever was drawn behind it — one shop
-        /// front could be picked and the one beside it could not, with nothing on screen to say
-        /// why. So the ray does not stop on it; it goes past. And in the image inspector the same
-        /// applies to anything carrying no picture: stopping on it fell back to walking every
-        /// renderer in the scene, 33 380 of them, 207 ms per hover.
+        /// 🔴 **It always answers something.** An earlier attempt the same day answered null when
+        /// nothing was drawn anywhere near, so the ray could carry on past it — that fixed a
+        /// pavement and broke every wall: an interior wall whose collider does not carry the mesh
+        /// was walked straight through, and pointing at a television hovered the road outside. A
+        /// collider is solid whether or not something is drawn on it.
         ///
-        /// ⚠ Deliberately NOT Physics.RaycastAll, which would answer this in one call and returns
-        /// an ARRAY — the family of Unity API IL2CPP strips, and which cost this project two
-        /// regressions the same day. Several ordinary Raycasts are proven; one clever one is not.
+        /// ⚠ Deliberately NOT Physics.RaycastAll, which would answer the whole question in one call
+        /// and returns an ARRAY — the family of Unity API IL2CPP strips, and which cost this project
+        /// two regressions the same day. Several ordinary Raycasts are proven; one clever one is not.
         /// </summary>
-        private static GameObject FirstAlong(Vector3 origin, Vector3 direction, float distance,
-                                             Func<GameObject, bool> pickable, out float travelled)
+        private static GameObject Drawn(GameObject go)
         {
-            travelled = 0f;
-            RaycastHit hit;
-            if (!Physics.Raycast(origin, direction, out hit, distance)) return null;
-            if (hit.collider == null) return null;
-
-            travelled = hit.distance + PastTheHit;
-
             // 🔴 **A collider is not the thing you see.** Measured 2026-09-19: the ray kept
             // landing on objects named "Cube (7)" — invisible collision volumes wrapped around
             // furniture — 1 675 times in one session. They carry no Renderer, so no highlight
             // could be drawn, and they are not what holds the text either, so the inspector
             // listed the neighbours' strings. Walk to what is actually drawn: the collider's own
             // renderer, else one below it, else the one above.
-            var go = hit.collider.gameObject;
+            if (go == null) return null;
             var rend = go.GetComponent<Renderer>();
             if (rend == null) rend = go.GetComponentInChildren<Renderer>();
             if (rend == null) rend = go.GetComponentInParent<Renderer>();
@@ -335,10 +347,10 @@ namespace UnityGameTranslator.Core.UI
             if (rend == null && go.transform.parent != null)
                 rend = go.transform.parent.GetComponentInChildren<Renderer>();
 
-            // Nothing is drawn anywhere around this collider, or what is drawn is not something
-            // this mode can act on: the caller carries the ray past it rather than stopping here.
-            if (rend == null) return null;
-            return pickable == null || pickable(rend.gameObject) ? rend.gameObject : null;
+            // Nothing drawn anywhere around it: the collider itself, which is what was pointed at
+            // even if it cannot be seen. The highlight frames a collider too, and saying "you
+            // landed on a collision volume" is honest where looking through it is not.
+            return rend != null ? rend.gameObject : go;
         }
 
         /// <summary>

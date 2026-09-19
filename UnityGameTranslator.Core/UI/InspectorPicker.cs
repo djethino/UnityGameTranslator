@@ -97,6 +97,9 @@ namespace UnityGameTranslator.Core.UI
 
         private const float EdgeThickness = 2f;
 
+        /// <summary>How much of the marker's own colour the 3D wash keeps — a hint, not a fill.</summary>
+        private const float VeilAlpha = 0.35f;
+
         /// <summary>The twelve edges of a box, as pairs of corner indices (bit 0 = x, 1 = y, 2 = z).</summary>
         private static readonly int[] BoxEdges =
         {
@@ -1245,6 +1248,8 @@ namespace UnityGameTranslator.Core.UI
             if (targetRect != null)
             {
                 HideEdges(edgeImages);
+                // Back to a blocking marker: a Canvas element's rectangle is the element itself.
+                highlightImage.raycastTarget = true;
                 if (!GetScreenBounds(targetRect, _selectedCamera, out var screenMin, out var screenMax))
                 {
                     highlightImage.gameObject.SetActive(false);
@@ -1263,7 +1268,31 @@ namespace UnityGameTranslator.Core.UI
             var camera = _selectedCamera ?? Camera.main;
             if (renderer != null && camera != null && ProjectBox(renderer.bounds, camera))
             {
-                highlightImage.gameObject.SetActive(false);
+                // 🔴 **A veil behind the wires, or the marker vanishes on a same-coloured object**
+                // (2026-09-19, user's remark). Twelve thin lines are invisible against a surface
+                // of their own colour; a wash over the whole footprint is always readable, and the
+                // wires on top still say where the volume begins and ends.
+                //
+                // ⚠ It reuses the flat rectangle rather than adding a thirteenth image — same
+                // piece, two roles — but NOT as a click blocker: the flat marker is a raycast
+                // target so nothing behind it reacts, whereas a wash over a whole 3D footprint
+                // would swallow the neighbours you are trying to aim at next.
+                float minX = _corners[0].x, maxX = minX, minY = _corners[0].y, maxY = minY;
+                for (int i = 1; i < 8; i++)
+                {
+                    if (_corners[i].x < minX) minX = _corners[i].x;
+                    if (_corners[i].x > maxX) maxX = _corners[i].x;
+                    if (_corners[i].y < minY) minY = _corners[i].y;
+                    if (_corners[i].y > maxY) maxY = _corners[i].y;
+                }
+
+                Color wire = highlightImage.color;
+                highlightImage.raycastTarget = false;
+                highlightImage.color = new Color(wire.r, wire.g, wire.b, wire.a * VeilAlpha);
+                PositionHighlightRect(highlightRect, highlightImage,
+                                      UnityEngine.Rect.MinMaxRect(minX, minY, maxX, maxY));
+                highlightImage.color = wire;
+
                 ShowBox(edges, edgeImages);
                 return;
             }

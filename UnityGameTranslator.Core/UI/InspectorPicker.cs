@@ -423,6 +423,14 @@ namespace UnityGameTranslator.Core.UI
         private static int _probeRayHits;
         private static int _probeFallbacks;
 
+        /// <summary>
+        /// Which of the two answered last. Said on every CLICK — not on every hover, which would
+        /// drown the log — because "am I sure which path this takes?" is the question that cannot
+        /// be settled by reading the code: the two agree most of the time and differ exactly when
+        /// something looks wrong.
+        /// </summary>
+        private static bool _lastPathWasRay;
+
         private void ResetProbe()
         {
             _probeCount = 0;
@@ -725,6 +733,13 @@ namespace UnityGameTranslator.Core.UI
                             TranslatorCore.LogDebug($"[Inspector] BitmapReplace click handler error: {ex}");
                         }
                     }
+
+                    // Which of the two passes answered, and what it landed on. One line per click,
+                    // because reading the code cannot tell you: both are wired, and they differ
+                    // exactly on the picks that look wrong.
+                    if (_selectedCamera != null)
+                        TranslatorCore.LogDebug($"[Inspector] picked '{hitObject.name}' via "
+                                                + (_lastPathWasRay ? "the ray" : "the whole-scene pass"));
 
                     // Position selected highlight
                     PositionHighlight(_selectedHighlightRect, _selectedHighlight, _selectedEdges, _selectedEdgeImages, hitObject);
@@ -1171,8 +1186,9 @@ namespace UnityGameTranslator.Core.UI
                         + "falls back to bounding boxes, which cannot see what is in front");
                 }
 
-                if (viaRay != null) { _probeRayHits++; return viaRay; }
+                if (viaRay != null) { _probeRayHits++; _lastPathWasRay = true; return viaRay; }
                 _probeFallbacks++;
+                _lastPathWasRay = false;
             }
 
             // Then: bounds check for renderers visible to this camera
@@ -1372,15 +1388,33 @@ namespace UnityGameTranslator.Core.UI
             Vector3 c = bounds.center, e = bounds.extents;
             if (e == Vector3.zero) return false;
 
+            // 🔴 **A corner behind the eye no longer throws the whole marker away** (2026-09-19).
+            // It used to: one corner with a negative depth and the method gave up, so a big object
+            // seen from close — a wall, a television one has walked up to — was picked with NOTHING
+            // drawn on it. The person then reads that as "it will not select", which is what was
+            // reported, and the log said the object had no renderer, which was not true either.
+            //
+            // ⚠ Such a corner is pulled onto the near plane before projecting. The wireframe is
+            // then approximate for that corner — a box one is standing in has no honest outline on
+            // screen anyway — but the marker EXISTS, and it is the marker that says the pick landed.
+            float nearPlane = camera.nearClipPlane + 0.01f;
             for (int i = 0; i < 8; i++)
             {
                 var corner = new Vector3(
                     c.x + ((i & 1) == 0 ? -e.x : e.x),
                     c.y + ((i & 2) == 0 ? -e.y : e.y),
                     c.z + ((i & 4) == 0 ? -e.z : e.z));
-                Vector3 p = camera.WorldToScreenPoint(corner);
-                if (!camera.orthographic && p.z < 0) return false;
-                _corners[i] = p;
+
+                if (!camera.orthographic)
+                {
+                    var inCamera = camera.transform.InverseTransformPoint(corner);
+                    if (inCamera.z < nearPlane)
+                    {
+                        inCamera.z = nearPlane;
+                        corner = camera.transform.TransformPoint(inCamera);
+                    }
+                }
+                _corners[i] = camera.WorldToScreenPoint(corner);
             }
             return true;
         }
@@ -1482,6 +1516,13 @@ namespace UnityGameTranslator.Core.UI
                     if (_corners[i].y > maxY) maxY = _corners[i].y;
                 }
 
+                // ⚠ Kept to the screen. A corner pulled onto the near plane can project a long way
+                // outside it, and the wash is meant to say "this footprint", not to paint a
+                // rectangle the size of a city over the game.
+                minX = Mathf.Max(minX, 0f); minY = Mathf.Max(minY, 0f);
+                maxX = Mathf.Min(maxX, Screen.width); maxY = Mathf.Min(maxY, Screen.height);
+                if (maxX <= minX || maxY <= minY) { minX = 0f; minY = 0f; maxX = 0f; maxY = 0f; }
+
                 Color wire = highlightImage.color;
                 highlightImage.raycastTarget = false;
                 highlightImage.color = new Color(wire.r, wire.g, wire.b, wire.a * VeilAlpha);
@@ -1493,9 +1534,16 @@ namespace UnityGameTranslator.Core.UI
                 return;
             }
 
+            // ⚠ **Say WHICH of the reasons it is.** This line used to blame the renderer whatever
+            // had happened, and it was read that way for a day while the real cause was a box the
+            // projection refused. A message that names one of three causes is worse than none: it
+            // sends the next reader down the wrong path.
             TranslatorCore.LogDebug(
-                $"[Inspector] '{target.name}' has neither a RectTransform nor a projectable renderer"
-                + (camera == null ? " (and no camera to project with)" : "") + " — highlight hidden");
+                $"[Inspector] '{target.name}': "
+                + (!haveBox ? "nothing drawn on it and no collider either"
+                   : camera == null ? "no camera to project through"
+                   : "its box cannot be projected")
+                + " — highlight hidden");
             HideEdges(edgeImages);
             highlightImage.gameObject.SetActive(false);
         }

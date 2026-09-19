@@ -176,6 +176,36 @@ namespace UnityGameTranslator.Core.UI
         /// <summary>True once the runtime has refused the frustum API; it is not asked again.</summary>
         private static bool _frustumRefused;
 
+        /// <summary>
+        /// Is this box inside what the camera frames? The standard plane-versus-AABB test, done
+        /// here rather than by <c>GeometryUtility.TestPlanesAABB</c>.
+        ///
+        /// 🔴 **Because that method does not exist on IL2CPP** — measured 2026-09-19:
+        /// `MissingMethodException: Boolean GeometryUtility.TestPlanesAABB(Plane[], Bounds)`,
+        /// thrown per object, straight up through Tick, and the inspector stopped responding
+        /// entirely. It is the rule CLAUDE.md states in red for textures, in its other form: do
+        /// not name an overload the running game may not carry. I had guarded the call that
+        /// RETURNS an array and left unguarded the one that TAKES one — the allocation was never
+        /// the danger, the stripping was.
+        ///
+        /// ⚠ This uses only Plane.normal and Plane.GetDistanceToPoint, which are plain members.
+        /// The arithmetic is the textbook one: project the box's extents onto the plane normal to
+        /// get the radius of its most positive vertex, and compare with the centre's distance.
+        /// </summary>
+        private static bool InFrustum(Plane[] frustum, Bounds bounds)
+        {
+            if (frustum == null) return true;   // no opinion is not a refusal
+
+            Vector3 c = bounds.center, e = bounds.extents;
+            for (int i = 0; i < frustum.Length; i++)
+            {
+                Vector3 n = frustum[i].normal;
+                float radius = e.x * Mathf.Abs(n.x) + e.y * Mathf.Abs(n.y) + e.z * Mathf.Abs(n.z);
+                if (frustum[i].GetDistanceToPoint(c) + radius < 0f) return false;
+            }
+            return true;
+        }
+
         private static Plane[] FrustumOf(Camera camera)
         {
             if (_frustumRefused || camera == null) return null;
@@ -933,11 +963,11 @@ namespace UnityGameTranslator.Core.UI
                 // cameras included. The frustum of the camera being picked through is the honest
                 // question, asked once per hover rather than per object.
                 //
-                // ⚠ Behind a one-time refusal rather than a per-hover try: this returns an array
-                // Unity allocates, and IL2CPP has already cost this project a silent death over
-                // an array-taking API (see the memory on RectTransformUtility/GetWorldCorners).
-                // If it throws once, it is never asked again and the pass keeps its old behaviour
-                // — slow, but correct.
+                // ⚠ Behind a one-time refusal, because an IL2CPP build may simply not carry this
+                // method. If it throws once it is never asked again, InFrustum then rejects
+                // nothing, and the pass keeps its old behaviour — slow, but correct. ⚠ The test
+                // itself is ours (see InFrustum): GeometryUtility.TestPlanesAABB is stripped on
+                // IL2CPP and threw per object until 2026-09-19.
                 Plane[] frustum = FrustumOf(camera);
 
                 GameObject bestHit = null;
@@ -962,7 +992,7 @@ namespace UnityGameTranslator.Core.UI
                     if ((cullingMask & (1 << rend.gameObject.layer)) == 0) continue;
 
                     // Outside what this camera frames: nothing to pick, nothing to project.
-                    if (frustum != null && !GeometryUtility.TestPlanesAABB(frustum, rend.bounds)) continue;
+                    if (!InFrustum(frustum, rend.bounds)) continue;
 
                     if (IsOwnUI(rend.gameObject)) continue;
 

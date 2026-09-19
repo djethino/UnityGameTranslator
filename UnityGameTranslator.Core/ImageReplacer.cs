@@ -566,10 +566,20 @@ namespace UnityGameTranslator.Core
                     // It's a Sprite — extract the region
                     extracted = TextureUtils.ExtractSpriteRegion(spriteObj);
                 }
-                else if (spriteObj is Texture2D tex)
+                else
                 {
-                    // It's a raw Texture2D (RawImage)
-                    extracted = TextureUtils.MakeReadableCopy(tex);
+                    // A raw texture: a RawImage's, or the one painted on a 3D material.
+                    //
+                    // 🔴 **`is Texture2D` is not enough on IL2CPP** (2026-09-19). The texture comes
+                    // back through a property typed `Texture`, so the runtime hands over a proxy
+                    // the C# `is` refuses — and the export failed with "Failed to extract" on a
+                    // texture the inspector had just named and measured, 2048x2048. Il2CppCast is
+                    // how the rest of this project crosses that boundary.
+                    var tex = spriteObj as Texture2D
+                              ?? TypeHelper.Il2CppCast(spriteObj, typeof(Texture2D)) as Texture2D;
+                    if (tex != null) extracted = TextureUtils.MakeReadableCopy(tex);
+                    else TranslatorCore.LogWarning(
+                        $"[ImageReplacer] {spriteName} is a {spriteObj.GetType().Name}, not a Texture2D — cannot export");
                 }
 
                 if (extracted == null)

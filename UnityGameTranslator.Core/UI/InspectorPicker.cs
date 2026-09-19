@@ -313,7 +313,11 @@ namespace UnityGameTranslator.Core.UI
                 if (!aroundTheEye && !hit.collider.isTrigger)
                 {
                     blockedAt = hit.distance;
-                    return Drawn(hit.collider.gameObject);
+                    // What the ray actually struck, kept for the line logged on a click: the gap
+                    // between this and what is picked is where three rounds of wrong diagnosis
+                    // went, and it costs one string to close it.
+                    _lastColliderName = hit.collider.gameObject != null ? hit.collider.gameObject.name : "?";
+                    return Drawn(hit.collider.gameObject, hit.point);
                 }
 
                 float step = hit.distance + PastTheHit;
@@ -337,7 +341,7 @@ namespace UnityGameTranslator.Core.UI
         /// and returns an ARRAY — the family of Unity API IL2CPP strips, and which cost this project
         /// two regressions the same day. Several ordinary Raycasts are proven; one clever one is not.
         /// </summary>
-        private static GameObject Drawn(GameObject go)
+        private static GameObject Drawn(GameObject go, Vector3 at)
         {
             // 🔴 **A collider is not the thing you see.** Measured 2026-09-19: the ray kept
             // landing on objects named "Cube (7)" — invisible collision volumes wrapped around
@@ -348,15 +352,32 @@ namespace UnityGameTranslator.Core.UI
             if (go == null) return null;
             var rend = go.GetComponent<Renderer>();
             if (rend == null) rend = go.GetComponentInChildren<Renderer>();
-            if (rend == null) rend = go.GetComponentInParent<Renderer>();
 
             // ⚠ And the SIBLING case, which the three above all miss. A collider is very often a
             // bare child named "Bounds" beside the mesh rather than on it, so what is drawn is
             // neither under it nor above it. Measured on a television whose hierarchy is
             // TV_Built(Clone)/{Bounds, <mesh>}: the pick stayed on Bounds, which holds no text,
             // and the editor then walked up a level and offered every string of the whole set.
+            // 🔴 **One level up, and no further.** This used to call GetComponentInParent, which
+            // climbs until it finds a renderer however far that is — so a television whose collider
+            // is a bare child inside a prefab nested under the building answered with the BUILDING.
+            // It read as "it picks things behind the wall" and it was not that at all: it was the
+            // right hit and the wrong object taken from it.
+            //
+            // ⚠ One level covers the case this was added for — a collider named "Bounds" beside the
+            // mesh rather than on it — because asking a transform for a renderer among its children
+            // includes the transform itself and all of its descendants.
             if (rend == null && go.transform.parent != null)
                 rend = go.transform.parent.GetComponentInChildren<Renderer>();
+
+            // ⚠ **And what was found must contain what the ray actually struck.** A prefab can hold
+            // several meshes; the first one a search returns is not necessarily the one under the
+            // cursor. When it does not contain the point, the collider itself is the honest answer.
+            if (rend != null && !rend.bounds.Contains(at))
+            {
+                var own = go.GetComponent<Renderer>();
+                if (own == null) return go;
+            }
 
             // Nothing drawn anywhere around it: the collider itself, which is what was pointed at
             // even if it cannot be seen. The highlight frames a collider too, and saying "you
@@ -460,6 +481,9 @@ namespace UnityGameTranslator.Core.UI
         /// something looks wrong.
         /// </summary>
         private static bool _lastPathWasRay;
+
+        /// <summary>What the ray last struck, by name — not what was picked from it.</summary>
+        private static string _lastColliderName = "";
 
         private void ResetProbe()
         {
@@ -769,7 +793,8 @@ namespace UnityGameTranslator.Core.UI
                     // exactly on the picks that look wrong.
                     if (_selectedCamera != null)
                         TranslatorCore.LogDebug($"[Inspector] picked '{hitObject.name}' via "
-                                                + (_lastPathWasRay ? "the ray" : "the whole-scene pass"));
+                                                + (_lastPathWasRay ? $"the ray, which struck the collider '{_lastColliderName}'"
+                                                                   : "a box in front of what the ray struck"));
 
                     // Position selected highlight
                     PositionHighlight(_selectedHighlightRect, _selectedHighlight, _selectedEdges, _selectedEdgeImages, hitObject);

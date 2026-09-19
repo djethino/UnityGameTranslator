@@ -2495,20 +2495,28 @@ namespace UnityGameTranslator.Core.UI.Panels
                     string fontName = kvp.Key;
                     var pending = kvp.Value;
 
+                    // 🔴 **settleNow: false — the global pass and the save happen ONCE, below.**
+                    // Each of these three used to run a full ForceRefreshAllText and rewrite the
+                    // whole translations.json, so changing K fonts cost K+1 of each while this
+                    // method then did both again. What stays per font is RefreshForFont, inside
+                    // the door: the global pass cannot re-apply a font on an already-translated
+                    // component (issue #21).
+                    //
                     // enabled/fallback always applied (does not touch size_percent/scale_auto).
-                    FontManager.UpdateFontSettings(fontName, pending.enabled, pending.fallback);
+                    FontManager.UpdateFontSettings(fontName, pending.enabled, pending.fallback,
+                                                   settleNow: false);
 
                     // Auto design-scale toggle (orthogonal to the deliberate percent). SetFontAutoScale
                     // recompensates the shadow in place (no revert/re-scan).
                     bool initialAuto = _initialFontSettings.TryGetValue(fontName, out var init0) && init0.scaleAuto;
                     if (pending.scaleAuto != initialAuto)
-                        FontManager.SetFontAutoScale(fontName, pending.scaleAuto);
+                        FontManager.SetFontAutoScale(fontName, pending.scaleAuto, settleNow: false);
 
                     // Deliberate size percent — pushed only when the slider actually moved (editing
                     // only fallback/enabled must not touch the size). UpdateFontScale also recompensates
                     // the shadow in place.
                     if (Math.Abs(pending.sizePercent - FontManager.GetFontSizePercent(fontName)) > 0.001f)
-                        FontManager.UpdateFontScale(fontName, pending.sizePercent);
+                        FontManager.UpdateFontScale(fontName, pending.sizePercent, settleNow: false);
 
                     // RTL alignment choice — pushed only when it moved; null is the default
                     // (mirror), "keep" the deliberate opt-out, both shared with the translation.
@@ -2588,7 +2596,12 @@ namespace UnityGameTranslator.Core.UI.Panels
                 }
 
                 TranslatorCore.SaveConfig();
-                TranslatorCore.SaveCache(); // saves _settings to translations.json
+
+                // 🔴 Off the interface thread: this serialises the WHOLE translation — seconds on
+                // a large file — and nothing below reads it back from disk. The snapshot is taken
+                // now, so what lands is what was just applied; only the writing is deferred, and
+                // an act that needs the file on disk (upload, merge, fork) still calls SaveCache.
+                TranslatorCore.SaveCacheInBackground(); // saves _settings to translations.json
 
                 // Force refresh all text to apply new settings (fonts, translations, overrides)
                 // This re-triggers ProcessTextPatchPrefix for all components, which:

@@ -121,6 +121,7 @@ namespace UnityGameTranslator.Core.Checks
         {
             Section("The config.json contract and its migrations", ModConfigChecks.Run);
             Section("config.json against the spec's cases", ConfigSpecChecks.Run);
+            Section("What an Apply has to redraw", ConfigEffectsChecks.Run);
         }
 
         /// <summary>Reading one server-sent event stream: the grammar, and the loop pulling the lines.</summary>

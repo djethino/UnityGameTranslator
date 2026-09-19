@@ -3069,6 +3069,14 @@ namespace UnityGameTranslator.Core
             var names = new HashSet<string>(before.Keys, StringComparer.OrdinalIgnoreCase);
             foreach (var name in FontSettingsMap.Keys) names.Add(name);
 
+            // 🔴 **One global pass for the whole file, and NO save at all** (2026-09-20). The door
+            // used to make a full pass and rewrite translations.json per font: a translation
+            // touching several fonts paid both that many times, and the save wrote back the very
+            // file this reload had just read. What is per font — RefreshForFont, inside the door —
+            // stays, since the global pass cannot re-apply a font on an already-translated
+            // component (issue #21).
+            bool anyFontMoved = false;
+
             foreach (var name in names)
             {
                 FontSettings was;
@@ -3096,8 +3104,13 @@ namespace UnityGameTranslator.Core
                 now.enabled = wasEnabled;
                 now.fallback = wasFallback;
 
-                FontManager.UpdateFontSettings(name, nowEnabled, nowFallback);
+                FontManager.UpdateFontSettings(name, nowEnabled, nowFallback, settleNow: false);
+                anyFontMoved = true;
             }
+
+            // Only when something actually moved: a reload whose fonts are the ones already in
+            // place has nothing to redraw, and this pass is the expensive one.
+            if (anyFontMoved) TranslatorScanner.ForceRefreshAllText(reapplyAllScales: true);
         }
 
         // ── Upstream ancestor (branches only) ────────────────────────────────
@@ -6576,17 +6589,31 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static void SaveCacheInBackground()
         {
-            if (backgroundSave != null && !backgroundSave.IsCompleted) return;
-
             PreparedSave prepared;
             lock (lockObj) { prepared = PrepareSave(); }
             if (prepared == null) return;
 
-            backgroundSave = Task.Run(() =>
-            {
-                WriteSave(prepared);
-                Host?.LocalFileChanged();
-            });
+            // 🔴 **A save already in flight used to make this one give up** (2026-09-20), on the
+            // reasoning that the tick would ask again — which it does, up to thirty seconds later,
+            // and only while the flag still says so. That is fine for the tick's own rhythm and
+            // wrong for a screen's Apply: what somebody just validated would sit in memory alone.
+            // The request now QUEUES behind the one running instead of being dropped, and the
+            // snapshot above is taken at once either way, so what gets written is what was applied.
+            //
+            // ⚠ Order is settled by SaveOrder, not by the queue: WriteSave refuses to overwrite a
+            // newer file, so even out of order nothing older lands on top of something newer.
+            var running = backgroundSave;
+
+            backgroundSave = running == null || running.IsCompleted
+                ? Task.Run(() => WriteAndTell(prepared))
+                : running.ContinueWith(_ => WriteAndTell(prepared));
+        }
+
+        /// <summary>The worker's half of a save: the file, then the browser editor if one is open.</summary>
+        private static void WriteAndTell(PreparedSave prepared)
+        {
+            WriteSave(prepared);
+            Host?.LocalFileChanged();
         }
 
         /// <summary>

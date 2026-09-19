@@ -97,6 +97,11 @@
     <Compile Include="../../UnityGameTranslator.Core/Engine/ModConfig.cs" />
     <Compile Include="../../UnityGameTranslator.Core/TokenProtection.cs" />
     <!--
+      Which settings a text on screen SHOWS — what decides whether an Apply redraws the game. It
+      reads ModConfig by reflection and nothing else, so it belongs beside it here.
+    -->
+    <Compile Include="../../UnityGameTranslator.Core/Engine/ConfigEffects.cs" />
+    <!--
       🔴 Reading one server-sent event stream — added because of a defect that cost months and
       that no check could reach: a tick abandoning a pending read, which .NET refuses, so signing
       a game in never completed while the site said it had. A moment, not an answer. The reader is

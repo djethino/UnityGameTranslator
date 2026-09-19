@@ -1884,7 +1884,8 @@ namespace UnityGameTranslator.Core
         /// auto design-scale: this does NOT turn scale_auto off — the two combine multiplicatively
         /// (effective = design-scale baseline × percent).
         /// </summary>
-        public static void UpdateFontScale(string fontName, float percent)
+        /// <param name="settleNow">False when several fonts move together — see UpdateFontSettings.</param>
+        public static void UpdateFontScale(string fontName, float percent, bool settleNow = true)
         {
             if (string.IsNullOrEmpty(fontName))
                 return;
@@ -1918,7 +1919,7 @@ namespace UnityGameTranslator.Core
                     TranslatorPatches.ApplyAutoSizeScaleForFont(fontName);
                 }
 
-                TranslatorCore.SaveCache();
+                if (settleNow) TranslatorCore.SaveCache();
             }
         }
 
@@ -1951,7 +1952,8 @@ namespace UnityGameTranslator.Core
         /// Only ever called from the Apply flow — UX rule: all settings commit via Apply, never
         /// immediately (see UpdateFontScale for the manual-scale path, which also clears auto).
         /// </summary>
-        public static void SetFontAutoScale(string fontName, bool auto)
+        /// <param name="settleNow">False when several fonts move together — see UpdateFontSettings.</param>
+        public static void SetFontAutoScale(string fontName, bool auto, bool settleNow = true)
         {
             if (string.IsNullOrEmpty(fontName))
                 return;
@@ -1975,7 +1977,7 @@ namespace UnityGameTranslator.Core
                 TranslatorPatches.ApplyAutoSizeScaleForFont(fontName);
             }
 
-            TranslatorCore.SaveCache();
+            if (settleNow) TranslatorCore.SaveCache();
         }
 
         /// <summary>
@@ -2040,7 +2042,23 @@ namespace UnityGameTranslator.Core
             settings.rtl_alignment = rtlAlignment;
         }
 
-        public static void UpdateFontSettings(string fontName, bool enabled, string fallbackFont)
+        /// <param name="settleNow">
+        /// False when this font is one of several being changed in one go: the caller then makes
+        /// the global pass and saves ONCE, at the end.
+        ///
+        /// 🔴 **Because an Apply over K fonts cost K+1 of each** (2026-09-20). Every call here ran
+        /// a full ForceRefreshAllText — a pass measured at 689 ms on a large IL2CPP game — and
+        /// rewrote the whole translations.json, and the Apply then did both again. The reload path
+        /// (TranslatorCore.ReapplyFontSettings) walks every font of a file the same way, and its
+        /// save wrote back the file it had just read.
+        ///
+        /// ⚠ **Never skips <see cref="TranslatorScanner.RefreshForFont"/>**, which is per font and
+        /// must stay: the global pass cannot re-apply a font on a component whose text is already
+        /// translated — its guard refuses exactly that (pieges-projet.md, issue #21). Only the
+        /// global pass and the save are what the caller takes over.
+        /// </param>
+        public static void UpdateFontSettings(string fontName, bool enabled, string fallbackFont,
+                                              bool settleNow = true)
         {
             if (string.IsNullOrEmpty(fontName))
                 return;
@@ -2128,11 +2146,11 @@ namespace UnityGameTranslator.Core
                 // re-sets their text unconditionally) and, with reapplyAllScales, re-derives every
                 // component's size — a per-font enable toggle changes the design-scale gate, so a
                 // disabled font's restored original must not stay at the old scaled fontSize.
-                TranslatorScanner.ForceRefreshAllText(reapplyAllScales: true);
+                if (settleNow) TranslatorScanner.ForceRefreshAllText(reapplyAllScales: true);
             }
 
             // Save changes
-            TranslatorCore.SaveCache();
+            if (settleNow) TranslatorCore.SaveCache();
         }
 
         /// <summary>

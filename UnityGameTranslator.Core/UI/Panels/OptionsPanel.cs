@@ -1435,6 +1435,10 @@ namespace UnityGameTranslator.Core.UI.Panels
             TranslatorCore.LogInfo("[Options] Applying settings...");
             try
             {
+                // What the config says BEFORE this method writes into it — the other half of the
+                // comparison that decides, at the end, whether the game has to be redrawn.
+                var before = ConfigEffects.Snapshot(TranslatorCore.Config);
+
                 // General
                 TranslatorCore.Config.enable_translations = _enableTranslationsToggle.IsOn;
                 // Applying records an EXPLICIT choice (tri-state leaves "undecided" for users who
@@ -1627,26 +1631,50 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // Save per-game settings (translations.json)
                 if (perGameChanged)
                 {
-                    TranslatorCore.SaveCache();
+                    // Off the interface thread, like the Fonts tab's Apply: the whole translation
+                    // is serialised and nothing here reads it back. See SaveCacheInBackground.
+                    TranslatorCore.SaveCacheInBackground();
                     TranslatorCore.LogInfo("[Options] EventSystem override setting changed — applied on the next tick, no restart needed");
                 }
 
                 TranslatorCore.LogInfo("[Options] Settings saved successfully");
 
-                // Interface font: (re)apply the mod UI font from the committed config.
-                TranslatorUIManager.ApplyInterfaceFont();
-                // Mod UI translation: enable → submit our text; disable (or missing font) → English.
-                if (TranslatorCore.ShouldTranslateOwnUI)
-                    TranslatorUIManager.RefreshOwnUITranslation();
+                // 🔴 **Only when something a text SHOWS has changed** (2026-09-20). Everything in
+                // this block is a pass over the whole game — the mod's own interface walked, every
+                // processing cache dropped, every mesh rebuilt (689 ms measured on a large IL2CPP
+                // game) — and it ran for a changed hotkey, a proxy, a sync rhythm.
+                //
+                // ⚠ The question is asked the SAFE way round and by comparison, never from a list
+                // of settings kept by hand: ConfigEffects.NeedsRedraw is true unless EVERY changed
+                // key is named as one no text shows. A setting added later, or one nobody
+                // classified, redraws exactly as today. See ConfigEffects, and its checks.
+                var changedKeys = ConfigEffects.Changed(before, ConfigEffects.Snapshot(TranslatorCore.Config));
+
+                // ⚠ The one setting on this screen that is NOT in the config: it lives in the
+                // translation's own settings, so the comparison above cannot see it. Named rather
+                // than left out — ConfigEffects decides what it means, like every other key.
+                if (eventSystemChanged) changedKeys.Add("disable_eventsystem_override");
+                if (ConfigEffects.NeedsRedraw(changedKeys))
+                {
+                    // Interface font: (re)apply the mod UI font from the committed config.
+                    TranslatorUIManager.ApplyInterfaceFont();
+                    // Mod UI translation: enable → submit our text; disable (or missing font) → English.
+                    if (TranslatorCore.ShouldTranslateOwnUI)
+                        TranslatorUIManager.RefreshOwnUITranslation();
+                    else
+                        TranslatorUIManager.RestoreOwnUIEnglish();
+
+                    TranslatorCore.ClearProcessingCaches();
+
+                    // Force refresh all text to apply new settings (fonts, translations).
+                    // reapplyAllScales: discrete Apply — re-derive every component's size from its gated
+                    // scale so a toggled setting doesn't leave un-retriggered components mis-sized (issue #21).
+                    TranslatorScanner.ForceRefreshAllText(reapplyAllScales: true);
+                }
                 else
-                    TranslatorUIManager.RestoreOwnUIEnglish();
-
-                TranslatorCore.ClearProcessingCaches();
-
-                // Force refresh all text to apply new settings (fonts, translations).
-                // reapplyAllScales: discrete Apply — re-derive every component's size from its gated
-                // scale so a toggled setting doesn't leave un-retriggered components mis-sized (issue #21).
-                TranslatorScanner.ForceRefreshAllText(reapplyAllScales: true);
+                {
+                    TranslatorCore.LogInfo($"[Options] Nothing on screen changes ({string.Join(", ", changedKeys.ToArray())}) — no redraw");
+                }
 
                 if (TranslatorCore.Config.IsTranslationEnabled)
                 {

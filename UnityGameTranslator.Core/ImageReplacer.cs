@@ -43,9 +43,35 @@ namespace UnityGameTranslator.Core
         private static string _imagesFolder;
         private static bool _initialized;
 
-        // Tracks components where we replaced the sprite/texture, keyed by component instance id.
-        // Stored so the Restore hotkey/toggle can put back the original (same as disabling replacement).
-        private static Dictionary<int, (object component, object originalValue, string propertyName)> _replacedComponents = new Dictionary<int, (object, object, string)>();
+        /// <summary>
+        /// One thing this mod overwrote, and what was there before it — so switching image
+        /// replacement off puts the game's own pictures back.
+        ///
+        /// ⚠ Exactly ONE of <see cref="PropertyName"/> and <see cref="Slot"/> is set: a component's
+        /// property (an Image's sprite, a material's mainTexture) is written by reflection, a
+        /// shader slot through the material's own SetTexture. They are two different Unity APIs for
+        /// two different things, not two ways of doing one.
+        /// </summary>
+        private struct Replaced
+        {
+            public object Target;
+            public object OriginalValue;
+            /// <summary>The property written — "sprite", "texture", "mainTexture". Null for a slot.</summary>
+            public string PropertyName;
+            /// <summary>The shader slot written — "_EmissionMap". Null for a property.</summary>
+            public string Slot;
+        }
+
+        /// <summary>
+        /// What was overwritten, by target AND by what was written on it.
+        ///
+        /// 🔴 **Keyed on the pair, never on the object alone.** One material can carry a picture on
+        /// its main slot and another on its emissive slot, and both can be replaced; keyed on the
+        /// material, the second would find an entry already there, keep quiet, and its original
+        /// would be lost — so switching replacement off would put one picture back and leave the
+        /// other one ours, for good.
+        /// </summary>
+        private static Dictionary<string, Replaced> _replacedComponents = new Dictionary<string, Replaced>(StringComparer.Ordinal);
 
         #endregion
 
@@ -201,9 +227,15 @@ namespace UnityGameTranslator.Core
             // fourth over every Renderer — tens of thousands in a real scene — to answer a
             // question that costs two field reads here would be the expensive way round.
             var renderer = go.GetComponent<Renderer>();
-            return renderer != null
-                   && renderer.sharedMaterial != null
-                   && renderer.sharedMaterial.mainTexture != null;
+            if (renderer == null || renderer.sharedMaterial == null) return false;
+            if (renderer.sharedMaterial.mainTexture != null) return true;
+
+            // ⚠ **The costly question is asked LAST, and only when the cheap one said no.** A lit
+            // sign carries its artwork on the emissive slot and has no main texture at all, so
+            // without this it could not even be picked; but reading every slot means a handful of
+            // native calls, and this is asked once per candidate while somebody hovers. A material
+            // with a main texture — the ordinary case — never reaches here.
+            return TexturesOf(renderer.sharedMaterial).Count > 0;
         }
 
         private static void RebuildImageComponentCache()
@@ -321,14 +353,23 @@ namespace UnityGameTranslator.Core
             // ⚠ Everything downstream already copes: GetSpriteName reads `.name` by reflection,
             // GetSpriteSize falls back to width/height, and ExportOriginal sends a bare Texture2D
             // through TextureUtils.MakeReadableCopy — the path RawImage already uses.
-            var renderer = go.GetComponent<Renderer>();
-            if (renderer != null)
-            {
-                var material = renderer.sharedMaterial;
-                if (material != null && material.mainTexture != null) return material.mainTexture;
-            }
+            var carried = TexturesOnObject(go);
+            return carried.Count > 0 ? carried[0].Texture : null;
+        }
 
-            return null;
+        /// <summary>
+        /// Every picture painted on this object's material, the main one first — the 3D half of
+        /// <see cref="GetSpriteFromComponent"/>, told apart because the interface offers a CHOICE
+        /// when there are several and the rest of the code wants one.
+        ///
+        /// ⚠ Empty for a flat element: an Image, a RawImage and a SpriteRenderer each carry one
+        /// picture and one only, so there is nothing to choose between.
+        /// </summary>
+        public static List<MaterialTexture> TexturesOnObject(GameObject go)
+        {
+            if (go == null) return new List<MaterialTexture>();
+            var renderer = go.GetComponent<Renderer>();
+            return renderer != null ? TexturesOf(renderer.sharedMaterial) : new List<MaterialTexture>();
         }
 
         /// <summary>
@@ -771,6 +812,122 @@ namespace UnityGameTranslator.Core
         /// RestoreAllOriginalImages puts the game's own picture back without knowing about any of
         /// this.
         /// </summary>
+        /// <summary>One picture a material carries, and the slot it is painted on.</summary>
+        public struct MaterialTexture
+        {
+            /// <summary>The shader property it sits on — "_MainTex", "_EmissionMap"…</summary>
+            public string Slot;
+            public Texture Texture;
+            /// <summary>
+            /// It is the material's <c>mainTexture</c>, so it is written and put back through that
+            /// property — the path this mod has always used and which is proven on IL2CPP — rather
+            /// than through the material's SetTexture.
+            /// </summary>
+            public bool IsMain;
+        }
+
+        /// <summary>
+        /// The slots to look at when this runtime cannot list a material's own.
+        ///
+        /// ⚠ Only the ones that carry a PICTURE somebody could want translated: the albedo under
+        /// its three spellings (built-in, URP, HDRP), what a lit sign glows with, and the detail
+        /// layer. A normal map or a roughness mask is a texture too and has no words on it.
+        /// </summary>
+        private static readonly string[] ConventionalTextureSlots =
+            { "_MainTex", "_BaseMap", "_BaseColorMap", "_EmissionMap", "_EmissiveColorMap", "_DetailAlbedoMap", "_DetailMap" };
+
+        // Noted once per session, never retried: a runtime that stripped one of these did so at
+        // build time and will not grow it back. Not a wait — a fact about this game.
+        private static bool _slotNamesUnavailable;
+        private static bool _slotReadUnavailable;
+
+        /// <summary>
+        /// 🔴 **Alone in its own method, and called inside a try BY ITS CALLER.** It returns a
+        /// `string[]`, the family of Unity API IL2CPP strips — and a guard written INSIDE would
+        /// never run, because the runtime resolves a missing method when it compiles the method
+        /// that NAMES it. That cost two regressions on 2026-09-19 (analyse/pieges-projet.md §9).
+        /// </summary>
+        private static string[] SlotNamesOf(Material material) => material.GetTexturePropertyNames();
+
+        /// <inheritdoc cref="SlotNamesOf"/>
+        private static Texture SlotTexture(Material material, string slot)
+            => material.HasProperty(slot) ? material.GetTexture(slot) : null;
+
+        /// <inheritdoc cref="SlotNamesOf"/>
+        private static void WriteSlot(Material material, string slot, Texture texture)
+            => material.SetTexture(slot, texture);
+
+        // Same fact, noted once: this game cannot be written slot by slot, so only the main
+        // texture is ever replaced on a material.
+        private static bool _slotWriteUnavailable;
+
+        /// <summary>
+        /// Every picture a material carries, the main one first.
+        ///
+        /// 🔴 **Why more than the main one** (2026-09-19): a lit sign carries its artwork on the
+        /// emissive slot, so a shop front glowing in English had nothing to extract — the material
+        /// was read for `mainTexture` and nothing else.
+        ///
+        /// ⚠ **The same picture on two slots is one picture.** A sign usually paints the same
+        /// texture as albedo AND as emissive so it glows; offering it twice would be asking
+        /// somebody to choose between a thing and itself.
+        ///
+        /// ⚠ Nothing here decides anything: a rule is keyed on the texture's NAME, which a texture
+        /// on the emissive slot has just as much as one on the main slot. So the slot is where a
+        /// picture was FOUND, never part of what is remembered about it.
+        /// </summary>
+        public static List<MaterialTexture> TexturesOf(Material material)
+        {
+            var found = new List<MaterialTexture>();
+            if (material == null) return found;
+
+            var seen = new HashSet<int>();
+
+            // The main one first, whatever the shader declares and in what order: it is the one
+            // that matters in almost every case, and it is the one this class has always read.
+            try
+            {
+                var main = material.mainTexture;
+                if (main != null && seen.Add(main.GetInstanceID()))
+                    found.Add(new MaterialTexture { Slot = "_MainTex", Texture = main, IsMain = true });
+            }
+            catch { }
+
+            if (_slotReadUnavailable) return found;
+
+            string[] slots = null;
+            if (!_slotNamesUnavailable)
+            {
+                try { slots = SlotNamesOf(material); }
+                catch (Exception ex)
+                {
+                    _slotNamesUnavailable = true;
+                    TranslatorCore.LogInfo($"[ImageReplacer] This game cannot list a material's texture slots "
+                                           + $"({ex.GetType().Name}); reading the usual ones instead");
+                }
+            }
+            if (slots == null) slots = ConventionalTextureSlots;
+
+            foreach (var slot in slots)
+            {
+                if (string.IsNullOrEmpty(slot)) continue;
+                Texture texture;
+                try { texture = SlotTexture(material, slot); }
+                catch (Exception ex)
+                {
+                    _slotReadUnavailable = true;
+                    TranslatorCore.LogInfo($"[ImageReplacer] This game cannot read a material's texture slots "
+                                           + $"({ex.GetType().Name}); only the main one is offered");
+                    return found;
+                }
+                if (texture == null) continue;
+                if (!seen.Add(texture.GetInstanceID())) continue;
+                found.Add(new MaterialTexture { Slot = slot, Texture = texture });
+            }
+
+            return found;
+        }
+
         private static int ApplyToMaterials()
         {
             int applied = 0;
@@ -808,23 +965,45 @@ namespace UnityGameTranslator.Core
                     if (material == null) continue;
                     if (!seenMaterials.Add(material.GetInstanceID())) continue;
 
-                    var current = material.mainTexture;
-                    if (current == null) continue;
+                    // Every picture the material carries, not only its main one: a lit sign paints
+                    // its artwork on the emissive slot (2026-09-19).
+                    foreach (var carried in TexturesOf(material))
+                    {
+                        string name = carried.Texture.name;
+                        if (string.IsNullOrEmpty(name) || !_replacements.ContainsKey(name)) continue;
 
-                    string name = current.name;
-                    if (string.IsNullOrEmpty(name) || !_replacements.ContainsKey(name)) continue;
+                        var sprite = GetReplacement(name);
+                        if (sprite == null || sprite.texture == null) continue;
+                        if (ReferenceEquals(carried.Texture, sprite.texture)) continue;   // already ours
 
-                    var sprite = GetReplacement(name);
-                    if (sprite == null || sprite.texture == null) continue;
-                    if (ReferenceEquals(current, sprite.texture)) continue;   // already ours
+                        if (carried.IsMain)
+                        {
+                            var prop = material.GetType().GetProperty("mainTexture",
+                                           BindingFlags.Public | BindingFlags.Instance);
+                            if (prop == null || prop.SetMethod == null) continue;
 
-                    var prop = material.GetType().GetProperty("mainTexture",
-                                   BindingFlags.Public | BindingFlags.Instance);
-                    if (prop == null || prop.SetMethod == null) continue;
-
-                    TrackReplacement(material, prop, "mainTexture");
-                    prop.SetValue(material, sprite.texture, null);
-                    applied++;
+                            TrackReplacement(material, prop, "mainTexture");
+                            prop.SetValue(material, sprite.texture, null);
+                        }
+                        else
+                        {
+                            if (_slotWriteUnavailable) continue;
+                            // The try is HERE and not inside WriteSlot: IL2CPP resolves a missing
+                            // method when it compiles the method that names it, so a guard written
+                            // down there would never run — and taking this whole pass down would
+                            // take the main texture with it.
+                            try { WriteSlot(material, carried.Slot, sprite.texture); }
+                            catch (Exception ex)
+                            {
+                                _slotWriteUnavailable = true;
+                                TranslatorCore.LogInfo($"[ImageReplacer] This game cannot write a material's texture slots "
+                                                       + $"({ex.GetType().Name}); only the main one is replaced");
+                                continue;
+                            }
+                            TrackSlot(material, carried.Slot, carried.Texture);
+                        }
+                        applied++;
+                    }
                 }
                 catch { }
             }
@@ -846,15 +1025,39 @@ namespace UnityGameTranslator.Core
         {
             try
             {
-                int id = component is UnityEngine.Object uObj ? uObj.GetInstanceID() : component.GetHashCode();
-                if (_replacedComponents.ContainsKey(id)) return; // keep true original
-                object originalValue = prop.GetValue(component, null);
-                _replacedComponents[id] = (component, originalValue, propertyName);
+                string key = KeyOf(component, propertyName);
+                if (_replacedComponents.ContainsKey(key)) return; // keep true original
+                _replacedComponents[key] = new Replaced
+                {
+                    Target = component,
+                    OriginalValue = prop.GetValue(component, null),
+                    PropertyName = propertyName,
+                };
             }
             catch (Exception ex)
             {
                 TranslatorCore.LogDebug($"[ImageReplacer] TrackReplacement failed: {ex.Message}");
             }
+        }
+
+        /// <inheritdoc cref="TrackReplacement"/>
+        private static void TrackSlot(Material material, string slot, Texture original)
+        {
+            string key = KeyOf(material, slot);
+            if (_replacedComponents.ContainsKey(key)) return; // keep true original
+            _replacedComponents[key] = new Replaced
+            {
+                Target = material,
+                OriginalValue = original,
+                Slot = slot,
+            };
+        }
+
+        /// <summary>What was written, and on what — the pair, so two slots of one material are two entries.</summary>
+        private static string KeyOf(object target, string what)
+        {
+            int id = target is UnityEngine.Object uObj ? uObj.GetInstanceID() : target.GetHashCode();
+            return id.ToString(System.Globalization.CultureInfo.InvariantCulture) + "|" + what;
         }
 
         /// <summary>
@@ -868,10 +1071,29 @@ namespace UnityGameTranslator.Core
             {
                 try
                 {
-                    var (component, originalValue, propertyName) = kvp.Value;
+                    var entry = kvp.Value;
+                    object component = entry.Target;
+                    object originalValue = entry.OriginalValue;
+                    string propertyName = entry.PropertyName;
                     if (component == null) continue;
                     // Check if the Unity object still exists
                     if (component is UnityEngine.Object uObj && uObj == null) continue;
+
+                    // A shader slot goes back the way it was written: through the material itself.
+                    if (entry.Slot != null)
+                    {
+                        var target = component as Material;
+                        if (target == null) continue;
+                        // Through the isolated writer, so the loop's own try is the guard that
+                        // runs: the runtime resolves SetTexture when it compiles WriteSlot, which
+                        // happens here, inside it.
+                        WriteSlot(target, entry.Slot, originalValue as Texture);
+                        if (TranslatorCore.DebugMode)
+                            TranslatorCore.LogDebug($"[ImageReplacer] Restore {NameOf(component)}[{entry.Slot}]: "
+                                                    + $"wrote {Describe(originalValue)}");
+                        restored++;
+                        continue;
+                    }
 
                     var prop = component.GetType().GetProperty(propertyName, BindingFlags.Public | BindingFlags.Instance);
                     if (prop == null || prop.SetMethod == null) continue;

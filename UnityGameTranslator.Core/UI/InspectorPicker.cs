@@ -506,6 +506,10 @@ namespace UnityGameTranslator.Core.UI
         /// <summary>How far along the ray the winning box was met, and how far the ray was blocked.</summary>
         private static float _lastBoxAt, _lastBlockedAt;
 
+        /// <summary>The nearest box the image filter turned away, and how far off it was.</summary>
+        private static float _rejectedAt;
+        private static string _rejectedName;
+
         private void ResetProbe()
         {
             _probeCount = 0;
@@ -727,7 +731,10 @@ namespace UnityGameTranslator.Core.UI
                                     + (_lastPathWasRay
                                         ? $"the ray, which struck the collider '{_lastColliderName}'"
                                         : $"a box met at {_lastBoxAt:F2}, ahead of the collider "
-                                          + $"'{_lastColliderName}' whose far side is at {_lastBlockedAt:F2}"));
+                                          + $"'{_lastColliderName}' whose far side is at {_lastBlockedAt:F2}")
+                                    + (_rejectedName != null
+                                        ? $" | nearest turned away for carrying no image: '{_rejectedName}' at {_rejectedAt:F2}"
+                                        : " | nothing was turned away for carrying no image"));
 
                             Hovered?.Invoke(path);
                         }
@@ -1297,6 +1304,8 @@ namespace UnityGameTranslator.Core.UI
 
                 // The line of sight, worked out once for the whole pass rather than per renderer.
                 var cursor = camera.ScreenPointToRay(screenPosition);
+                _rejectedAt = float.MaxValue;
+                _rejectedName = null;
 
                 GameObject bestHit = null;
                 float bestDepth = float.MaxValue;
@@ -1348,7 +1357,16 @@ namespace UnityGameTranslator.Core.UI
                         if ((cullingMask & (1 << go.layer)) == 0) continue;
                         if (IsOwnUI(go)) continue;
                         if (_currentMode == InspectorMode.BitmapReplace
-                            && !ImageReplacer.HasImageComponent(go)) continue;
+                            && !ImageReplacer.HasImageComponent(go))
+                        {
+                            // 🔴 **The nearest thing the image filter turned away, remembered.**
+                            // Everything in a flat was unpickable while the decals on the walls
+                            // were not, and nothing said whether the furniture was being rejected
+                            // by this filter or never reaching it at all — two completely
+                            // different defects with one symptom (2026-09-19).
+                            if (reach < _rejectedAt) { _rejectedAt = reach; _rejectedName = go.name; }
+                            continue;
+                        }
 
                         bestDepth = reach;
                         bestArea = size;

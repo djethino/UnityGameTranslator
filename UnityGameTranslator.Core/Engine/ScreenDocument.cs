@@ -254,8 +254,10 @@ namespace UnityGameTranslator.Core
                         }
                         break;
                     case "row":
-                        // A row pressed as a whole — a list row chosen by a click on its words. Its
-                        // controls keep their own acts; the row's fires everywhere else on it.
+                    case "stack":
+                        // Pressed as a whole — a list row chosen by a click on its words, a picture
+                        // chosen by a click on it. Its controls keep their own acts; this one fires
+                        // everywhere else on it.
                         if (node.Act != null) goto case "field";
                         break;
                     case "choice":

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using UnityEngine;
@@ -38,6 +39,30 @@ namespace UnityGameTranslator.Core.UI
         public int SpriteWidth;
         public int SpriteHeight;
         public string SpriteComponentType;
+
+        /// <summary>
+        /// Every picture this object carries, when it carries more than the one above — a lit sign
+        /// paints its artwork on the emissive slot as well as on the albedo. The first is the one
+        /// already described by <see cref="SpriteObject"/> and friends.
+        ///
+        /// ⚠ Empty for a flat element: an Image, a RawImage and a SpriteRenderer carry one picture
+        /// each, so there is nothing to choose between.
+        /// </summary>
+        public readonly List<PickedImage> Images = new List<PickedImage>();
+    }
+
+    /// <summary>One picture an object carries, and where on it — a choice offered when there are several.</summary>
+    public sealed class PickedImage
+    {
+        /// <summary>Where it sits, as the shader names it without its leading underscore: "MainTex", "EmissionMap".</summary>
+        public string Slot;
+
+        /// <summary>The picture itself, opaque: it only ever travels back into ImageReplacer.</summary>
+        public object Image;
+
+        public string Name;
+        public int Width;
+        public int Height;
     }
 
     /// <summary>
@@ -577,6 +602,22 @@ namespace UnityGameTranslator.Core.UI
                             target.SpriteWidth = size.x;
                             target.SpriteHeight = size.y;
                             target.SpriteComponentType = compType;
+
+                            // Everything the object's material carries, so the panel can offer a
+                            // choice when there is more than one. The first is the one already
+                            // described above — GetSpriteFromComponent returns exactly that.
+                            foreach (var carried in ImageReplacer.TexturesOnObject(hitObject))
+                            {
+                                var each = ImageReplacer.GetSpriteSize(carried.Texture);
+                                target.Images.Add(new PickedImage
+                                {
+                                    Slot = carried.Slot.TrimStart('_'),
+                                    Image = carried.Texture,
+                                    Name = ImageReplacer.GetSpriteName(carried.Texture) ?? "(unnamed)",
+                                    Width = each.x,
+                                    Height = each.y,
+                                });
+                            }
                         }
                         catch (Exception ex)
                         {

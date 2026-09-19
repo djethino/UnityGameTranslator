@@ -203,6 +203,14 @@ namespace UnityGameTranslator.Core.Checks
                 "which row shows is the mode's, decided by the code");
             check(inspector.Nodes["TextEditScroll"].Int("minHeight") == 260,
                 "the text-edit list's floor is stated once, in the document", "the code reads it there and revises the box once the list is filled");
+            // The picture an element draws, and the strip of them when it carries several: both
+            // start hidden — most elements have one picture, and a strip of one is not a choice.
+            check(inspector.Nodes["ImagePreview"].Kind == "image" && inspector.Nodes["ImagePreview"].Int("height") > 0
+                  && !inspector.Nodes["ImagePreview"].StartsVisible && !inspector.Nodes["SlotStrip"].StartsVisible
+                  && inspector.Templates["SlotChoice"].Root.Act == "pickSlot"
+                  && inspector.Templates["SlotChoice"].Pieces.Nodes["SlotImage"].Kind == "image",
+                "inspector.json: a picture of a settled height, and a strip of pictures to choose from",
+                "a picture is chosen by seeing it, never by reading the name of a texture slot");
 
             var wizard = ScreenDocument.FromFile(Path.Combine(folder, "wizard.json"));
             check(wizard.Body.Count == 7 && wizard.Body.All(s => s.Kind == "stack" && !s.StartsVisible) && wizard.Footer.Count == 0 && !wizard.Persist,
@@ -260,7 +268,7 @@ namespace UnityGameTranslator.Core.Checks
 
             // ── Templates: the rows of every list, described once, instantiated per element ──
             var templated = new Dictionary<string, int> {
-                { "merge", 2 }, { "settings-choice", 1 }, { "upload-setup", 1 }, { "inspector", 1 }, { "tools", 10 }, { "backups", 5 } };
+                { "merge", 2 }, { "settings-choice", 1 }, { "upload-setup", 1 }, { "inspector", 2 }, { "tools", 10 }, { "backups", 5 } };
             foreach (var pair in templated)
             {
                 var doc = ScreenDocument.FromFile(Path.Combine(folder, pair.Key + ".json"));

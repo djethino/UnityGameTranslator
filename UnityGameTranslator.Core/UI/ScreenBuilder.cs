@@ -302,6 +302,9 @@ namespace UnityGameTranslator.Core.UI
                                                minHeight: MinHeight(node),
                                                fillHeight: node.Flag("fillHeight") ?? false,
                                                minWidth: node.Int("minWidth"));
+                    // Pressed as a whole, like a row: a block whose pieces are stacked and which is
+                    // itself one choice among several.
+                    if (node.Act != null) host.Pressed(Act(site, node));
                     host.Visible = node.StartsVisible;
                     built.Add(node.Name, host);
                     Describe(site, node, host);

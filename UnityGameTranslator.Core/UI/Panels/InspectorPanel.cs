@@ -75,6 +75,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         private ButtonHandle _markReplaceBtn;
         private Host _imageActionsRow;
         private ImageHandle _imagePreview;
+        private Host _slotStrip;
         private LabelHandle _spriteInfoLabel;
 
         // UI elements — TextEdit mode
@@ -181,6 +182,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _hoveredPathLabel = _screen.Label("HoverPathValue");
             _selectedPathLabel = _screen.Label("SelectedPathValue");
             _imagePreview = _screen.Picture("ImagePreview");
+            _slotStrip = _screen.Host("SlotStrip");
             _spriteInfoLabel = _screen.Label("SpriteInfo");
             _exclusionActionsRow = _screen.Host("ExclusionActionRow");
             _excludeThisBtn = _screen.Button("ExcludeThisBtn");
@@ -368,10 +370,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // box arrived above it.
                 if (target.HasSprite)
                 {
-                    _imagePreview.Show(target.SpriteObject);
-                    _spriteInfoLabel.Show(
-                        $"{target.SpriteComponentType}: \"{target.SpriteName}\" ({target.SpriteWidth}x{target.SpriteHeight})");
-                    _spriteInfoLabel.Tone = Tone.Plain;
+                    ShowChosenImage(target.SpriteObject, target.SpriteComponentType,
+                                    target.SpriteName, target.SpriteWidth, target.SpriteHeight);
+                    BuildSlotStrip(target);
                 }
                 else
                 {
@@ -426,6 +427,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             _cancelBtn.Enabled = false;
             _spriteInfoLabel.Show("");
             _imagePreview.Clear();
+            _slotStrip.Clear();
+            _slotStrip.Visible = false;
             _picker.ClearSelection();
 
             // Clear TextEdit UI
@@ -468,6 +471,57 @@ namespace UnityGameTranslator.Core.UI.Panels
         }
 
         #region BitmapReplace Actions
+
+        /// <summary>
+        /// Put one of the object's pictures under the eye, and make it the one the verbs act on.
+        ///
+        /// 🔴 **The picture first, its name under it.** One is recognised at a glance, the other has
+        /// to be read — and both are needed: the name is the key the replacement rule is written on,
+        /// so it is what says the rule will hold on every object showing this same texture.
+        /// </summary>
+        private void ShowChosenImage(object image, string componentType, string name, int width, int height)
+        {
+            _lastSelectedSpriteObj = image;
+            _imagePreview.Show(image);
+            _spriteInfoLabel.Show($"{componentType}: \"{name}\" ({width}x{height})");
+            _spriteInfoLabel.Tone = Tone.Plain;
+        }
+
+        /// <summary>
+        /// The row of pictures this object carries, when it carries more than one.
+        ///
+        /// 🔴 **Thumbnails, not a list of slot names.** A picture is chosen by seeing it; nobody
+        /// picks between "_MainTex" and "_EmissionMap" by reading them. The slot stays as a caption
+        /// under each one, because it answers the question the choice actually asks — which face of
+        /// the object is this — and the full name and size of whichever is chosen stay on the line
+        /// below, told once.
+        ///
+        /// ⚠ Hidden outright for the ordinary object with a single picture: a strip of one is a
+        /// choice that is not one, and it would push the verbs down for nothing.
+        /// </summary>
+        private void BuildSlotStrip(PickedTarget target)
+        {
+            _slotStrip.Clear();
+            if (target.Images.Count < 2)
+            {
+                _slotStrip.Visible = false;
+                return;
+            }
+
+            foreach (var carried in target.Images)
+            {
+                var each = carried;                       // captured per thumbnail, not per loop
+                var choice = _screen.Instantiate("SlotChoice", _slotStrip,
+                    act => act == "pickSlot"
+                        ? (Action)(() => ShowChosenImage(each.Image, target.SpriteComponentType,
+                                                         each.Name, each.Width, each.Height))
+                        : null);
+                choice.Picture("SlotImage").Show(each.Image);
+                choice.Say("slotName", each.Slot);
+            }
+
+            _slotStrip.Visible = true;
+        }
 
         private void OnExportOriginalClicked()
         {

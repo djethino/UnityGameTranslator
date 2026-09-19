@@ -669,6 +669,17 @@ namespace UnityGameTranslator.Core
             var instances = ScanInstancesUniverseLib(searchValue, skipPrefixes, results, seen, progress);
             while (instances.MoveNext()) yield return instances.Current;
 
+            // 🔴 Called off in the middle: say nothing at all. Measured on a real session
+            // (2026-09-19) — the window was closed mid-scan, the instance pass stopped as it
+            // should, and this method carried on to announce "1 candidate found" as though it had
+            // finished. A partial result presented as a complete one is worse than no result: it
+            // reads as "the scan looked everywhere and this is all there is".
+            if (_scanToken != mine)
+            {
+                TranslatorCore.LogInfo("[VariableManager] Scan called off — no result reported");
+                yield break;
+            }
+
             foreach (var r in results)
                 TranslatorCore.LogInfo($"[VariableManager] Candidate: {r.ClassName}.{r.FieldPath} = \"{r.CurrentValue}\" static={r.IsStatic} rank={r.MatchRank}");
             TranslatorCore.LogInfo($"[VariableManager] Scan complete: {results.Count} candidates found ({staticsPassMs} ms statics + {stopwatch.ElapsedMilliseconds - staticsPassMs} ms instances)");

@@ -1754,6 +1754,7 @@ namespace UnityGameTranslator.Core
             var watch = System.Diagnostics.Stopwatch.StartNew();
             long pass1Ticks = 0;
             int pass1Count = 0, pass2Seen = 0, pass2Rewritten = 0, pass2AlreadyDone = 0;
+            _phCast = _phFont = _phRead = _phApply = 0;
             long lookupTicks = 0, writeTicks = 0, dirtyTicks = 0;
 
             bool globalRestore = !TranslatorCore.TranslationsActive;
@@ -1905,7 +1906,9 @@ namespace UnityGameTranslator.Core
                     double p1 = pass1Ticks / freq * 1000.0;
                     TranslatorCore.LogWarning(
                         $"[FORCE-REFRESH] {totalMs:F0}ms in ONE frame | "
-                        + $"pass1 (scanner cache) {p1:F0}ms/{pass1Count} comps | "
+                        + $"pass1 (scanner cache) {p1:F0}ms/{pass1Count} comps "
+                        + $"[cast {_phCast / freq * 1000:F0}ms, font state {_phFont / freq * 1000:F0}ms, "
+                        + $"read {_phRead / freq * 1000:F0}ms, apply {_phApply / freq * 1000:F0}ms] | "
                         + $"pass2 (patch refs) {totalMs - p1:F0}ms/{pass2Seen} seen, {pass2Rewritten} rewritten | "
                         + $"[lookup {lookupTicks / freq * 1000:F0}ms, write {writeTicks / freq * 1000:F0}ms, "
                         + $"dirty {dirtyTicks / freq * 1000:F0}ms, {pass2AlreadyDone} already up to date] | "
@@ -1945,8 +1948,24 @@ namespace UnityGameTranslator.Core
             return prop;
         }
 
+        /// <summary>
+        /// Where a refresh pass actually spends itself, per phase, in stopwatch ticks.
+        ///
+        /// 🔴 **Measured because the first fix aimed at the wrong half** (2026-09-19). The probe of
+        /// 2026-09-18 split pass 1 from pass 2 and pass 2 was the whole cost, so that is what got
+        /// fixed. A session on a large game then showed pass 1 taking 4 657 ms for 9 602
+        /// components — about half a millisecond EACH — and the split no longer says anything: it
+        /// is all in one bucket. These four say which call it is.
+        ///
+        /// ⚠ Four timestamps per component against ~480 µs of work is under a thousandth of it,
+        /// so they are taken unconditionally rather than behind DebugMode: a measurement that only
+        /// exists in a mode nobody plays in tells you about that mode.
+        /// </summary>
+        private static long _phCast, _phFont, _phRead, _phApply;
+
         private static void RefreshComponent(UnityEngine.Object obj, RegisteredTextType type, bool globalRestore, ref int refreshed, ref int restored)
         {
+            long _t = System.Diagnostics.Stopwatch.GetTimestamp();
             try
             {
                 // For IL2CPP native scan results, need TryCast to get the typed component
@@ -1961,12 +1980,16 @@ namespace UnityGameTranslator.Core
                 }
 
                 int instanceId = TypeHelper.GetInstanceID(component);
+                _phCast += System.Diagnostics.Stopwatch.GetTimestamp() - _t;
+                _t = System.Diagnostics.Stopwatch.GetTimestamp();
                 if (instanceId == -1) return;
 
                 // Check per-font translation state (always uses original font name for settings)
                 string compFontName = GetFontNameForType(component, type);
                 bool fontDisabled = !FontManager.IsTranslationEnabledForComponent(instanceId, compFontName);
                 bool shouldRestore = globalRestore || fontDisabled;
+                _phFont += System.Diagnostics.Stopwatch.GetTimestamp() - _t;
+                _t = System.Diagnostics.Stopwatch.GetTimestamp();
 
                 if (shouldRestore)
                 {
@@ -1987,6 +2010,8 @@ namespace UnityGameTranslator.Core
 
                 // Normal refresh path (trigger Harmony patch)
                 string currentText = GetTextForType(component, type);
+                _phRead += System.Diagnostics.Stopwatch.GetTimestamp() - _t;
+                _t = System.Diagnostics.Stopwatch.GetTimestamp();
                 if (!string.IsNullOrEmpty(currentText))
                 {
                     if (type.NeedsForceMeshUpdate)
@@ -2020,6 +2045,7 @@ namespace UnityGameTranslator.Core
                 }
             }
             catch { }
+            finally { _phApply += System.Diagnostics.Stopwatch.GetTimestamp() - _t; }
         }
 
         #endregion

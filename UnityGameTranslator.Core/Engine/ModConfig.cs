@@ -261,6 +261,16 @@ namespace UnityGameTranslator.Core
                 _extraData = null;
             }
 
+            // One spelling of this machine, whatever an older file or a person typed — at EVERY
+            // read, not versioned: somebody can type "localhost" again tomorrow. The host alone
+            // changes, compared whole (Endpoints.Canonical, spec/config: localhost-is-respelled…).
+            string canonicalUrl = Endpoints.Canonical(ai_url);
+            if (canonicalUrl != ai_url)
+            {
+                ai_url = canonicalUrl;
+                _configMigrated = true;
+            }
+
             // Migrate: if enable_ai is true but translation_backend is still "none",
             // the user had AI enabled before the backend system was added
             if (enable_ai && translation_backend == "none")

@@ -2334,7 +2334,7 @@ namespace UnityGameTranslator.Core
 
                 if (Config._configMigrated)
                 {
-                    LogDebug($"[Config] Migrated old Ollama config -> AI config (enable_ai={Config.enable_ai}, ai_url={Sanitize.Url(Config.ai_url)}, ai_model={Config.ai_model})");
+                    LogDebug($"[Config] Migrated an older shape of the config (enable_ai={Config.enable_ai}, ai_url={Sanitize.Url(Config.ai_url)}, ai_model={Config.ai_model})");
                     needsResave = true;
                 }
 

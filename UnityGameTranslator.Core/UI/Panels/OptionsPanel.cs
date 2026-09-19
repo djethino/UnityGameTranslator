@@ -1485,7 +1485,12 @@ namespace UnityGameTranslator.Core.UI.Panels
                 string previousUrl = TranslatorCore.Config.ai_url;
                 string previousModel = TranslatorCore.Config.ai_model;
 
-                TranslatorCore.Config.ai_url = _aiUrlInput.Text;
+                // One spelling of this machine (Endpoints.Canonical) — and written back into the
+                // field too: Pending compares the field with the config, so a field left saying
+                // "localhost" over a config saying 127.0.0.1 would keep Apply (1) lit for ever.
+                string url = Endpoints.Canonical(_aiUrlInput.Text);
+                TranslatorCore.Config.ai_url = url;
+                if (_aiUrlInput.Text != url) _aiUrlInput.Text = url;
                 string apiKeyValue = _aiApiKeyInput.Text;
                 TranslatorCore.Config.ai_api_key = !string.IsNullOrEmpty(apiKeyValue) ? apiKeyValue : null;
                 TranslatorCore.Config.ai_model = _modelDropdown.SelectedValue ?? "";

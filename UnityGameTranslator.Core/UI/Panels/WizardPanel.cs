@@ -293,12 +293,28 @@ namespace UnityGameTranslator.Core.UI.Panels
             _gameLabel.Show("Game: Detecting...");
             _accountStatusLabel.Say("Optional: connect an account to share your translation later");
 
-            _wizardEnableToggle.IsOn = _translationBackend != "none";
+            // 🔴 **The two lists are filled BEFORE the toggle, and the order is the fix** (2026-09-19).
+            // Setting the toggle fires its act, which recomputes the backend FROM these lists. It
+            // used to come first: the type list had no options yet and read "" — not null, so the
+            // `?? LLM` fallback never applied — which counted as "not LLM" and wrote "google" over
+            // the configured backend. isTransApi was then computed from that, so a wizard reopened
+            // on an llm game opened on Translation API / Google, and Finish would have saved it.
+            // Only a configured game could hit it: on "none" the toggle does not change, nothing fires.
+            //
+            // ⚠ Setting SelectedValue does NOT fire the lists' own acts (SearchableDropdown only
+            // redraws), so only the toggle below recomputes — and by then it reads the config.
+            bool isTransApi = _translationBackend == "google" || _translationBackend == "deepl";
 
             string[] typeOptions = { UIStyles.BackendTypeLLM, UIStyles.BackendTypeApi };
-            bool isTransApi = _translationBackend == "google" || _translationBackend == "deepl";
             _wizardBackendTypeDropdown.SetOptions(typeOptions);
             _wizardBackendTypeDropdown.SelectedValue = isTransApi ? UIStyles.BackendTypeApi : UIStyles.BackendTypeLLM;
+
+            string[] providerOptions = { "Google Translate", "DeepL" };
+            string currentProvider = _translationBackend == "deepl" ? "DeepL" : "Google Translate";
+            _wizardProviderDropdown.SetOptions(providerOptions);
+            _wizardProviderDropdown.SelectedValue = currentProvider;
+
+            _wizardEnableToggle.IsOn = _translationBackend != "none";
 
             _aiUrlInput.Text = _aiUrl;
             _aiApiKeyInput.Text = _aiApiKey;
@@ -308,11 +324,6 @@ namespace UnityGameTranslator.Core.UI.Panels
             _modelDropdown.SelectedValue = _aiModel;
 
             _gameContextInput.Text = _gameContext;
-
-            string[] providerOptions = { "Google Translate", "DeepL" };
-            string currentProvider = _translationBackend == "deepl" ? "DeepL" : "Google Translate";
-            _wizardProviderDropdown.SetOptions(providerOptions);
-            _wizardProviderDropdown.SelectedValue = currentProvider;
 
             _wizardGoogleKeyInput.Text = _googleApiKey;
             _wizardDeeplKeyInput.Text = _deeplApiKey;
@@ -844,7 +855,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             // "== llm": that older line left Google and DeepL users with the switch off while
             // they translated anyway, which is the confusion this flag now exists to end.
             TranslatorCore.Config.enable_ai = (_translationBackend != "none");
-            TranslatorCore.Config.ai_url = _aiUrl;
+            // One spelling of this machine, whatever was typed — see Endpoints.Canonical.
+            TranslatorCore.Config.ai_url = Endpoints.Canonical(_aiUrl);
             TranslatorCore.Config.ai_api_key = !string.IsNullOrEmpty(_aiApiKey) ? _aiApiKey : null;
             TranslatorCore.Config.ai_model = _aiModel;
             TranslatorCore.Config.game_context = _gameContext;

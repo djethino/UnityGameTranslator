@@ -398,6 +398,17 @@ namespace UnityGameTranslator.Core.UI
         {
             if (!_isInspecting) return;
 
+            // 🔴 **Off the window, nothing is under the pointer** (2026-09-19). Reported: objects
+            // were being selected while the mouse was outside the game entirely. Every picking
+            // path answers a screen position, and a position nobody is pointing at still lands
+            // inside some large bounding box — so the guard belongs here, before any of them.
+            Vector3 probe = InputManager.MousePosition;
+            if (probe.x < 0f || probe.y < 0f || probe.x > Screen.width || probe.y > Screen.height)
+            {
+                ClearHover();
+                return;
+            }
+
             // Throttle raycast: every 2 frames for hover (smooth enough, saves perf)
             _frameSkip++;
             bool doHoverRaycast = (_frameSkip % 2 == 0);
@@ -1036,6 +1047,15 @@ namespace UnityGameTranslator.Core.UI
                             // Physics.Raycast could, and would need colliders on everything.
                             float depth = screenCenter.z;
                             float hitArea = (maxX - minX) * (maxY - minY);
+
+                            // 🔴 **A box bigger than the whole screen is a container, never the
+                            // thing being aimed at** — the floor, the room, the building shell.
+                            // Sorting by depth alone handed those the win everywhere, cursor off
+                            // screen included, because their box contains every position and
+                            // their centre is near. ⚠ The bound is the screen's own area, not a
+                            // number chosen here: what cannot be framed cannot be pointed at.
+                            if (hitArea >= (float)Screen.width * Screen.height) continue;
+
                             if (depth < bestDepth || (depth == bestDepth && hitArea < bestArea))
                             {
                                 bestDepth = depth;

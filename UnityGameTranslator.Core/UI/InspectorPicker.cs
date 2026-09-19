@@ -503,6 +503,9 @@ namespace UnityGameTranslator.Core.UI
         /// <summary>Set once an object has been dropped while walking the scene, so it is said once.</summary>
         private static bool _walkComplained;
 
+        /// <summary>How far along the ray the winning box was met, and how far the ray was blocked.</summary>
+        private static float _lastBoxAt, _lastBlockedAt;
+
         private void ResetProbe()
         {
             _probeCount = 0;
@@ -723,7 +726,8 @@ namespace UnityGameTranslator.Core.UI
                                     $"[Inspector] hover '{hoveredObject.name}' via "
                                     + (_lastPathWasRay
                                         ? $"the ray, which struck the collider '{_lastColliderName}'"
-                                        : $"a box in front of the collider '{_lastColliderName}'"));
+                                        : $"a box met at {_lastBoxAt:F2}, ahead of the collider "
+                                          + $"'{_lastColliderName}' whose far side is at {_lastBlockedAt:F2}"));
 
                             Hovered?.Invoke(path);
                         }
@@ -1370,8 +1374,8 @@ namespace UnityGameTranslator.Core.UI
 
                 // A box in front of the nearest solid thing wins; otherwise the solid thing is the
                 // answer, if this mode can act on it.
-                if (bestHit != null) { _probeBoxWins++; _lastPathWasRay = false; return bestHit; }
-                if (blocker != null && Pickable(blocker)) { _probeRayHits++; _lastPathWasRay = true; return blocker; }
+                if (bestHit != null) { _probeBoxWins++; _lastPathWasRay = false; _lastBoxAt = bestDepth; _lastBlockedAt = blockedAt; return bestHit; }
+                if (blocker != null && Pickable(blocker)) { _probeRayHits++; _lastPathWasRay = true; _lastBoxAt = -1f; _lastBlockedAt = blockedAt; return blocker; }
                 return null;
             }
             catch (Exception ex)

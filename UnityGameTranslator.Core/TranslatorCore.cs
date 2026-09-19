@@ -1879,7 +1879,12 @@ namespace UnityGameTranslator.Core
                 Task.Run(PreloadModel);
             }
 
-            Adapter.LogInfo($"UnityGameTranslator v{PluginInfo.Version} initialized!");
+            // 🔴 **WHICH build is running, said out loud.** A version number does not answer it
+            // during development: the same version is rebuilt twenty times in an afternoon, and on
+            // 2026-09-19 an hour went into reading field reports without knowing whether the game
+            // held the fix being discussed. The file's own date answers it in one glance, and
+            // costs one line.
+            Adapter.LogInfo($"UnityGameTranslator v{PluginInfo.Version} initialized! (built {BuiltWhen()})");
             if (Config.IsTranslationEnabled)
             {
                 string backendName = Config.translation_backend == "llm"
@@ -1895,6 +1900,27 @@ namespace UnityGameTranslator.Core
             string tgtLang = Config.GetTargetLanguage();
             Adapter.LogInfo($"Translation: {srcLang} -> {tgtLang}");
             Adapter.LogInfo($"Cache entries: {TranslationCache.Count}, Pattern entries: {PatternEntries.Count}");
+        }
+
+        /// <summary>
+        /// When the plugin file in this game's folder was last written — the one question a version
+        /// number cannot answer while a build is rebuilt twenty times in an afternoon.
+        ///
+        /// ⚠ Read off the folder the adapter names, never off the assembly's own Location, which is
+        /// empty on IL2CPP. Unknown rather than absent when it cannot be read: a line that lies
+        /// about which build is running would be worse than no line.
+        /// </summary>
+        private static string BuiltWhen()
+        {
+            try
+            {
+                string folder = Adapter?.GetPluginFolder();
+                if (string.IsNullOrEmpty(folder)) return "unknown";
+                string dll = System.IO.Path.Combine(folder, "UnityGameTranslator.dll");
+                if (!System.IO.File.Exists(dll)) return "unknown";
+                return System.IO.File.GetLastWriteTime(dll).ToString("yyyy-MM-dd HH:mm");
+            }
+            catch (Exception ex) { return "unknown (" + ex.GetType().Name + ")"; }
         }
 
         public static void OnSceneChanged(string sceneName)

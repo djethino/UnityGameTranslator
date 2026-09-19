@@ -774,6 +774,7 @@ namespace UnityGameTranslator.Core
         private static int ApplyToMaterials()
         {
             int applied = 0;
+            var sweep = System.Diagnostics.Stopwatch.StartNew();
             UnityEngine.Object[] all;
             try { all = TypeHelper.FindAllObjectsOfType(typeof(Renderer)); }
             catch (Exception ex)
@@ -782,6 +783,19 @@ namespace UnityGameTranslator.Core
                 return 0;
             }
             if (all == null) return 0;
+
+            // 🔴 **One material is examined ONCE, however many renderers wear it.** What is written
+            // here is a property of the MATERIAL, not of the renderer — so a second renderer sharing
+            // it has nothing left to do — and renderers share materials massively in a real scene
+            // (a street of identical props). Without this the pass re-read `.name` off the same
+            // texture thousands of times, and reading a Unity object's name is a native call: that
+            // is where the second of freeze on switching image replacement back on was spent
+            // (2026-09-19). It is also more honest: the count now says materials, which is what was
+            // changed, instead of counting the same write once per renderer.
+            // Told apart from the walk below, because they call for opposite remedies: the
+            // enumeration is one Unity call this code cannot divide, the walk is ours to budget.
+            long enumMs = sweep.ElapsedMilliseconds;
+            var seenMaterials = new HashSet<int>();
 
             foreach (var obj in all)
             {
@@ -792,6 +806,7 @@ namespace UnityGameTranslator.Core
 
                     var material = rend.sharedMaterial;
                     if (material == null) continue;
+                    if (!seenMaterials.Add(material.GetInstanceID())) continue;
 
                     var current = material.mainTexture;
                     if (current == null) continue;
@@ -816,6 +831,14 @@ namespace UnityGameTranslator.Core
 
             if (applied > 0)
                 TranslatorCore.LogInfo($"[ImageReplacer] {applied} material texture(s) replaced");
+
+            // ⚠ The sweep's own cost, because it is the expensive half and nothing measured it:
+            // how many renderers were walked against how many distinct materials that came to.
+            // The gap between the two figures is what the set above saves.
+            if (TranslatorCore.DebugMode)
+                TranslatorCore.LogDebug($"[IMAGE-APPLY] materials: {sweep.ElapsedMilliseconds}ms "
+                                        + $"(enumerate {enumMs}ms) | {all.Length} renderer(s) → "
+                                        + $"{seenMaterials.Count} material(s) | {applied} replaced");
             return applied;
         }
 
@@ -992,10 +1015,13 @@ namespace UnityGameTranslator.Core
             // `project_reconcile_state_not_transitions`. It costs nothing when everything is in
             // place: LoadAllReplacements re-imports exactly what is missing, and its test is the
             // Unity-aware one, so a destroyed sprite counts as missing.
+            var whole = System.Diagnostics.Stopwatch.StartNew();
             LoadAllReplacements();
+            long loadMs = whole.ElapsedMilliseconds;
 
             if (_loadedSprites.Count == 0) return 0;
             int applied = ApplyToMaterials();
+            long materialsMs = whole.ElapsedMilliseconds;
 
             foreach (var kvp in _replacements)
             {
@@ -1070,6 +1096,14 @@ namespace UnityGameTranslator.Core
                     TranslatorCore.LogDebug($"[ImageReplacer] ApplyToScene error for '{entry.SpriteName}': {ex.Message}");
                 }
             }
+
+            // ⚠ The three halves of the pass, told apart: decoding the PNGs back off disk, the
+            // renderer sweep, and the path lookups. Reported because switching image replacement
+            // back on froze the game for a second and nothing said which of the three it was.
+            if (TranslatorCore.DebugMode)
+                TranslatorCore.LogDebug($"[IMAGE-APPLY] total {whole.ElapsedMilliseconds}ms | "
+                                        + $"load {loadMs}ms | materials {materialsMs - loadMs}ms | "
+                                        + $"paths {whole.ElapsedMilliseconds - materialsMs}ms");
 
             if (applied > 0)
                 TranslatorCore.LogInfo($"[ImageReplacer] Applied {applied} image replacements to scene");

@@ -6621,15 +6621,42 @@ namespace UnityGameTranslator.Core
         /// added a minute earlier was nowhere to be seen (2026-09-17). What the file holds is
         /// what leaves this machine, section for section.
         /// </summary>
+        /// <summary>
+        /// Under this, nobody notices the pause; over it, the one line that says what it cost.
+        /// Same threshold and same reasoning as the scanner's felt pass.
+        /// </summary>
+        private const double DocumentFeltMs = 100.0;
+
         public static JObject BuildTranslationDocument()
         {
+            // 🔴 **Measured before being moved** (2026-09-19). Every caller hands this straight to
+            // an async method AS AN ARGUMENT, so it runs on the calling thread before any await:
+            // the upload even serializes it to a string on top. On a session holding 14 426 lines
+            // that is a freeze the `async` signature hides, and the "Uploading…" label set just
+            // before it is never drawn — the very shape of defect the variable scan had.
+            //
+            // ⚠ **Moving it to a Task.Run would displace the freeze, not remove it.** The lock
+            // below guards TranslationCache, which the engine takes for every line it translates;
+            // held for hundreds of milliseconds on a pool thread, the main thread would block on
+            // it at the next translation — same stall, harder to find. Doing it properly means
+            // snapshotting under the lock and building outside it, which is a real change to a
+            // path that carries the file people publish. So: the number first.
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            int lines;
+
             var output = new JObject();
             lock (lockObj)
             {
+                lines = TranslationCache?.Count ?? 0;
                 WriteIdentityInto(output);
                 WriteSectionsInto(output);
                 TranslationFileEntries.WriteInto(output, TranslationCache);
             }
+
+            double ms = watch.Elapsed.TotalMilliseconds;
+            if (ms >= DocumentFeltMs)
+                LogWarning($"[BUILD-DOC] {ms:F0}ms on the calling thread for {lines} line(s) "
+                           + "— the caller awaits AFTER this, so this part is a stall");
             return output;
         }
 

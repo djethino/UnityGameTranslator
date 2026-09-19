@@ -681,6 +681,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                 _wizardGoogleStatusLabel.Say("Testing...");
                 _wizardGoogleStatusLabel.Tone = Tone.Secondary;
 
+                _wizardGoogleStatusLabel.Show("Testing...");
+                _wizardGoogleStatusLabel.Tone = Tone.Secondary;
                 bool success = await TranslatorCore.TestGoogleConnection(_googleApiKey);
                 TranslatorUIManager.RunOnMainThread(() =>
                 {
@@ -707,6 +709,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                 _wizardDeeplStatusLabel.Say("Testing...");
                 _wizardDeeplStatusLabel.Tone = Tone.Secondary;
 
+                _wizardDeeplStatusLabel.Show("Testing...");
+                _wizardDeeplStatusLabel.Tone = Tone.Secondary;
                 bool success = await TranslatorCore.TestDeepLConnection(_deeplApiKey, _deeplUseFree);
                 TranslatorUIManager.RunOnMainThread(() =>
                 {
@@ -817,6 +821,15 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         private async void RefreshModels()
         {
+            // 🔴 Said before the wait, not after it (2026-09-19). Fetching a model list crosses
+            // the network with a timeout; without this the wizard looked frozen on the very first
+            // screen somebody ever sees. The Options screen said it, this one did not.
+            if (_aiStatusLabel != null)
+            {
+                _aiStatusLabel.Say("Loading models...");
+                _aiStatusLabel.Tone = Tone.Warning;
+            }
+
             string url = _aiUrl;
             string apiKey = _aiApiKey;
 

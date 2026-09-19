@@ -187,6 +187,13 @@ namespace UnityGameTranslator.Core
         private static HashSet<int> _imageComponentGOIds = new HashSet<int>();
 
         /// <summary>
+        /// Whether a material carries a picture on any slot, by material — the answer to the one
+        /// question that costs something in <see cref="HasImageComponent"/>, kept because renderers
+        /// share materials by the thousand. Emptied with the cache beside it.
+        /// </summary>
+        private static readonly Dictionary<int, bool> _materialCarriesImage = new Dictionary<int, bool>();
+
+        /// <summary>
         /// Set when the cache describes a scene that is gone, or none yet.
         ///
         /// 🔴 **Was a two-second clock, and it cost the image inspector its speed** (2026-09-19).
@@ -227,20 +234,34 @@ namespace UnityGameTranslator.Core
             // fourth over every Renderer — tens of thousands in a real scene — to answer a
             // question that costs two field reads here would be the expensive way round.
             var renderer = go.GetComponent<Renderer>();
-            if (renderer == null || renderer.sharedMaterial == null) return false;
-            if (renderer.sharedMaterial.mainTexture != null) return true;
+            if (renderer == null) return false;
+            var material = renderer.sharedMaterial;
+            if (material == null) return false;
+            if (material.mainTexture != null) return true;
 
-            // ⚠ **The costly question is asked LAST, and only when the cheap one said no.** A lit
-            // sign carries its artwork on the emissive slot and has no main texture at all, so
-            // without this it could not even be picked; but reading every slot means a handful of
-            // native calls, and this is asked once per candidate while somebody hovers. A material
-            // with a main texture — the ordinary case — never reaches here.
-            return TexturesOf(renderer.sharedMaterial).Count > 0;
+            // 🔴 **Asked of the MATERIAL, once, and remembered.** A lit sign carries its artwork on
+            // the emissive slot and has no main texture at all, so without this question it could
+            // not even be picked — but the question costs a string[] and a walk over every slot,
+            // and this method is asked once per CANDIDATE while somebody hovers: 33 380 times in
+            // one pass on a street. Written that way on 2026-09-19 it made the game stutter, and
+            // the allocations were the reason rather than the calls.
+            //
+            // ⚠ The saving is the same one ApplyToMaterials makes: 67 223 renderers share 3 480
+            // materials, so the honest unit of work is the material. Dropped with the rest of the
+            // image cache, on the three events that invalidate it.
+            int id = material.GetInstanceID();
+            if (_materialCarriesImage.TryGetValue(id, out bool carries)) return carries;
+            carries = TexturesOf(material).Count > 0;
+            _materialCarriesImage[id] = carries;
+            return carries;
         }
 
         private static void RebuildImageComponentCache()
         {
             _imageComponentGOIds.Clear();
+            // Dropped with it: an instance id is only unique among what is loaded, so an answer
+            // kept about a material of the scene before could be read as another material's.
+            _materialCarriesImage.Clear();
 
             // Find all Image components in scene
             if (_imageType != null)
@@ -1433,6 +1454,7 @@ namespace UnityGameTranslator.Core
             // Sprites survive scene transitions (we created them, not scene assets).
             // Clear GO ID cache (instanceIDs change between scenes).
             _imageComponentGOIds.Clear();
+            _materialCarriesImage.Clear();
             _imageCacheStale = true;
 
             // Load sprites from disk if not already loaded (first scene after startup)

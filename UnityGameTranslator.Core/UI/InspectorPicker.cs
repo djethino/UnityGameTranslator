@@ -249,12 +249,72 @@ namespace UnityGameTranslator.Core.UI
         /// into this one — inside the caller's try, which is the only place a guard can work. A
         /// try written HERE would never run. Measured twice on 2026-09-19 with GeometryUtility.
         /// </summary>
-        private static GameObject PhysicsPick(Camera camera, Vector3 screenPosition)
+        /// <summary>
+        /// How many invisible layers the ray is willing to look through in one frame.
+        ///
+        /// ⚠ Not a limit on correctness — the ray advances past every hit, so it always reaches the
+        /// far plane eventually. It is a limit on how much of ONE frame a hover may spend: a
+        /// pavement, a trigger volume and a wall's collision hull is three, and a scene that stacks
+        /// a dozen invisible shells in front of the same pixel has bigger problems than picking.
+        /// </summary>
+        private const int MaxInvisibleLayers = 12;
+
+        /// <summary>A whisker past a hit, so the next cast cannot land on the surface it just left.</summary>
+        private const float PastTheHit = 0.01f;
+
+        /// <summary>
+        /// Could somebody mean THIS object, in the mode we are in? Asked of what the ray finds, so
+        /// the ray goes past what the answer is no for instead of stopping on it.
+        /// </summary>
+        private bool Pickable(GameObject go)
         {
+            if (go == null || IsOwnUI(go)) return false;
+            return _currentMode != InspectorMode.BitmapReplace || ImageReplacer.HasImageComponent(go);
+        }
+
+        private static GameObject PhysicsPick(Camera camera, Vector3 screenPosition, Func<GameObject, bool> pickable)
+        {
+            var ray = camera.ScreenPointToRay(screenPosition);
+            Vector3 origin = ray.origin;
+            float remaining = camera.farClipPlane;
+
+            for (int layer = 0; layer < MaxInvisibleLayers && remaining > 0f; layer++)
+            {
+                var found = FirstAlong(origin, ray.direction, remaining, pickable, out float travelled);
+                if (found != null) return found;
+                if (travelled <= 0f) return null;     // nothing further along the ray
+
+                origin += ray.direction * travelled;
+                remaining -= travelled;
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// The nearest thing along this ray that somebody could mean, or null with how far the ray
+        /// got — so the caller can carry on from there.
+        ///
+        /// 🔴 **A collider nobody can SEE cannot be what was pointed at.** Measured 2026-09-19 on a
+        /// street: the ray kept landing on 'OuterSidewalk 15 (2)', a pavement's walkable surface
+        /// carrying no mesh at all, and stopping there hid whatever was drawn behind it — one shop
+        /// front could be picked and the one beside it could not, with nothing on screen to say
+        /// why. So the ray does not stop on it; it goes past. And in the image inspector the same
+        /// applies to anything carrying no picture: stopping on it fell back to walking every
+        /// renderer in the scene, 33 380 of them, 207 ms per hover.
+        ///
+        /// ⚠ Deliberately NOT Physics.RaycastAll, which would answer this in one call and returns
+        /// an ARRAY — the family of Unity API IL2CPP strips, and which cost this project two
+        /// regressions the same day. Several ordinary Raycasts are proven; one clever one is not.
+        /// </summary>
+        private static GameObject FirstAlong(Vector3 origin, Vector3 direction, float distance,
+                                             Func<GameObject, bool> pickable, out float travelled)
+        {
+            travelled = 0f;
             RaycastHit hit;
-            if (!Physics.Raycast(camera.ScreenPointToRay(screenPosition), out hit, camera.farClipPlane))
-                return null;
+            if (!Physics.Raycast(origin, direction, out hit, distance)) return null;
             if (hit.collider == null) return null;
+
+            travelled = hit.distance + PastTheHit;
 
             // 🔴 **A collider is not the thing you see.** Measured 2026-09-19: the ray kept
             // landing on objects named "Cube (7)" — invisible collision volumes wrapped around
@@ -275,7 +335,10 @@ namespace UnityGameTranslator.Core.UI
             if (rend == null && go.transform.parent != null)
                 rend = go.transform.parent.GetComponentInChildren<Renderer>();
 
-            return rend != null ? rend.gameObject : go;
+            // Nothing is drawn anywhere around this collider, or what is drawn is not something
+            // this mode can act on: the caller carries the ray past it rather than stopping here.
+            if (rend == null) return null;
+            return pickable == null || pickable(rend.gameObject) ? rend.gameObject : null;
         }
 
         /// <summary>Is this box inside what the camera frames? Plain arithmetic, no Unity helper.</summary>
@@ -324,6 +387,10 @@ namespace UnityGameTranslator.Core.UI
         private static long _probeWorst;
         private static int _probeWalked;        // objects walked by the raycast under way
         private static int _probeWalkedTotal;
+        // How often the ray answered on its own, against how often the whole-scene pass had to.
+        // The second figure is the expensive one: it is the pass that walks every renderer.
+        private static int _probeRayHits;
+        private static int _probeFallbacks;
 
         private void ResetProbe()
         {
@@ -331,6 +398,8 @@ namespace UnityGameTranslator.Core.UI
             _probeTicks = 0;
             _probeWorst = 0;
             _probeWalkedTotal = 0;
+            _probeRayHits = 0;
+            _probeFallbacks = 0;
         }
 
         private void NoteProbe(long ticks)
@@ -348,7 +417,8 @@ namespace UnityGameTranslator.Core.UI
             TranslatorCore.LogInfo(
                 $"[INSPECTOR-PROBE] {where}: {_probeTicks * toMs / _probeCount:F2} ms avg, "
                 + $"{_probeWorst * toMs:F2} ms worst, over {_probeCount} hovers — "
-                + $"{_probeWalkedTotal / _probeCount} object(s) walked each");
+                + $"{_probeWalkedTotal / _probeCount} object(s) walked each | "
+                + $"ray {_probeRayHits}, whole-scene pass {_probeFallbacks}");
             ResetProbe();
         }
 
@@ -1061,7 +1131,7 @@ namespace UnityGameTranslator.Core.UI
             if (!_physicsRefused)
             {
                 GameObject viaRay = null;
-                try { viaRay = PhysicsPick(camera, screenPosition); }
+                try { viaRay = PhysicsPick(camera, screenPosition, Pickable); }
                 catch (Exception ex)
                 {
                     _physicsRefused = true;
@@ -1070,9 +1140,8 @@ namespace UnityGameTranslator.Core.UI
                         + "falls back to bounding boxes, which cannot see what is in front");
                 }
 
-                if (viaRay != null && !IsOwnUI(viaRay)
-                    && (_currentMode != InspectorMode.BitmapReplace || ImageReplacer.HasImageComponent(viaRay)))
-                    return viaRay;
+                if (viaRay != null) { _probeRayHits++; return viaRay; }
+                _probeFallbacks++;
             }
 
             // Then: bounds check for renderers visible to this camera

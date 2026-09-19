@@ -2170,10 +2170,23 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Clear previous results
             _scanResultsList.Clear();
 
+            // 🔴 Spread over frames, not run in one go (2026-09-19). This used to call the scan
+            // straight from here: the whole scene walked on the main thread, so the game froze —
+            // and "Scanning..." above was never even drawn, because the frame never ended. The
+            // scan now hands the frame back on a budget and reports as it goes.
+            // No CancelScan here: the coroutine takes the next token as it starts, which calls off
+            // whatever was running. Cancelling is for the window closing, where nothing replaces it.
+            RunOverFrames(VariableManager.ScanForValue(
+                value,
+                said => { _variablesStatus.Say(said); _variablesStatus.Tone = Tone.Secondary; },
+                ShowScanResults));
+        }
+
+        /// <summary>The scan is done: its candidates, already sorted by the rule.</summary>
+        private void ShowScanResults(System.Collections.Generic.List<VariableManager.VariableCandidate> candidates)
+        {
             try
             {
-                var candidates = VariableManager.ScanForValue(value);
-
                 if (candidates.Count == 0)
                 {
                     _variablesStatus.Say("No results found");
@@ -2284,6 +2297,12 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // Clear font highlight when closing the panel
                 TranslatorScanner.ClearHighlight();
                 ResetHighlightButton();
+
+                // A variable scan now spreads over frames, so closing the window while one runs
+                // would leave it crawling over a scene nobody is watching — and would leave the
+                // guard latched, since the flag is cleared where the results arrive.
+                VariableManager.CancelScan();
+                _isScanning = false;
             }
         }
 

@@ -82,6 +82,128 @@ namespace UnityGameTranslator.Core.UI
         private Camera[] _sceneCameras = new Camera[0];
         private string[] _cameraNames = new string[0];
 
+        #region What the scene holds — found once, not thirty times a second
+
+        /// <summary>
+        /// 🔴 **These two lists were rebuilt on EVERY raycast** (fixed 2026-09-19): a
+        /// FindAllObjectsOfType — which walks the whole scene and, on IL2CPP, crosses the interop
+        /// boundary — ran twice a second per hover and again at every click. In camera mode it was
+        /// every Renderer in the game.
+        ///
+        /// ⚠ **A cache must not cost fidelity**, which is the trade this one refuses. It is
+        /// dropped on three events, never on a clock: the active scene changes
+        /// (<see cref="DropIfSceneChanged"/>), picking starts, and — the case the other two do not
+        /// cover — the first time a hover finds NOTHING. A menu that has just opened is exactly
+        /// what a stale list cannot see, and looking again at that moment is what finds it. One
+        /// rebuild per run of empty hovers, never one per frame: the flag clears as soon as
+        /// something is found again.
+        /// </summary>
+        private static UnityEngine.Object[] _raycastersCache;
+        private static UnityEngine.Object[] _renderersCache;
+
+        /// <summary>Set once a rebuild has been spent on the current run of empty hovers.</summary>
+        private bool _rebuiltOnMiss;
+
+        /// <summary>Which scene the lists describe. A different one makes them meaningless.</summary>
+        private static int _cacheScene = -1;
+
+        private static void DropSceneCaches()
+        {
+            _raycastersCache = null;
+            _renderersCache = null;
+        }
+
+        /// <summary>
+        /// Drop the lists when the active scene is no longer the one they were taken from.
+        ///
+        /// ⚠ **Checked here rather than hooked into TranslatorCore.OnSceneChanged**, where the
+        /// other modules hang: that method belongs to the engine, and the engine never names the
+        /// interface (EngineFrontierChecks). Reading the active scene's handle is O(1) and keeps
+        /// the cache's validity the cache's own business.
+        /// </summary>
+        private static void DropIfSceneChanged()
+        {
+            int scene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().handle;
+            if (scene == _cacheScene) return;
+            _cacheScene = scene;
+            DropSceneCaches();
+        }
+
+        private static UnityEngine.Object[] Raycasters()
+        {
+            DropIfSceneChanged();
+            if (_raycastersCache == null)
+            {
+                _raycastersCache = TypeHelper.FindAllObjectsOfType(_graphicRaycasterType)
+                                   ?? new UnityEngine.Object[0];
+                TranslatorCore.LogDebug($"[Inspector] Scene walked: {_raycastersCache.Length} graphic raycaster(s)");
+            }
+            return _raycastersCache;
+        }
+
+        private static UnityEngine.Object[] Renderers()
+        {
+            DropIfSceneChanged();
+            if (_renderersCache == null)
+            {
+                _renderersCache = TypeHelper.FindAllObjectsOfType(typeof(Renderer))
+                                  ?? new UnityEngine.Object[0];
+                TranslatorCore.LogDebug($"[Inspector] Scene walked: {_renderersCache.Length} renderer(s)");
+            }
+            return _renderersCache;
+        }
+
+        #endregion
+
+        #region Probe — what picking costs, in DebugMode only
+
+        /// <summary>
+        /// 🔴 **Aggregated, never per frame.** A line per raycast would be thirty a second and
+        /// would itself become the cost being measured — the mistake the freeze of 2026-09-18
+        /// taught (its own probe logs once, above a felt threshold). One summary per
+        /// <see cref="ProbeEvery"/> hovers gives the average, the worst and how many objects were
+        /// walked: enough to tell whether a game stutters because of this or in spite of it, and
+        /// enough to see whether a further fix is worth its complexity.
+        ///
+        /// ⚠ Behind DebugMode, as asked. The numbers are therefore read on a build where every
+        /// other diagnostic is on too, which inflates them all equally.
+        /// </summary>
+        private const int ProbeEvery = 60;
+        private static int _probeCount;
+        private static long _probeTicks;
+        private static long _probeWorst;
+        private static int _probeWalked;        // objects walked by the raycast under way
+        private static int _probeWalkedTotal;
+
+        private void ResetProbe()
+        {
+            _probeCount = 0;
+            _probeTicks = 0;
+            _probeWorst = 0;
+            _probeWalkedTotal = 0;
+        }
+
+        private void NoteProbe(long ticks)
+        {
+            if (!TranslatorCore.DebugMode) return;
+
+            _probeCount++;
+            _probeTicks += ticks;
+            if (ticks > _probeWorst) _probeWorst = ticks;
+            _probeWalkedTotal += _probeWalked;
+            if (_probeCount < ProbeEvery) return;
+
+            double toMs = 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+            string where = _selectedCamera != null ? $"camera '{_selectedCamera.name}'" : "UI Only";
+            TranslatorCore.LogInfo(
+                $"[INSPECTOR-PROBE] {where}: {_probeTicks * toMs / _probeCount:F2} ms avg, "
+                + $"{_probeWorst * toMs:F2} ms worst, over {_probeCount} hovers — "
+                + $"{_probeWalkedTotal / _probeCount} object(s) walked each");
+            ResetProbe();
+        }
+
+        #endregion
+
         /// <summary>Raised when the hovered path changes — including to "" when nothing is hovered.</summary>
         public event Action<string> Hovered;
 
@@ -104,6 +226,10 @@ namespace UnityGameTranslator.Core.UI
             _currentMode = mode;
             _panelRect = panelRect as RectTransform;
             _selectedCamera = null;
+            // Picking starts on what the scene holds now, not on what it held last time.
+            DropSceneCaches();
+            _rebuiltOnMiss = false;
+            ResetProbe();
             RefreshCameraList();
 
             ClearSelection();
@@ -212,7 +338,21 @@ namespace UnityGameTranslator.Core.UI
             // --- Hover detection (every 2 frames) ---
             if (doHoverRaycast)
             {
+                long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+                _probeWalked = 0;
                 var hoveredObject = RaycastUIElement(mousePos);
+
+                // Found nothing: the lists may predate a menu that has just opened. Look once
+                // more with fresh ones — and only once, until something is found again.
+                if (hoveredObject == null && !_rebuiltOnMiss)
+                {
+                    _rebuiltOnMiss = true;
+                    DropSceneCaches();
+                    hoveredObject = RaycastUIElement(mousePos);
+                }
+                if (hoveredObject != null) _rebuiltOnMiss = false;
+
+                NoteProbe(System.Diagnostics.Stopwatch.GetTimestamp() - t0);
 
                 if (hoveredObject != null)
                 {
@@ -545,12 +685,13 @@ namespace UnityGameTranslator.Core.UI
                 if (eventSystem == null) return null;
 
                 // Find all GraphicRaycasters in the scene
-                var raycasters = TypeHelper.FindAllObjectsOfType(_graphicRaycasterType);
-                if (raycasters == null || raycasters.Length == 0) return null;
+                var raycasters = Raycasters();
+                if (raycasters.Length == 0) return null;
 
                 foreach (var raycasterObj in raycasters)
                 {
                     if (raycasterObj == null) continue;
+                    _probeWalked++;
 
                     // Skip our own highlight canvas raycaster
                     var raycasterComp = raycasterObj as Component;
@@ -642,12 +783,13 @@ namespace UnityGameTranslator.Core.UI
                 var eventSystem = _eventSystemCurrentProp.GetValue(null, null);
                 if (eventSystem == null) return null;
 
-                var raycasters = TypeHelper.FindAllObjectsOfType(_graphicRaycasterType);
+                var raycasters = Raycasters();
                 if (raycasters == null) return null;
 
                 foreach (var raycasterObj in raycasters)
                 {
                     if (raycasterObj == null) continue;
+                    _probeWalked++;
 
                     // Get the Canvas of this raycaster
                     var raycasterComp = raycasterObj as Component;
@@ -732,8 +874,7 @@ namespace UnityGameTranslator.Core.UI
             try
             {
                 int cullingMask = camera.cullingMask;
-                var all = TypeHelper.FindAllObjectsOfType(typeof(Renderer));
-                if (all == null) return null;
+                var all = Renderers();
 
                 GameObject bestHit = null;
                 float bestArea = float.MaxValue;
@@ -741,6 +882,7 @@ namespace UnityGameTranslator.Core.UI
                 foreach (var obj in all)
                 {
                     if (obj == null) continue;
+                    _probeWalked++;
 
                     Renderer rend = obj as Renderer;
                     if (rend == null)
@@ -897,7 +1039,7 @@ namespace UnityGameTranslator.Core.UI
             if (targetRect != null)
             {
                 // Canvas UI: use RectTransform bounds
-                if (!GetScreenBounds(targetRect, out screenMin, out screenMax))
+                if (!GetScreenBounds(targetRect, _selectedCamera, out screenMin, out screenMax))
                 {
                     highlightImage.gameObject.SetActive(false);
                     return;
@@ -906,7 +1048,7 @@ namespace UnityGameTranslator.Core.UI
             else
             {
                 // World-space object (SpriteRenderer): project bounds to screen
-                if (!GetScreenBoundsFromRenderer(target, out screenMin, out screenMax))
+                if (!GetScreenBoundsFromRenderer(target, _selectedCamera, out screenMin, out screenMax))
                 {
                     highlightImage.gameObject.SetActive(false);
                     return;
@@ -929,9 +1071,14 @@ namespace UnityGameTranslator.Core.UI
         {
             if (highlightRect == null || highlightImage == null) return;
 
-            // Skip degenerate rects
+            // A rectangle under a pixel is not a shape: it is a conversion that went wrong
+            // upstream (world units read as pixels, a projection behind the camera). Said out
+            // loud, because hiding it silently is what made the missing highlight undebuggable.
             if (screen.width < 1f || screen.height < 1f)
             {
+                TranslatorCore.LogDebug(
+                    $"[Inspector] Degenerate highlight rect {screen.width:F2}x{screen.height:F2} at " +
+                    $"({screen.xMin:F1},{screen.yMin:F1}) — hidden");
                 highlightImage.gameObject.SetActive(false);
                 return;
             }
@@ -980,8 +1127,10 @@ namespace UnityGameTranslator.Core.UI
         {
             if (_panelRect == null) return false;
 
+            // No picking camera here on purpose: this is OUR window, on UniverseLib's own
+            // Screen Space Overlay canvas, where world coordinates already are screen ones.
             Vector2 screenMin, screenMax;
-            if (!GetScreenBounds(_panelRect, out screenMin, out screenMax))
+            if (!GetScreenBounds(_panelRect, null, out screenMin, out screenMax))
                 return false;
 
             return screenPos.x >= screenMin.x && screenPos.x <= screenMax.x &&
@@ -993,7 +1142,7 @@ namespace UnityGameTranslator.Core.UI
         /// GetWorldCorners(Vector3[]) crashes on IL2CPP because the array param becomes
         /// Il2CppStructArray — using TransformPoint(Vector3) avoids this entirely.
         /// </summary>
-        private static bool GetScreenBounds(RectTransform rect, out Vector2 screenMin, out Vector2 screenMax)
+        private static bool GetScreenBounds(RectTransform rect, Camera picking, out Vector2 screenMin, out Vector2 screenMax)
         {
             screenMin = Vector2.zero;
             screenMax = Vector2.zero;
@@ -1032,19 +1181,33 @@ namespace UnityGameTranslator.Core.UI
 
                 if (rootCanvas != null && rootCanvas.renderMode != RenderMode.ScreenSpaceOverlay)
                 {
-                    var cam = rootCanvas.worldCamera;
-                    if (cam != null)
+                    // 🔴 **A canvas that is not Overlay MUST be converted, and the fallbacks are
+                    // new** (2026-09-19). This took `worldCamera` and, when it was null, simply
+                    // kept the WORLD coordinates as if they were pixels: a rectangle a few units
+                    // wide, which PositionHighlightRect then threw away on `width < 1f`. The
+                    // highlight vanished with nothing said, on the very common case of a
+                    // ScreenSpaceCamera canvas whose camera is assigned at runtime.
+                    //
+                    // Order: the canvas's own camera is the truth when it has one; otherwise the
+                    // camera the person is picking through; otherwise the main one. Out of all
+                    // three, the honest answer is to refuse — out loud.
+                    var cam = rootCanvas.worldCamera ?? picking ?? Camera.main;
+                    if (cam == null)
                     {
-                        Vector3 s0 = cam.WorldToScreenPoint(c0);
-                        Vector3 s1 = cam.WorldToScreenPoint(c1);
-                        Vector3 s2 = cam.WorldToScreenPoint(c2);
-                        Vector3 s3 = cam.WorldToScreenPoint(c3);
-
-                        minX = Mathf.Min(s0.x, s1.x, s2.x, s3.x);
-                        maxX = Mathf.Max(s0.x, s1.x, s2.x, s3.x);
-                        minY = Mathf.Min(s0.y, s1.y, s2.y, s3.y);
-                        maxY = Mathf.Max(s0.y, s1.y, s2.y, s3.y);
+                        TranslatorCore.LogDebug(
+                            $"[Inspector] Canvas '{rootCanvas.name}' is {rootCanvas.renderMode} with no camera to convert through — highlight hidden");
+                        return false;
                     }
+
+                    Vector3 s0 = cam.WorldToScreenPoint(c0);
+                    Vector3 s1 = cam.WorldToScreenPoint(c1);
+                    Vector3 s2 = cam.WorldToScreenPoint(c2);
+                    Vector3 s3 = cam.WorldToScreenPoint(c3);
+
+                    minX = Mathf.Min(s0.x, s1.x, s2.x, s3.x);
+                    maxX = Mathf.Max(s0.x, s1.x, s2.x, s3.x);
+                    minY = Mathf.Min(s0.y, s1.y, s2.y, s3.y);
+                    maxY = Mathf.Max(s0.y, s1.y, s2.y, s3.y);
                 }
 
                 screenMin = new Vector2(minX, minY);
@@ -1062,13 +1225,24 @@ namespace UnityGameTranslator.Core.UI
         /// Get screen-space bounds for a world-space object (SpriteRenderer).
         /// Uses Renderer.bounds projected to screen via Camera.main.
         /// </summary>
-        private static bool GetScreenBoundsFromRenderer(GameObject target, out Vector2 screenMin, out Vector2 screenMax)
+        private static bool GetScreenBoundsFromRenderer(GameObject target, Camera picking,
+                                                        out Vector2 screenMin, out Vector2 screenMax)
         {
             screenMin = screenMax = Vector2.zero;
             try
             {
-                var camera = Camera.main;
-                if (camera == null) return false;
+                // 🔴 **The camera that PICKED, not Camera.main** (2026-09-19). This read
+                // Camera.main and nothing else: the object was found through the camera chosen in
+                // the dropdown and then drawn through a different one, so the rectangle landed
+                // beside the target or off screen — and on a game with no camera tagged MainCamera
+                // there was no rectangle at all. Choosing a camera exists precisely to inspect
+                // what THAT camera sees.
+                var camera = picking ?? Camera.main;
+                if (camera == null)
+                {
+                    TranslatorCore.LogDebug("[Inspector] No camera to project this renderer with — highlight hidden");
+                    return false;
+                }
 
                 // Try to get Renderer.bounds via reflection
                 var renderer = target.GetComponent<Renderer>();

@@ -166,6 +166,30 @@ namespace UnityGameTranslator.Core
             return Mathf.Clamp(stdDev, 0.5f, mean * 0.5f);
         }
 
+        /// <summary>
+        /// The budget for work somebody ASKED for and is watching — a variable scan, not the
+        /// background pass.
+        ///
+        /// 🔴 **Half a frame, and that is not a number picked here**: it is the ceiling
+        /// <see cref="ComputeAdaptiveBudgetMs"/> already clamps to, derived from the game's own
+        /// measured pacing. The distinction is about consent, not about cost. Background work must
+        /// stay under the frame-time noise, so nobody can tell it is running; work somebody
+        /// started and is watching a progress line for may take visibly more, and halving the
+        /// frame rate for a few seconds is a fair trade against freezing the game outright — which
+        /// is what the variable scan did before 2026-09-19.
+        ///
+        /// ⚠ Falls back to 8 ms only before five frames have been recorded, the same bootstrap
+        /// the adaptive budget uses: with no measurement there is nothing to derive from.
+        /// </summary>
+        public static float DeliberateBudgetMs()
+        {
+            if (_frameTimeCount < 5) return 8f;
+
+            float sum = 0f;
+            for (int i = 0; i < _frameTimeCount; i++) sum += _frameTimeBuffer[i];
+            return Mathf.Max(1f, (sum / _frameTimeCount) * 0.5f);
+        }
+
         #endregion
 
         #region Incremental Refresh State

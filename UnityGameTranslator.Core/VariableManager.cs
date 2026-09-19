@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Reflection;
 using System.Runtime.CompilerServices;
@@ -614,13 +615,20 @@ namespace UnityGameTranslator.Core
         /// classes, recursing into their object members) and live Unity instances.
         /// Returns candidates sorted by match strength then relevance.
         /// </summary>
-        public static List<VariableCandidate> ScanForValue(string searchValue)
+        public static IEnumerator ScanForValue(string searchValue,
+                                               Action<string> progress,
+                                               Action<List<VariableCandidate>> done)
         {
-            if (string.IsNullOrEmpty(searchValue)) return new List<VariableCandidate>();
-
             var results = new List<VariableCandidate>();
+            if (string.IsNullOrEmpty(searchValue)) { done?.Invoke(results); yield break; }
+
             var seen = new HashSet<string>(); // "ClassName|FieldPath" dedup across all scan passes
             var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            var frame = System.Diagnostics.Stopwatch.StartNew();
+            int typesSeen = 0;
+            // Called off by CancelScan (the window closing): checked between types and between
+            // objects, so a scan never outlives the screen that asked for it.
+            int mine = ++_scanToken;
             TranslatorCore.LogInfo($"[VariableManager] Scanning for value: \"{searchValue}\"...");
 
             // Skip system/engine assemblies that can crash on IL2CPP when accessing types
@@ -629,40 +637,28 @@ namespace UnityGameTranslator.Core
                 "MelonLoader", "Harmony", "0Harmony", "BepInEx",
                 "Newtonsoft", "UniverseLib", "UnityGameTranslator" };
 
+            // ⚠ No try around this loop any more: C# forbids yielding inside one, and the
+            // budget has to hand the frame back from the middle of it. Each protected step is a
+            // method of its own (SkippedAssembly, TypesOf, ScanOneType) — same swallowing as
+            // before, expressed where it belongs.
+            float budget = TranslatorScanner.DeliberateBudgetMs();
             foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
             {
-                try
+                if (SkippedAssembly(asm, skipPrefixes)) continue;
+
+                foreach (var type in TypesOf(asm))
                 {
-                    string asmName = asm.GetName().Name;
-                    bool skip = false;
-                    foreach (var prefix in skipPrefixes)
-                    {
-                        if (asmName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
-                        {
-                            skip = true;
-                            break;
-                        }
-                    }
-                    if (skip) continue;
+                    if (_scanToken != mine) yield break;
 
-                    TranslatorCore.LogDebug($"[VariableManager] Scanning assembly: {asmName}");
-                    Type[] types;
-                    try { types = asm.GetTypes(); }
-                    catch { continue; }
+                    ScanOneType(type, searchValue, results, seen);
+                    typesSeen++;
 
-                    foreach (var type in types)
-                    {
-                        try
-                        {
-                            ScanTypeStaticFields(type, searchValue, results, seen);
-                            // Static classes (abstract+sealed) can't have singleton instances
-                            if (!(type.IsAbstract && type.IsSealed))
-                                ScanTypeSingleton(type, searchValue, results, seen);
-                        }
-                        catch { }
-                    }
+                    if (frame.Elapsed.TotalMilliseconds < budget) continue;
+                    progress?.Invoke($"Scanning… {results.Count} found so far");
+                    yield return null;
+                    frame.Restart();
+                    budget = TranslatorScanner.DeliberateBudgetMs();
                 }
-                catch { }
             }
 
             long staticsPassMs = stopwatch.ElapsedMilliseconds;
@@ -670,11 +666,14 @@ namespace UnityGameTranslator.Core
 
             // Scan game instances using UniverseLib's GetActualType()
             // which resolves IL2CPP proxy types correctly on both Mono and IL2CPP
-            ScanInstancesUniverseLib(searchValue, skipPrefixes, results, seen);
+            var instances = ScanInstancesUniverseLib(searchValue, skipPrefixes, results, seen, progress);
+            while (instances.MoveNext()) yield return instances.Current;
 
             foreach (var r in results)
                 TranslatorCore.LogInfo($"[VariableManager] Candidate: {r.ClassName}.{r.FieldPath} = \"{r.CurrentValue}\" static={r.IsStatic} rank={r.MatchRank}");
             TranslatorCore.LogInfo($"[VariableManager] Scan complete: {results.Count} candidates found ({staticsPassMs} ms statics + {stopwatch.ElapsedMilliseconds - staticsPassMs} ms instances)");
+
+            int found = results.Count;
 
             // Filter out noise: clipboard fields, m_Text (UI internals), our own mod
             results.RemoveAll(r =>
@@ -698,7 +697,52 @@ namespace UnityGameTranslator.Core
                 return string.Compare(a.ClassName, b.ClassName, StringComparison.Ordinal);
             });
 
-            return results;
+            // 🔴 The probe, in DebugMode: what the scan cost and how much it actually looked at.
+            // `kept` against `found` is the one number that says whether the noise filter is
+            // hiding the answer, and the work/elapsed pair says whether the spread is working —
+            // a scan that took 4 s of wall clock for 900 ms of work never stuttered the game.
+            if (TranslatorCore.DebugMode)
+                TranslatorCore.LogInfo(
+                    $"[VAR-SCAN] \"{searchValue}\": {results.Count} kept of {found} found, "
+                    + $"{typesSeen} type(s) read, {stopwatch.ElapsedMilliseconds} ms of work");
+
+            done?.Invoke(results);
+        }
+
+        /// <summary>An assembly the scan has no business reading. Swallows its own failure, as before.</summary>
+        private static bool SkippedAssembly(Assembly asm, string[] skipPrefixes)
+        {
+            try
+            {
+                string asmName = asm.GetName().Name;
+                foreach (var prefix in skipPrefixes)
+                    if (asmName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                        return true;
+                TranslatorCore.LogDebug($"[VariableManager] Scanning assembly: {asmName}");
+                return false;
+            }
+            catch { return true; }
+        }
+
+        /// <summary>The types of an assembly, or none when it refuses to say.</summary>
+        private static Type[] TypesOf(Assembly asm)
+        {
+            try { return asm.GetTypes(); }
+            catch { return Type.EmptyTypes; }
+        }
+
+        /// <summary>One type's statics and, when it can have one, its singleton.</summary>
+        private static void ScanOneType(Type type, string searchValue,
+                                        List<VariableCandidate> results, HashSet<string> seen)
+        {
+            try
+            {
+                ScanTypeStaticFields(type, searchValue, results, seen);
+                // Static classes (abstract+sealed) can't have singleton instances
+                if (!(type.IsAbstract && type.IsSealed))
+                    ScanTypeSingleton(type, searchValue, results, seen);
+            }
+            catch { }
         }
 
         private static void ScanTypeStaticFields(Type type, string searchValue, List<VariableCandidate> results, HashSet<string> seen)
@@ -1036,9 +1080,15 @@ namespace UnityGameTranslator.Core
         /// unlike raw reflection which only sees base class members.
         /// Works on both Mono and IL2CPP.
         /// </summary>
-        // Soft cap on the instance pass. It cannot interrupt a single blocking native
-        // call, but bounds the total when a game has thousands of live types.
-        private const int InstanceScanBudgetMs = 15000;
+        /// <summary>
+        /// Bumped to call off a scan under way. The running coroutine captures it and stops at
+        /// the next object when it no longer matches — so closing the window, or asking for
+        /// another value, does not leave a scan crawling over a scene nobody is looking at.
+        /// </summary>
+        private static int _scanToken;
+
+        /// <summary>Stop whatever scan is running. Safe when none is.</summary>
+        public static void CancelScan() => _scanToken++;
 
         /// <summary>
         /// Scan live game instances. Enumerates ALL MonoBehaviours and ScriptableObjects
@@ -1048,83 +1098,106 @@ namespace UnityGameTranslator.Core
         /// freeze. Bulk enumeration also only ever visits types that actually have
         /// live instances.
         /// </summary>
-        private static void ScanInstancesUniverseLib(string searchValue, string[] skipPrefixes,
-            List<VariableCandidate> results, HashSet<string> seen)
+        /// <summary>
+        /// Every live instance the scene holds, read for the value — the pass that finds what the
+        /// other two cannot, since a line of dialogue lives on an ordinary MonoBehaviour field.
+        ///
+        /// 🔴 **It used to read ONE object per type** (`scannedTypes.Add(actualType)`): a game
+        /// holding forty DialogueLine had thirty-nine of them ignored, and if the text was on any
+        /// but the first it was simply never found. That is the main reason the scan "found
+        /// nothing" (2026-09-19). The dedup is gone; what bounds the work now is the frame budget,
+        /// and the results are still deduplicated on "ClassName|FieldPath" through `seen`.
+        ///
+        /// 🔴 **And it required the code to live in `Assembly-CSharp`.** Modern Unity projects
+        /// split their code with asmdefs — Game.Runtime.dll, Core.dll — so on those games this
+        /// pass matched nothing at all and only statics and singletons were left. The positive
+        /// filter is gone; `skipPrefixes` alone decides, exactly as the statics pass already did.
+        ///
+        /// ⚠ Nothing is truncated any more: the 15 s cap silently dropped candidates. The work is
+        /// spread instead, with a progress line, and can be called off.
+        /// </summary>
+        private static IEnumerator ScanInstancesUniverseLib(string searchValue, string[] skipPrefixes,
+            List<VariableCandidate> results, HashSet<string> seen, Action<string> progress)
+        {
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            var frame = System.Diagnostics.Stopwatch.StartNew();
+            float budget = TranslatorScanner.DeliberateBudgetMs();
+            int mine = _scanToken;
+            int read = 0, skipped = 0;
+
+            var pools = InstancePools();
+            TranslatorCore.LogInfo($"[VariableManager] Instance pass: {pools[0]?.Length ?? 0} behaviours + {pools[1]?.Length ?? 0} scriptable objects enumerated in {sw.ElapsedMilliseconds} ms");
+
+            foreach (var pool in pools)
+            {
+                if (pool == null) continue;
+
+                foreach (var obj in pool)
+                {
+                    if (_scanToken != mine)
+                    {
+                        TranslatorCore.LogInfo("[VariableManager] Instance pass called off");
+                        yield break;
+                    }
+
+                    if (ScanOneInstance(obj, searchValue, skipPrefixes, results, seen)) read++;
+                    else skipped++;
+
+                    if (frame.Elapsed.TotalMilliseconds < budget) continue;
+                    progress?.Invoke($"Scanning… {results.Count} found so far ({read} object(s) read)");
+                    yield return null;
+                    frame.Restart();
+                    budget = TranslatorScanner.DeliberateBudgetMs();
+                }
+            }
+
+            TranslatorCore.LogInfo($"[VariableManager] Instance pass: {read} object(s) read, {skipped} skipped (not game code), {sw.ElapsedMilliseconds} ms");
+        }
+
+        /// <summary>Scene objects (incl. inactive) and assets. Assets need the asset path: FindObjectsOfType never returns them on Mono.</summary>
+        private static UnityEngine.Object[][] InstancePools()
         {
             try
             {
-                var sw = System.Diagnostics.Stopwatch.StartNew();
-                var scannedTypes = new HashSet<Type>();
-                int typesScanned = 0;
-                bool truncated = false;
-
-                // Scene objects (incl. inactive) + assets: SOs need the asset-scan
-                // path on Mono (FindObjectsOfType never returns assets)
-                var pools = new UnityEngine.Object[][]
+                return new UnityEngine.Object[][]
                 {
                     TypeHelper.FindAllObjectsOfType(typeof(MonoBehaviour)),
                     TypeHelper.FindAllAssetsOfType(typeof(ScriptableObject))
                 };
-                TranslatorCore.LogInfo($"[VariableManager] Instance pass: {pools[0]?.Length ?? 0} behaviours + {pools[1]?.Length ?? 0} scriptable objects enumerated in {sw.ElapsedMilliseconds} ms");
-
-                foreach (var pool in pools)
-                {
-                    if (pool == null) continue;
-                    if (truncated) break;
-
-                    foreach (var obj in pool)
-                    {
-                        try
-                        {
-                            if (obj == null) continue;
-
-                            Type actualType;
-                            try { actualType = obj.GetActualType(); }
-                            catch { continue; }
-
-                            if (!scannedTypes.Add(actualType)) continue;
-
-                            // Keep only game types (same assembly filter as the statics pass)
-                            string asmName = actualType.Assembly.GetName().Name;
-                            if (!asmName.Contains("Assembly-CSharp") && !asmName.StartsWith("Il2Cpp")) continue;
-                            bool skipAsm = false;
-                            foreach (var prefix in skipPrefixes)
-                            {
-                                if (asmName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
-                                { skipAsm = true; break; }
-                            }
-                            if (skipAsm) continue;
-
-                            if (sw.ElapsedMilliseconds > InstanceScanBudgetMs)
-                            {
-                                truncated = true;
-                                TranslatorCore.LogWarning($"[VariableManager] Instance pass truncated after {typesScanned} types ({InstanceScanBudgetMs} ms budget) — some candidates may be missing");
-                                break;
-                            }
-
-                            // Cast to actual type
-                            object typed;
-                            try { typed = TypeHelper.Il2CppCast(obj, actualType) ?? obj; }
-                            catch { typed = obj; }
-
-                            typesScanned++;
-                            if (typesScanned % 100 == 0)
-                                TranslatorCore.LogInfo($"[VariableManager] Instance pass: {typesScanned} types scanned, {sw.ElapsedMilliseconds} ms, last={actualType.Name}");
-
-                            // Scan fields and properties, following sub-objects
-                            var visited = new HashSet<object>(ReferenceComparer.Comparer);
-                            ScanObjectRecursive(typed, actualType.Name, "", searchValue, results, seen, 0, visited);
-                        }
-                        catch { }
-                    }
-                }
-
-                TranslatorCore.LogInfo($"[VariableManager] Instance pass: {typesScanned} types checked in {sw.ElapsedMilliseconds} ms{(truncated ? " (TRUNCATED)" : "")}");
             }
             catch (Exception ex)
             {
-                TranslatorCore.LogWarning($"[VariableManager] UniverseLib scan error: {ex.Message}");
+                TranslatorCore.LogWarning($"[VariableManager] Could not enumerate instances: {ex.Message}");
+                return new UnityEngine.Object[][] { null, null };
             }
+        }
+
+        /// <summary>One live object, read for the value. False when it was not game code to begin with.</summary>
+        private static bool ScanOneInstance(UnityEngine.Object obj, string searchValue, string[] skipPrefixes,
+                                            List<VariableCandidate> results, HashSet<string> seen)
+        {
+            try
+            {
+                if (obj == null) return false;
+
+                Type actualType;
+                try { actualType = obj.GetActualType(); }
+                catch { return false; }
+
+                string asmName = actualType.Assembly.GetName().Name;
+                foreach (var prefix in skipPrefixes)
+                    if (asmName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                        return false;
+
+                object typed;
+                try { typed = TypeHelper.Il2CppCast(obj, actualType) ?? obj; }
+                catch { typed = obj; }
+
+                var visited = new HashSet<object>(ReferenceComparer.Comparer);
+                ScanObjectRecursive(typed, actualType.Name, "", searchValue, results, seen, 0, visited);
+                return true;
+            }
+            catch { return false; }
         }
 
         #endregion

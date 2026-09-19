@@ -149,6 +149,20 @@ namespace UnityGameTranslator.Core.UI.Panels
         // said it correctly, so the flag was a second answer to a question already answered.
         private float _tallestTabContentHeight;
 
+        /// <summary>
+        /// Run work that spreads over frames — a scan that hands the frame back on a budget,
+        /// rather than one that freezes the game until it is done.
+        ///
+        /// ⚠ **The one door a panel has to a coroutine.** A panel may not name UniverseLib
+        /// (UiBoundaryChecks refuses a qualified name there); the base may, and does, which is
+        /// why the passage belongs here rather than being worked around at the call site.
+        /// </summary>
+        protected static void RunOverFrames(System.Collections.IEnumerator work)
+        {
+            if (work == null) return;
+            UniverseLib.RuntimeHelper.StartCoroutine(work);
+        }
+
         /// <summary>The rendering half of <see cref="KeepPanelHeightAcrossTabs"/>: the wait is a coroutine.</summary>
         private void StartMeasuringTallestTab(TabBar tabBar)
         {

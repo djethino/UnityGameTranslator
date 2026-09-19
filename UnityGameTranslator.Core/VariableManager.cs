@@ -584,13 +584,27 @@ namespace UnityGameTranslator.Core
         /// 3 = exact, 2 = value contains the search, 1 = search contains the value
         /// (displayed strings composed from several fields, e.g. "seedA-seedB"), 0 = no match.
         /// </summary>
+        /// <summary>
+        /// How well a field's value answers what was typed. 3 exact, 2 contains it, 1 is
+        /// contained by it, 0 no.
+        ///
+        /// 🔴 **Case-insensitive since 2026-09-19, and it used not to be.** A session searched
+        /// for "kyle" on a game that stores "Kyle": 84 148 objects were read, every one of them
+        /// compared with `==` and `Contains`, and the scan reported nothing found. Nothing on
+        /// screen says the case matters — nor should it: a search box that only matches the
+        /// exact spelling is a search box that fails silently, and the person has no way of
+        /// telling that from "the value is not in memory".
+        ///
+        /// ⚠ Ordinal, never culture-aware: these are game identifiers, not prose, and a Turkish
+        /// locale must not decide that "I" and "ı" are the same field.
+        /// </summary>
         private static int GetMatchRank(string value, string searchValue)
         {
             if (string.IsNullOrEmpty(value)) return 0;
-            if (value == searchValue) return 3;
-            if (value.Contains(searchValue)) return 2;
+            if (string.Equals(value, searchValue, StringComparison.OrdinalIgnoreCase)) return 3;
+            if (value.IndexOf(searchValue, StringComparison.OrdinalIgnoreCase) >= 0) return 2;
             if (value.Length >= MinReverseMatchLength && !string.IsNullOrWhiteSpace(value)
-                && searchValue.Contains(value)) return 1;
+                && searchValue.IndexOf(value, StringComparison.OrdinalIgnoreCase) >= 0) return 1;
             return 0;
         }
 

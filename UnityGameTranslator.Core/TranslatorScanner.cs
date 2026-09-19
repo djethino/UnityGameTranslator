@@ -1781,7 +1781,7 @@ namespace UnityGameTranslator.Core
                         if (obj == null) continue;
                         int id = GetComponentInstanceId(obj);
                         if (id != -1) processedIds.Add(id);
-                        RefreshComponent(obj, type, globalRestore, ref refreshed, ref restored);
+                        RefreshComponent(obj, type, globalRestore, glyphsChanged, ref refreshed, ref restored);
                         pass1Count++;
                     }
                 }
@@ -1904,8 +1904,11 @@ namespace UnityGameTranslator.Core
                 if (totalMs >= FeltMs)
                 {
                     double p1 = pass1Ticks / freq * 1000.0;
+                    // Without this, the numbers cannot be read: a full rebuild is legitimate when
+                    // the glyphs changed and pure waste when they did not.
+                    string glyphsMode = glyphsChanged ? "CHANGED" : "same";
                     TranslatorCore.LogWarning(
-                        $"[FORCE-REFRESH] {totalMs:F0}ms in ONE frame | "
+                        $"[FORCE-REFRESH] {totalMs:F0}ms in ONE frame (glyphs {glyphsMode}) | "
                         + $"pass1 (scanner cache) {p1:F0}ms/{pass1Count} comps "
                         + $"[cast {_phCast / freq * 1000:F0}ms, font state {_phFont / freq * 1000:F0}ms, "
                         + $"read {_phRead / freq * 1000:F0}ms, apply {_phApply / freq * 1000:F0}ms] | "
@@ -1963,7 +1966,7 @@ namespace UnityGameTranslator.Core
         /// </summary>
         private static long _phCast, _phFont, _phRead, _phApply;
 
-        private static void RefreshComponent(UnityEngine.Object obj, RegisteredTextType type, bool globalRestore, ref int refreshed, ref int restored)
+        private static void RefreshComponent(UnityEngine.Object obj, RegisteredTextType type, bool globalRestore, bool glyphsChanged, ref int refreshed, ref int restored)
         {
             long _t = System.Diagnostics.Stopwatch.GetTimestamp();
             try
@@ -2010,6 +2013,7 @@ namespace UnityGameTranslator.Core
 
                 // Normal refresh path (trigger Harmony patch)
                 string currentText = GetTextForType(component, type);
+                bool rewrote = false;
                 _phRead += System.Diagnostics.Stopwatch.GetTimestamp() - _t;
                 _t = System.Diagnostics.Stopwatch.GetTimestamp();
                 if (!string.IsNullOrEmpty(currentText))
@@ -2027,20 +2031,31 @@ namespace UnityGameTranslator.Core
                         int cid = TypeHelper.GetInstanceID(component);
                         if (cid != -1 && FontManager.IsGameManagedFontComponent(cid))
                             return;
+                        // 🔴 Rebuilt only when something CHANGED (2026-09-19). Measured on a
+                        // large IL2CPP game: 621 ms of a 625 ms pass, for 1 138 components, went
+                        // into these two calls — and the text of almost all of them was already
+                        // what it should be. Pass 2 got this guard on 2026-09-18; pass 1 kept
+                        // rebuilding every mesh unconditionally, which is where the freeze moved.
                         if (!TranslatorCore.HasCachedTranslation(currentText))
+                        {
                             SetTextForType(component, type, currentText);
-                        TypeHelper.ForceMeshUpdate(component);
+                            rewrote = true;
+                        }
+                        if (glyphsChanged || rewrote) TypeHelper.ForceMeshUpdate(component);
                     }
                     else
                     {
                         SetTextForType(component, type, currentText);
+                        rewrote = true;
                     }
                     // Force the UGUI pipeline to re-resolve material + vertices on the
                     // next frame. Needed for components wrapped by SoftMaskable / other
                     // MaskableGraphic decorators that cache the material — without this
                     // they keep pointing to the previous (now stale) atlas after a font
-                    // fallback switch.
-                    TypeHelper.SetAllDirty(component);
+                    // fallback switch. ⚠ Which is exactly the glyphsChanged case: with the
+                    // glyphs untouched and the text unchanged, there is no stale material to
+                    // re-resolve, and this was the other half of the 621 ms.
+                    if (glyphsChanged || rewrote) TypeHelper.SetAllDirty(component);
                     refreshed++;
                 }
             }

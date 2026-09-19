@@ -197,6 +197,11 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             _screen = ScreenBuilder.Build(Doc, body, footer, ActOf, help: _helpZone);
 
+            // Enter in the search box searches, the same act as the button beside it. Subscribed
+            // here — once, at construction — because GameSearchInput is a property that re-reads
+            // the handle, so wiring it anywhere that runs twice would stack handlers.
+            GameSearchInput.Submitted(_ => PerformGameSearch());
+
             // The socle's legend for the search result markers — the same words the Manager uses.
             _screen.Say("legend", GameCandidates.Legend);
 

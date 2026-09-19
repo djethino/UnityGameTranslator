@@ -221,6 +221,15 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // FieldHandle.Changed, never a raw InputField event — see UIHelpers.
             _failInput.Changed += _ => OnFailInputChanged();
+
+            // 🔴 Enter in a search box does what the button beside it does (2026-09-19).
+            // Reported: typing a value and pressing Enter did nothing, the button had to be
+            // clicked. ⚠ Wired to the SAME method, never to a copy of it — a second
+            // implementation is how one of the two ends up without the other's guards, which is
+            // what FieldHandle.Submitted warns about in so many words.
+            _scanValueInput.Submitted(_ => OnScanClicked());
+            _findByValueInput.Submitted(_ => OnFindByValueClicked());
+            _fontOverrideFindInput.Submitted(_ => OnFindForFontOverride());
             // The bars between the areas: the rule divides, the person may move the seams; the
             // seams go back when the window closes (SetActive).
             _failShares.Attach(_screen.Splitter("ListSplit"), _failuresList, _sourceText.Area);

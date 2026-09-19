@@ -221,15 +221,6 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // FieldHandle.Changed, never a raw InputField event — see UIHelpers.
             _failInput.Changed += _ => OnFailInputChanged();
-
-            // 🔴 Enter in a search box does what the button beside it does (2026-09-19).
-            // Reported: typing a value and pressing Enter did nothing, the button had to be
-            // clicked. ⚠ Wired to the SAME method, never to a copy of it — a second
-            // implementation is how one of the two ends up without the other's guards, which is
-            // what FieldHandle.Submitted warns about in so many words.
-            _scanValueInput.Submitted(_ => OnScanClicked());
-            _findByValueInput.Submitted(_ => OnFindByValueClicked());
-            _fontOverrideFindInput.Submitted(_ => OnFindForFontOverride());
             // The bars between the areas: the rule divides, the person may move the seams; the
             // seams go back when the window closes (SetActive).
             _failShares.Attach(_screen.Splitter("ListSplit"), _failuresList, _sourceText.Area);
@@ -271,6 +262,22 @@ namespace UnityGameTranslator.Core.UI.Panels
             _variablesStatus = _screen.Label("VarsStatus");
 
             _applyBtn = _screen.Button("ApplyBtn");
+
+            // 🔴 Enter in a search box does what the button beside it does (2026-09-19).
+            // Reported: typing a value and pressing Enter did nothing, the button had to be
+            // clicked. ⚠ Wired to the SAME method, never to a copy of it — a second
+            // implementation is how one of the two ends up without the other's guards, which is
+            // what FieldHandle.Submitted warns about in so many words.
+            //
+            // 🔴 **And it sits AFTER the last fetch, which is the whole point.** Put one screen
+            // higher it ran before _scanValueInput and _fontOverrideFindInput existed: a null
+            // reference here aborts ConstructPanelContent, so every panel after this one is never
+            // built and this window opens over the whole screen at launch. The warning three
+            // hundred lines above says this happened twice before; this was the third
+            // (2026-09-19), and it was introduced while MOVING the block to a tidier place.
+            _scanValueInput.Submitted(_ => OnScanClicked());
+            _findByValueInput.Submitted(_ => OnFindByValueClicked());
+            _fontOverrideFindInput.Submitted(_ => OnFindForFontOverride());
 
             // Font sharpness = max SDF atlas dimension. Higher = crisper when the translation
             // scales text up, at a VRAM cost. LAYOUT-NEUTRAL (text size unchanged). Options are

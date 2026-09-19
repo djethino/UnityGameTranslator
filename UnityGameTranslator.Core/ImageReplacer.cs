@@ -977,8 +977,24 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static int ApplyToScene()
         {
-            if (_loadedSprites.Count == 0) return 0;
             ResolveTypes();
+
+            // 🔴 **What is loaded is not what was loaded.** A replacement sprite is an object this
+            // mod created, and several ordinary things destroy it — reloading a translation
+            // (DropReplacements), a scene that takes its assets with it. The lookup still holds the
+            // entry, so nothing looks wrong; but a destroyed Unity object compares EQUAL to null,
+            // so every loop below skipped it with `continue` and this method applied nothing,
+            // silently (2026-09-19: image replacement could be switched off and never back on, and
+            // three attempts left not one line in the log).
+            //
+            // 🔴 So applying RECONCILES from the file rather than assuming the state some earlier
+            // act left behind — the recurring defect of this project, written down in the memory
+            // `project_reconcile_state_not_transitions`. It costs nothing when everything is in
+            // place: LoadAllReplacements re-imports exactly what is missing, and its test is the
+            // Unity-aware one, so a destroyed sprite counts as missing.
+            LoadAllReplacements();
+
+            if (_loadedSprites.Count == 0) return 0;
             int applied = ApplyToMaterials();
 
             foreach (var kvp in _replacements)
@@ -1057,6 +1073,13 @@ namespace UnityGameTranslator.Core
 
             if (applied > 0)
                 TranslatorCore.LogInfo($"[ImageReplacer] Applied {applied} image replacements to scene");
+            else
+                // ⚠ **Said, because its absence is what hid the defect above.** Three attempts at
+                // switching image replacement back on left the log completely empty, so there was
+                // nothing to tell "it ran and found nothing" from "it never ran". Both figures are
+                // measured, and together they name which of the two it was.
+                TranslatorCore.LogDebug($"[ImageReplacer] ApplyToScene: nothing applied "
+                                        + $"({_replacements.Count} rule(s), {_loadedSprites.Count} sprite(s) loaded)");
 
             return applied;
         }

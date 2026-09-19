@@ -73,6 +73,38 @@ namespace UnityGameTranslator.Core.UI
         private RectTransform _hoverHighlightRect;
         private RectTransform _selectedHighlightRect;
 
+        /// <summary>
+        /// The twelve edges of the bounding box, per highlight — the 3D form of the marker.
+        ///
+        /// 🔴 **A flat rectangle could not say what was picked in a 3D scene**, and worse, it was
+        /// wrong: the bounds were projected as four points of an XY rectangle, ignoring
+        /// extents.z, so an object seen at an angle collapsed to a line — measured 2026-09-19,
+        /// "Degenerate highlight rect 0,17x56,53 — hidden", which is why the highlight seemed
+        /// absent. Eight corners are projected now, and the twelve edges between them show the
+        /// volume and its orientation the way an editor does.
+        ///
+        /// ⚠ uGUI draws no arbitrary segment: each edge is a thin Image placed at the midpoint,
+        /// sized to the length and rotated to the angle. Hence a centre pivot on these, where the
+        /// flat rectangle keeps its corner pivot.
+        /// </summary>
+        private RectTransform[] _hoverEdges;
+        private RectTransform[] _selectedEdges;
+        private Image[] _hoverEdgeImages;
+        private Image[] _selectedEdgeImages;
+
+        /// <summary>The eight corners, reused between frames so a hover allocates nothing.</summary>
+        private readonly Vector3[] _corners = new Vector3[8];
+
+        private const float EdgeThickness = 2f;
+
+        /// <summary>The twelve edges of a box, as pairs of corner indices (bit 0 = x, 1 = y, 2 = z).</summary>
+        private static readonly int[] BoxEdges =
+        {
+            0,1, 2,3, 4,5, 6,7,   // along X
+            0,2, 1,3, 4,6, 5,7,   // along Y
+            0,4, 1,5, 2,6, 3,7,   // along Z
+        };
+
         // Colors for highlights (DevTools-style) — from the palette
         private static readonly Color HoverHighlightColor = UIStyles.GameHighlightHover;
         private static readonly Color SelectedHighlightColor = UIStyles.GameHighlightSelected;
@@ -139,6 +171,23 @@ namespace UnityGameTranslator.Core.UI
                 TranslatorCore.LogDebug($"[Inspector] Scene walked: {_raycastersCache.Length} graphic raycaster(s)");
             }
             return _raycastersCache;
+        }
+
+        /// <summary>True once the runtime has refused the frustum API; it is not asked again.</summary>
+        private static bool _frustumRefused;
+
+        private static Plane[] FrustumOf(Camera camera)
+        {
+            if (_frustumRefused || camera == null) return null;
+            try { return GeometryUtility.CalculateFrustumPlanes(camera); }
+            catch (Exception ex)
+            {
+                _frustumRefused = true;
+                TranslatorCore.LogWarning(
+                    $"[Inspector] This runtime refuses CalculateFrustumPlanes ({ex.Message}) — "
+                    + "picking by camera stays correct, and stays slow");
+                return null;
+            }
         }
 
         private static UnityEngine.Object[] Renderers()
@@ -372,7 +421,7 @@ namespace UnityGameTranslator.Core.UI
                         }
 
                         // Position hover highlight
-                        PositionHighlight(_hoverHighlightRect, _hoverHighlight, hoveredObject);
+                        PositionHighlight(_hoverHighlightRect, _hoverHighlight, _hoverEdges, _hoverEdgeImages, hoveredObject);
                     }
                 }
                 else
@@ -389,6 +438,7 @@ namespace UnityGameTranslator.Core.UI
                             Hovered?.Invoke(elementPath);
                         }
 
+                        HideEdges(_hoverEdgeImages);
                         PositionHighlightRect(_hoverHighlightRect, _hoverHighlight, elementRect);
                     }
                     else
@@ -447,7 +497,7 @@ namespace UnityGameTranslator.Core.UI
                     }
 
                     // Position selected highlight
-                    PositionHighlight(_selectedHighlightRect, _selectedHighlight, hitObject);
+                    PositionHighlight(_selectedHighlightRect, _selectedHighlight, _selectedEdges, _selectedEdgeImages, hitObject);
 
                     Picked?.Invoke(target);
                 }
@@ -458,7 +508,7 @@ namespace UnityGameTranslator.Core.UI
             {
                 // Re-position every ~10 frames to track moving elements
                 if (_frameSkip % 10 == 0)
-                    PositionHighlight(_selectedHighlightRect, _selectedHighlight, _lastSelectedObject);
+                    PositionHighlight(_selectedHighlightRect, _selectedHighlight, _selectedEdges, _selectedEdgeImages, _lastSelectedObject);
             }
         }
 
@@ -876,6 +926,20 @@ namespace UnityGameTranslator.Core.UI
                 int cullingMask = camera.cullingMask;
                 var all = Renderers();
 
+                // 🔴 **Reject what the camera cannot see, before projecting anything** — measured
+                // 2026-09-19: 329 ms average per hover, 57 143 objects walked each time, on a
+                // game holding 71 336 renderers. `isVisible` filtered barely a fifth of them,
+                // because it is true as soon as ANY camera sees the object, shadow and offscreen
+                // cameras included. The frustum of the camera being picked through is the honest
+                // question, asked once per hover rather than per object.
+                //
+                // ⚠ Behind a one-time refusal rather than a per-hover try: this returns an array
+                // Unity allocates, and IL2CPP has already cost this project a silent death over
+                // an array-taking API (see the memory on RectTransformUtility/GetWorldCorners).
+                // If it throws once, it is never asked again and the pass keeps its old behaviour
+                // — slow, but correct.
+                Plane[] frustum = FrustumOf(camera);
+
                 GameObject bestHit = null;
                 float bestArea = float.MaxValue;
 
@@ -896,6 +960,9 @@ namespace UnityGameTranslator.Core.UI
 
                     // Filter by camera culling mask
                     if ((cullingMask & (1 << rend.gameObject.layer)) == 0) continue;
+
+                    // Outside what this camera frames: nothing to pick, nothing to project.
+                    if (frustum != null && !GeometryUtility.TestPlanesAABB(frustum, rend.bounds)) continue;
 
                     if (IsOwnUI(rend.gameObject)) continue;
 
@@ -1017,47 +1084,133 @@ namespace UnityGameTranslator.Core.UI
             _selectedHighlightRect.pivot = new Vector2(0, 0);
             selectedObj.SetActive(false);
 
+            _hoverEdges = new RectTransform[12];
+            _hoverEdgeImages = new Image[12];
+            _selectedEdges = new RectTransform[12];
+            _selectedEdgeImages = new Image[12];
+            BuildEdges("HoverEdge", HoverHighlightColor, _hoverEdges, _hoverEdgeImages);
+            BuildEdges("SelectedEdge", SelectedHighlightColor, _selectedEdges, _selectedEdgeImages);
+
             // Start hidden
             _highlightCanvas.SetActive(false);
+        }
+
+        private void BuildEdges(string name, Color color, RectTransform[] rects, Image[] images)
+        {
+            for (int i = 0; i < 12; i++)
+            {
+                var obj = new GameObject(name + i);
+                obj.transform.SetParent(_highlightCanvas.transform, false);
+                var image = obj.AddComponent<Image>();
+                image.color = color;
+                // ⚠ Never a raycast target: twelve thin strips across the screen would swallow the
+                // clicks this tool exists to let through. The flat rectangle blocks them on
+                // purpose; a wireframe is a drawing, not a surface.
+                image.raycastTarget = false;
+                var rect = obj.GetComponent<RectTransform>();
+                rect.anchorMin = Vector2.zero;
+                rect.anchorMax = Vector2.zero;
+                rect.pivot = new Vector2(0.5f, 0.5f);
+                obj.SetActive(false);
+                rects[i] = rect;
+                images[i] = image;
+            }
+        }
+
+        /// <summary>The eight corners of a world bounding box, in screen space. False when the box is behind a perspective camera.</summary>
+        private bool ProjectBox(Bounds bounds, Camera camera)
+        {
+            if (camera == null) return false;
+            Vector3 c = bounds.center, e = bounds.extents;
+            if (e == Vector3.zero) return false;
+
+            for (int i = 0; i < 8; i++)
+            {
+                var corner = new Vector3(
+                    c.x + ((i & 1) == 0 ? -e.x : e.x),
+                    c.y + ((i & 2) == 0 ? -e.y : e.y),
+                    c.z + ((i & 4) == 0 ? -e.z : e.z));
+                Vector3 p = camera.WorldToScreenPoint(corner);
+                if (!camera.orthographic && p.z < 0) return false;
+                _corners[i] = p;
+            }
+            return true;
+        }
+
+        /// <summary>Draw the box: twelve strips between the projected corners.</summary>
+        private void ShowBox(RectTransform[] rects, Image[] images)
+        {
+            for (int i = 0; i < 12; i++)
+            {
+                Vector3 a = _corners[BoxEdges[i * 2]];
+                Vector3 b = _corners[BoxEdges[i * 2 + 1]];
+                float dx = b.x - a.x, dy = b.y - a.y;
+                float length = Mathf.Sqrt(dx * dx + dy * dy);
+
+                rects[i].anchoredPosition = new Vector2((a.x + b.x) * 0.5f, (a.y + b.y) * 0.5f);
+                rects[i].sizeDelta = new Vector2(Mathf.Max(length, EdgeThickness), EdgeThickness);
+                rects[i].localRotation = Quaternion.Euler(0f, 0f, Mathf.Atan2(dy, dx) * Mathf.Rad2Deg);
+                images[i].gameObject.SetActive(true);
+            }
+        }
+
+        private static void HideEdges(Image[] images)
+        {
+            if (images == null) return;
+            for (int i = 0; i < images.Length; i++)
+                images[i]?.gameObject.SetActive(false);
         }
 
         /// <summary>
         /// Position a highlight rect over a target GameObject's RectTransform bounds.
         /// Uses TransformPoint instead of GetWorldCorners (IL2CPP-safe: no array params).
         /// </summary>
-        private void PositionHighlight(RectTransform highlightRect, Image highlightImage, GameObject target)
+        private void PositionHighlight(RectTransform highlightRect, Image highlightImage,
+                                       RectTransform[] edges, Image[] edgeImages, GameObject target)
         {
             if (target == null || highlightRect == null || highlightImage == null)
             {
+                HideEdges(edgeImages);
                 highlightImage?.gameObject.SetActive(false);
                 return;
             }
 
-            Vector2 screenMin, screenMax;
-
+            // 🔴 **Flat marker for flat things, box for things with a volume** (2026-09-19). A
+            // Canvas element IS a rectangle on the screen, so a rectangle says everything about
+            // it; a mesh in the world has an orientation, and a rectangle around it says only
+            // "somewhere in there". The two never show at once.
             var targetRect = target.GetComponent<RectTransform>();
             if (targetRect != null)
             {
-                // Canvas UI: use RectTransform bounds
-                if (!GetScreenBounds(targetRect, _selectedCamera, out screenMin, out screenMax))
+                HideEdges(edgeImages);
+                if (!GetScreenBounds(targetRect, _selectedCamera, out var screenMin, out var screenMax))
                 {
                     highlightImage.gameObject.SetActive(false);
                     return;
                 }
-            }
-            else
-            {
-                // World-space object (SpriteRenderer): project bounds to screen
-                if (!GetScreenBoundsFromRenderer(target, _selectedCamera, out screenMin, out screenMax))
-                {
-                    highlightImage.gameObject.SetActive(false);
-                    return;
-                }
+                PositionHighlightRect(highlightRect, highlightImage,
+                                      UnityEngine.Rect.MinMaxRect(screenMin.x, screenMin.y,
+                                                                  screenMax.x, screenMax.y));
+                return;
             }
 
-            PositionHighlightRect(highlightRect, highlightImage,
-                                  UnityEngine.Rect.MinMaxRect(screenMin.x, screenMin.y,
-                                                              screenMax.x, screenMax.y));
+            // A renderer in the world: the eight corners of its bounds, projected through the
+            // camera being picked through — never Camera.main, which is what used to draw the
+            // marker somewhere else entirely.
+            var renderer = target.GetComponent<Renderer>();
+            var camera = _selectedCamera ?? Camera.main;
+            if (renderer != null && camera != null && ProjectBox(renderer.bounds, camera))
+            {
+                highlightImage.gameObject.SetActive(false);
+                ShowBox(edges, edgeImages);
+                return;
+            }
+
+            TranslatorCore.LogDebug(
+                $"[Inspector] '{target.name}' has neither a RectTransform nor a projectable renderer"
+                + (camera == null ? " (and no camera to project with)" : "") + " — highlight hidden");
+            HideEdges(edgeImages);
+            highlightImage.gameObject.SetActive(false);
         }
 
         /// <summary>
@@ -1092,6 +1245,8 @@ namespace UnityGameTranslator.Core.UI
         {
             if (_hoverHighlight != null) _hoverHighlight.gameObject.SetActive(false);
             if (_selectedHighlight != null) _selectedHighlight.gameObject.SetActive(false);
+            HideEdges(_hoverEdgeImages);
+            HideEdges(_selectedEdgeImages);
         }
 
         #endregion
@@ -1221,72 +1376,6 @@ namespace UnityGameTranslator.Core.UI
             }
         }
 
-        /// <summary>
-        /// Get screen-space bounds for a world-space object (SpriteRenderer).
-        /// Uses Renderer.bounds projected to screen via Camera.main.
-        /// </summary>
-        private static bool GetScreenBoundsFromRenderer(GameObject target, Camera picking,
-                                                        out Vector2 screenMin, out Vector2 screenMax)
-        {
-            screenMin = screenMax = Vector2.zero;
-            try
-            {
-                // 🔴 **The camera that PICKED, not Camera.main** (2026-09-19). This read
-                // Camera.main and nothing else: the object was found through the camera chosen in
-                // the dropdown and then drawn through a different one, so the rectangle landed
-                // beside the target or off screen — and on a game with no camera tagged MainCamera
-                // there was no rectangle at all. Choosing a camera exists precisely to inspect
-                // what THAT camera sees.
-                var camera = picking ?? Camera.main;
-                if (camera == null)
-                {
-                    TranslatorCore.LogDebug("[Inspector] No camera to project this renderer with — highlight hidden");
-                    return false;
-                }
-
-                // Try to get Renderer.bounds via reflection
-                var renderer = target.GetComponent<Renderer>();
-                if (renderer == null) return false;
-
-                var bounds = renderer.bounds;
-                if (bounds.size == Vector3.zero) return false;
-
-                Vector3 center = bounds.center;
-                Vector3 extents = bounds.extents;
-
-                // Project 4 corners to screen space
-                Vector3 s0 = camera.WorldToScreenPoint(center + new Vector3(-extents.x, -extents.y, 0));
-                Vector3 s1 = camera.WorldToScreenPoint(center + new Vector3(extents.x, -extents.y, 0));
-                Vector3 s2 = camera.WorldToScreenPoint(center + new Vector3(-extents.x, extents.y, 0));
-                Vector3 s3 = camera.WorldToScreenPoint(center + new Vector3(extents.x, extents.y, 0));
-
-                if (!camera.orthographic && s0.z < 0) return false; // Behind perspective camera
-
-                float minX = Mathf.Min(Mathf.Min(s0.x, s1.x), Mathf.Min(s2.x, s3.x));
-                float maxX = Mathf.Max(Mathf.Max(s0.x, s1.x), Mathf.Max(s2.x, s3.x));
-                float minY = Mathf.Min(Mathf.Min(s0.y, s1.y), Mathf.Min(s2.y, s3.y));
-                float maxY = Mathf.Max(Mathf.Max(s0.y, s1.y), Mathf.Max(s2.y, s3.y));
-
-                screenMin = new Vector2(minX, minY);
-                screenMax = new Vector2(maxX, maxY);
-                return true;
-            }
-            catch
-            {
-                return false;
-            }
-        }
-
-        /// <summary>
-        /// Select a UI Toolkit element under the pointer. True when one was taken.
-        ///
-        /// 🔴 The Canvas raycast returns nothing on a UI Toolkit interface, so before this the
-        /// inspector simply did not work on those games — clicking anywhere found nothing.
-        ///
-        /// ⚠ Everything after the selection already worked from the PATH alone: exclusions, font
-        /// rules and the text editor all match on it. Only the picking was uGUI's, so only the
-        /// picking had to be written again.
-        /// </summary>
         private bool SelectUIToolkitAt(Vector2 mousePos)
         {
             var element = UIToolkitSupport.PickAt(mousePos, out var screenRect);
@@ -1299,6 +1388,7 @@ namespace UnityGameTranslator.Core.UI
             _lastSelectedObject = null;   // there is no GameObject behind a VisualElement
             _lastSelectedSpriteObj = null;
 
+            HideEdges(_selectedEdgeImages);
             PositionHighlightRect(_selectedHighlightRect, _selectedHighlight, screenRect);
 
             var target = new PickedTarget

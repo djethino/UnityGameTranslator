@@ -52,7 +52,7 @@ namespace UnityGameTranslator.Core
     public sealed class ScreenDocument
     {
         /// <summary>The closed vocabulary. The same list as the schema's enum — a check says so.</summary>
-        public static readonly string[] Kinds = { "card", "stack", "row", "spacer", "label", "button", "status", "section", "field", "dropdown", "list", "tabs", "tab", "callout", "collapsible", "title", "checkbox", "toast", "slider", "choice", "chip", "splitter" };
+        public static readonly string[] Kinds = { "card", "stack", "row", "spacer", "label", "button", "status", "section", "field", "dropdown", "list", "tabs", "tab", "callout", "collapsible", "title", "checkbox", "toast", "slider", "choice", "chip", "splitter", "image" };
 
         /// <summary>What the help bar says over this piece, or null.</summary>
         public static string HelpOf(ScreenNode node) => node.Word("help");
@@ -288,6 +288,12 @@ namespace UnityGameTranslator.Core
                         if (node.Int("height") == null)
                             throw new ScreenDocumentException($"{Name}: the spacer '{node.Name}' has a height");
                         break;
+                    case "image":
+                        // The room the box keeps, whatever it holds: the picture is fitted inside
+                        // it, so what sits below never moves from one selection to the next.
+                        if (node.Int("height") == null)
+                            throw new ScreenDocumentException($"{Name}: the picture '{node.Name}' says how much room it keeps (height)");
+                        break;
                     case "dropdown":
                         // The choices are never written in a document: they come from a source
                         // every product shares, named here.
@@ -309,7 +315,7 @@ namespace UnityGameTranslator.Core
                     if (node.Kind == "label" || node.Kind == "button" || node.Kind == "spacer" || node.Kind == "status"
                         || node.Kind == "field" || node.Kind == "dropdown" || node.Kind == "list"
                         || node.Kind == "title" || node.Kind == "checkbox" || node.Kind == "toast" || node.Kind == "slider"
-                        || node.Kind == "choice" || node.Kind == "chip" || node.Kind == "splitter")
+                        || node.Kind == "choice" || node.Kind == "chip" || node.Kind == "splitter" || node.Kind == "image")
                         throw new ScreenDocumentException($"{Name}: a {node.Kind} holds nothing");
                     ReadInto(node.Children, children, set, node.Kind);
                 }

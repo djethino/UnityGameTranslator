@@ -74,6 +74,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         private ButtonHandle _exportOriginalBtn;
         private ButtonHandle _markReplaceBtn;
         private Host _imageActionsRow;
+        private ImageHandle _imagePreview;
         private LabelHandle _spriteInfoLabel;
 
         // UI elements — TextEdit mode
@@ -179,6 +180,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _cameraDropdown = _screen.Dropdown("CameraTarget");
             _hoveredPathLabel = _screen.Label("HoverPathValue");
             _selectedPathLabel = _screen.Label("SelectedPathValue");
+            _imagePreview = _screen.Picture("ImagePreview");
             _spriteInfoLabel = _screen.Label("SpriteInfo");
             _exclusionActionsRow = _screen.Host("ExclusionActionRow");
             _excludeThisBtn = _screen.Button("ExcludeThisBtn");
@@ -247,6 +249,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Toggle action button visibility per mode
             _exclusionActionsRow.Visible = !isImage && !isFontOverride && !isTextEdit;
             _imageActionsRow.Visible = isImage;
+            _imagePreview.Visible = isImage;
             _spriteInfoLabel.Visible = isImage;
             _textEditRow.Visible = false; // Shown only after clicking a text
 
@@ -356,18 +359,26 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
             else if (_currentMode == InspectorMode.BitmapReplace)
             {
-                if (!target.HasSprite && target.Engine == "UI Toolkit")
+                // The picture first, its name under it: one is recognised, the other is read — and
+                // the name is what the replacement rule is keyed on, so it stays.
+                //
+                // ⚠ The fact "there is no image here" is told ONCE, by the box, which is where the
+                // eye already is. It used to be said by this label instead ("No named image on this
+                // element."), which left two wordings of one fact three centimetres apart the day a
+                // box arrived above it.
+                if (target.HasSprite)
                 {
-                    // Said rather than left blank: an element can draw a bare texture, or a shape
-                    // with no picture at all, and neither has a name to match a replacement to.
-                    _spriteInfoLabel.Show("No named image on this element.");
-                    _spriteInfoLabel.Tone = Tone.Muted;
-                }
-                else
-                {
+                    _imagePreview.Show(target.SpriteObject);
                     _spriteInfoLabel.Show(
                         $"{target.SpriteComponentType}: \"{target.SpriteName}\" ({target.SpriteWidth}x{target.SpriteHeight})");
                     _spriteInfoLabel.Tone = Tone.Plain;
+                }
+                else
+                {
+                    // An element can draw a bare shape with no picture at all: there is nothing to
+                    // show and nothing to name.
+                    _imagePreview.Explain("No image on this element.");
+                    _spriteInfoLabel.Show("");
                 }
 
                 if (isCanvasOrWorld)
@@ -414,6 +425,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _markReplaceBtn.Enabled = false;
             _cancelBtn.Enabled = false;
             _spriteInfoLabel.Show("");
+            _imagePreview.Clear();
             _picker.ClearSelection();
 
             // Clear TextEdit UI
@@ -469,16 +481,23 @@ namespace UnityGameTranslator.Core.UI.Panels
                 return;
             }
 
-            // If not already marked, mark it first
-            if (!ImageReplacer.GetAll().ContainsKey(spriteName))
-            {
-                MarkCurrentForReplace(spriteName);
-            }
+            // Exporting writes the rule too — the file it saves IS the one the game will load back,
+            // so there would be nothing to load it into otherwise.
+            //
+            // ⚠ **And it SAYS so.** Reported by somebody who could no longer remember whether he had
+            // pressed Mark for Replace: the rule had appeared in the list on its own. Since the 3D
+            // textures it reaches further still — every object sharing that texture — so a silent
+            // one is worse than it was. Told rather than made deliberate: the act is right, only
+            // its silence was wrong, and a second click to confirm what the first already implies
+            // is a step that teaches nothing.
+            bool marked = !ImageReplacer.GetAll().ContainsKey(spriteName);
+            if (marked) MarkCurrentForReplace(spriteName);
 
             var exportedPath = ImageReplacer.ExportOriginal(_lastSelectedSpriteObj, spriteName);
             if (exportedPath != null)
             {
-                _statusLabel.Show($"Exported: {System.IO.Path.GetFileName(exportedPath)}");
+                _statusLabel.Show((marked ? Tr("Exported and marked for replacement:") : Tr("Exported:"))
+                                  + $" {System.IO.Path.GetFileName(exportedPath)}");
                 _statusLabel.Tone = Tone.Success;
                 TranslatorCore.SaveCache();
             }

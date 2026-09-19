@@ -984,6 +984,71 @@ namespace UnityGameTranslator.Core
             }
         }
 
+        /// <summary>
+        /// The thing the game draws, as a sprite something else can draw too — for SHOWING it, never
+        /// for reading its pixels.
+        ///
+        /// 🔴 **No readable copy, and that is the whole point.** Readability is a CPU matter: only
+        /// reading pixels back (<see cref="EncodeToPngSafe"/>, and so exporting) needs it, and paying
+        /// for it costs a blit through a render target on a 2048² texture. Drawing does not: the
+        /// picture is already on the card. So a preview of what is on screen costs nothing when the
+        /// game hands a Sprite — the very same object is shown — and one Sprite.Create otherwise.
+        ///
+        /// ⚠ Two shapes arrive here, told apart exactly as <c>ImageReplacer.ExportOriginal</c> tells
+        /// them apart: a Sprite (it has a <c>textureRect</c>, so it may be one region of an atlas and
+        /// is shown as the game shows it), or a raw texture — a RawImage's, or the one painted on a
+        /// 3D material. On IL2CPP neither arrives as its own type, hence Il2CppCast both times.
+        ///
+        /// ⚠ **Whoever asks owns what comes back** when <paramref name="mine"/> says so: a sprite
+        /// made here is destroyed by the caller when it shows something else. A sprite that came from
+        /// the game is the GAME's, and destroying it would take the picture off the object.
+        /// </summary>
+        /// <param name="why">Why nothing can be shown, in the interface's words; null when it can.</param>
+        /// <param name="mine">True when what comes back was made here and is the caller's to destroy.</param>
+        public static object SpriteForDisplay(object spriteObj, out string why, out bool mine)
+        {
+            why = null;
+            mine = false;
+            if (spriteObj == null) { why = "Nothing to show."; return null; }
+
+            try
+            {
+                // A Sprite says so by having a region: shown as it is, atlas region included.
+                var type = spriteObj.GetType();
+                if (type.GetProperty("textureRect", BindingFlags.Public | BindingFlags.Instance) != null)
+                {
+                    var sprite = spriteObj as Sprite ?? TypeHelper.Il2CppCast(spriteObj, typeof(Sprite)) as Sprite;
+                    if (sprite != null) return sprite;
+                    why = "This image cannot be shown here (check the log).";
+                    TranslatorCore.LogWarning($"[TextureUtils] SpriteForDisplay: {type.Name} has a textureRect and is not a Sprite");
+                    return null;
+                }
+
+                var texture = spriteObj as Texture2D ?? TypeHelper.Il2CppCast(spriteObj, typeof(Texture2D)) as Texture2D;
+                if (texture == null)
+                {
+                    why = $"This is a {type.Name}, which cannot be shown as a picture.";
+                    return null;
+                }
+
+                var made = CreateSpriteSafe(texture, Compat.MakeRect(0, 0, texture.width, texture.height),
+                                            new Vector2(0.5f, 0.5f), 100f, Vector4.zero);
+                if (made == null)
+                {
+                    why = "This image cannot be shown here (check the log).";
+                    return null;
+                }
+                mine = true;
+                return made;
+            }
+            catch (Exception ex)
+            {
+                why = "This image cannot be shown here (check the log).";
+                TranslatorCore.LogWarning($"[TextureUtils] SpriteForDisplay failed: {ex.GetType().Name}: {ex.Message}");
+                return null;
+            }
+        }
+
         #endregion
 
         #region Sprite Property Helpers (NEW)

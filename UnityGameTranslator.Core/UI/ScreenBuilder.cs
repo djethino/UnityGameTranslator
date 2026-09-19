@@ -72,6 +72,9 @@ namespace UnityGameTranslator.Core.UI
         internal void Add(string name, ChoiceHandle choice) => _choices[name] = choice;
         private readonly Dictionary<string, ChoiceHandle> _choices = new Dictionary<string, ChoiceHandle>(StringComparer.Ordinal);
         public ChoiceHandle Choice(string name) => _choices.TryGetValue(name, out var c) ? c : throw new ScreenDocumentException($"{_name}: no choice named '{name}'");
+        internal void Add(string name, ImageHandle picture) => _pictures[name] = picture;
+        private readonly Dictionary<string, ImageHandle> _pictures = new Dictionary<string, ImageHandle>(StringComparer.Ordinal);
+        public ImageHandle Picture(string name) => _pictures.TryGetValue(name, out var p) ? p : throw new ScreenDocumentException($"{_name}: no picture named '{name}'");
         internal void Add(string name, TagChipHandle chip) => _chips[name] = chip;
         private readonly Dictionary<string, TagChipHandle> _chips = new Dictionary<string, TagChipHandle>(StringComparer.Ordinal);
         public TagChipHandle Chip(string name) => _chips.TryGetValue(name, out var c) ? c : throw new ScreenDocumentException($"{_name}: no chip named '{name}'");
@@ -348,6 +351,16 @@ namespace UnityGameTranslator.Core.UI
                 case "toast":
                     built.Add(node.Name, Toasts.Create(parent, node.Name));
                     break;
+                case "image":
+                {
+                    // Built empty: what it shows belongs to whatever the screen is shown for, and
+                    // the box keeps the room the document gives it either way.
+                    var picture = Images.Create(parent, node.Name, node.Int("height") ?? 0);
+                    picture.Visible = node.StartsVisible;
+                    built.Add(node.Name, picture);
+                    Describe(site, node, picture);
+                    break;
+                }
                 case "chip":
                 {
                     // The tag is data, written by the code (Retag); built blank and hidden.

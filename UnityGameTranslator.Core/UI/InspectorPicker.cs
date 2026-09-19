@@ -312,7 +312,23 @@ namespace UnityGameTranslator.Core.UI
                 bool aroundTheEye = hit.distance < camera.nearClipPlane;
                 if (!aroundTheEye && !hit.collider.isTrigger)
                 {
-                    blockedAt = hit.distance;
+                    // 🔴 **How far the ray is blocked is where it LEAVES this collider, not where
+                    // it enters.** A collision volume is very often a cube wrapped AROUND a piece
+                    // of furniture, so the mesh one is aiming at sits inside it: measured from the
+                    // near face, that mesh counts as "behind" and is thrown away. On 2026-09-19
+                    // that rejected every object in the flat at once and left only the flat decals
+                    // on the walls, which carry no collider — "no more 3D objects at all", and the
+                    // log said it outright: hover 'Quad' via a box in front of the collider
+                    // 'Cube (2)'.
+                    //
+                    // ⚠ The far face is the honest boundary: what is beyond the volume is hidden by
+                    // it, what is inside it is the thing it wraps.
+                    var shell = hit.collider.bounds;
+                    float leaves = RayBox.Reach(origin.x, origin.y, origin.z,
+                                                ray.direction.x, ray.direction.y, ray.direction.z,
+                                                shell.min.x, shell.min.y, shell.min.z,
+                                                shell.max.x, shell.max.y, shell.max.z);
+                    blockedAt = leaves > hit.distance ? leaves : hit.distance;
                     // What the ray actually struck, kept for the line logged on a click: the gap
                     // between this and what is picked is where three rounds of wrong diagnosis
                     // went, and it costs one string to close it.

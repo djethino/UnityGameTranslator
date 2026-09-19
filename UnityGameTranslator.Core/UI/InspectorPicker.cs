@@ -213,6 +213,25 @@ namespace UnityGameTranslator.Core.UI
             _frustum[i] = a; _frustum[i + 1] = b; _frustum[i + 2] = c; _frustum[i + 3] = d;
         }
 
+        /// <summary>True once this runtime has shown it carries no physics; not asked again.</summary>
+        private static bool _physicsRefused;
+
+        /// <summary>
+        /// The first surface the ray meets, or null when it meets none.
+        ///
+        /// 🔴 **Its own method on purpose.** IL2CPP resolves a missing method when it compiles the
+        /// method that NAMES it, so a game shipping no PhysicsModule throws as the caller steps
+        /// into this one — inside the caller's try, which is the only place a guard can work. A
+        /// try written HERE would never run. Measured twice on 2026-09-19 with GeometryUtility.
+        /// </summary>
+        private static GameObject PhysicsPick(Camera camera, Vector3 screenPosition)
+        {
+            RaycastHit hit;
+            if (!Physics.Raycast(camera.ScreenPointToRay(screenPosition), out hit, camera.farClipPlane))
+                return null;
+            return hit.collider != null ? hit.collider.gameObject : null;
+        }
+
         /// <summary>Is this box inside what the camera frames? Plain arithmetic, no Unity helper.</summary>
         private static bool InFrustum(Bounds bounds)
         {
@@ -966,6 +985,32 @@ namespace UnityGameTranslator.Core.UI
             // because their GraphicRaycaster needs the correct camera context)
             var canvasHit = RaycastWorldSpaceCanvases(camera, screenPosition);
             if (canvasHit != null) return canvasHit;
+
+            // 🔴 **The ray first: it is the only thing that knows what is IN FRONT.** The bounds
+            // pass below asks "is the cursor inside this box on screen", which a wall does not
+            // stop — hence objects picked through walls, and, once sorted by depth instead, an
+            // enclosing box winning everywhere including off screen. Two symptoms, one limit: a
+            // bounding box cannot answer occlusion. A ray can, and is indexed, so it also ends
+            // the walk over every renderer in the scene.
+            //
+            // ⚠ It sees only what carries a collider, so the bounds pass stays as the fallback
+            // rather than being replaced: plenty of decorative meshes, and most 3D text, have none.
+            if (!_physicsRefused)
+            {
+                GameObject viaRay = null;
+                try { viaRay = PhysicsPick(camera, screenPosition); }
+                catch (Exception ex)
+                {
+                    _physicsRefused = true;
+                    TranslatorCore.LogWarning(
+                        $"[Inspector] This game ships no usable physics ({ex.Message}) — picking "
+                        + "falls back to bounding boxes, which cannot see what is in front");
+                }
+
+                if (viaRay != null && !IsOwnUI(viaRay)
+                    && (_currentMode != InspectorMode.BitmapReplace || ImageReplacer.HasImageComponent(viaRay)))
+                    return viaRay;
+            }
 
             // Then: bounds check for renderers visible to this camera
             try

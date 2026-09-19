@@ -60,6 +60,14 @@
       <HintPath>..\extlibs\Unity\UnityEngine.CoreModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <!-- Physics.Raycast, so a 3D object is picked by what the ray actually meets instead of being
+         guessed from bounding boxes, which cannot answer occlusion. Reference only, like every
+         Unity module here: a game shipping no physics makes InspectorPicker fall back — once for
+         the session — to the bounding-box pass. -->
+    <Reference Include="UnityEngine.PhysicsModule">
+      <HintPath>..\extlibs\Unity\UnityEngine.PhysicsModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
     <Reference Include="UnityEngine.IMGUIModule">
       <HintPath>..\extlibs\Unity\UnityEngine.IMGUIModule.dll</HintPath>
       <Private>false</Private>

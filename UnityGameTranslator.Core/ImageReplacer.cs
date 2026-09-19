@@ -752,6 +752,73 @@ namespace UnityGameTranslator.Core
         /// Remember a component's original sprite/texture before replacing it, keyed by instance id.
         /// Used by RestoreAllOriginalImages to revert when the debug toggle is turned off.
         /// </summary>
+        /// <summary>
+        /// Textures painted on 3D materials, replaced BY NAME wherever they appear.
+        ///
+        /// 🔴 **Deliberately not keyed on a hierarchy path**, unlike the 2D pass above. A rule
+        /// says "the texture called X becomes this PNG" and holds everywhere, because that is
+        /// what translating means (user, 2026-09-19): if two objects show the same poster,
+        /// translating it once must change both. Leaving one in English beside a translated one
+        /// is the defect, not a side effect — which is also why this writes to `sharedMaterial`
+        /// rather than `material`, whose read would clone it for a single object.
+        ///
+        /// ⚠ **One sweep for all the rules, never one per rule.** A scene holds tens of thousands
+        /// of renderers; asking the dictionary per material is a hash lookup, walking the scene
+        /// per rule is the same walk again and again.
+        ///
+        /// ⚠ Restoration costs nothing new: TrackReplacement keeps the original value of a named
+        /// property on a Unity object, and a Material with "mainTexture" is exactly that, so
+        /// RestoreAllOriginalImages puts the game's own picture back without knowing about any of
+        /// this.
+        /// </summary>
+        private static int ApplyToMaterials()
+        {
+            int applied = 0;
+            UnityEngine.Object[] all;
+            try { all = TypeHelper.FindAllObjectsOfType(typeof(Renderer)); }
+            catch (Exception ex)
+            {
+                TranslatorCore.LogWarning($"[ImageReplacer] Could not enumerate renderers: {ex.Message}");
+                return 0;
+            }
+            if (all == null) return 0;
+
+            foreach (var obj in all)
+            {
+                try
+                {
+                    var rend = obj as Renderer ?? TypeHelper.Il2CppCast(obj, typeof(Renderer)) as Renderer;
+                    if (rend == null) continue;
+
+                    var material = rend.sharedMaterial;
+                    if (material == null) continue;
+
+                    var current = material.mainTexture;
+                    if (current == null) continue;
+
+                    string name = current.name;
+                    if (string.IsNullOrEmpty(name) || !_replacements.ContainsKey(name)) continue;
+
+                    var sprite = GetReplacement(name);
+                    if (sprite == null || sprite.texture == null) continue;
+                    if (ReferenceEquals(current, sprite.texture)) continue;   // already ours
+
+                    var prop = material.GetType().GetProperty("mainTexture",
+                                   BindingFlags.Public | BindingFlags.Instance);
+                    if (prop == null || prop.SetMethod == null) continue;
+
+                    TrackReplacement(material, prop, "mainTexture");
+                    prop.SetValue(material, sprite.texture, null);
+                    applied++;
+                }
+                catch { }
+            }
+
+            if (applied > 0)
+                TranslatorCore.LogInfo($"[ImageReplacer] {applied} material texture(s) replaced");
+            return applied;
+        }
+
         private static void TrackReplacement(object component, PropertyInfo prop, string propertyName)
         {
             try
@@ -912,7 +979,7 @@ namespace UnityGameTranslator.Core
         {
             if (_loadedSprites.Count == 0) return 0;
             ResolveTypes();
-            int applied = 0;
+            int applied = ApplyToMaterials();
 
             foreach (var kvp in _replacements)
             {

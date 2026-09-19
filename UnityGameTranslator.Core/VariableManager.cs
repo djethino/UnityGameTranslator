@@ -642,8 +642,14 @@ namespace UnityGameTranslator.Core
             // method of its own (SkippedAssembly, TypesOf, ScanOneType) — same swallowing as
             // before, expressed where it belongs.
             float budget = TranslatorScanner.DeliberateBudgetMs();
-            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+            // ⚠ The count is part of the progress, not decoration: a line that says only
+            // "Scanning…" is indistinguishable from a line left over from a scan that finished —
+            // which is exactly how a session got closed mid-scan (2026-09-19).
+            var assemblies = AppDomain.CurrentDomain.GetAssemblies();
+            int asmDone = 0;
+            foreach (var asm in assemblies)
             {
+                asmDone++;
                 if (SkippedAssembly(asm, skipPrefixes)) continue;
 
                 foreach (var type in TypesOf(asm))
@@ -654,7 +660,7 @@ namespace UnityGameTranslator.Core
                     typesSeen++;
 
                     if (frame.Elapsed.TotalMilliseconds < budget) continue;
-                    progress?.Invoke($"Scanning… {results.Count} found so far");
+                    progress?.Invoke($"Scanning code… {asmDone}/{assemblies.Length} • {results.Count} found");
                     yield return null;
                     frame.Restart();
                     budget = TranslatorScanner.DeliberateBudgetMs();
@@ -1137,6 +1143,7 @@ namespace UnityGameTranslator.Core
             int read = 0, skipped = 0;
 
             var pools = InstancePools();
+            int total = (pools[0]?.Length ?? 0) + (pools[1]?.Length ?? 0);
             TranslatorCore.LogInfo($"[VariableManager] Instance pass: {pools[0]?.Length ?? 0} behaviours + {pools[1]?.Length ?? 0} scriptable objects enumerated in {sw.ElapsedMilliseconds} ms");
 
             foreach (var pool in pools)
@@ -1155,7 +1162,7 @@ namespace UnityGameTranslator.Core
                     else skipped++;
 
                     if (frame.Elapsed.TotalMilliseconds < budget) continue;
-                    progress?.Invoke($"Scanning… {results.Count} found so far ({read} object(s) read)");
+                    progress?.Invoke($"Scanning objects… {read + skipped}/{total} • {results.Count} found");
                     yield return null;
                     frame.Restart();
                     budget = TranslatorScanner.DeliberateBudgetMs();

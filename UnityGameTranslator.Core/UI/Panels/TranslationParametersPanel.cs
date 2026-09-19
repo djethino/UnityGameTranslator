@@ -128,6 +128,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         private FieldHandle _scanValueInput;
         private ScrollList _scanResultsList;
         private bool _isScanning;
+        private ButtonHandle _scanBtn;
 
         // Apply button tracking
         private ButtonHandle _applyBtn;
@@ -255,6 +256,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // Variables
             _scanValueInput = _screen.Field("ScanValueInput");
+            _scanBtn = _screen.Button("ScanBtn");
             _scanResultsList = _screen.List("ScanResultsScroll");
             _variablesList = _screen.List("VarsScroll");
             _variablesStatus = _screen.Label("VarsStatus");
@@ -2148,9 +2150,25 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         #region Variables Tab
 
+        /// <summary>
+        /// 🔴 **The button is where the eye is**, so it is the button that says a scan is running
+        /// — and the button that stops it. Reported 2026-09-19: the progress line went to
+        /// VarsStatus, the LAST child of the card, below two lists and two spacers, while Scan
+        /// sits at the top; somebody pressed Scan, saw nothing move where they were looking,
+        /// concluded it had finished and closed the window mid-scan.
+        ///
+        /// ⚠ One button, two verbs, as the mod-update box already does ("Download" / "View
+        /// Release"): the word follows what pressing it will actually do. It is not a second door
+        /// to the same act — it is the same control, refusing to lie about its state.
+        /// </summary>
         private void OnScanClicked()
         {
-            if (_isScanning) return;
+            if (_isScanning)
+            {
+                VariableManager.CancelScan();
+                EndScanning("Scan cancelled", Tone.Secondary);
+                return;
+            }
 
             string value = _scanValueInput?.Text?.Trim();
             if (string.IsNullOrEmpty(value))
@@ -2161,6 +2179,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
 
             _isScanning = true;
+            if (_scanBtn != null) _scanBtn.Label = "Cancel";
             _variablesStatus.Say("Scanning...");
             _variablesStatus.Tone = Tone.Secondary;
 
@@ -2230,7 +2249,17 @@ namespace UnityGameTranslator.Core.UI.Panels
                 _variablesStatus.Tone = Tone.Error;
             }
 
+            EndScanning(null, Tone.Secondary);
+        }
+
+        /// <summary>Back to rest: the button offers Scan again, and a new one may start.</summary>
+        private void EndScanning(string said, Tone tone)
+        {
             _isScanning = false;
+            if (_scanBtn != null) _scanBtn.Label = "Scan";
+            if (said == null) return;
+            _variablesStatus.Say(said);
+            _variablesStatus.Tone = tone;
         }
 
         private void RefreshVariablesList()
@@ -2302,7 +2331,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // would leave it crawling over a scene nobody is watching — and would leave the
                 // guard latched, since the flag is cleared where the results arrive.
                 VariableManager.CancelScan();
-                _isScanning = false;
+                EndScanning(null, Tone.Secondary);
             }
         }
 

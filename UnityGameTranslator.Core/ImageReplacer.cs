@@ -895,6 +895,30 @@ namespace UnityGameTranslator.Core
         /// </summary>
         private static string[] SlotNamesOf(Material material) => material.GetTexturePropertyNames();
 
+        /// <summary>
+        /// How many properties this material's shader declares — asked one by one, so no array is
+        /// ever returned and nothing of the stripped family is named.
+        ///
+        /// 🔴 **The door left untried until the log closed the other two** (2026-09-19). A real game
+        /// answered MissingMethodException to GetTexturePropertyNames AND to sharedMaterials, so
+        /// slot discovery fell back to a hand-written list of the usual names — and a game whose
+        /// shaders call their albedo something else then has, as far as this class can tell, no
+        /// picture at all. That is what made a television unpickable in the image inspector while
+        /// the text editor saw it perfectly.
+        /// </summary>
+        private static int ShaderPropertyCount(Material material) => material.shader.GetPropertyCount();
+
+        /// <inheritdoc cref="ShaderPropertyCount"/>
+        private static string ShaderPropertyName(Material material, int index)
+            => material.shader.GetPropertyName(index);
+
+        /// <inheritdoc cref="ShaderPropertyCount"/>
+        private static bool ShaderPropertyIsTexture(Material material, int index)
+            => material.shader.GetPropertyType(index) == UnityEngine.Rendering.ShaderPropertyType.Texture;
+
+        // Noted once: this game's shaders cannot be asked what they declare.
+        private static bool _shaderAskUnavailable;
+
         /// <inheritdoc cref="SlotNamesOf"/>
         private static Texture SlotTexture(Material material, string slot)
             => material.HasProperty(slot) ? material.GetTexture(slot) : null;
@@ -1020,6 +1044,33 @@ namespace UnityGameTranslator.Core
 
             if (_slotReadUnavailable) return found;
 
+            // ① Ask the shader itself, property by property: nothing here returns an array.
+            if (!_shaderAskUnavailable)
+            {
+                try
+                {
+                    int count = ShaderPropertyCount(material);
+                    for (int i = 0; i < count; i++)
+                    {
+                        if (!ShaderPropertyIsTexture(material, i)) continue;
+                        string slotName = ShaderPropertyName(material, i);
+                        if (string.IsNullOrEmpty(slotName)) continue;
+                        var carried = SlotTexture(material, slotName);
+                        if (carried == null) continue;
+                        if (!seen.Add(carried.GetInstanceID())) continue;
+                        found.Add(new MaterialTexture { Slot = slotName, Texture = carried });
+                    }
+                    return found;
+                }
+                catch (Exception ex)
+                {
+                    _shaderAskUnavailable = true;
+                    TranslatorCore.LogInfo($"[ImageReplacer] This game's shaders cannot be asked what they declare "
+                                           + $"({ex.GetType().Name}); falling back to the named slots");
+                }
+            }
+
+            // ② The array of names, then ③ the conventional list.
             string[] slots = null;
             if (!_slotNamesUnavailable)
             {

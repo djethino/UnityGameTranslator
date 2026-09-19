@@ -695,6 +695,20 @@ namespace UnityGameTranslator.Core.UI
                         if (path != _lastHoveredPath)
                         {
                             _lastHoveredPath = path;
+
+                            // 🔴 **One line per CHANGE of hover, naming the decision.** What is
+                            // reported about picking is always what is hovered, and nothing said
+                            // what produced it: which of the two passes answered, what the ray
+                            // actually struck, and what was taken from that. Four rounds of fixing
+                            // on 2026-09-19 were guesses for want of exactly this. Not per frame —
+                            // per change, which is the event the person is describing.
+                            if (_selectedCamera != null)
+                                TranslatorCore.LogDebug(
+                                    $"[Inspector] hover '{hoveredObject.name}' via "
+                                    + (_lastPathWasRay
+                                        ? $"the ray, which struck the collider '{_lastColliderName}'"
+                                        : $"a box in front of the collider '{_lastColliderName}'"));
+
                             Hovered?.Invoke(path);
                         }
 

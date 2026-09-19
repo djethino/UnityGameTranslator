@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Reflection;
 using System.Runtime.CompilerServices;
@@ -159,7 +159,16 @@ namespace UnityGameTranslator.Core.UI
         /// something is found again.
         /// </summary>
         private static UnityEngine.Object[] _raycastersCache;
-        private static UnityEngine.Object[] _renderersCache;
+
+        /// <summary>
+        /// The scene's renderers, ALREADY as renderers.
+        ///
+        /// 🔴 **Cast once per scene, not once per object per hover.** On IL2CPP an object arrives as
+        /// a base proxy and reaching the derived type goes through reflection
+        /// (<c>TypeHelper.Il2CppCast</c>); doing that inside the hover loop meant 33 380 reflective
+        /// casts every time the pointer moved, which is most of what a hover cost.
+        /// </summary>
+        private static Renderer[] _renderersCache;
 
         /// <summary>Set once a rebuild has been spent on the current run of empty hovers.</summary>
         private bool _rebuiltOnMiss;
@@ -274,8 +283,10 @@ namespace UnityGameTranslator.Core.UI
             return _currentMode != InspectorMode.BitmapReplace || ImageReplacer.HasImageComponent(go);
         }
 
-        private static GameObject PhysicsPick(Camera camera, Vector3 screenPosition, Func<GameObject, bool> pickable)
+        /// <param name="blockedAt">How far away the solid thing is, so the box pass may only win nearer than it.</param>
+        private static GameObject PhysicsPick(Camera camera, Vector3 screenPosition, out float blockedAt)
         {
+            blockedAt = float.MaxValue;
             var ray = camera.ScreenPointToRay(screenPosition);
             Vector3 origin = ray.origin;
             float remaining = camera.farClipPlane;
@@ -301,8 +312,8 @@ namespace UnityGameTranslator.Core.UI
                 bool aroundTheEye = hit.distance < camera.nearClipPlane;
                 if (!aroundTheEye && !hit.collider.isTrigger)
                 {
-                    var landed = Drawn(hit.collider.gameObject);
-                    return pickable == null || pickable(landed) ? landed : null;
+                    blockedAt = hit.distance;
+                    return Drawn(hit.collider.gameObject);
                 }
 
                 float step = hit.distance + PastTheHit;
@@ -397,15 +408,21 @@ namespace UnityGameTranslator.Core.UI
             return true;
         }
 
-        private static UnityEngine.Object[] Renderers()
+        private static Renderer[] Renderers()
         {
             DropIfSceneChanged();
-            if (_renderersCache == null)
+            if (_renderersCache != null) return _renderersCache;
+
+            var found = TypeHelper.FindAllObjectsOfType(typeof(Renderer)) ?? new UnityEngine.Object[0];
+            var kept = new List<Renderer>(found.Length);
+            foreach (var obj in found)
             {
-                _renderersCache = TypeHelper.FindAllObjectsOfType(typeof(Renderer))
-                                  ?? new UnityEngine.Object[0];
-                TranslatorCore.LogDebug($"[Inspector] Scene walked: {_renderersCache.Length} renderer(s)");
+                if (obj == null) continue;
+                var rend = obj as Renderer ?? TypeHelper.Il2CppCast(obj, typeof(Renderer)) as Renderer;
+                if (rend != null) kept.Add(rend);
             }
+            _renderersCache = kept.ToArray();
+            TranslatorCore.LogDebug($"[Inspector] Scene walked: {_renderersCache.Length} renderer(s)");
             return _renderersCache;
         }
 
@@ -433,7 +450,8 @@ namespace UnityGameTranslator.Core.UI
         // How often the ray answered on its own, against how often the whole-scene pass had to.
         // The second figure is the expensive one: it is the pass that walks every renderer.
         private static int _probeRayHits;
-        private static int _probeFallbacks;
+        /// <summary>Picks won by a box in front of the nearest solid thing — what has no collider.</summary>
+        private static int _probeBoxWins;
 
         /// <summary>
         /// Which of the two answered last. Said on every CLICK — not on every hover, which would
@@ -450,7 +468,7 @@ namespace UnityGameTranslator.Core.UI
             _probeWorst = 0;
             _probeWalkedTotal = 0;
             _probeRayHits = 0;
-            _probeFallbacks = 0;
+            _probeBoxWins = 0;
         }
 
         private void NoteProbe(long ticks)
@@ -469,7 +487,7 @@ namespace UnityGameTranslator.Core.UI
                 $"[INSPECTOR-PROBE] {where}: {_probeTicks * toMs / _probeCount:F2} ms avg, "
                 + $"{_probeWorst * toMs:F2} ms worst, over {_probeCount} hovers — "
                 + $"{_probeWalkedTotal / _probeCount} object(s) walked each | "
-                + $"ray {_probeRayHits}, whole-scene pass {_probeFallbacks}");
+                + $"ray {_probeRayHits}, box in front {_probeBoxWins}");
             ResetProbe();
         }
 
@@ -1177,19 +1195,21 @@ namespace UnityGameTranslator.Core.UI
             var canvasHit = RaycastWorldSpaceCanvases(camera, screenPosition);
             if (canvasHit != null) return canvasHit;
 
-            // 🔴 **The ray first: it is the only thing that knows what is IN FRONT.** The bounds
-            // pass below asks "is the cursor inside this box on screen", which a wall does not
-            // stop — hence objects picked through walls, and, once sorted by depth instead, an
-            // enclosing box winning everywhere including off screen. Two symptoms, one limit: a
-            // bounding box cannot answer occlusion. A ray can, and is indexed, so it also ends
-            // the walk over every renderer in the scene.
+            // 🔴 **The two passes TOGETHER, because each knows half the answer** (2026-09-19, after
+            // three rounds of making them take turns). The ray knows what is in front, and nothing
+            // else does — a bounding box cannot answer occlusion. But the ray only sees colliders,
+            // and plenty of what one wants to point at carries none: a television could not be
+            // picked while the bin beside it could, because the bin has a collider and the set
+            // dressing behind them — a wall, a road — is what the ray reached instead.
             //
-            // ⚠ It sees only what carries a collider, so the bounds pass stays as the fallback
-            // rather than being replaced: plenty of decorative meshes, and most 3D text, have none.
+            // So: the ray gives the distance of the nearest solid thing, and the box pass may only
+            // win NEARER than that. What is drawn without a collider becomes reachable, and nothing
+            // behind a wall ever can be.
+            float blockedAt = float.MaxValue;
+            GameObject blocker = null;
             if (!_physicsRefused)
             {
-                GameObject viaRay = null;
-                try { viaRay = PhysicsPick(camera, screenPosition, Pickable); }
+                try { blocker = PhysicsPick(camera, screenPosition, out blockedAt); }
                 catch (Exception ex)
                 {
                     _physicsRefused = true;
@@ -1197,10 +1217,6 @@ namespace UnityGameTranslator.Core.UI
                         $"[Inspector] This game ships no usable physics ({ex.Message}) — picking "
                         + "falls back to bounding boxes, which cannot see what is in front");
                 }
-
-                if (viaRay != null) { _probeRayHits++; _lastPathWasRay = true; return viaRay; }
-                _probeFallbacks++;
-                _lastPathWasRay = false;
             }
 
             // Then: bounds check for renderers visible to this camera
@@ -1225,63 +1241,66 @@ namespace UnityGameTranslator.Core.UI
                 float bestDepth = float.MaxValue;
                 float bestArea = float.MaxValue;
 
-                foreach (var obj in all)
+                // 🔴 **Geometry first, identity last.** Every test below that names `gameObject`
+                // is an interop call on IL2CPP — the proxy has to be found for each one — and they
+                // used to run before the box was even looked at, on all 33 380 renderers. The
+                // cheap questions, and the ones that reject almost everything, are the geometric
+                // ones: does the camera frame it, does the line of sight go through it.
+                foreach (var rend in all)
                 {
-                    if (obj == null) continue;
+                    if (rend == null) continue;
                     _probeWalked++;
 
-                    Renderer rend = obj as Renderer;
-                    if (rend == null)
-                    {
-                        var casted = TypeHelper.Il2CppCast(obj, typeof(Renderer));
-                        rend = casted as Renderer;
-                    }
-                    if (rend == null || rend.gameObject == null) continue;
                     if (!rend.enabled || !rend.isVisible) continue;
-                    if (!rend.gameObject.activeInHierarchy) continue;
 
-                    // Filter by camera culling mask
-                    if ((cullingMask & (1 << rend.gameObject.layer)) == 0) continue;
+                    var bounds = rend.bounds;
+                    if (bounds.size == Vector3.zero) continue;
 
-                    // Outside what this camera frames: nothing to pick, nothing to project.
-                    if (!InFrustum(rend.bounds)) continue;
+                    // Outside what this camera frames: nothing to pick, nothing to measure.
+                    if (!InFrustum(bounds)) continue;
 
-                    if (IsOwnUI(rend.gameObject)) continue;
+                    // Does the line of sight actually go through this box, and how far along?
+                    float reach = RayReachesBox(cursor.origin, cursor.direction, bounds);
+                    if (reach < 0f) continue;
 
-                    if (_currentMode == InspectorMode.BitmapReplace)
-                    {
-                        if (!ImageReplacer.HasImageComponent(rend.gameObject)) continue;
-                    }
+                    // 🔴 **Nothing behind the nearest solid thing.** This is what the ray is for:
+                    // a box further away than the wall the ray stopped at is behind that wall, and
+                    // a bounding box on its own can never know that.
+                    if (reach >= blockedAt) continue;
 
+                    // 🔴 **The nearest along the ray wins.** A real distance, not the depth of
+                    // the box's centre — which put a large object behind a small one whenever
+                    // its middle happened to be further away, whatever stood in front.
+                    //
+                    // ⚠ The smaller box settles an exact tie, and its size is measured in the
+                    // WORLD, not on screen: two coplanar faces (a label on the panel it sits
+                    // on) are the case, and a tie-break that changed with the viewpoint is the
+                    // thing this pass was rewritten to be rid of.
+                    float size = bounds.size.x * bounds.size.y * bounds.size.z;
+                    if (reach > bestDepth || (reach == bestDepth && size >= bestArea)) continue;
+
+                    // Only now, for the handful that are actually in front: who is it?
                     try
                     {
-                        var bounds = rend.bounds;
-                        if (bounds.size == Vector3.zero) continue;
+                        var go = rend.gameObject;
+                        if (go == null || !go.activeInHierarchy) continue;
+                        if ((cullingMask & (1 << go.layer)) == 0) continue;
+                        if (IsOwnUI(go)) continue;
+                        if (_currentMode == InspectorMode.BitmapReplace
+                            && !ImageReplacer.HasImageComponent(go)) continue;
 
-                        // Does the line of sight actually go through this box, and how far along?
-                        float reach = RayReachesBox(cursor.origin, cursor.direction, bounds);
-                        if (reach < 0f) continue;
-
-                        // 🔴 **The nearest along the ray wins.** A real distance, not the depth of
-                        // the box's centre — which put a large object behind a small one whenever
-                        // its middle happened to be further away, whatever stood in front.
-                        //
-                        // ⚠ The smaller box settles an exact tie, and its size is measured in the
-                        // WORLD, not on screen: two coplanar faces (a label on the panel it sits
-                        // on) are the case, and a tie-break that changed with the viewpoint is the
-                        // thing this pass was rewritten to be rid of.
-                        float size = bounds.size.x * bounds.size.y * bounds.size.z;
-                        if (reach < bestDepth || (reach == bestDepth && size < bestArea))
-                        {
-                            bestDepth = reach;
-                            bestArea = size;
-                            bestHit = rend.gameObject;
-                        }
+                        bestDepth = reach;
+                        bestArea = size;
+                        bestHit = go;
                     }
                     catch { }
                 }
 
-                return bestHit;
+                // A box in front of the nearest solid thing wins; otherwise the solid thing is the
+                // answer, if this mode can act on it.
+                if (bestHit != null) { _probeBoxWins++; _lastPathWasRay = false; return bestHit; }
+                if (blocker != null && Pickable(blocker)) { _probeRayHits++; _lastPathWasRay = true; return blocker; }
+                return null;
             }
             catch (Exception ex)
             {

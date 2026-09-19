@@ -229,7 +229,19 @@ namespace UnityGameTranslator.Core.UI
             RaycastHit hit;
             if (!Physics.Raycast(camera.ScreenPointToRay(screenPosition), out hit, camera.farClipPlane))
                 return null;
-            return hit.collider != null ? hit.collider.gameObject : null;
+            if (hit.collider == null) return null;
+
+            // 🔴 **A collider is not the thing you see.** Measured 2026-09-19: the ray kept
+            // landing on objects named "Cube (7)" — invisible collision volumes wrapped around
+            // furniture — 1 675 times in one session. They carry no Renderer, so no highlight
+            // could be drawn, and they are not what holds the text either, so the inspector
+            // listed the neighbours' strings. Walk to what is actually drawn: the collider's own
+            // renderer, else one below it, else the one above.
+            var go = hit.collider.gameObject;
+            var rend = go.GetComponent<Renderer>();
+            if (rend == null) rend = go.GetComponentInChildren<Renderer>();
+            if (rend == null) rend = go.GetComponentInParent<Renderer>();
+            return rend != null ? rend.gameObject : go;
         }
 
         /// <summary>Is this box inside what the camera frames? Plain arithmetic, no Unity helper.</summary>
@@ -1311,7 +1323,20 @@ namespace UnityGameTranslator.Core.UI
             // marker somewhere else entirely.
             var renderer = target.GetComponent<Renderer>();
             var camera = _selectedCamera ?? Camera.main;
-            if (renderer != null && camera != null && ProjectBox(renderer.bounds, camera))
+
+            // Nothing drawn on it, but something solid: frame what the ray could hit. Better than
+            // no marker at all, and it says plainly that the pick landed on a collision volume.
+            Bounds box;
+            bool haveBox = renderer != null;
+            if (haveBox) box = renderer.bounds;
+            else
+            {
+                var solid = target.GetComponent<Collider>();
+                haveBox = solid != null;
+                box = haveBox ? solid.bounds : default(Bounds);
+            }
+
+            if (haveBox && camera != null && ProjectBox(box, camera))
             {
                 // 🔴 **A veil behind the wires, or the marker vanishes on a same-coloured object**
                 // (2026-09-19, user's remark). Twelve thin lines are invisible against a surface

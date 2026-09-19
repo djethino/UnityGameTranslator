@@ -173,51 +173,54 @@ namespace UnityGameTranslator.Core.UI
             return _raycastersCache;
         }
 
-        /// <summary>True once the runtime has refused the frustum API; it is not asked again.</summary>
-        private static bool _frustumRefused;
-
         /// <summary>
-        /// Is this box inside what the camera frames? The standard plane-versus-AABB test, done
-        /// here rather than by <c>GeometryUtility.TestPlanesAABB</c>.
+        /// The six frustum planes of a camera, as (a,b,c,d) rows — derived from its own matrices
+        /// rather than asked of Unity.
         ///
-        /// 🔴 **Because that method does not exist on IL2CPP** — measured 2026-09-19:
-        /// `MissingMethodException: Boolean GeometryUtility.TestPlanesAABB(Plane[], Bounds)`,
-        /// thrown per object, straight up through Tick, and the inspector stopped responding
-        /// entirely. It is the rule CLAUDE.md states in red for textures, in its other form: do
-        /// not name an overload the running game may not carry. I had guarded the call that
-        /// RETURNS an array and left unguarded the one that TAKES one — the allocation was never
-        /// the danger, the stripping was.
+        /// 🔴 **Because GeometryUtility does not exist on this runtime, in either direction.**
+        /// 2026-09-19, measured twice: TestPlanesAABB was stripped, then CalculateFrustumPlanes
+        /// too. ⚠ **And a try/catch does not save you**: IL2CPP resolves a missing method when it
+        /// compiles the method that NAMES it, so the throw happens before the guarded body is
+        /// entered — the exception surfaced in the CALLER while the guard sat unused. That is the
+        /// same lesson CLAUDE.md states in red for AddListener: the answer is never to wrap the
+        /// call, it is to not name it.
         ///
-        /// ⚠ This uses only Plane.normal and Plane.GetDistanceToPoint, which are plain members.
-        /// The arithmetic is the textbook one: project the box's extents onto the plane normal to
-        /// get the radius of its most positive vertex, and compare with the centre's distance.
+        /// Gribb-Hartmann: with M = projection * worldToCamera, the planes are row3 ± rowN. ⚠ Not
+        /// normalised, on purpose — the AABB test below compares a distance against a radius, and
+        /// both scale by the same factor, so normalising would only cost six square roots.
         /// </summary>
-        private static bool InFrustum(Plane[] frustum, Bounds bounds)
-        {
-            if (frustum == null) return true;   // no opinion is not a refusal
+        private static readonly float[] _frustum = new float[24];
 
-            Vector3 c = bounds.center, e = bounds.extents;
-            for (int i = 0; i < frustum.Length; i++)
-            {
-                Vector3 n = frustum[i].normal;
-                float radius = e.x * Mathf.Abs(n.x) + e.y * Mathf.Abs(n.y) + e.z * Mathf.Abs(n.z);
-                if (frustum[i].GetDistanceToPoint(c) + radius < 0f) return false;
-            }
-            return true;
+        private static void BuildFrustum(Camera camera)
+        {
+            Matrix4x4 m = camera.projectionMatrix * camera.worldToCameraMatrix;
+
+            // left, right, bottom, top, near, far
+            Set(0, m.m30 + m.m00, m.m31 + m.m01, m.m32 + m.m02, m.m33 + m.m03);
+            Set(1, m.m30 - m.m00, m.m31 - m.m01, m.m32 - m.m02, m.m33 - m.m03);
+            Set(2, m.m30 + m.m10, m.m31 + m.m11, m.m32 + m.m12, m.m33 + m.m13);
+            Set(3, m.m30 - m.m10, m.m31 - m.m11, m.m32 - m.m12, m.m33 - m.m13);
+            Set(4, m.m30 + m.m20, m.m31 + m.m21, m.m32 + m.m22, m.m33 + m.m23);
+            Set(5, m.m30 - m.m20, m.m31 - m.m21, m.m32 - m.m22, m.m33 - m.m23);
         }
 
-        private static Plane[] FrustumOf(Camera camera)
+        private static void Set(int plane, float a, float b, float c, float d)
         {
-            if (_frustumRefused || camera == null) return null;
-            try { return GeometryUtility.CalculateFrustumPlanes(camera); }
-            catch (Exception ex)
+            int i = plane * 4;
+            _frustum[i] = a; _frustum[i + 1] = b; _frustum[i + 2] = c; _frustum[i + 3] = d;
+        }
+
+        /// <summary>Is this box inside what the camera frames? Plain arithmetic, no Unity helper.</summary>
+        private static bool InFrustum(Bounds bounds)
+        {
+            Vector3 c = bounds.center, e = bounds.extents;
+            for (int i = 0; i < 24; i += 4)
             {
-                _frustumRefused = true;
-                TranslatorCore.LogWarning(
-                    $"[Inspector] This runtime refuses CalculateFrustumPlanes ({ex.Message}) — "
-                    + "picking by camera stays correct, and stays slow");
-                return null;
+                float a = _frustum[i], b = _frustum[i + 1], cc = _frustum[i + 2], d = _frustum[i + 3];
+                float radius = e.x * Mathf.Abs(a) + e.y * Mathf.Abs(b) + e.z * Mathf.Abs(cc);
+                if (a * c.x + b * c.y + cc * c.z + d + radius < 0f) return false;
             }
+            return true;
         }
 
         private static UnityEngine.Object[] Renderers()
@@ -963,12 +966,7 @@ namespace UnityGameTranslator.Core.UI
                 // cameras included. The frustum of the camera being picked through is the honest
                 // question, asked once per hover rather than per object.
                 //
-                // ⚠ Behind a one-time refusal, because an IL2CPP build may simply not carry this
-                // method. If it throws once it is never asked again, InFrustum then rejects
-                // nothing, and the pass keeps its old behaviour — slow, but correct. ⚠ The test
-                // itself is ours (see InFrustum): GeometryUtility.TestPlanesAABB is stripped on
-                // IL2CPP and threw per object until 2026-09-19.
-                Plane[] frustum = FrustumOf(camera);
+                BuildFrustum(camera);
 
                 GameObject bestHit = null;
                 float bestArea = float.MaxValue;
@@ -992,7 +990,7 @@ namespace UnityGameTranslator.Core.UI
                     if ((cullingMask & (1 << rend.gameObject.layer)) == 0) continue;
 
                     // Outside what this camera frames: nothing to pick, nothing to project.
-                    if (!InFrustum(frustum, rend.bounds)) continue;
+                    if (!InFrustum(rend.bounds)) continue;
 
                     if (IsOwnUI(rend.gameObject)) continue;
 

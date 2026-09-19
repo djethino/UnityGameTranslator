@@ -3110,7 +3110,7 @@ namespace UnityGameTranslator.Core
 
             // Only when something actually moved: a reload whose fonts are the ones already in
             // place has nothing to redraw, and this pass is the expensive one.
-            if (anyFontMoved) TranslatorScanner.ForceRefreshAllText(reapplyAllScales: true);
+            if (anyFontMoved) TranslatorScanner.SpreadRefreshAllText(reapplyAllScales: true);
         }
 
         // ── Upstream ancestor (branches only) ────────────────────────────────

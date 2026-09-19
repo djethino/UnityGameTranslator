@@ -2146,7 +2146,7 @@ namespace UnityGameTranslator.Core
                 // re-sets their text unconditionally) and, with reapplyAllScales, re-derives every
                 // component's size — a per-font enable toggle changes the design-scale gate, so a
                 // disabled font's restored original must not stay at the old scaled fontSize.
-                if (settleNow) TranslatorScanner.ForceRefreshAllText(reapplyAllScales: true);
+                if (settleNow) TranslatorScanner.SpreadRefreshAllText(reapplyAllScales: true);
             }
 
             // Save changes

@@ -372,6 +372,11 @@ namespace UnityGameTranslator.Core
 
             ProcessPendingUpdates(tickBudgetMs);
 
+            // 🔴 Before everything that follows, and above ShouldSkipScanning: a spread carrying
+            // "translations off" must finish even on a tick where there is nothing to scan. It
+            // spends from the tick's own allowance, like every other walk here.
+            PumpSpreadRefresh(tickBudgetMs, _scanFrameSw);
+
             // Register types on first invocation (after TypeHelper.Initialize() + InitializeIL2CPP())
             if (!_typesRegistered) RegisterBuiltInTypes();
 
@@ -1795,92 +1800,25 @@ namespace UnityGameTranslator.Core
                 try { patchRefs = new List<KeyValuePair<int, object>>(TranslatorPatches.PatchedComponentRefs); }
                 catch { patchRefs = new List<KeyValuePair<int, object>>(); }
 
+                // ⚠ **One implementation, in RefreshPatchRef** — the spread walks the same list
+                // over several frames, and a second copy of this would be free to drift from it.
+                // The probe below is what the immediate pass adds, and the only difference.
+                var probe = new PatchRefProbe { Watch = watch };
+
                 foreach (var kvp in patchRefs)
                 {
                     if (processedIds.Contains(kvp.Key)) continue;
                     if (kvp.Value == null) continue;
-                    pass2Seen++;
-                    try
-                    {
-                        // ⚠ Second probe (2026-09-18): pass 2 costs 1.65 ms per component and the
-                        // remedy depends on WHERE. Looking the property up again for every
-                        // component is ours to cache and changes no behaviour; the write re-enters
-                        // the setter prefix, so its cost is a whole translate + font + scale cycle
-                        // and removing it means not rewriting a text already up to date — which
-                        // does change behaviour. The three buckets say which fix is enough.
-                        long tMark = watch.ElapsedTicks;
 
-                        // Re-set text via property to trigger the setter prefix (translation + font + scale)
-                        //
-                        // 🔴 **Looked up once per TYPE.** There are two or three distinct types
-                        // among these components and the lookup was redone for every one of them,
-                        // every second: a reflection search that answers the same thing each time.
-                        // Measured at 1.65 ms per component before anything was cached
-                        // (2026-09-18).
-                        var textProp = TextPropertyOf(kvp.Value.GetType());
-                        if (textProp?.GetMethod != null && textProp?.SetMethod != null)
-                        {
-                            string currentText = textProp.GetValue(kvp.Value, null) as string;
-                            lookupTicks += watch.ElapsedTicks - tMark;
-                            if (!string.IsNullOrEmpty(currentText))
-                            {
-                                pass2Rewritten++;
-
-                                // Already showing what the write would put there? Counted, never
-                                // skipped: this probe measures what a skip WOULD save, and a
-                                // measurement that changes the behaviour it measures proves
-                                // nothing about the behaviour that shipped.
-                                // ⚠ Through the reverse index, never a scan of the cache's values:
-                                // ContainsValue is linear, and asking it once per component would
-                                // cost more than the pass being measured.
-                                if (TranslatorCore.IsReadbackOfOwnTranslation(currentText))
-                                    pass2AlreadyDone++;
-
-                                tMark = watch.ElapsedTicks;
-                                textProp.SetValue(kvp.Value, currentText, null);
-                                writeTicks += watch.ElapsedTicks - tMark;
-                                tMark = watch.ElapsedTicks;
-
-                                // Did the write change anything? Two questions, and the second
-                                // exists because the first cannot answer alone.
-                                //
-                                // 🔴 **The getter is patched and translates on READ.** So the
-                                // string this loop holds is already the translated one, and
-                                // reading it back after the write compares a translation with
-                                // itself — blind to a component that just went from the original
-                                // to the translation. That case is named instead of guessed: the
-                                // value is one of ours, which the reverse index answers in
-                                // constant time. Measured on the game that showed the freeze: 12
-                                // components out of 952, so the rebuild stays where it matters
-                                // and goes from 1 678 ms to about 20 (2026-09-18).
-                                bool showsSomethingNew = glyphsChanged
-                                                         || TranslatorCore.IsReadbackOfOwnTranslation(currentText);
-                                if (!showsSomethingNew)
-                                {
-                                    var after = textProp.GetValue(kvp.Value, null) as string;
-                                    showsSomethingNew = !string.Equals(after, currentText, StringComparison.Ordinal);
-                                }
-                                if (!showsSomethingNew)
-                                {
-                                    dirtyTicks += watch.ElapsedTicks - tMark;
-                                    refreshed++;
-                                    continue;
-                                }
-
-                                // Pass 2 covers components seen by the patch but missed by
-                                // the scanner pass — typically because their GameObject was
-                                // inactive at scan time. On IL2CPP the property setter alone
-                                // doesn't always force a mesh + material rebuild, so we
-                                // explicitly force both here too.
-                                TypeHelper.ForceMeshUpdate(kvp.Value);
-                                TypeHelper.SetAllDirty(kvp.Value);
-                                dirtyTicks += watch.ElapsedTicks - tMark;
-                                refreshed++;
-                            }
-                        }
-                    }
-                    catch { }
+                    RefreshPatchRef(kvp, glyphsChanged, ref refreshed, probe);
                 }
+
+                pass2Seen = probe.Seen;
+                pass2Rewritten = probe.Rewritten;
+                pass2AlreadyDone = probe.AlreadyDone;
+                lookupTicks = probe.LookupTicks;
+                writeTicks = probe.WriteTicks;
+                dirtyTicks = probe.DirtyTicks;
 
                 // Discrete toggles (font replacement / global translation): the text-set passes above
                 // only re-run ApplyFontScale on components the game re-triggers, leaving static /
@@ -1925,6 +1863,267 @@ namespace UnityGameTranslator.Core
             }
 
             return refreshed + restored;
+        }
+
+        // ─── The same pass, spread over frames ──────────────────────────────────────────────
+        //
+        // 🔴 **Because a legitimate redraw is still one long frame.** Once an Apply only redraws
+        // what a text actually shows (ConfigEffects), what is left is the case that has to happen:
+        // a font, a language, translations switched off. On a large game that is 689 ms in ONE
+        // frame — a visible stop. Nothing here can move to another thread (Unity objects belong to
+        // the main one), so the only lever is to do it in slices — which is what the scanner
+        // already does for its own walk.
+        //
+        // ⚠ **Same budget, same stopwatch as every other walk of the tick.** Not a timer, not a
+        // number invented here: the allowance is derived from this game's own frame-time noise and
+        // shared, so the spread cannot spend what the scan already spent.
+        //
+        // ⚠ **The work is snapshot when the act is asked for.** A component destroyed meanwhile is
+        // skipped like anywhere else; a component born meanwhile is not in it — and does not need
+        // to be, since it goes through the setter with the new settings already in force.
+        //
+        // ⚠ **Only user-initiated acts spread.** The periodic paths keep the immediate pass: they
+        // read the count back to tell "it ran and found nothing" from "it never ran" (issue #21),
+        // and they are cheap now that they only rebuild what changed.
+
+        private struct SpreadItem
+        {
+            public UnityEngine.Object Component;
+            public RegisteredTextType Type;
+        }
+
+        private sealed class SpreadPass
+        {
+            public List<SpreadItem> Cached = new List<SpreadItem>();
+            public List<KeyValuePair<int, object>> PatchRefs;
+            public HashSet<int> Processed = new HashSet<int>();
+            public int NextCached, NextPatchRef;
+            public bool GlyphsChanged, ReapplyAllScales, GlobalRestore;
+            public int Refreshed, Restored, Frames;
+            public System.Diagnostics.Stopwatch Spent = new System.Diagnostics.Stopwatch();
+        }
+
+        private static SpreadPass _spread;
+
+        /// <summary>
+        /// The whole refresh, carried out over as many frames as the budget takes — for the acts a
+        /// person just validated, where a few frames of text settling in beats one frozen one.
+        ///
+        /// ⚠ A second request replaces the first rather than queueing: what was asked LAST is what
+        /// the screen has to end up showing, and the work already done was applied, not lost.
+        /// </summary>
+        public static void SpreadRefreshAllText(bool reapplyAllScales = false, bool glyphsChanged = true)
+        {
+            var pass = new SpreadPass
+            {
+                GlyphsChanged = glyphsChanged,
+                ReapplyAllScales = reapplyAllScales,
+                GlobalRestore = !TranslatorCore.TranslationsActive,
+            };
+
+            // Same first act as the immediate pass, and for the same reason: on the way OUT, UI
+            // Toolkit text is put back by its own walk, which nothing else covers.
+            if (pass.GlobalRestore) UIToolkitSupport.RestoreAll();
+
+            foreach (var type in _registeredTypes)
+            {
+                if (type.CachedComponents == null) continue;
+                foreach (var obj in type.CachedComponents)
+                {
+                    if (obj == null) continue;
+                    pass.Cached.Add(new SpreadItem { Component = obj, Type = type });
+                }
+            }
+
+            try { pass.PatchRefs = new List<KeyValuePair<int, object>>(TranslatorPatches.PatchedComponentRefs); }
+            catch { pass.PatchRefs = new List<KeyValuePair<int, object>>(); }
+
+            if (_spread != null)
+                TranslatorCore.LogDebug("[SPREAD-REFRESH] a new one replaces the pass still running");
+
+            _spread = pass;
+        }
+
+        /// <summary>
+        /// Carries the spread forward for as long as this frame's allowance lasts. Called by the
+        /// tick, before anything else that spends from it.
+        /// </summary>
+        private static void PumpSpreadRefresh(float budgetMs, System.Diagnostics.Stopwatch frame)
+        {
+            var pass = _spread;
+            if (pass == null) return;
+
+            pass.Frames++;
+            pass.Spent.Start();
+
+            try
+            {
+                while (pass.NextCached < pass.Cached.Count)
+                {
+                    if (frame.Elapsed.TotalMilliseconds >= budgetMs) return;
+
+                    var item = pass.Cached[pass.NextCached++];
+                    if (item.Component == null) continue;
+
+                    int id = GetComponentInstanceId(item.Component);
+                    if (id != -1) pass.Processed.Add(id);
+
+                    RefreshComponent(item.Component, item.Type, pass.GlobalRestore, pass.GlyphsChanged,
+                                     ref pass.Refreshed, ref pass.Restored);
+                }
+
+                while (pass.NextPatchRef < pass.PatchRefs.Count)
+                {
+                    if (frame.Elapsed.TotalMilliseconds >= budgetMs) return;
+
+                    var kvp = pass.PatchRefs[pass.NextPatchRef++];
+                    if (kvp.Value == null || pass.Processed.Contains(kvp.Key)) continue;
+
+                    RefreshPatchRef(kvp, pass.GlyphsChanged, ref pass.Refreshed);
+                }
+
+                // Everything walked: the sizes, then the report. ⚠ Not spread itself — it is one
+                // pass over the tracked components and its share of the cost is in the line below,
+                // which is what says whether it ever needs to be.
+                long beforeScales = pass.Spent.ElapsedTicks;
+                if (pass.ReapplyAllScales) TranslatorPatches.ReapplyScaleToAllComponents();
+
+                double freq = System.Diagnostics.Stopwatch.Frequency;
+                double totalMs = pass.Spent.ElapsedTicks / freq * 1000.0;
+                double scalesMs = (pass.Spent.ElapsedTicks - beforeScales) / freq * 1000.0;
+
+                if (totalMs >= FeltMs)
+                {
+                    TranslatorCore.LogInfo(
+                        $"[SPREAD-REFRESH] {totalMs:F0}ms over {pass.Frames} frames "
+                        + $"(glyphs {(pass.GlyphsChanged ? "CHANGED" : "same")}) | "
+                        + $"{pass.Cached.Count} cached, {pass.PatchRefs.Count} patch refs | "
+                        + $"refreshed {pass.Refreshed}, restored {pass.Restored} | scales {scalesMs:F0}ms");
+                }
+                else
+                {
+                    TranslatorCore.LogDebug($"[SPREAD-REFRESH] done in {pass.Frames} frame(s), "
+                                            + $"refreshed {pass.Refreshed}, restored {pass.Restored}");
+                }
+
+                _spread = null;
+            }
+            catch (Exception ex)
+            {
+                // A pass that threw must not stay half-done for ever: the screen would keep part
+                // of the old answer with nothing left to finish it.
+                TranslatorCore.LogWarning($"[Scanner] SpreadRefresh error: {ex.Message}");
+                _spread = null;
+            }
+            finally
+            {
+                pass.Spent.Stop();
+            }
+        }
+
+        /// <summary>
+        /// Where the immediate pass spends itself on ONE patch ref, per phase — handed in by that
+        /// pass and null everywhere else, so the measurement exists without a second copy of the
+        /// code being measured.
+        ///
+        /// ⚠ Second probe (2026-09-18): pass 2 cost 1.65 ms per component and the remedy depended
+        /// on WHERE. Looking the property up again for every component was ours to cache and
+        /// changed no behaviour; the write re-enters the setter prefix, so its cost is a whole
+        /// translate + font + scale cycle and removing it means not rewriting a text already up to
+        /// date — which does change behaviour. The three buckets say which fix is enough.
+        /// </summary>
+        private sealed class PatchRefProbe
+        {
+            public System.Diagnostics.Stopwatch Watch;
+            public int Seen, Rewritten, AlreadyDone;
+            public long LookupTicks, WriteTicks, DirtyTicks;
+        }
+
+        /// <summary>
+        /// One component seen by the patch but not by the scanner — pass 2, for one entry.
+        ///
+        /// 🔴 **One implementation for both walks.** The immediate pass does the whole list in a
+        /// frame; the spread does it over several. Two copies of this would be two answers to
+        /// "what does a component get", free to drift — and the difference would show up as a
+        /// game where one of the two ways leaves text behind.
+        /// </summary>
+        private static void RefreshPatchRef(KeyValuePair<int, object> kvp, bool glyphsChanged,
+                                            ref int refreshed, PatchRefProbe probe = null)
+        {
+            if (probe != null) probe.Seen++;
+
+            try
+            {
+                long tMark = probe?.Watch.ElapsedTicks ?? 0;
+
+                // Re-set text via property to trigger the setter prefix (translation + font + scale)
+                //
+                // 🔴 **Looked up once per TYPE.** There are two or three distinct types among these
+                // components and the lookup was redone for every one of them, every second: a
+                // reflection search that answers the same thing each time. Measured at 1.65 ms per
+                // component before anything was cached (2026-09-18).
+                var textProp = TextPropertyOf(kvp.Value.GetType());
+                if (textProp?.GetMethod == null || textProp?.SetMethod == null) return;
+
+                string currentText = textProp.GetValue(kvp.Value, null) as string;
+                if (probe != null) probe.LookupTicks += probe.Watch.ElapsedTicks - tMark;
+                if (string.IsNullOrEmpty(currentText)) return;
+
+                if (probe != null)
+                {
+                    probe.Rewritten++;
+
+                    // Already showing what the write would put there? Counted, never skipped: this
+                    // probe measures what a skip WOULD save, and a measurement that changes the
+                    // behaviour it measures proves nothing about the behaviour that shipped.
+                    // ⚠ Through the reverse index, never a scan of the cache's values:
+                    // ContainsValue is linear, and asking it once per component would cost more
+                    // than the pass being measured.
+                    if (TranslatorCore.IsReadbackOfOwnTranslation(currentText)) probe.AlreadyDone++;
+
+                    tMark = probe.Watch.ElapsedTicks;
+                }
+
+                textProp.SetValue(kvp.Value, currentText, null);
+
+                if (probe != null)
+                {
+                    probe.WriteTicks += probe.Watch.ElapsedTicks - tMark;
+                    tMark = probe.Watch.ElapsedTicks;
+                }
+
+                // Did the write change anything? Two questions, and the second exists because the
+                // first cannot answer alone.
+                //
+                // 🔴 **The getter is patched and translates on READ.** So the string this holds is
+                // already the translated one, and reading it back after the write compares a
+                // translation with itself — blind to a component that just went from the original
+                // to the translation. That case is named instead of guessed: the value is one of
+                // ours, which the reverse index answers in constant time. Measured on the game
+                // that showed the freeze: 12 components out of 952, so the rebuild stays where it
+                // matters and goes from 1 678 ms to about 20 (2026-09-18).
+                bool showsSomethingNew = glyphsChanged
+                                         || TranslatorCore.IsReadbackOfOwnTranslation(currentText);
+                if (!showsSomethingNew)
+                {
+                    var after = textProp.GetValue(kvp.Value, null) as string;
+                    showsSomethingNew = !string.Equals(after, currentText, StringComparison.Ordinal);
+                }
+
+                if (showsSomethingNew)
+                {
+                    // Pass 2 covers components seen by the patch but missed by the scanner pass —
+                    // typically because their GameObject was inactive at scan time. On IL2CPP the
+                    // property setter alone doesn't always force a mesh + material rebuild, so we
+                    // explicitly force both here too.
+                    TypeHelper.ForceMeshUpdate(kvp.Value);
+                    TypeHelper.SetAllDirty(kvp.Value);
+                }
+
+                if (probe != null) probe.DirtyTicks += probe.Watch.ElapsedTicks - tMark;
+                refreshed++;
+            }
+            catch { }
         }
 
         /// <summary>

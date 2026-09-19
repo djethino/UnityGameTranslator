@@ -894,7 +894,9 @@ namespace UnityGameTranslator.Core.UI.Panels
             // and OptionsPanel.ApplySettings use, for the same reason: text the game will never
             // re-write on its own would otherwise stay untranslated until it next changes.
             TranslatorCore.ClearProcessingCaches();
-            TranslatorScanner.ForceRefreshAllText(reapplyAllScales: true);
+            // Spread over frames, like every other act somebody validates — see
+            // TranslatorScanner.SpreadRefreshAllText.
+            TranslatorScanner.SpreadRefreshAllText(reapplyAllScales: true);
 
             // Same for the pictures (seen 2026-09-11 on a wizard re-run over a translation that
             // carries images): the sprite patch answered "no replacement" to everything set while

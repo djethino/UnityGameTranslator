@@ -2609,7 +2609,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // - Re-applies font scale via ApplyFontScale (uses per-component overrides)
                 // reapplyAllScales: discrete Apply — re-derive size for components the game doesn't
                 // re-trigger so a changed scale/enable/override lands everywhere (issue #21).
-                TranslatorScanner.ForceRefreshAllText(reapplyAllScales: true);
+                // ⚠ Spread over frames, like the Options Apply: same pass, same components, the
+                // tick's budget. See TranslatorScanner.SpreadRefreshAllText.
+                TranslatorScanner.SpreadRefreshAllText(reapplyAllScales: true);
 
                 // Update initial font settings
                 _initialFontSettings.Clear();

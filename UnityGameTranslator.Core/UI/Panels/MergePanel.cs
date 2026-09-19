@@ -523,6 +523,15 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         private async void PerformReplaceWithRemote()
         {
+            // 🔴 Say it is working (2026-09-19). The confirmation closes, the download takes
+            // seconds, and this window stayed open saying nothing before shutting itself — so it
+            // read as "the Replace did nothing" until it suddenly vanished. The panel already
+            // guards the same trap for the review page (_reviewInFlight, just below): a click
+            // whose effect is invisible is a click somebody makes twice.
+            _applyBtn?.Busy("Downloading...");
+            if (_reviewBtn != null) _reviewBtn.Enabled = false;
+            _summaryLabel?.Say("Replacing with the published version...");
+
             try
             {
                 await TranslatorUIManager.DownloadUpdate();

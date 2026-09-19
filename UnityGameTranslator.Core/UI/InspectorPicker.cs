@@ -241,6 +241,15 @@ namespace UnityGameTranslator.Core.UI
             var rend = go.GetComponent<Renderer>();
             if (rend == null) rend = go.GetComponentInChildren<Renderer>();
             if (rend == null) rend = go.GetComponentInParent<Renderer>();
+
+            // ⚠ And the SIBLING case, which the three above all miss. A collider is very often a
+            // bare child named "Bounds" beside the mesh rather than on it, so what is drawn is
+            // neither under it nor above it. Measured on a television whose hierarchy is
+            // TV_Built(Clone)/{Bounds, <mesh>}: the pick stayed on Bounds, which holds no text,
+            // and the editor then walked up a level and offered every string of the whole set.
+            if (rend == null && go.transform.parent != null)
+                rend = go.transform.parent.GetComponentInChildren<Renderer>();
+
             return rend != null ? rend.gameObject : go;
         }
 
@@ -1108,13 +1117,13 @@ namespace UnityGameTranslator.Core.UI
                             float depth = screenCenter.z;
                             float hitArea = (maxX - minX) * (maxY - minY);
 
-                            // 🔴 **A box bigger than the whole screen is a container, never the
-                            // thing being aimed at** — the floor, the room, the building shell.
-                            // Sorting by depth alone handed those the win everywhere, cursor off
-                            // screen included, because their box contains every position and
-                            // their centre is near. ⚠ The bound is the screen's own area, not a
-                            // number chosen here: what cannot be framed cannot be pointed at.
-                            if (hitArea >= (float)Screen.width * Screen.height) continue;
+                            // ⚠ **No "too big to be a target" rule here** (tried and removed the
+                            // same day). It was meant to stop an enclosing box winning everywhere,
+                            // but a wall seen edge-on extends in depth and so covers the screen
+                            // just as the room does: the back wall could be picked and the side
+                            // walls, the ceiling and the door could not. The ray above answers
+                            // occlusion now, which is what that rule was standing in for, and
+                            // this pass only runs when nothing solid was hit at all.
 
                             if (depth < bestDepth || (depth == bestDepth && hitArea < bestArea))
                             {

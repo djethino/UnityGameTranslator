@@ -484,6 +484,9 @@ namespace UnityGameTranslator.Core.UI
         /// <summary>What the ray last struck, by name — not what was picked from it.</summary>
         private static string _lastColliderName = "";
 
+        /// <summary>Set once an object has been dropped while walking the scene, so it is said once.</summary>
+        private static bool _walkComplained;
+
         private void ResetProbe()
         {
             _probeCount = 0;
@@ -1317,7 +1320,22 @@ namespace UnityGameTranslator.Core.UI
                         bestArea = size;
                         bestHit = go;
                     }
-                    catch { }
+                    catch (Exception ex)
+                    {
+                        // 🔴 **Said, once.** This was `catch { }`: every object whose identity
+                        // could not be read was dropped in silence, so a pass that found nothing
+                        // because it was throwing on all 33 380 of them looked exactly like a pass
+                        // that found nothing because nothing was there. Once per session, because
+                        // it would otherwise be a line per object per hover — and once is enough
+                        // to know it is happening at all.
+                        if (!_walkComplained)
+                        {
+                            _walkComplained = true;
+                            TranslatorCore.LogWarning(
+                                $"[Inspector] cannot read an object while picking: {ex.GetType().Name}: {ex.Message}"
+                                + " — objects it happens to are skipped");
+                        }
+                    }
                 }
 
                 // A box in front of the nearest solid thing wins; otherwise the solid thing is the

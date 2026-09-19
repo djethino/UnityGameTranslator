@@ -341,6 +341,37 @@ namespace UnityGameTranslator.Core.UI
             return pickable == null || pickable(rend.gameObject) ? rend.gameObject : null;
         }
 
+        /// <summary>
+        /// How far along this ray the box is first seen, or -1 when the ray misses it. The slab
+        /// method, in plain arithmetic — no Unity helper, so nothing here can be stripped.
+        ///
+        /// 🔴 **This replaces projecting two opposite corners and calling that the box's rectangle
+        /// on screen** (2026-09-19). Two corners describe the box's screen rectangle only when the
+        /// camera is square to the world axes; turn or move, and the other six corners fall outside
+        /// it — the rectangle can be a sliver while the object fills the view. That is why picking
+        /// "depended on the angle and the distance", and why two objects side by side traded places
+        /// as soon as somebody took a step: their rectangles were not their outlines.
+        ///
+        /// 🔴 **And it answers with a DISTANCE, so the nearest wins for real.** The old pass
+        /// compared the depth of each box's CENTRE, which puts a large object behind a small one
+        /// whenever its middle is further away, whatever is actually in front.
+        ///
+        /// ⚠ **Inside the box, the answer is where the ray LEAVES it.** Standing in a room, the ray
+        /// starts inside the room's own box: entering it is at distance zero, so the room would win
+        /// every pick everywhere. What somebody actually sees of a box they are inside is its far
+        /// face — which is honestly further away than the television in front of it. This is what
+        /// the "too big to be a target" rule of the morning was standing in for, and it needs no
+        /// rule: it falls out of the arithmetic.
+        /// </summary>
+        private static float RayReachesBox(Vector3 origin, Vector3 direction, Bounds bounds)
+        {
+            Vector3 min = bounds.min, max = bounds.max;
+            // The arithmetic itself is in Engine/RayBox — free of Unity, so it can be held by a
+            // check. All that happens here is unpacking two vectors.
+            return RayBox.Reach(origin.x, origin.y, origin.z, direction.x, direction.y, direction.z,
+                                min.x, min.y, min.z, max.x, max.y, max.z);
+        }
+
         /// <summary>Is this box inside what the camera frames? Plain arithmetic, no Unity helper.</summary>
         private static bool InFrustum(Bounds bounds)
         {
@@ -1159,6 +1190,9 @@ namespace UnityGameTranslator.Core.UI
                 //
                 BuildFrustum(camera);
 
+                // The line of sight, worked out once for the whole pass rather than per renderer.
+                var cursor = camera.ScreenPointToRay(screenPosition);
+
                 GameObject bestHit = null;
                 float bestDepth = float.MaxValue;
                 float bestArea = float.MaxValue;
@@ -1196,52 +1230,24 @@ namespace UnityGameTranslator.Core.UI
                         var bounds = rend.bounds;
                         if (bounds.size == Vector3.zero) continue;
 
-                        Vector3 center = bounds.center;
-                        Vector3 extents = bounds.extents;
+                        // Does the line of sight actually go through this box, and how far along?
+                        float reach = RayReachesBox(cursor.origin, cursor.direction, bounds);
+                        if (reach < 0f) continue;
 
-                        Vector3 screenCenter = camera.WorldToScreenPoint(center);
-                        // Only filter by Z for perspective cameras (orthographic can have negative Z)
-                        if (!camera.orthographic && screenCenter.z < 0) continue;
-
-                        Vector3 s0 = camera.WorldToScreenPoint(center - extents);
-                        Vector3 s1 = camera.WorldToScreenPoint(center + extents);
-
-                        float minX = Mathf.Min(s0.x, s1.x);
-                        float maxX = Mathf.Max(s0.x, s1.x);
-                        float minY = Mathf.Min(s0.y, s1.y);
-                        float maxY = Mathf.Max(s0.y, s1.y);
-
-                        if (screenPosition.x >= minX && screenPosition.x <= maxX &&
-                            screenPosition.y >= minY && screenPosition.y <= maxY)
+                        // 🔴 **The nearest along the ray wins.** A real distance, not the depth of
+                        // the box's centre — which put a large object behind a small one whenever
+                        // its middle happened to be further away, whatever stood in front.
+                        //
+                        // ⚠ The smaller box settles an exact tie, and its size is measured in the
+                        // WORLD, not on screen: two coplanar faces (a label on the panel it sits
+                        // on) are the case, and a tie-break that changed with the viewpoint is the
+                        // thing this pass was rewritten to be rid of.
+                        float size = bounds.size.x * bounds.size.y * bounds.size.z;
+                        if (reach < bestDepth || (reach == bestDepth && size < bestArea))
                         {
-                            // 🔴 **The nearest wins, not the smallest** (2026-09-19). This kept
-                            // whichever box was smallest on screen, so standing in a room and
-                            // aiming at the television picked objects OUTSIDE the flat, behind
-                            // the wall: they were smaller, and distance was never asked about.
-                            // Depth first; area only settles an exact tie, which is what it was
-                            // good for — telling a label apart from the panel it sits on.
-                            //
-                            // ⚠ The depth is the box's CENTRE, not its surface. A large object
-                            // whose middle is far can still lose to a small one nearer the
-                            // camera. Bounding boxes cannot do better than that; a real
-                            // Physics.Raycast could, and would need colliders on everything.
-                            float depth = screenCenter.z;
-                            float hitArea = (maxX - minX) * (maxY - minY);
-
-                            // ⚠ **No "too big to be a target" rule here** (tried and removed the
-                            // same day). It was meant to stop an enclosing box winning everywhere,
-                            // but a wall seen edge-on extends in depth and so covers the screen
-                            // just as the room does: the back wall could be picked and the side
-                            // walls, the ceiling and the door could not. The ray above answers
-                            // occlusion now, which is what that rule was standing in for, and
-                            // this pass only runs when nothing solid was hit at all.
-
-                            if (depth < bestDepth || (depth == bestDepth && hitArea < bestArea))
-                            {
-                                bestDepth = depth;
-                                bestArea = hitArea;
-                                bestHit = rend.gameObject;
-                            }
+                            bestDepth = reach;
+                            bestArea = size;
+                            bestHit = rend.gameObject;
                         }
                     }
                     catch { }

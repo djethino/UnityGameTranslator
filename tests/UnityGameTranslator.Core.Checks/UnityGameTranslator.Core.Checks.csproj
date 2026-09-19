@@ -68,6 +68,12 @@
     -->
     <Compile Include="../../UnityGameTranslator.Core/Engine/FontRules.cs" />
     <!--
+      Where a line of sight meets a box — the arithmetic the inspector picks with. Pure numbers on
+      purpose: a sign error in it throws nothing and logs nothing, and shows up in a game only as
+      "sometimes I can select that object and sometimes I cannot, depending where I stand".
+    -->
+    <Compile Include="../../UnityGameTranslator.Core/Engine/RayBox.cs" />
+    <!--
       Which languages a translation is in, and what happens when the file, the machine and the
       server disagree. Which value wins is the socle's; the SEQUENCE is here, and every defect it
       can carry is a right answer taken at the wrong moment.

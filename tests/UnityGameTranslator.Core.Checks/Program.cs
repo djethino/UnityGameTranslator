@@ -227,6 +227,7 @@ namespace UnityGameTranslator.Core.Checks
             Section("Long text in pieces a label can draw", TextChunksChecks.Run);
             Section("Saving (whole or not at all, newest wins)", SavingChecks.Run);
             Section("Transfers (a limit per step, never on the whole)", StallGuardChecks.Run);
+            Section("Picking (where a line of sight meets a box)", RayBoxChecks.Run);
         }
 
         /// <summary>The frontier: a panel names nothing of the engine, a component lets no engine type through.</summary>

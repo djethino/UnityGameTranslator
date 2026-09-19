@@ -159,8 +159,24 @@ namespace UnityGameTranslator.Core
 
         // Cache of image component instanceIDs for fast lookup (rebuilt periodically)
         private static HashSet<int> _imageComponentGOIds = new HashSet<int>();
-        private static float _lastImageCacheTime;
-        private const float IMAGE_CACHE_DURATION = 2f;
+
+        /// <summary>
+        /// Set when the cache describes a scene that is gone, or none yet.
+        ///
+        /// 🔴 **Was a two-second clock, and it cost the image inspector its speed** (2026-09-19).
+        /// Rebuilding means three full scene sweeps — Image, RawImage, SpriteRenderer — and
+        /// HasImageComponent is asked once per candidate while picking, so every couple of
+        /// seconds one of those calls walked the whole scene three times mid-hover. A cache is
+        /// invalidated by an event, never by a clock: see the rule in CLAUDE.md.
+        /// </summary>
+        private static bool _imageCacheStale = true;
+
+        /// <summary>
+        /// The scene may hold images it did not a moment ago — a menu that opened, a prop that
+        /// spawned. Called when picking starts, which is the one moment somebody is about to rely
+        /// on this list being current.
+        /// </summary>
+        public static void MarkImageCacheStale() => _imageCacheStale = true;
 
         /// <summary>
         /// Check if a GameObject has an Image, RawImage, or SpriteRenderer component.
@@ -172,12 +188,10 @@ namespace UnityGameTranslator.Core
             if (go == null) return false;
             ResolveTypes();
 
-            // Rebuild cache if stale
-            float now = Time.time;
-            if (now - _lastImageCacheTime > IMAGE_CACHE_DURATION)
+            if (_imageCacheStale)
             {
                 RebuildImageComponentCache();
-                _lastImageCacheTime = now;
+                _imageCacheStale = false;
             }
 
             return _imageComponentGOIds.Contains(go.GetInstanceID());
@@ -1033,7 +1047,7 @@ namespace UnityGameTranslator.Core
             // Sprites survive scene transitions (we created them, not scene assets).
             // Clear GO ID cache (instanceIDs change between scenes).
             _imageComponentGOIds.Clear();
-            _lastImageCacheTime = 0;
+            _imageCacheStale = true;
 
             // Load sprites from disk if not already loaded (first scene after startup)
             LoadAllReplacements();

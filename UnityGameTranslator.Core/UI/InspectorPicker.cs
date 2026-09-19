@@ -353,6 +353,7 @@ namespace UnityGameTranslator.Core.UI
             _selectedCamera = null;
             // Picking starts on what the scene holds now, not on what it held last time.
             DropSceneCaches();
+            ImageReplacer.MarkImageCacheStale();
             _rebuiltOnMiss = false;
             ResetProbe();
             RefreshCameraList();

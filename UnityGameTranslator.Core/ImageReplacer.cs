@@ -906,8 +906,20 @@ namespace UnityGameTranslator.Core
         /// <inheritdoc cref="SlotNamesOf"/>
         private static Material[] MaterialsOf(Renderer renderer) => renderer.sharedMaterials;
 
-        // Noted once: this game hands over one material per renderer and no list.
+        /// <summary>
+        /// The other door to the same question, and it takes a LIST rather than returning an array.
+        ///
+        /// 🔴 **Tried FIRST, because the array is the family IL2CPP strips** — and on a real game
+        /// (2026-09-19) it is stripped: "cannot list a renderer's materials
+        /// (MissingMethodException)". Everything then fell back to the first material, which is
+        /// precisely the gap being closed, so the fix changed nothing until this route was added.
+        /// </summary>
+        private static void MaterialsInto(Renderer renderer, List<Material> into)
+            => renderer.GetSharedMaterials(into);
+
+        // Noted once each: this game offers neither door, so one material per renderer is read.
         private static bool _materialListUnavailable;
+        private static bool _materialArrayUnavailable;
 
         /// <summary>
         /// Every material a renderer wears, not just the first.
@@ -924,10 +936,29 @@ namespace UnityGameTranslator.Core
             into.Clear();
             if (renderer == null) return;
 
+            // ① The list-taking door, first: it returns nothing, so it is not of the family that
+            // gets stripped. The try is HERE and not inside, as always.
             if (!_materialListUnavailable)
             {
-                // The try is HERE: the list comes back as an ARRAY, the family IL2CPP strips, and a
-                // guard written inside MaterialsOf would never run.
+                try
+                {
+                    MaterialsInto(renderer, into);
+                    for (int i = into.Count - 1; i >= 0; i--)
+                        if (into[i] == null) into.RemoveAt(i);
+                    if (into.Count > 0) return;
+                }
+                catch (Exception ex)
+                {
+                    _materialListUnavailable = true;
+                    into.Clear();
+                    TranslatorCore.LogInfo($"[ImageReplacer] This game has no GetSharedMaterials "
+                                           + $"({ex.GetType().Name}); trying the array instead");
+                }
+            }
+
+            // ② The array-returning one.
+            if (!_materialArrayUnavailable)
+            {
                 try
                 {
                     var all = MaterialsOf(renderer);
@@ -935,12 +966,13 @@ namespace UnityGameTranslator.Core
                     {
                         foreach (var material in all)
                             if (material != null) into.Add(material);
-                        return;
+                        if (into.Count > 0) return;
                     }
                 }
                 catch (Exception ex)
                 {
-                    _materialListUnavailable = true;
+                    _materialArrayUnavailable = true;
+                    into.Clear();
                     TranslatorCore.LogInfo($"[ImageReplacer] This game cannot list a renderer's materials "
                                            + $"({ex.GetType().Name}); only the first one is read");
                 }

@@ -501,6 +501,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Shown only while there is something to abandon — see UpdateApplyButtonText.
             _cancelBtn = _screen.Button("CancelBtn");
 
+            FillAboutTab();
+
             // ── The choices only the code knows ─────────────────────────────────
             // Show the font IN EFFECT — the local override if set, else the one the translation
             // asks for — so the picker reflects what the user actually sees.
@@ -556,6 +558,11 @@ namespace UnityGameTranslator.Core.UI.Panels
                 case "reportBug": return () => TranslatorCore.OpenUrlSafe("https://github.com/djethino/UnityGameTranslator/issues");
                 case "discussions": return () => TranslatorCore.OpenUrlSafe("https://github.com/djethino/UnityGameTranslator/discussions");
                 case "onlineDocs": return () => TranslatorCore.OpenUrlSafe($"{ApiClient.WebsiteBaseUrl}/docs");
+                // About — the three programs of the ecosystem, and the studio behind them.
+                case "aboutSource": return () => TranslatorCore.OpenUrlSafe("https://github.com/djethino/UnityGameTranslator");
+                case "aboutManager": return () => TranslatorCore.OpenUrlSafe(PluginInfo.ManagerReleaseUrl);
+                case "aboutWebsite": return () => TranslatorCore.OpenUrlSafe(ApiClient.WebsiteBaseUrl);
+                case "aboutStudio": return () => TranslatorCore.OpenUrlSafe("https://asymptomatikgames.com");
                 // Adaptation
                 case "captureKeyboardChanged":
                 case "captureKeyboardFocusChanged":
@@ -586,6 +593,41 @@ namespace UnityGameTranslator.Core.UI.Panels
                 case "apply": return OnApplyClicked;
                 default: return null;
             }
+        }
+
+        /// <summary>
+        /// The About tab's three written-in-code pieces: the two pictures and the version.
+        ///
+        /// Everything else it shows is in the document — what this mod is, the ecosystem, who it is
+        /// built on. Only what the code KNOWS lands here: the version it was compiled with, and
+        /// pictures, which a document names but cannot carry.
+        ///
+        /// ⚠ **The band is painted, not built.** A stack repainted (Stacks.Retint) is what a panel
+        /// may do; building a white box by hand here is what the screens-in-data rule refuses, and
+        /// ScreenDocumentChecks goes red on it. The white exists for one reason — see Surface.Paper.
+        ///
+        /// ⚠ A picture this game cannot decode says so where it would have been (ImageHandle
+        /// explains), rather than leaving a hole under a title.
+        /// </summary>
+        private void FillAboutTab()
+        {
+            _screen.Label("AboutVersion").Show($"Version {PluginInfo.Version}");
+
+            var icon = _screen.Picture("AboutIcon");
+            var iconSprite = Branding.Sprite(Branding.ProductIcon);
+            if (iconSprite != null) icon.Show(iconSprite);
+            else icon.Explain("");
+
+            var logo = _screen.Picture("PublisherLogo");
+
+            // Black ink on its own white, exactly as the Manager signs its About. On the BOX, not
+            // on the stack behind it: the box paints its own trough, which is what showed as a
+            // grey band under the logo.
+            logo.OnPaper();
+
+            var logoSprite = Branding.Sprite(Branding.PublisherLogo);
+            if (logoSprite != null) logo.Show(logoSprite);
+            else logo.Explain("ASymptOmatik Games");
         }
 
         /// <summary>

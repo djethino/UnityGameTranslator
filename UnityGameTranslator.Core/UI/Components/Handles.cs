@@ -339,6 +339,37 @@ namespace UnityGameTranslator.Core.UI.Components
         /// <summary>The policy this label was created with.</summary>
         public TextPolicy Policy => _policy;
 
+        /// <summary>Made the first time this line reports a wait, and never for any other.</summary>
+        private Spinner _waitMark;
+
+        /// <summary>
+        /// Whether the turning mark sits beside this line — for the lines that report something IN
+        /// FLIGHT: a scan running, a search asking the site, a file coming down.
+        ///
+        /// 🔴 **Here rather than in each screen**, because a line that waits is the same thing
+        /// whichever screen it is on — the status piece, the Tools window's own lines, the
+        /// community list. One mark, one meaning (see Spinners), and one place to change it.
+        ///
+        /// ⚠ **Whoever turns it on owns turning it off**, on every way out — the answer, a
+        /// failure, and the cancel. A mark left turning says the work continues after it stopped,
+        /// which is worse than never having shown one.
+        /// </summary>
+        public bool Waiting
+        {
+            get => _waitMark != null && _waitMark.Turning;
+            set
+            {
+                if (!value)
+                {
+                    if (_waitMark != null) _waitMark.Turning = false;
+                    return;
+                }
+
+                if (_waitMark == null) _waitMark = Spinners.Mark(this);
+                if (_waitMark != null) _waitMark.Turning = true;
+            }
+        }
+
         /// <summary>What it says right now.</summary>
         public string Value => Text != null ? Text.text : "";
 

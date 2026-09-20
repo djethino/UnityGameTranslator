@@ -247,8 +247,8 @@ namespace UnityGameTranslator.Core.Checks
                 "tools.json asks for 27 acts (eight of them settle a failed line, three turning its pages); the sharpness choices are the GPU's; the editors write locally", $"got {tools.Acts.Count} acts");
 
             var options = ScreenDocument.FromFile(Path.Combine(folder, "options.json"));
-            check(options.Header.Count == 1 && options.Header[0].Kind == "tabs" && options.Header[0].Children.Count == 5 && options.Body.Count == 0,
-                "options.json: five tabs in the header, the body theirs", "the tab buttons stay put while the settings scroll");
+            check(options.Header.Count == 1 && options.Header[0].Kind == "tabs" && options.Header[0].Children.Count == 6 && options.Body.Count == 0,
+                "options.json: six tabs in the header, the body theirs", "the tab buttons stay put while the settings scroll");
             check(options.Nodes.Values.Count(n => n.Kind == "slider") == 2 && options.Nodes["OpacityFocused"].Number("min") == 0.4f
                   && options.Nodes["OpacityFocused"].Word("format") == "Percent",
                 "the two opacity sliders floor at 40% and read as percentages", "lower is not translucent but unreadable — uGUI applies the alpha to the text too");
@@ -263,8 +263,18 @@ namespace UnityGameTranslator.Core.Checks
             check(options.Nodes["CaptureKeyboardWhy"].Bind != null && !options.Nodes["CaptureKeyboardWhy"].StartsVisible
                   && !options.Nodes["PauseWhy"].StartsVisible && !options.Nodes["PauseBlocked"].StartsVisible,
                 "each capture box has a hidden line for the runtime's own reason; freezing has its three", "whether an intention can be honoured is the game's to say");
-            check(options.Acts.Count == 38 && options.Nodes["AiAdvanced"].Kind == "collapsible" && options.Nodes["AiAdvanced"].Flag("expanded") == false,
-                "options.json asks for 38 acts and folds the AI's advanced settings", $"got {options.Acts.Count} acts");
+            // 42 = the 38 settings acts plus the About tab's four doors out: this mod's source, the
+            // Manager, the website, the studio. A tab that only reads and links asks for no more.
+            check(options.Acts.Count == 42 && options.Nodes["AiAdvanced"].Kind == "collapsible" && options.Nodes["AiAdvanced"].Flag("expanded") == false,
+                "options.json asks for 42 acts and folds the AI's advanced settings", $"got {options.Acts.Count} acts");
+
+            // ⚠ The About tab carries the mod's only two pictures. A document can name a picture
+            // and never hold one: if either box disappears, the code that fills it throws at
+            // construction — which takes every panel after it with it (see CLAUDE.md).
+            check(options.Nodes["AboutIcon"].Kind == "image" && options.Nodes["PublisherLogo"].Kind == "image"
+                  && options.Nodes["AboutVersion"].Word("policy") == "Dynamic",
+                "the About tab has its two pictures, and a version written at show time",
+                "the version is data: it must never be replaced by the mod's own translation");
 
             // ── Templates: the rows of every list, described once, instantiated per element ──
             var templated = new Dictionary<string, int> {

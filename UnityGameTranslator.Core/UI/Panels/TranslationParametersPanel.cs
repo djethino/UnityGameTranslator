@@ -2219,6 +2219,10 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (_scanBtn != null) _scanBtn.Label = "Cancel";
             _variablesStatus.Say("Scanning...");
             _variablesStatus.Tone = Tone.Secondary;
+            // The scan spreads over frames and reports counts as it goes; the mark says it is
+            // still going between two of those reports. Turned off by EndScanning — the one way
+            // back to rest, whether the scan finished, failed or was called off.
+            _variablesStatus.Waiting = true;
 
             // Show results container
             _scanResultsList.Visible = true;
@@ -2294,6 +2298,8 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             _isScanning = false;
             if (_scanBtn != null) _scanBtn.Label = "Scan";
+            // Before the early return below: a scan that ends with nothing to say still ends.
+            _variablesStatus.Waiting = false;
             if (said == null) return;
             _variablesStatus.Say(said);
             _variablesStatus.Tone = tone;

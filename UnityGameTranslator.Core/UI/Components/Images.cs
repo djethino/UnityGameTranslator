@@ -39,6 +39,25 @@ namespace UnityGameTranslator.Core.UI.Components
         internal override GameObject Object => _box;
 
         /// <summary>
+        /// Paints this box white instead of the usual trough — for a picture that brings its own
+        /// paper.
+        ///
+        /// 🔴 **Because the publisher's signature is black line art.** Inverted to white it reads
+        /// as a negative rather than as a drawing, so it keeps its ink and the box brings the
+        /// white; the logo's anti-aliasing was cut against that same white, so there is no seam.
+        /// Painting the stack BEHIND the box does nothing: this box paints its own background, and
+        /// that is what showed as a grey band under a logo that was supposed to sit on white.
+        ///
+        /// ⚠ Repainting a piece is what a panel may do; building one is not (see ScreenBuilder).
+        /// And it is for that one case: dark text or a dark drawing is all that reads on white.
+        /// </summary>
+        public void OnPaper()
+        {
+            if (_box == null) return;
+            UIStyles.SetBackground(_box, Color.white, UIFactory.Shapes.Small);
+        }
+
+        /// <summary>
         /// Show what the game draws on this thing. The argument is what the picker found and the
         /// panel holds — a sprite or a texture, whichever the game uses — and this piece asks
         /// <see cref="TextureUtils.SpriteForDisplay"/> what can be made of it.

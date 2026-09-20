@@ -305,7 +305,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             TranslatorCore.LogInfo("[UploadPanel] CheckUploadMode started");
             _isChecking = true;
-            _status.Say("Checking...", Tone.Warning);
+            _status.Say("Checking...", Tone.Warning, waiting: true);
             _uploadBtn.Enabled = false;
 
             // Hide back button (only shown for NEW mode after setup)
@@ -806,7 +806,9 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             string actionText = _uploadMode == UploadMode.Update ? "Updating..." :
                                (_uploadMode == UploadMode.Branch ? "Contributing..." : "Uploading...");
-            _status.Say(actionText, Tone.Warning);
+            // The file leaves here: seconds on a large translation, and the window says nothing
+            // else while it does.
+            _status.Say(actionText, Tone.Warning, waiting: true);
 
             // Capture values before async (for use in RunOnMainThread callbacks)
             var uploadMode = _uploadMode;
@@ -1010,7 +1012,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 return;
             }
 
-            _status.Say("Saving...", Tone.Warning);
+            _status.Say("Saving...", Tone.Warning, waiting: true);
 
             string notes = _notesInput.Text;
             string resourcesUrl = _resourcesUrlInput?.Text?.Trim();

@@ -88,7 +88,10 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
 
             StartLoginBtn.Enabled = false;
-            Status.Say("Requesting code...", Tone.Warning);
+            // ⚠ waiting: the longest, stillest wait in the mod — a code asked for, then a person
+            // going to a browser and coming back. A line that never moves for half a minute is
+            // what somebody reads as "it has stopped".
+            Status.Say("Requesting code...", Tone.Warning, waiting: true);
 
             try
             {
@@ -117,7 +120,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                         StartLoginBtn.Visible = false;
 
                         Instructions.Say("Click the button below to open the website,\nthen enter this code:");
-                        Status.Say("Waiting for authorization...", Tone.Info);
+                        Status.Say("Waiting for authorization...", Tone.Info, waiting: true);
 
                         // Recalculate size after content changed
                         RecalculateSize();
@@ -185,7 +188,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                             Status.Say("Connection lost, reconnecting...", Tone.Warning);
                             break;
                         case SseConnectionState.Connected:
-                            Status.Say("Waiting for authorization...", Tone.Info);
+                            Status.Say("Waiting for authorization...", Tone.Info, waiting: true);
                             break;
                     }
                 });

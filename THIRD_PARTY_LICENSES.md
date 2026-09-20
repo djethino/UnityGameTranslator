@@ -124,6 +124,18 @@ Unity runtime libraries are used for compilation and compatibility.
 
 *This file is included in all release packages to comply with LGPL-2.1 and Apache-2.0 license requirements.*
 
+## RichTextKit (Topten Software)
+
+The text shaping and line-breaking code under
+`UnityGameTranslator.Core/TextShaping/RichTextKit/` — how a line is split into words and how
+glyphs are placed in scripts that need more than one glyph per character.
+
+- **Source:** https://github.com/toptensoftware/RichTextKit
+- **License:** Apache License 2.0
+- **Copyright:** © 2019-2020 Topten Software
+- **Modifications:** the parts this mod needs, taken into the source tree rather than referenced
+  as a package (the mod ships as one merged assembly); namespaces adapted.
+
 ## ICU word-break dictionaries (Thai, Lao, Khmer, Myanmar)
 
 Word lists used to find word boundaries in scripts written without spaces

@@ -1436,6 +1436,11 @@ namespace UnityGameTranslator.Core.UI
                     // ButtonStates for why this is a registry ticked here rather than a component.
                     ButtonStates.Tick();
 
+                    // The mark beside a line that is waiting for something. Same reason as above:
+                    // a registry, not a component, because this assembly cannot inject a type of
+                    // its own into an IL2CPP game.
+                    Components.Spinners.Tick();
+
                     // Everything below TOUCHES THE GAME — reads its scene, rewrites its text,
                     // writes the cache to disk. None of it may happen before someone said yes.
                     if (TranslatorCore.SetupCompleted)

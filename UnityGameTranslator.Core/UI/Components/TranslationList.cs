@@ -150,11 +150,20 @@ namespace UnityGameTranslator.Core.UI.Components
         /// Set the status message, in a tone. Written as it is: what the panels say here is
         /// composed with counts and server messages.
         /// </summary>
-        public void SetStatus(string message, Tone tone)
+        /// <param name="waiting">
+        /// True while this line reports something in flight — the site being asked, a file coming
+        /// down. The mark turns beside it.
+        ///
+        /// ⚠ False by default, and that is what settles it: every other message this list shows is
+        /// an ANSWER, so the mark goes off by itself at the next one, whichever it is — found,
+        /// none, or an error.
+        /// </param>
+        public void SetStatus(string message, Tone tone, bool waiting = false)
         {
             if (_statusLabel == null) return;
             _statusLabel.Show(message);
             _statusLabel.Tone = tone;
+            _statusLabel.Waiting = waiting;
         }
 
         /// <summary>
@@ -260,7 +269,7 @@ namespace UnityGameTranslator.Core.UI.Components
             if (_isSearching) return;
 
             _isSearching = true;
-            SetStatus("Searching online...", Tone.Warning);
+            SetStatus("Searching online...", Tone.Warning, waiting: true);
             Clear();
 
             try

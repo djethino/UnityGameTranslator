@@ -1765,7 +1765,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             _downloadBtn.Enabled = false;
             SetCommunityDownloadState(false);
-            _translationList.SetStatus("Downloading...", Tone.Warning);
+            _translationList.SetStatus("Downloading...", Tone.Warning, waiting: true);
 
             await TranslatorUIManager.DownloadTranslation(translation, (success, message) =>
             {

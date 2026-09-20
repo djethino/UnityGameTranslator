@@ -40,6 +40,10 @@
          ScreenDocument.FromEmbedded("parts/status-card") reads screens/parts/status-card.json. -->
     <EmbeddedResource Include="..\common\spec\screens\parts\*.json"
                       LogicalName="screens/parts/%(Filename)%(Extension)" />
+    <!-- The only pictures this mod ships: the product's face, the publisher's signature and the
+         turning mark. ~41 KB inside the one merged DLL — see Assets/README.md for what each is
+         and why the gear is not the signature. Read through UI/Branding. -->
+    <EmbeddedResource Include="Assets\*.png" LogicalName="assets/%(Filename)%(Extension)" />
   </ItemGroup>
 
   <ItemGroup>

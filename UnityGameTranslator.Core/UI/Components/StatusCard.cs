@@ -435,7 +435,14 @@ namespace UnityGameTranslator.Core.UI.Components
                                  // site's page and the community list already give, and this card
                                  // gave nowhere — the same file read "Forked from @x" in a browser
                                  // and a bare "Main" in the game (2026-09-17).
-                                 origin: TranslatorCore.ServerState?.Origin,
+                                 //
+                                 // ⚠ **The engine composes it, from the server's answer OR from the
+                                 // file's own `_forked_from`** (2026-09-20). Reading only the server
+                                 // meant the credit appeared at the moment the fork was published,
+                                 // i.e. when the site was already showing it — and a fork living in
+                                 // a game folder, which is every fork until somebody publishes it,
+                                 // said nothing about where it came from at all.
+                                 origin: TranslatorCore.ForkOrigin,
 
                                  // Nothing translated: the socle says it as one chip, in place of
                                  // a stage with nothing to judge and a "0% translated".

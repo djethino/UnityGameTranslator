@@ -206,6 +206,16 @@ namespace UnityGameTranslator.Core
         /// the file hash the day the answer started carrying the vote count and the uploader.
         /// </summary>
         public string ETag { get; set; }
+
+        /// <summary>
+        /// What the server answered, or 0 when nothing was received.
+        ///
+        /// ⚠ **"It refused" and "it never answered" are two different facts**, and <see cref="Success"/>
+        /// alone conflates them. A caller that remembers a refusal must not remember a dropped
+        /// connection the same way: 404 means asking again is pointless, a timeout means asking
+        /// again is the whole point.
+        /// </summary>
+        public int Status { get; set; }
     }
 
     public class TranslationDownloadResult

@@ -2553,6 +2553,94 @@ namespace UnityGameTranslator.Core.UI
             CheckSyncStateNow();
         }
 
+        /// <summary>True while the one public call below is out.</summary>
+        private static bool _forkOriginInFlight;
+
+        /// <summary>
+        /// Learn whose work this file was forked from, once, when it is a fork the site has not
+        /// already spoken about.
+        ///
+        /// 🔴 **A fork that has never been published knows the ROW it came from and not the name.**
+        /// <c>_forked_from.site_id</c> is written at the fork and the name deliberately is not — a
+        /// name read live follows a rename, a name written into a file does not. So the credit
+        /// existed on the site's pages and nowhere in the game, which is the one place the file
+        /// actually lives until somebody publishes it.
+        ///
+        /// ⚠ **No account and no permission**: the public check endpoint answers anybody, which is
+        /// what makes this work for the very people it is for — a fork needs neither to exist.
+        ///
+        /// ⚠ **Asked once per row and server**, whatever the answer. A row that is gone answers 404
+        /// and asking again would never produce anything; a connection that dropped records
+        /// nothing, so the next panel that needs it asks again. Nothing waits and nothing polls:
+        /// the trigger is a screen being drawn.
+        /// </summary>
+        public static void EnsureForkOriginKnown()
+        {
+            if (_forkOriginInFlight) return;
+            if (!TranslatorCore.Config.online_mode) return;
+            if (!TranslatorCore.ForkedFromSiteId.HasValue) return;
+
+            // The site already states this file's provenance on its own row: that answer is the
+            // authority, and it carries the count as recorded rather than as measured here.
+            if (TranslatorCore.ServerState?.Origin != null) return;
+
+            if (TranslatorCore.ForkOriginAsked) return;
+
+            AskForkOrigin(TranslatorCore.ForkedFromSiteId.Value);
+        }
+
+        private static async void AskForkOrigin(int siteId)
+        {
+            _forkOriginInFlight = true;
+
+            try
+            {
+                // ⚠ No hash: this is not an update check. We hold a translation that LEFT this
+                // lineage, so "has it moved" has no meaning here — the only field wanted is who
+                // published it. Sending our hash would ask the server a question about two files
+                // that have nothing to do with each other.
+                var result = await ApiClient.CheckPublicUpdate(siteId, null);
+
+                var success = result.Success;
+                var uploader = result.Uploader;
+                var status = result.Status;
+
+                RunOnMainThread(() =>
+                {
+                    _forkOriginInFlight = false;
+
+                    if (success)
+                    {
+                        TranslatorCore.NoteForkOrigin(siteId, uploader);
+                        TranslatorCore.LogInfo(string.IsNullOrEmpty(uploader)
+                            ? $"[Fork] Forked from #{siteId}, which names nobody"
+                            : $"[Fork] Forked from #{siteId}, published by {uploader}");
+                    }
+                    else if (status == 404)
+                    {
+                        TranslatorCore.NoteForkOriginMissing(siteId);
+                        TranslatorCore.LogInfo($"[Fork] The translation this was forked from (#{siteId}) is no longer on the site");
+                    }
+                    else
+                    {
+                        // Nothing recorded: the next screen that needs it asks again.
+                        return;
+                    }
+
+                    MainPanel?.RefreshUI();
+                });
+            }
+            catch (Exception e)
+            {
+                var errorMsg = e.Message;
+                RunOnMainThread(() =>
+                {
+                    _forkOriginInFlight = false;
+                    TranslatorCore.LogWarning($"[Fork] Could not ask who #{siteId} belongs to: {errorMsg}");
+                });
+            }
+        }
+
         /// <summary>Preconditions shared by both the stream and the polled check.</summary>
         private static bool CanWatchSync(bool logReason = true)
         {

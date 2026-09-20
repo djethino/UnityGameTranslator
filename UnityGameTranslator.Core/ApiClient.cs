@@ -568,6 +568,7 @@ namespace UnityGameTranslator.Core
                         NotModified = true,
                         HasUpdate = false,
                         ETag = knownETag,
+                        Status = (int)response.StatusCode,
                     };
                 }
 
@@ -576,10 +577,19 @@ namespace UnityGameTranslator.Core
                 if (!response.IsSuccessStatusCode)
                 {
                     TranslatorCore.LogWarning($"[ApiClient] Public update check failed: {DescribeHttpError(response, json)}");
-                    return new TranslationCheckResult { Success = false, Error = DescribeHttpError(response, json) };
+                    return new TranslationCheckResult
+                    {
+                        Success = false,
+                        Error = DescribeHttpError(response, json),
+                        Status = (int)response.StatusCode,
+                    };
                 }
 
-                return ApiReaders.ReadCheck(ParseJsonSafe(json), localHash, response.Headers.ETag?.ToString());
+                // ⚠ Set here and not in ReadCheck: that one reads a BODY, and is replayed against
+                // the contract's cases, which carry no transport.
+                var read = ApiReaders.ReadCheck(ParseJsonSafe(json), localHash, response.Headers.ETag?.ToString());
+                read.Status = (int)response.StatusCode;
+                return read;
             }
             catch (Exception e)
             {

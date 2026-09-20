@@ -318,6 +318,88 @@ namespace UnityGameTranslator.Core
             !string.IsNullOrEmpty(ForkedFromContentHash)
             && string.Equals(ComputeContentFingerprint(), ForkedFromContentHash, StringComparison.Ordinal);
 
+        // ── Where this file came from, as a chip ─────────────────────────────────
+
+        /// <summary>
+        /// Which row the name below was learnt for, written as <c>&lt;site id&gt;@&lt;api base&gt;</c>.
+        ///
+        /// ⚠ Keyed rather than cleared, for the reason the public check's ETag is
+        /// (TranslatorUIManager): a name learnt for row 12 on one server says nothing about row 12
+        /// on another, and a file swapped under us must not inherit the previous one's credit. A
+        /// key that no longer matches IS the reset, so no load path has to remember to do it.
+        /// </summary>
+        private static string _forkOriginKey;
+
+        /// <summary>Whether the site answered about that row at all — as opposed to it being gone.</summary>
+        private static bool _forkOriginFound;
+        private static string _forkOriginAuthor;
+
+        private static string ForkOriginKeyFor(int siteId) => siteId + "@" + (Config?.api_base_url ?? "");
+
+        /// <summary>
+        /// Remember whose work this file was forked from, as the site has just stated it.
+        /// </summary>
+        /// <param name="author">
+        /// The account's name, or null when the site holds the row and names nobody — the account
+        /// went. That is the same fact a published fork's card already states.
+        /// </param>
+        public static void NoteForkOrigin(int siteId, string author)
+        {
+            _forkOriginKey = ForkOriginKeyFor(siteId);
+            _forkOriginFound = true;
+            _forkOriginAuthor = author;
+        }
+
+        /// <summary>
+        /// The site answered and holds no such row: the translation this was forked from is gone.
+        ///
+        /// 🔴 **Not the same as "the account was removed", and it must not say so.** A row can go
+        /// while its account stays, so naming a cause here would invent a fact about somebody. The
+        /// chip goes on saying only "Forked"; what this records is that asking again is pointless.
+        /// </summary>
+        public static void NoteForkOriginMissing(int siteId)
+        {
+            _forkOriginKey = ForkOriginKeyFor(siteId);
+            _forkOriginFound = false;
+            _forkOriginAuthor = null;
+        }
+
+        /// <summary>True once the site has been asked about this file's source, whatever it said.</summary>
+        public static bool ForkOriginAsked =>
+            ForkedFromSiteId.HasValue
+            && _forkOriginKey == ForkOriginKeyFor(ForkedFromSiteId.Value);
+
+        /// <summary>
+        /// The origin chip for the translation this game holds, or null when it is not a fork.
+        ///
+        /// 🔴 **A fork that has never been published said NOTHING about itself.** The site records
+        /// provenance in its own columns and shows it on every published row, and the mod's card
+        /// read it from there — so the credit appeared at the exact moment it stopped being the
+        /// only trace, and a fork living in a game folder credited nobody. The file has carried
+        /// <c>_forked_from</c> all along; only its name was missing, and that is one public call.
+        ///
+        /// ⚠ **The server's answer about OUR row wins.** Once this fork is published, the site
+        /// holds the origin as an inscription of its own — with the account read live, so a rename
+        /// follows — and that is the authority. This local composition is what fills the gap
+        /// before then, and offline.
+        /// </summary>
+        public static Origin? ForkOrigin
+        {
+            get
+            {
+                var published = ServerState?.Origin;
+                if (published.HasValue) return published;
+
+                if (!ForkedFromSiteId.HasValue) return null;
+
+                // The count comes from the file either way: it was measured at the fork and the
+                // original has gone on growing, so no server can answer it later.
+                return ForkOriginAsked && _forkOriginFound
+                    ? new Origin(_forkOriginAuthor, ForkedFromResolvedLines)
+                    : Origin.NotAsked(ForkedFromResolvedLines);
+            }
+        }
+
         /// <summary>
         /// If true, UniverseLib won't override the game's EventSystem.
         /// Enable this if the game's UI animations or navigation don't work with the mod.

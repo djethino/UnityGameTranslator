@@ -537,6 +537,11 @@ namespace UnityGameTranslator.Core.UI.Panels
             TranslatorUIManager.EnsureServerStateKnown();
             TranslatorUIManager.EnsureRemoteChangesCounted();
 
+            // Whose work a fork was started from. Asked here rather than with the sync state: a
+            // fork has deliberately left its lineage, so the sync check knows nothing about the
+            // row it came from — that credit lives on the file and needs its own question.
+            TranslatorUIManager.EnsureForkOriginKnown();
+
             // The community rows say what each lineage is to the account; a new account, new rows.
             _translationList?.Refresh();
 

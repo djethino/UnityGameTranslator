@@ -183,6 +183,9 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         // Apply button tracking
         private ButtonHandle _applyBtn;
+
+        /// <summary>Shown only while Apply has something to apply — see UpdateApplyButtonText.</summary>
+        private ButtonHandle _cancelBtn;
         private ConfigSnapshot _initialSnapshot;
         private bool _isLoadingSettings;
 
@@ -495,6 +498,9 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             _applyBtn = _screen.Button("ApplyBtn");
 
+            // Shown only while there is something to abandon — see UpdateApplyButtonText.
+            _cancelBtn = _screen.Button("CancelBtn");
+
             // ── The choices only the code knows ─────────────────────────────────
             // Show the font IN EFFECT — the local override if set, else the one the translation
             // asks for — so the picker reflects what the user actually sees.
@@ -576,11 +582,39 @@ namespace UnityGameTranslator.Core.UI.Panels
                 case "checkModUpdates": return OnCheckModUpdatesNowClicked;
                 case "proxyModeChanged": return OnProxyModeChanged;
                 // Footer
-                case "cancel": return () => SetActive(false);
+                case "cancel": return DiscardAndClose;
                 case "apply": return OnApplyClicked;
                 default: return null;
             }
         }
+
+        /// <summary>
+        /// Puts every answer back to what the mod actually holds, then closes.
+        ///
+        /// 🔴 **Cancel means cancel at the moment it is pressed.** It was `SetActive(false)` and
+        /// nothing else: the abandoning happened by accident, at the NEXT opening, because opening
+        /// reloads everything from the config. The outcome was right and the reason was invisible
+        /// — a reader of this line could not tell "cancel" from "close", and neither could the
+        /// screen, which is why the two buttons sat side by side saying different words for one
+        /// act (see UpdateApplyButtonText).
+        ///
+        /// ⚠ The same routine an opening runs, never a second way of undoing: one description of
+        /// what this screen shows, used by both.
+        /// </summary>
+        private void DiscardAndClose()
+        {
+            LoadCurrentSettings();
+            SetActive(false);
+        }
+
+        /// <summary>
+        /// The cross in the title bar is the same act as Cancel, and goes through it.
+        ///
+        /// ⚠ Two ways out of a screen must not mean two different things about the answers typed
+        /// in it. Nothing here is ever written without Apply, so leaving by either door abandons —
+        /// and saying it in one place is what stops the two drifting.
+        /// </summary>
+        protected override void OnClosePanelClicked() => DiscardAndClose();
 
         /// <summary>A setting moved: the Apply button counts again — unless the settings are being loaded, which is not a change.</summary>
         private void OnSettingChanged()
@@ -1929,6 +1963,13 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Translated at set-time (cache-aware, placeholder-aware) so this code-managed button
             // shows the right state in the current language without racing the async pipeline.
             _applyBtn.Label = changes > 0 ? $"Apply ({changes})" : "Close";
+
+            // 🔴 **Cancel exists only against Apply.** With nothing pending this button reads
+            // "Close", and Cancel — which is SetActive(false), the very same act — sat beside it:
+            // two buttons, one outcome, and a reader left wondering what the difference is. It
+            // comes back the moment there is something to abandon, which is the only moment the
+            // word means anything.
+            if (_cancelBtn != null) _cancelBtn.Visible = changes > 0;
         }
 
     }

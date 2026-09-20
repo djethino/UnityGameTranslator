@@ -133,6 +133,9 @@ namespace UnityGameTranslator.Core.UI.Panels
         // Apply button tracking
         private ButtonHandle _applyBtn;
 
+        /// <summary>Shown only while Apply has something to apply — see UpdateApplyButtonText.</summary>
+        private ButtonHandle _cancelBtn;
+
         // Tools tab — browser editor (live edit session)
         private ButtonHandle _browserEditorBtn;
         private LabelHandle _browserEditorStatus;
@@ -263,6 +266,9 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             _applyBtn = _screen.Button("ApplyBtn");
 
+            // Shown only while there is something to abandon — see UpdateApplyButtonText.
+            _cancelBtn = _screen.Button("CancelBtn");
+
             // 🔴 Enter in a search box does what the button beside it does (2026-09-19).
             // Reported: typing a value and pressing Enter did nothing, the button had to be
             // clicked. ⚠ Wired to the SAME method, never to a copy of it — a second
@@ -349,11 +355,26 @@ namespace UnityGameTranslator.Core.UI.Panels
                 case "imageInspector": return OnStartImageInspectorClicked;
                 case "loadAll": return OnLoadAllReplacementsClicked;
                 case "scan": return OnScanClicked;
-                case "cancel": return () => SetActive(false);
+                case "cancel": return DiscardAndClose;
                 case "apply": return OnApplyClicked;
                 default: return null;
             }
         }
+
+        /// <summary>
+        /// Drops every pending answer — fonts, exclusions, override rules, sharpness — and closes.
+        ///
+        /// Same rule as the Options screen: Cancel undoes when it is pressed, through the routine
+        /// an opening already runs, rather than leaving the undoing to the next opening.
+        /// </summary>
+        private void DiscardAndClose()
+        {
+            LoadCurrentState();
+            SetActive(false);
+        }
+
+        /// <summary>The cross in the title bar is the same act as Cancel — see the Options screen.</summary>
+        protected override void OnClosePanelClicked() => DiscardAndClose();
 
         /// <summary>Pending only — applied (and fonts rebuilt) on Apply, like every other setting.</summary>
         private void OnFontSharpnessChanged()
@@ -2692,6 +2713,10 @@ namespace UnityGameTranslator.Core.UI.Panels
             int changes = CountPendingChanges();
             // Translated at set-time (cache/placeholder-aware) — no race with the async pipeline.
             _applyBtn.Label = changes > 0 ? $"Apply ({changes})" : "Close";
+
+            // Same rule as the Options screen: Cancel only against Apply. With nothing pending it
+            // and "Close" are the same act, side by side.
+            if (_cancelBtn != null) _cancelBtn.Visible = changes > 0;
         }
 
         #endregion

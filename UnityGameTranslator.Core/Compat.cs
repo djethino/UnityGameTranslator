@@ -1,17 +1,22 @@
 using System;
 using UnityEngine;
+using UnityEngine.UI;
+using UniverseLib.Runtime;
 
 namespace UnityGameTranslator.Core
 {
     /// <summary>
-    /// IL2CPP compatibility helpers. Some Unity API constructors / methods are
-    /// stripped by IL2CPP when the host game's own code never calls them — even
-    /// though they exist on every Unity version. Hitting one of those at runtime
-    /// crashes us with MissingMethodException.
+    /// Compatibility helpers for Unity API the running game may not carry. Two causes, same
+    /// symptom (MissingMethodException at the call):
+    ///   - IL2CPP strips constructors / methods the game's own code never calls, even though
+    ///     they exist on every Unity version;
+    ///   - the member did not exist yet in the game's Unity version (the mod compiles against a
+    ///     newer UnityEngine than the oldest games it runs in).
     ///
     /// Confirmed cases:
     ///   - <c>RectOffset(int, int, int, int)</c> stripped on Heroes of Might and
     ///     Magic: Olden Era (Unity IL2CPP build, BepInEx 6).
+    ///   - <c>ColorBlock.selectedColor</c> absent before Unity 2019.1 (see <see cref="SetSelectedColor"/>).
     ///
     /// Strategy: route every fragile constructor through a helper that uses the
     /// most stable code path (default ctor + property setters when possible,
@@ -78,6 +83,26 @@ namespace UnityGameTranslator.Core
                     return new Texture2D(2, 2);
                 }
             }
+        }
+
+        // Resolved once. Null member where the game's Unity predates it — SetValue is then a no-op.
+        private static readonly AmbiguousMemberHandler<ColorBlock, Color> SelectedColorMember
+            = new AmbiguousMemberHandler<ColorBlock, Color>(true, true, "selectedColor", "m_SelectedColor");
+
+        /// <summary>
+        /// Sets <c>ColorBlock.selectedColor</c> where the game's Unity has it (2019.1 and later).
+        /// Before 2019.1 the "selected" state does not exist, so there is nothing to theme.
+        ///
+        /// 🔴 Never write <c>cb.selectedColor</c> directly: on an older game the call throws
+        /// inside panel construction, <c>CreatePanels</c> aborts, and the whole interface is gone
+        /// — an empty wizard filling the screen. This is the same tolerant access UniverseLib
+        /// already uses for its own controls (<c>MonoProvider</c>, <c>Il2CppProvider</c>).
+        /// </summary>
+        public static void SetSelectedColor(ref ColorBlock colors, Color color)
+        {
+            object boxed = colors;
+            SelectedColorMember.SetValue(boxed, color);
+            colors = (ColorBlock)boxed;
         }
     }
 }

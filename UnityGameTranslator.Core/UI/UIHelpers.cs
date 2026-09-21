@@ -1,6 +1,7 @@
 using System;
 using System.Reflection;
 using UnityEngine;
+using UnityEngine.Events;
 using UnityEngine.EventSystems;
 using UnityEngine.UI;
 using UniverseLib.UI.Models;
@@ -263,9 +264,20 @@ namespace UnityGameTranslator.Core.UI
             }
         }
 
+        // Resolved once, from the game's own InputField.
+        private static readonly PropertyInfo OnEndEditProperty = typeof(InputField).GetProperty("onEndEdit");
+
+        /// <summary>
+        /// ⚠ **The event's type depends on the game's Unity**: <c>InputField.EndEditEvent</c> from
+        /// 2019.1, <c>InputField.SubmitEvent</c> before. Writing <c>field.onEndEdit</c> names the
+        /// newer one, and on an older game the method cannot even load — the panel building it
+        /// aborts, and every panel after it with it. Both are a <c>UnityEvent&lt;string&gt;</c>,
+        /// so the event is reached by name and held by that common base.
+        /// </summary>
         private static void AddSubmitListenerDirect(InputField field, Action<string> callback)
         {
-            field.onEndEdit.AddListener((text) => callback(text));
+            var onEndEdit = (UnityEvent<string>)OnEndEditProperty.GetValue(field, null);
+            onEndEdit.AddListener((text) => callback(text));
         }
 
         /// <summary>

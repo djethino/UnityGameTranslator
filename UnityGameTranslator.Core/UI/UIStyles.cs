@@ -648,7 +648,7 @@ namespace UnityGameTranslator.Core.UI
                 cb.highlightedColor = new Color(
                     Mathf.Min(color.r * 1.15f, 1f), Mathf.Min(color.g * 1.15f, 1f), Mathf.Min(color.b * 1.15f, 1f), color.a);
                 cb.pressedColor = new Color(color.r * 0.8f, color.g * 0.8f, color.b * 0.8f, color.a);
-                cb.selectedColor = color;
+                Compat.SetSelectedColor(ref cb, color);
                 // Themed disabled state (dim slate, fully opaque) so a disabled button reads as a clear
                 // "greyed out" control instead of Unity's translucent light-gray default, which looked
                 // like a black smudge over the dark panel (e.g. Upload Translation when not uploadable).

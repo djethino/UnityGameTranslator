@@ -122,6 +122,11 @@ foreach ($proj in $projects) {
 
 Write-Host "All builds successful!" -ForegroundColor Green
 
+# The Core, now built, against the oldest supported Unity: a release must not name what an older
+# game lacks (check-unity-api-floor.ps1 says why).
+& "$PSScriptRoot/check-unity-api-floor.ps1"
+if ($LASTEXITCODE -ne 0) { exit 1 }
+
 # NOTE: config.json is NOT included in releases
 # The mod creates it on first run with defaults
 # This prevents overwriting user settings during updates

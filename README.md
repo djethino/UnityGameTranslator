@@ -262,8 +262,26 @@ Or override at runtime in `config.json`:
 
 ### Prerequisites
 
-- .NET SDK 6.0+
-- `extlibs/` folder with Unity, BepInEx, MelonLoader, and UniverseLib DLLs (see project structure)
+- .NET SDK 8.0 (the adapters target .NET Standard 2.0, .NET Framework 4.7.2 and .NET 6; the checks run on .NET 8)
+- The submodules: `git submodule update --init --recursive` (UniverseLib, and `common` with its catalogs)
+- An `extlibs/` folder holding the DLLs below. They belong to Unity, BepInEx and MelonLoader, cannot be redistributed, and are therefore not in this repository: take them from a Unity install or a game, and from each loader's release.
+
+### What goes in `extlibs/`
+
+| Folder | Files | Used for |
+|---|---|---|
+| `Unity/` | `UnityEngine.dll`, `UnityEngine.CoreModule.dll`, `UnityEngine.IMGUIModule.dll`, `UnityEngine.InputLegacyModule.dll`, `UnityEngine.PhysicsModule.dll`, `UnityEngine.TextRenderingModule.dll`, `UnityEngine.UIModule.dll`, `UnityEngine.UI.dll`, `UnityEngine.UI_publicized.dll`, `Unity.TextMeshPro.dll` | Compiling the Core. Any recent, consistent Unity version (tested with 2021.3). `UnityEngine.PhysicsModule.dll` must be a build that targets .NET Standard 2.0 — recent Unity versions ship one targeting 2.1, which the Core cannot reference |
+| `UniverseLib/` | `UniverseLib.Mono.dll` | Compiling the Core. Written there by the build from the `UniverseLib` submodule |
+| `BepInEx5/` | `BepInEx.dll`, `0Harmony.dll` | The BepInEx 5 adapter |
+| `BepInEx6-Mono/` | `BepInEx.Core.dll`, `BepInEx.Unity.Mono.dll`, `0Harmony.dll` | The BepInEx 6 Mono adapter |
+| `BepInEx6-IL2CPP/` | `BepInEx.Core.dll`, `BepInEx.Unity.IL2CPP.dll`, `Il2CppInterop.Runtime.dll`, `0Harmony.dll` | The BepInEx 6 IL2CPP adapter |
+| `MelonLoader-Mono/` | `MelonLoader.dll`, `0Harmony.dll` | The MelonLoader Mono adapter |
+| `MelonLoader-IL2CPP/` | `MelonLoader.dll`, `Il2CppInterop.Runtime.dll`, `0Harmony.dll` | The MelonLoader IL2CPP adapter |
+| `UnityFloor/2018.1.0f2/` | `UnityEngine.dll`, every `UnityEngine.*Module.dll`, `UnityEngine.UI.dll` — all from **Unity 2018.1.0f2** | The Unity API floor check (below). The modules come from Unity's Windows build support package for that version, `UnityEngine.UI.dll` from its editor, in `UnityExtensions/Unity/GUISystem/Standalone/` |
+
+### The Unity API floor
+
+The mod compiles against a recent Unity, but must run on games made with older ones: the oldest supported is **Unity 2018.1**, the first with a stable .NET 4 runtime (games on Unity's older .NET 3.5 runtime cannot run the mod). `check-unity-api-floor.ps1` compares every Unity type and member the Core uses, signatures included, with Unity 2018.1's, and fails the build when one is missing. Members that are absent on purpose — kept in a method of their own and guarded by its caller — are listed in `tests/UnityGameTranslator.UnityApiFloor/allowed.txt`, method by method, with the reason. `prepare-release.ps1` runs it after building.
 
 ### Build
 

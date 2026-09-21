@@ -106,6 +106,18 @@ namespace UnityGameTranslator.Core
         #region EncodeToPNG
 
         /// <summary>
+        /// The texture's state for the export's log line.
+        ///
+        /// 🔴 **Alone in its own method, and read inside a try BY ITS CALLER.** `Texture.mipmapCount`
+        /// and `Texture.isReadable` do not exist before Unity 2018.3/2019 — and the runtime resolves a
+        /// missing member when it compiles the method that NAMES it, so named in EncodeToPngSafe they
+        /// made the whole export unloadable on such a game, the try around them included (found by
+        /// the Unity API floor check, 2026-09-22; the trap: analyse/pieges-projet.md §9).
+        /// </summary>
+        private static string DescribeForLog(Texture2D texture)
+            => $"format={texture.format} size={texture.width}x{texture.height} mipmaps={texture.mipmapCount} readable={texture.isReadable}";
+
+        /// <summary>
         /// Encode a Texture2D to PNG via reflection (handles IL2CPP where EncodeToPNG may differ).
         /// </summary>
         public static byte[] EncodeToPngSafe(Texture2D texture)
@@ -123,7 +135,7 @@ namespace UnityGameTranslator.Core
             string textureDiag = "?";
             try
             {
-                textureDiag = $"format={texture.format} size={texture.width}x{texture.height} mipmaps={texture.mipmapCount} readable={texture.isReadable}";
+                textureDiag = DescribeForLog(texture);
             }
             catch (Exception ex)
             {

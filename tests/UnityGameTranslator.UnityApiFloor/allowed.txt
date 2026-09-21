@@ -1,0 +1,15 @@
+# What the Core names that Unity 2018.1 does not have — ON PURPOSE, each in one method of its own,
+# called inside a try by its caller (the runtime resolves a missing member when it compiles the
+# method that NAMES it, so a guard written inside would never run: analyse/pieges-projet.md §9).
+#
+# One line per reference AND per method: an allowance covers that place only. Named again anywhere
+# else, the same member fails the check. Every line says why after "  #".
+
+UnityEngine.Material::GetTexturePropertyNames():System.String[] @ UnityGameTranslator.Core.ImageReplacer.SlotNamesOf  # slot discovery; the caller falls back to the conventional slot names
+UnityEngine.Renderer::GetSharedMaterials(System.Collections.Generic.List`1<UnityEngine.Material>):System.Void @ UnityGameTranslator.Core.ImageReplacer.MaterialsInto  # EachMaterial tries it first, then the array, then the first material
+UnityEngine.Shader::GetPropertyCount():System.Int32 @ UnityGameTranslator.Core.ImageReplacer.ShaderPropertyCount  # asking the shader; the caller falls back to the slot names
+UnityEngine.Shader::GetPropertyName(System.Int32):System.String @ UnityGameTranslator.Core.ImageReplacer.ShaderPropertyName  # same guarded loop as ShaderPropertyCount
+UnityEngine.Shader::GetPropertyType(System.Int32):UnityEngine.Rendering.ShaderPropertyType @ UnityGameTranslator.Core.ImageReplacer.ShaderPropertyIsTexture  # same guarded loop as ShaderPropertyCount
+type UnityEngine.Rendering.ShaderPropertyType  # named only by ImageReplacer.ShaderPropertyIsTexture, allowed above
+UnityEngine.Texture::get_isReadable():System.Boolean @ UnityGameTranslator.Core.TextureUtils.DescribeForLog  # a log line only; EncodeToPngSafe reads it inside a try and exports anyway
+UnityEngine.Texture::get_mipmapCount():System.Int32 @ UnityGameTranslator.Core.TextureUtils.DescribeForLog  # same log line as isReadable

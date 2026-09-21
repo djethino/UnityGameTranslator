@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Checks the built Core against the Unity API floor — see Program.cs. No test framework, like the
+    Core's own checks: prints its results and exits non-zero. Run by build-and-deploy.ps1 and
+    prepare-release.ps1 after the Core is built.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <!-- Checked against, never a dependency: nothing here is built into the mod. -->
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+</Project>

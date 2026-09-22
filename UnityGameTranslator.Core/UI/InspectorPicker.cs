@@ -136,6 +136,8 @@ namespace UnityGameTranslator.Core.UI
         // Colors for highlights (DevTools-style) — from the palette
         private static readonly Color HoverHighlightColor = UIStyles.GameHighlightHover;
         private static readonly Color SelectedHighlightColor = UIStyles.GameHighlightSelected;
+        private static readonly Color HoverEdgeColor = UIStyles.GameHighlightHoverEdge;
+        private static readonly Color SelectedEdgeColor = UIStyles.GameHighlightSelectedEdge;
 
         // Camera selection for world-space raycast
         private Camera _selectedCamera = null; // null = UI Only mode
@@ -176,10 +178,19 @@ namespace UnityGameTranslator.Core.UI
         /// <summary>Which scene the lists describe. A different one makes them meaningless.</summary>
         private static int _cacheScene = -1;
 
+        /// <summary>
+        /// Every text this mod reaches in the scene, as components — for the pass that finds a text
+        /// by its rectangle on screen when the game's own answer carried none
+        /// (<see cref="TextUnderPointer"/>). Listed through <see cref="TextTargets"/>, the one
+        /// enumeration the in-game editor already uses, and kept like the two lists above.
+        /// </summary>
+        private static Component[] _textsCache;
+
         private static void DropSceneCaches()
         {
             _raycastersCache = null;
             _renderersCache = null;
+            _textsCache = null;
         }
 
         /// <summary>
@@ -462,6 +473,21 @@ namespace UnityGameTranslator.Core.UI
             return _renderersCache;
         }
 
+        private static Component[] Texts()
+        {
+            DropIfSceneChanged();
+            if (_textsCache != null) return _textsCache;
+
+            // UI Toolkit elements are not components and are asked through their own panels
+            // (UIToolkitSupport.PickAt); everything else TextTargets lists is.
+            var kept = new List<Component>();
+            foreach (var target in TextTargets.All())
+                if (target.Owner is Component comp) kept.Add(comp);
+            _textsCache = kept.ToArray();
+            TranslatorCore.LogDebug($"[Inspector] Scene walked: {_textsCache.Length} text(s)");
+            return _textsCache;
+        }
+
         #endregion
 
         #region Probe — what picking costs, in DebugMode only
@@ -594,14 +620,41 @@ namespace UnityGameTranslator.Core.UI
             _lastSelectedPath = "";
             _lastSelectedObject = null;
             _lastSelectedSpriteObj = null;
-            if (_selectedHighlight != null) _selectedHighlight.gameObject.SetActive(false);
+            HideSelectedMarker();
         }
 
         /// <summary>Forget the current hover and hide its highlight.</summary>
         public void ClearHover()
         {
             _lastHoveredPath = "";
+            HideHoverMarker();
+        }
+
+        // 🔴 **A marker is its fill AND its outline, hidden together, always** (2026-09-22, user's
+        // report: "the outlines stay while the fill goes"). The outline is twelve strips of their
+        // own, and five paths hid the fill alone — Clear Selection, the hover leaving an object or
+        // entering the panel, a camera change. Stop hid everything with the canvas, and the next
+        // Start brought the strips back where they had been. These two are the only way to hide one.
+        private void HideHoverMarker()
+        {
             if (_hoverHighlight != null) _hoverHighlight.gameObject.SetActive(false);
+            HideEdges(_hoverEdgeImages);
+        }
+
+        private void HideSelectedMarker()
+        {
+            if (_selectedHighlight != null) _selectedHighlight.gameObject.SetActive(false);
+            HideEdges(_selectedEdgeImages);
+        }
+
+        /// <summary>Whether the selection's marker is on screen — its fill, its outline, or both.</summary>
+        private bool SelectedMarkerShown()
+        {
+            if (_selectedHighlight != null && _selectedHighlight.gameObject.activeSelf) return true;
+            if (_selectedEdgeImages == null) return false;
+            foreach (var edge in _selectedEdgeImages)
+                if (edge != null && edge.gameObject.activeSelf) return true;
+            return false;
         }
 
         /// <summary>Select a camera by index into <see cref="CameraNames"/>. 0 (or out of range) is "UI Only".</summary>
@@ -676,7 +729,7 @@ namespace UnityGameTranslator.Core.UI
             if (_panelRect != null && IsMouseOverPanel(mousePos))
             {
                 // Hide hover highlight when over our panel
-                if (_hoverHighlight != null) _hoverHighlight.gameObject.SetActive(false);
+                HideHoverMarker();
                 if (_lastHoveredPath != "")
                 {
                     _lastHoveredPath = "";
@@ -702,6 +755,23 @@ namespace UnityGameTranslator.Core.UI
                 }
                 if (hoveredObject != null) _rebuiltOnMiss = false;
 
+                // Nothing in the Canvas: this may be a UI Toolkit interface, which the
+                // GraphicRaycaster cannot see at all. See UIToolkitSupport.PickAt.
+                object uiToolkitElement = null;
+                Rect uiToolkitRect = default(Rect);
+                if (hoveredObject == null)
+                    uiToolkitElement = UIToolkitSupport.PickAt(mousePos, out uiToolkitRect);
+
+                // And when neither answer is a text, in a mode that is about text: the text under the
+                // pointer by its rectangle (see TextUnderPointer — after the game's answer, never
+                // instead of it).
+                bool byRectangle = false;
+                if (uiToolkitElement == null && WantsText && (hoveredObject == null || !CarriesText(hoveredObject)))
+                {
+                    var text = TextUnderPointer(mousePos);
+                    if (text != null) { hoveredObject = text; byRectangle = true; }
+                }
+
                 NoteProbe(System.Diagnostics.Stopwatch.GetTimestamp() - t0);
 
                 if (hoveredObject != null)
@@ -709,7 +779,7 @@ namespace UnityGameTranslator.Core.UI
                     // Skip our own UI
                     if (IsOwnUI(hoveredObject))
                     {
-                        if (_hoverHighlight != null) _hoverHighlight.gameObject.SetActive(false);
+                        HideHoverMarker();
                         if (_lastHoveredPath != "") { _lastHoveredPath = ""; Hovered?.Invoke(""); }
                     }
                     else
@@ -725,7 +795,11 @@ namespace UnityGameTranslator.Core.UI
                             // actually struck, and what was taken from that. Four rounds of fixing
                             // on 2026-09-19 were guesses for want of exactly this. Not per frame —
                             // per change, which is the event the person is describing.
-                            if (_selectedCamera != null)
+                            if (byRectangle)
+                                TranslatorCore.LogDebug(
+                                    $"[Inspector] hover '{hoveredObject.name}' found by its rectangle, "
+                                    + $"the game's own answer carrying no text: {_lastTextWhy}");
+                            else if (_selectedCamera != null)
                                 TranslatorCore.LogDebug(
                                     $"[Inspector] hover '{hoveredObject.name}' via "
                                     + (_lastPathWasRay
@@ -745,9 +819,9 @@ namespace UnityGameTranslator.Core.UI
                 }
                 else
                 {
-                    // Nothing in the Canvas: this may be a UI Toolkit interface, which the
-                    // GraphicRaycaster cannot see at all. See UIToolkitSupport.PickAt.
-                    var element = UIToolkitSupport.PickAt(mousePos, out var elementRect);
+                    // The UI Toolkit answer, asked once above.
+                    var element = uiToolkitElement;
+                    var elementRect = uiToolkitRect;
                     if (element != null)
                     {
                         string elementPath = UIToolkitSupport.PathOf(element);
@@ -762,7 +836,7 @@ namespace UnityGameTranslator.Core.UI
                     }
                     else
                     {
-                        if (_hoverHighlight != null) _hoverHighlight.gameObject.SetActive(false);
+                        HideHoverMarker();
                         if (_lastHoveredPath != "") { _lastHoveredPath = ""; Hovered?.Invoke(""); }
                     }
                 }
@@ -773,6 +847,15 @@ namespace UnityGameTranslator.Core.UI
             {
                 var hitObject = RaycastUIElement(mousePos);
                 if (hitObject == null && SelectUIToolkitAt(mousePos)) return;
+
+                // Same order as the hover: the game's answer, UI Toolkit, then — when neither is a
+                // text, in a mode about text — the text under the pointer by its rectangle.
+                bool clickedByRectangle = false;
+                if (WantsText && (hitObject == null || !CarriesText(hitObject)))
+                {
+                    var text = TextUnderPointer(mousePos);
+                    if (text != null) { hitObject = text; clickedByRectangle = true; }
+                }
 
                 if (hitObject != null && !IsOwnUI(hitObject))
                 {
@@ -834,7 +917,9 @@ namespace UnityGameTranslator.Core.UI
                     // Which of the two passes answered, and what it landed on. One line per click,
                     // because reading the code cannot tell you: both are wired, and they differ
                     // exactly on the picks that look wrong.
-                    if (_selectedCamera != null)
+                    if (clickedByRectangle)
+                        TranslatorCore.LogDebug($"[Inspector] picked '{hitObject.name}' by its rectangle: {_lastTextWhy}");
+                    else if (_selectedCamera != null)
                         TranslatorCore.LogDebug($"[Inspector] picked '{hitObject.name}' via "
                                                 + (_lastPathWasRay ? $"the ray, which struck the collider '{_lastColliderName}'"
                                                                    : "a box in front of what the ray struck"));
@@ -847,7 +932,9 @@ namespace UnityGameTranslator.Core.UI
             }
 
             // Keep selected highlight tracking (object may move)
-            if (_lastSelectedObject != null && _selectedHighlight != null && _selectedHighlight.gameObject.activeSelf)
+            // ⚠ The outline counts as shown: a 3D pick whose wash was too thin to draw is still
+            // marked by its frame, and it moves with the object like any other.
+            if (_lastSelectedObject != null && SelectedMarkerShown())
             {
                 // Re-position every ~10 frames to track moving elements
                 if (_frameSkip % 10 == 0)
@@ -1249,6 +1336,259 @@ namespace UnityGameTranslator.Core.UI
             return null;
         }
 
+        #region Texts found by their rectangle — when the game's own answer carries none
+
+        /// <summary>
+        /// 🔴 **Why this pass exists** (2026-09-22). A dialogue bubble could not be picked on a game
+        /// whose sprites all could. Both ways of picking ask the GAME: "UI Only" asks its
+        /// GraphicRaycasters, which answer only for what accepts clicks — and a dialogue advanced
+        /// with the keyboard or a pad has no reason to accept any; a camera asks for Renderers, and
+        /// a uGUI text is drawn by a CanvasRenderer, which is not one. Whatever camera was chosen,
+        /// the text could never come back.
+        ///
+        /// ⚠ **It comes AFTER, never instead.** When the game answers with a text, its answer is the
+        /// better one: it carries the game's own drawing order and blocking. This pass runs only when
+        /// the answer carries no text — nothing at all, or a sprite behind the bubble — and only in
+        /// the modes that are about text.
+        ///
+        /// Its rule is the camera pass's, applied to texts: a text drawn on the screen sits over the
+        /// world and the one drawn last wins (Overlay over camera canvases, then sortingOrder, then
+        /// Graphic.depth); a text in the world is met along the line of sight, the nearest wins, and
+        /// nothing behind the first solid thing the physics ray meets can be picked.
+        ///
+        /// ⚠ **Its limits, stated**: an IMGUI text is no object at all and a UI drawn into a texture
+        /// shown on a surface lives in that texture's space — neither can be reached. A wall with no
+        /// collider does not stop the ray, as in the camera pass. The rectangle is the component's,
+        /// which may be wider than the glyphs it holds.
+        /// </summary>
+        private bool WantsText => _currentMode != InspectorMode.BitmapReplace;
+
+        /// <summary>Set once the text list has been rebuilt for the current run of hovers finding none.</summary>
+        private bool _textsRebuiltOnMiss;
+
+        /// <summary>What decided the last text found by its rectangle — said in the hover line.</summary>
+        private string _lastTextWhy;
+
+        private static bool _textWalkComplained;
+
+        /// <summary>
+        /// Is this, or something under it, a text? A bubble's background answering the game's raycast
+        /// is fine: the in-game editor looks for texts under what was picked.
+        /// </summary>
+        private static bool CarriesText(GameObject go)
+        {
+            if (go == null) return false;
+            var root = go.transform;
+            foreach (var comp in Texts())
+            {
+                if (comp == null) continue;
+                for (var t = comp.transform; t != null; t = t.parent)
+                    if (t == root) return true;
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// The text under the pointer, by rectangle. A text that appeared after the list was taken —
+        /// a bubble opens with its line — is found by looking once more with a fresh list, and only
+        /// once per run of empty answers, the rule the other lists follow.
+        /// </summary>
+        private GameObject TextUnderPointer(Vector3 screenPosition)
+        {
+            var found = PickTextByRectangle(screenPosition);
+            if (found == null && !_textsRebuiltOnMiss)
+            {
+                _textsRebuiltOnMiss = true;
+                _textsCache = null;
+                found = PickTextByRectangle(screenPosition);
+            }
+            if (found != null) _textsRebuiltOnMiss = false;
+            return found;
+        }
+
+        private GameObject PickTextByRectangle(Vector3 screenPosition)
+        {
+            Camera worldCamera = _selectedCamera ?? Camera.main;
+            float blockedAt = float.MaxValue;
+            bool blockedKnown = false;
+
+            Component bestOnScreen = null;
+            int bestOverlay = -1, bestOrder = int.MinValue, bestDepth = int.MinValue;
+            Component bestInWorld = null;
+            float bestReach = float.MaxValue;
+
+            foreach (var comp in Texts())
+            {
+                if (comp == null) continue;
+                _probeWalked++;
+
+                try
+                {
+                    var go = comp.gameObject;
+                    if (go == null || !go.activeInHierarchy) continue;
+                    // Hidden, disabled, under a disabled canvas or clipped away by a mask: not drawn,
+                    // so not what anybody is pointing at. The RTL pipeline's own gate.
+                    if (!TextShaping.RtlPresenter.IsDrawn(comp)) continue;
+                    int depth = GraphicDepth(comp);
+                    if (depth == -1) continue;   // a Graphic Unity is not drawing this frame
+
+                    // TextMesh and tk2d have no rectangle; their renderer is what the camera pass sees.
+                    var rect = comp.GetComponent<RectTransform>();
+                    if (rect == null) continue;
+
+                    Canvas canvas = null;
+                    try
+                    {
+                        canvas = rect.GetComponentInParent<Canvas>();
+                        if (canvas != null) canvas = canvas.rootCanvas;
+                    }
+                    catch { }
+
+                    Rect local = rect.rect;
+                    Vector3 w0 = rect.TransformPoint(new Vector3(local.xMin, local.yMin, 0));
+                    Vector3 w1 = rect.TransformPoint(new Vector3(local.xMin, local.yMax, 0));
+                    Vector3 w2 = rect.TransformPoint(new Vector3(local.xMax, local.yMax, 0));
+                    Vector3 w3 = rect.TransformPoint(new Vector3(local.xMax, local.yMin, 0));
+
+                    bool overlay = canvas != null && canvas.renderMode == RenderMode.ScreenSpaceOverlay;
+                    // The camera GetScreenBounds converts through, so the pick and its marker agree.
+                    Camera camera = overlay ? null
+                        : (canvas != null ? canvas.worldCamera : null) ?? worldCamera;
+
+                    Vector3 s0 = w0, s1 = w1, s2 = w2, s3 = w3;
+                    if (!overlay)
+                    {
+                        if (camera == null) continue;
+                        s0 = camera.WorldToScreenPoint(w0); s1 = camera.WorldToScreenPoint(w1);
+                        s2 = camera.WorldToScreenPoint(w2); s3 = camera.WorldToScreenPoint(w3);
+                        // A corner behind the eye projects to the wrong side of the screen.
+                        if (s0.z <= 0f || s1.z <= 0f || s2.z <= 0f || s3.z <= 0f) continue;
+                    }
+
+                    if (!InsideQuad(screenPosition, s0, s1, s2, s3)) continue;
+
+                    bool onScreen = canvas != null && canvas.renderMode != RenderMode.WorldSpace;
+                    if (onScreen)
+                    {
+                        int layerOver = overlay ? 1 : 0;
+                        int order = canvas.sortingOrder;
+                        bool drawnLater = layerOver != bestOverlay ? layerOver > bestOverlay
+                            : order != bestOrder ? order > bestOrder
+                            : depth > bestDepth;
+                        if (bestOnScreen == null || drawnLater)
+                        {
+                            bestOnScreen = comp; bestOverlay = layerOver; bestOrder = order; bestDepth = depth;
+                        }
+                        continue;
+                    }
+
+                    // In the world: how far along the line of sight does it sit? The plane of its
+                    // rectangle, met by the ray — plain vector arithmetic, no Plane API to be stripped.
+                    var ray = camera.ScreenPointToRay(screenPosition);
+                    Vector3 normal = Vector3.Cross(w1 - w0, w3 - w0);
+                    float facing = Vector3.Dot(normal, ray.direction);
+                    if (Mathf.Abs(facing) < 1e-8f) continue;   // seen edge-on
+                    float reach = Vector3.Dot(normal, w0 - ray.origin) / facing;
+                    if (reach < 0f) continue;
+
+                    if (!blockedKnown)
+                    {
+                        blockedKnown = true;
+                        blockedAt = BlockerDistance(camera, screenPosition);
+                    }
+                    if (reach >= blockedAt) continue;   // behind the first solid thing
+                    if (reach < bestReach) { bestReach = reach; bestInWorld = comp; }
+                }
+                catch (Exception ex)
+                {
+                    if (!_textWalkComplained)
+                    {
+                        _textWalkComplained = true;
+                        TranslatorCore.LogWarning(
+                            $"[Inspector] cannot read a text while picking by rectangle: {ex.GetType().Name}: {ex.Message}"
+                            + " — texts it happens to are skipped");
+                    }
+                }
+            }
+
+            // Drawn on the screen means drawn over the world.
+            if (bestOnScreen != null)
+            {
+                _lastTextWhy = $"on screen, sorting order {bestOrder}, depth {bestDepth}"
+                               + (bestOverlay == 1 ? ", overlay" : "");
+                return bestOnScreen.gameObject;
+            }
+            if (bestInWorld != null)
+            {
+                _lastTextWhy = $"in the world at {bestReach:F2}"
+                               + (blockedAt < float.MaxValue ? $", ahead of a collider at {blockedAt:F2}" : "");
+                return bestInWorld.gameObject;
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// How far the first solid thing is along the ray, or no limit. Through PhysicsPick, in a
+        /// method of its own with the guard HERE, in the caller — see PhysicsPick for why a guard
+        /// inside it would never run on a game shipping no physics.
+        /// </summary>
+        private static float BlockerDistance(Camera camera, Vector3 screenPosition)
+        {
+            if (_physicsRefused || camera == null) return float.MaxValue;
+            try
+            {
+                PhysicsPick(camera, screenPosition, out float blockedAt);
+                return blockedAt;
+            }
+            catch (Exception ex)
+            {
+                _physicsRefused = true;
+                TranslatorCore.LogWarning(
+                    $"[Inspector] This game ships no usable physics ({ex.Message}) — a text in the "
+                    + "world can be picked through what stands in front of it");
+                return float.MaxValue;
+            }
+        }
+
+        private static bool _graphicDepthResolved;
+        private static PropertyInfo _graphicDepthProp;
+
+        /// <summary>
+        /// Graphic.depth: the order Unity draws this element in its canvas, and -1 when it is not
+        /// drawing it this frame. Read by name rather than named in code. Not a Graphic — a 3D
+        /// TextMeshPro — or not readable: 0, which neither ranks it first nor rules it out.
+        /// </summary>
+        private static int GraphicDepth(Component comp)
+        {
+            if (!_graphicDepthResolved)
+            {
+                _graphicDepthResolved = true;
+                try { _graphicDepthProp = _graphicType?.GetProperty("depth", BindingFlags.Public | BindingFlags.Instance); }
+                catch { }
+            }
+            if (_graphicDepthProp == null || _graphicType == null || !_graphicType.IsInstanceOfType(comp)) return 0;
+            try { return (int)_graphicDepthProp.GetValue(comp, null); }
+            catch { return 0; }
+        }
+
+        /// <summary>
+        /// Is the point inside the four projected corners — a rotated or skewed rectangle included?
+        /// Same side of all four edges. A rectangle with no area contains nothing.
+        /// </summary>
+        private static bool InsideQuad(Vector3 p, Vector3 a, Vector3 b, Vector3 c, Vector3 d)
+        {
+            if (Mathf.Abs(Side(a, b, c)) < 1f && Mathf.Abs(Side(a, c, d)) < 1f) return false;
+            float e1 = Side(a, b, p), e2 = Side(b, c, p), e3 = Side(c, d, p), e4 = Side(d, a, p);
+            bool below = e1 < 0f || e2 < 0f || e3 < 0f || e4 < 0f;
+            bool above = e1 > 0f || e2 > 0f || e3 > 0f || e4 > 0f;
+            return !(below && above);
+        }
+
+        private static float Side(Vector3 a, Vector3 b, Vector3 p)
+            => (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x);
+
+        #endregion
+
         /// <summary>
         /// Raycast via a specific Camera for world-space Renderers.
         /// Only checks renderers visible to this camera (via cullingMask).
@@ -1477,8 +1817,8 @@ namespace UnityGameTranslator.Core.UI
             _hoverEdgeImages = new Image[12];
             _selectedEdges = new RectTransform[12];
             _selectedEdgeImages = new Image[12];
-            BuildEdges("HoverEdge", HoverHighlightColor, _hoverEdges, _hoverEdgeImages);
-            BuildEdges("SelectedEdge", SelectedHighlightColor, _selectedEdges, _selectedEdgeImages);
+            BuildEdges("HoverEdge", HoverEdgeColor, _hoverEdges, _hoverEdgeImages);
+            BuildEdges("SelectedEdge", SelectedEdgeColor, _selectedEdges, _selectedEdgeImages);
 
             // Start hidden
             _highlightCanvas.SetActive(false);
@@ -1561,6 +1901,38 @@ namespace UnityGameTranslator.Core.UI
             }
         }
 
+        /// <summary>
+        /// A flat frame around a screen rectangle, drawn with four of the twelve strips — what marks
+        /// a SELECTED flat element, so it reads apart from the hover's plain wash (2026-09-22).
+        /// </summary>
+        private static readonly Vector2[] FrameCorners = new Vector2[4];
+
+        private static void ShowFrame(RectTransform[] rects, Image[] images, Rect screen)
+        {
+            if (rects == null || images == null) return;
+
+            // Reused: the selection is re-framed as it moves, and a frame is no reason to allocate.
+            var corners = FrameCorners;
+            corners[0] = new Vector2(screen.xMin, screen.yMin);
+            corners[1] = new Vector2(screen.xMax, screen.yMin);
+            corners[2] = new Vector2(screen.xMax, screen.yMax);
+            corners[3] = new Vector2(screen.xMin, screen.yMax);
+
+            for (int i = 0; i < 12; i++)
+            {
+                if (i >= 4) { images[i].gameObject.SetActive(false); continue; }
+
+                Vector2 a = corners[i], b = corners[(i + 1) % 4];
+                float dx = b.x - a.x, dy = b.y - a.y;
+                float length = Mathf.Sqrt(dx * dx + dy * dy);
+
+                rects[i].anchoredPosition = new Vector2((a.x + b.x) * 0.5f, (a.y + b.y) * 0.5f);
+                rects[i].sizeDelta = new Vector2(Mathf.Max(length, EdgeThickness), EdgeThickness);
+                rects[i].localRotation = Quaternion.Euler(0f, 0f, Mathf.Atan2(dy, dx) * Mathf.Rad2Deg);
+                images[i].gameObject.SetActive(true);
+            }
+        }
+
         private static void HideEdges(Image[] images)
         {
             if (images == null) return;
@@ -1597,9 +1969,12 @@ namespace UnityGameTranslator.Core.UI
                     highlightImage.gameObject.SetActive(false);
                     return;
                 }
-                PositionHighlightRect(highlightRect, highlightImage,
-                                      UnityEngine.Rect.MinMaxRect(screenMin.x, screenMin.y,
-                                                                  screenMax.x, screenMax.y));
+                var flat = UnityEngine.Rect.MinMaxRect(screenMin.x, screenMin.y, screenMax.x, screenMax.y);
+                PositionHighlightRect(highlightRect, highlightImage, flat);
+
+                // The selection is framed; the hover is not — that is what tells them apart.
+                if (ReferenceEquals(edges, _selectedEdges) && highlightImage.gameObject.activeSelf)
+                    ShowFrame(edges, edgeImages, flat);
                 return;
             }
 
@@ -1703,10 +2078,8 @@ namespace UnityGameTranslator.Core.UI
 
         private void HideAllHighlights()
         {
-            if (_hoverHighlight != null) _hoverHighlight.gameObject.SetActive(false);
-            if (_selectedHighlight != null) _selectedHighlight.gameObject.SetActive(false);
-            HideEdges(_hoverEdgeImages);
-            HideEdges(_selectedEdgeImages);
+            HideHoverMarker();
+            HideSelectedMarker();
         }
 
         #endregion
@@ -1794,7 +2167,10 @@ namespace UnityGameTranslator.Core.UI
                 }
                 catch { }
 
-                if (rootCanvas != null && rootCanvas.renderMode != RenderMode.ScreenSpaceOverlay)
+                // ⚠ No canvas at all is a rectangle IN THE WORLD — a 3D TextMeshPro — and was read
+                // as pixels like an Overlay one, which drew its marker a few pixels wide in a corner.
+                // It is projected like a world-space canvas, through the same cameras.
+                if (rootCanvas == null || rootCanvas.renderMode != RenderMode.ScreenSpaceOverlay)
                 {
                     // 🔴 **A canvas that is not Overlay MUST be converted, and the fallbacks are
                     // new** (2026-09-19). This took `worldCamera` and, when it was null, simply
@@ -1806,11 +2182,12 @@ namespace UnityGameTranslator.Core.UI
                     // Order: the canvas's own camera is the truth when it has one; otherwise the
                     // camera the person is picking through; otherwise the main one. Out of all
                     // three, the honest answer is to refuse — out loud.
-                    var cam = rootCanvas.worldCamera ?? picking ?? Camera.main;
+                    var cam = (rootCanvas != null ? rootCanvas.worldCamera : null) ?? picking ?? Camera.main;
                     if (cam == null)
                     {
-                        TranslatorCore.LogDebug(
-                            $"[Inspector] Canvas '{rootCanvas.name}' is {rootCanvas.renderMode} with no camera to convert through — highlight hidden");
+                        TranslatorCore.LogDebug(rootCanvas != null
+                            ? $"[Inspector] Canvas '{rootCanvas.name}' is {rootCanvas.renderMode} with no camera to convert through — highlight hidden"
+                            : $"[Inspector] '{rect.name}' sits in the world with no camera to convert through — highlight hidden");
                         return false;
                     }
 
@@ -1850,6 +2227,8 @@ namespace UnityGameTranslator.Core.UI
 
             HideEdges(_selectedEdgeImages);
             PositionHighlightRect(_selectedHighlightRect, _selectedHighlight, screenRect);
+            if (_selectedHighlight != null && _selectedHighlight.gameObject.activeSelf)
+                ShowFrame(_selectedEdges, _selectedEdgeImages, screenRect);
 
             var target = new PickedTarget
             {

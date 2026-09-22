@@ -397,9 +397,15 @@ namespace UnityGameTranslator.Core.UI
         // The site's answer to the same need is gray-700 on gray-800.
         public static readonly Color CardElevated = Of(Theme.SurfaceRaised, 0.96f);
 
-        // In-game element highlight overlays (Inspector) — semi-transparent info-blue
-        public static readonly Color GameHighlightHover = new Color(0.24f, 0.55f, 0.85f, 0.28f);
-        public static readonly Color GameHighlightSelected = new Color(0.20f, 0.50f, 0.78f, 0.40f);
+        // In-game element highlight overlays (Inspector).
+        // ⚠ Hovered and selected must never be mistaken for each other (user, 2026-09-22: two blues
+        // one alpha step apart read as the same thing). Hover: a light info-blue wash, no frame —
+        // "this is what a click would take". Selected: the mod's accent with a solid frame — "this
+        // is what the panel is showing". The frame is what tells them apart when they overlap.
+        public static readonly Color GameHighlightHover = new Color(0.24f, 0.55f, 0.85f, 0.22f);
+        public static readonly Color GameHighlightHoverEdge = new Color(0.24f, 0.55f, 0.85f, 0.75f);
+        public static readonly Color GameHighlightSelected = Of(Theme.Accent, 0.26f);
+        public static readonly Color GameHighlightSelectedEdge = Of(Theme.Accent, 0.95f);
 
         // Tab bar. The active tab wears the colour of the content it opens — that is what makes the
         // two read as one object rather than as a button sitting above a box.

@@ -644,6 +644,14 @@ namespace UnityGameTranslator.Core.TextShaping
         /// processedText from its own state, so only the hierarchy matters there. Anything not
         /// readable answers true: the attempt counter, not a silent wait, is the safety net.
         /// </summary>
+        /// <summary>
+        /// Does Unity draw this text component right now? The same gate as <see cref="WillBeRedrawn"/>
+        /// for a uGUI Graphic — active, enabled, under an enabled Canvas, not culled by a mask —
+        /// shared with the inspector's picking, which asks the same question of a text the pointer
+        /// is over: a hidden or clipped text must not be picked. Anything not readable answers true.
+        /// </summary>
+        internal static bool IsDrawn(object comp) => WillBeRedrawn(comp, ReflowKind.UGuiText);
+
         private static bool WillBeRedrawn(object comp, ReflowKind kind)
         {
             if (!(comp is UnityEngine.Component c) || c.gameObject == null) return true;

@@ -1285,6 +1285,37 @@ namespace UnityGameTranslator.Core
             }
         }
 
+        /// <summary>
+        /// Before a first publication: is the picked game for adults only, and may this
+        /// publication say so? Asked with the same two fields the upload sends
+        /// (<see cref="GameInfo.PublishName"/>), so the site answers about the game it will file
+        /// under. See analyse/adult-declaration-at-publish.md.
+        /// </summary>
+        public static async Task<GameAdultRating> CheckGameAdult(string steamId, string gameName)
+        {
+            try
+            {
+                var query = new List<string>();
+                if (!string.IsNullOrEmpty(steamId)) query.Add("steam_id=" + Uri.EscapeDataString(steamId));
+                if (!string.IsNullOrEmpty(gameName)) query.Add("game_name=" + Uri.EscapeDataString(gameName));
+                if (query.Count == 0) return new GameAdultRating { Success = false, Error = "No game to ask about" };
+
+                var response = await client.GetAsync($"{DefaultBaseUrl}/games/adult?{string.Join("&", query)}");
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    return new GameAdultRating { Success = false, Error = $"HTTP {(int)response.StatusCode}" };
+                }
+
+                return ApiReaders.ReadGameAdultRating(ParseJsonSafe(await response.Content.ReadAsStringAsync()));
+            }
+            catch (Exception e)
+            {
+                TranslatorCore.LogWarning($"[ApiClient] Adult rating error: {Connectivity.ForLog(e)}");
+                return new GameAdultRating { Success = false, Error = Connectivity.Describe(e) };
+            }
+        }
+
         #endregion
 
         #region Connection Test
@@ -1508,6 +1539,9 @@ namespace UnityGameTranslator.Core
                     notes = request.Notes,
                     resources_url = request.ResourcesUrl,
                     accepts_branches = request.AcceptsBranches,
+                    // Only ever true, and only from the setup of a FIRST publication that ticked
+                    // the box; the site applies it only if this upload creates the game.
+                    adult_declared = request.AdultDeclared ? true : (bool?)null,
                     // Provenance of a fork, sent in the REQUEST rather than inside the file: an
                     // older version rebuilds translations.json from the metadata it knows and
                     // would drop an unknown block on its next save. Null on every upload that is

@@ -77,8 +77,11 @@ namespace UnityGameTranslator.Core.UI
         /// <summary>The upload window on its DETAILS act (notes, languages of the published copy).</summary>
         public static void OpenDetails() => TranslatorUIManager.UploadPanel?.OpenForDetails();
 
-        /// <summary>The questions an upload needs first (game, languages); the answers go to the caller.</summary>
-        public static void SetUpUpload(Action<GameInfo, string, string> onComplete)
+        /// <summary>
+        /// The questions an upload needs first (game, languages, whether the game is for adults
+        /// only when this publication may say so); the answers go to the caller.
+        /// </summary>
+        public static void SetUpUpload(Action<GameInfo, string, string, bool> onComplete)
             => TranslatorUIManager.UploadSetupPanel?.ShowForSetup(onComplete);
 
         public static void OpenInspector(InspectorMode mode = InspectorMode.Exclusion)

@@ -172,10 +172,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             SetActive(false);
 
             // Reopen setup panel - it will pre-populate with detected game
-            Intents.SetUpUpload((game, srcLang, tgtLang) =>
-            {
-                ContinueAfterSetup(game, srcLang, tgtLang);
-            });
+            Intents.SetUpUpload(ContinueAfterSetup);
         }
 
         public override void SetActive(bool active)
@@ -203,6 +200,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 _setupComplete = false;
                 _selectedSourceLanguage = null;
                 _selectedTargetLanguage = null;
+                _adultDeclared = false;
 
                 // What THIS opening is for. Read once and consumed, so every other way in — the
                 // Upload button, a Contribute, a Fork — opens the ordinary screen.
@@ -255,7 +253,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             var known = TranslatorCore.ServerState;
             if (known != null && known.Checked && !known.Exists && TranslatorCore.PendingFork == null)
             {
-                Intents.SetUpUpload((game, srcLang, tgtLang) => ContinueAfterSetup(game, srcLang, tgtLang));
+                Intents.SetUpUpload(ContinueAfterSetup);
                 return;
             }
 
@@ -274,10 +272,15 @@ namespace UnityGameTranslator.Core.UI.Panels
         // re-settle a panel that is already up — see OpenForUpload.
         private bool _purposeStated;
 
-        public void ContinueAfterSetup(GameInfo game, string sourceLanguage, string targetLanguage)
+        // The setup's "Adults only" box, ticked where the site offered it. Held for this sending
+        // alone: a choice not sent does not survive the window.
+        private bool _adultDeclared;
+
+        public void ContinueAfterSetup(GameInfo game, string sourceLanguage, string targetLanguage, bool adultDeclared)
         {
             _selectedSourceLanguage = sourceLanguage;
             _selectedTargetLanguage = targetLanguage;
+            _adultDeclared = adultDeclared;
             _setupComplete = true;
 
             // Update display
@@ -561,6 +564,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                             RefreshStatusControl();
                             _selectedSourceLanguage = forkSourceLang;
                             _selectedTargetLanguage = forkTargetLang;
+                            // A fork is of a game the site already holds: nothing to declare.
+                            _adultDeclared = false;
                             _setupComplete = true;
 
                             _titleLabel.Say("Upload Fork");
@@ -587,10 +592,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                             _isChecking = false;
                             SetActive(false);
 
-                            Intents.SetUpUpload((game, srcLang, tgtLang) =>
-                            {
-                                ContinueAfterSetup(game, srcLang, tgtLang);
-                            });
+                            Intents.SetUpUpload(ContinueAfterSetup);
                         });
                     }
                 }
@@ -841,8 +843,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                     // back to the folder — "HyperEchelon6vYY3", "Forsaken.Frontiers.v1510" — and
                     // publishing under that makes the translation unfindable from any other
                     // install, because no other machine reads that string. See GameInfo.
-                    GameName = TranslatorCore.CurrentGame?.product_name
-                               ?? TranslatorCore.CurrentGame?.name ?? "Unknown Game",
+                    GameName = TranslatorCore.CurrentGame?.PublishName() ?? "Unknown Game",
                     GameCompany = TranslatorCore.CurrentGame?.company_name,
                     SourceLanguage = srcLang,
                     TargetLanguage = tgtLang,
@@ -869,7 +870,10 @@ namespace UnityGameTranslator.Core.UI.Panels
                     // comparison sends (TranslatorCore.BuildTranslationDocument).
                     Content = TranslatorCore.BuildTranslationDocument().ToString(Newtonsoft.Json.Formatting.None),
                     Notes = notes,
-                    ResourcesUrl = string.IsNullOrEmpty(resourcesUrl) ? null : resourcesUrl
+                    ResourcesUrl = string.IsNullOrEmpty(resourcesUrl) ? null : resourcesUrl,
+                    // Only a first publication carries it; the site applies it only if this
+                    // upload creates the game.
+                    AdultDeclared = _uploadMode == UploadMode.New && _setupComplete && _adultDeclared
                 };
 
                 TranslatorCore.LogInfo($"[UploadPanel] Calling ApiClient.UploadTranslation...");

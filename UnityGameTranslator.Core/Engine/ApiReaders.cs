@@ -531,6 +531,23 @@ namespace UnityGameTranslator.Core
             return result;
         }
 
+        /// <summary>
+        /// <c>GET /games/adult</c>. ⚠ A field it does not carry reads as the safe answer — not
+        /// adult, nothing declarable — so a site that predates the route offers no box rather than
+        /// one whose answer it would ignore.
+        /// </summary>
+        public static GameAdultRating ReadGameAdultRating(JObject data)
+        {
+            return new GameAdultRating
+            {
+                Success = true,
+                Known = data["known"]?.Value<bool>() ?? false,
+                Adult = data["adult"]?.Value<bool>() ?? false,
+                Source = data["source"]?.Type == JTokenType.String ? data["source"].Value<string>() : null,
+                Declarable = data["declarable"]?.Value<bool>() ?? false,
+            };
+        }
+
         /// <summary><c>GET /games/search</c>: the catalogue, then the stores.</summary>
         public static GameSearchResult ReadExternalGames(JObject data)
         {

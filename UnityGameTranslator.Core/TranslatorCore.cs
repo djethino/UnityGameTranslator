@@ -7150,6 +7150,17 @@ namespace UnityGameTranslator.Core
         /// How the steam_id was detected: "steam_appid.txt", "appmanifest", or null if not detected
         /// </summary>
         public string detection_method { get; set; }
+
+        /// <summary>
+        /// The name a publication sends as `game_name`: what the game states, never the folder it
+        /// sits in when it states something. ⚠ A method, not a property, so it is never written
+        /// into a file this class is serialised to.
+        ///
+        /// 🔴 One definition for the upload AND the question asked before it (`GET games/adult`):
+        /// the site resolves both the same way, and sent two different names it could answer about
+        /// one game and file under another.
+        /// </summary>
+        public string PublishName() => product_name ?? name;
     }
 
     /// <summary>

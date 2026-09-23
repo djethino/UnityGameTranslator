@@ -274,6 +274,16 @@ namespace UnityGameTranslator.Core.Checks
                     }
                     return d;
                 }
+                case "game_adult":
+                {
+                    var r = ApiReaders.ReadGameAdultRating(body);
+                    d["Success"] = r.Success;
+                    d["Known"] = r.Known;
+                    d["Adult"] = r.Adult;
+                    d["Source"] = r.Source;
+                    d["Declarable"] = r.Declarable;
+                    return d;
+                }
                 case "access_code":
                     d["AccessCode"] = ApiReaders.ReadAccessCode(body);
                     return d;

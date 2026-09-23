@@ -42,7 +42,16 @@ namespace UnityGameTranslator.Core.UI.Panels
         private List<GameApiInfo> _gameSearchResults = null;
 
         // Callback
-        private Action<GameInfo, string, string> _onSetupComplete;
+        private Action<GameInfo, string, string, bool> _onSetupComplete;
+
+        // What the site said about the picked game being for adults only — null until it answered
+        // about THIS game (analyse/adult-declaration-at-publish.md). The counter drops an answer
+        // that comes back after another game was picked.
+        private GameAdultRating _adultRating;
+        private int _adultAsked;
+
+        private ToggleHandle AdultBox => _screen.Toggle("AdultBox");
+        private LabelHandle AdultNote => _screen.Label("AdultNote");
 
         // Contextual help
         private HelpZone _helpZone;
@@ -95,13 +104,12 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// <summary>
         /// Show the panel for new upload setup.
         /// </summary>
-        public void ShowForSetup(Action<GameInfo, string, string> onComplete)
+        public void ShowForSetup(Action<GameInfo, string, string, bool> onComplete)
         {
             _onSetupComplete = onComplete;
 
-            // For NEW uploads, game MUST be confirmed by user
-            // Clear any previous selection - user must select from search results
-            _selectedGame = null;
+            // For NEW uploads, game MUST be confirmed by user. The previous selection is cleared
+            // below, once the screen is laid out (SelectGame(null)).
 
             // Pre-select languages from Options if already configured (not "auto")
             string configSource = TranslatorCore.Config.source_language;
@@ -163,7 +171,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _gameSearchResults = null;
             ResultsList.Clear();
 
-            RefreshGameDisplay();
+            SelectGame(null);
             UpdateValidation();
 
             SetActive(true);
@@ -223,6 +231,71 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
         }
 
+        /// <summary>
+        /// The one way the picked game changes: the display, and the question about adult content,
+        /// follow it. Several paths pick a game (auto-detection, a search result, a reset); none of
+        /// them may leave the box answering about the previous one.
+        /// </summary>
+        private void SelectGame(GameInfo game)
+        {
+            _selectedGame = game;
+            RefreshGameDisplay();
+            AskAboutAdultContent();
+        }
+
+        /// <summary>
+        /// Ask the site about the game just picked. Called every time the choice changes — and the
+        /// box stays hidden until the answer is about THIS game.
+        /// </summary>
+        private async void AskAboutAdultContent()
+        {
+            int asked = ++_adultAsked;
+            _adultRating = null;
+            RefreshAdultBox();
+
+            var game = _selectedGame;
+            if (game == null || string.IsNullOrEmpty(game.name)) return;
+
+            var rating = await ApiClient.CheckGameAdult(game.steam_id, game.PublishName());
+
+            TranslatorUIManager.RunOnMainThread(() =>
+            {
+                if (asked != _adultAsked) return; // another game was picked meanwhile
+                _adultRating = rating.Success ? rating : null;
+                RefreshAdultBox();
+            });
+        }
+
+        /// <summary>
+        /// The "Adults only" box under the game, from what the site answered.
+        ///
+        /// 🔴 **The person is told when the game is classified, and asked only when nobody can
+        /// tell** (the user, 2026-09-23). Classified by a store, a moderator or its first
+        /// translation's author: shown ticked and locked, with who says so — the one question here
+        /// is already answered. Not classified, and this upload adds the game: the box is open, with
+        /// what ticking it does. Any other case — the game is already on the site, or the site did
+        /// not answer — shows nothing: the first publisher had the say, and a guess is not an answer.
+        /// </summary>
+        private void RefreshAdultBox()
+        {
+            if (_screen == null) return;
+
+            var rating = _adultRating;
+            bool shown = rating != null && AdultMarks.Shown(rating.Adult, rating.Declarable);
+
+            AdultBox.Visible = shown;
+            AdultNote.Visible = shown;
+            if (!shown) return;
+
+            // The box has no act: the code only reads it at Continue, so writing it wakes nothing.
+            bool open = AdultMarks.Open(rating.Adult, rating.Declarable);
+            AdultBox.IsOn = rating.Adult;
+            AdultBox.Enabled = open;
+
+            // The socle's sentences, the Manager's too — one fact, one wording.
+            AdultNote.Say(open ? AdultMarks.WhatItDoes : AdultMarks.Source(rating.Source));
+        }
+
         private void RefreshGameDisplay()
         {
             if (_screen == null) return;
@@ -271,20 +344,19 @@ namespace UnityGameTranslator.Core.UI.Panels
                     {
                         // Game exists on server — use the server's canonical info
                         var serverGame = result.Games[0];
-                        _selectedGame = new GameInfo
+                        SelectGame(new GameInfo
                         {
                             name = serverGame.Name,
                             steam_id = serverGame.SteamId
-                        };
+                        });
                     }
                     else
                     {
                         // Game not on server yet — use local detection.
                         // Server will create it on upload via findOrCreateGame.
-                        _selectedGame = detectedGame;
+                        SelectGame(detectedGame);
                     }
 
-                    RefreshGameDisplay();
                     UpdateValidation();
                 });
             }
@@ -293,8 +365,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // Network error — fall back to local detection
                 TranslatorUIManager.RunOnMainThread(() =>
                 {
-                    _selectedGame = detectedGame;
-                    RefreshGameDisplay();
+                    SelectGame(detectedGame);
                     UpdateValidation();
                 });
             }
@@ -395,19 +466,17 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         private void OnGameSelected(GameApiInfo gameApi)
         {
-            _selectedGame = new GameInfo
-            {
-                name = gameApi.Name,
-                steam_id = gameApi.SteamId
-            };
-
             // Clear search
             _gameSearchResults = null;
             GameSearchInput.Text = "";
             GameSearchStatus.Show("");
             ResultsList.Clear();
 
-            RefreshGameDisplay();
+            SelectGame(new GameInfo
+            {
+                name = gameApi.Name,
+                steam_id = gameApi.SteamId
+            });
         }
 
         private void UpdateValidation()
@@ -477,7 +546,12 @@ namespace UnityGameTranslator.Core.UI.Panels
             // so re-declaring is free and cannot relabel anything.
             ApiClient.DeclareGame();
 
-            _onSetupComplete?.Invoke(_selectedGame, SourceDropdown.SelectedValue, TargetDropdown.SelectedValue);
+            // Only where the site offered the box, and only when ticked. A classified game shows it
+            // ticked but locked — the stores already said it, nothing to declare.
+            bool adultDeclared = _adultRating != null && AdultMarks.Open(_adultRating.Adult, _adultRating.Declarable)
+                                 && AdultBox.IsOn;
+
+            _onSetupComplete?.Invoke(_selectedGame, SourceDropdown.SelectedValue, TargetDropdown.SelectedValue, adultDeclared);
             SetActive(false);
         }
     }

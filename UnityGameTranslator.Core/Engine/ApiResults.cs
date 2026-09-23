@@ -235,6 +235,27 @@ namespace UnityGameTranslator.Core
         public List<GameApiInfo> Games { get; set; }
     }
 
+    /// <summary>
+    /// <c>GET /games/adult</c>: whether the game a first publication names is for adults only, and
+    /// whether this publication may say so (analyse/adult-declaration-at-publish.md).
+    /// </summary>
+    public class GameAdultRating
+    {
+        public bool Success { get; set; }
+        public string Error { get; set; }
+
+        /// <summary>A card already answers: the upload lands on it and creates nothing.</summary>
+        public bool Known { get; set; }
+
+        public bool Adult { get; set; }
+
+        /// <summary>Who says so — steam, igdb, contributor (its first translation's author), admin — or null.</summary>
+        public string Source { get; set; }
+
+        /// <summary>The box is offered: the upload creates the game and the stores found nothing.</summary>
+        public bool Declarable { get; set; }
+    }
+
     public class GameApiInfo
     {
         public int Id { get; set; }
@@ -293,6 +314,13 @@ namespace UnityGameTranslator.Core
         /// the Main, and a contributor sending it would answer for somebody else's translation.
         /// </summary>
         public bool? AcceptsBranches { get; set; }
+
+        /// <summary>
+        /// The first publisher says the game is for adults only — ticked on the setup of a first
+        /// publication, where the site said the box may be offered. Applied by the site only when
+        /// this upload creates the game.
+        /// </summary>
+        public bool AdultDeclared { get; set; }
     }
 
     public class UploadResult

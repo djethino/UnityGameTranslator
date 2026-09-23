@@ -61,6 +61,13 @@ namespace UnityGameTranslator.Core.UI
 
         public static void OpenLogin() => Screens?.Show(ScreenId.Login);
 
+        /// <summary>The options, on the Translation tab: where the server, the model and the keys are set.</summary>
+        public static void OpenTranslationSettings()
+        {
+            Screens?.Show(ScreenId.Options);
+            TranslatorUIManager.OptionsPanel?.ShowTranslationTab();
+        }
+
         /// <summary>The backups window, refreshed as it comes up.</summary>
         public static void OpenBackups() => TranslatorUIManager.BackupsPanel?.ShowPanel();
 

@@ -851,6 +851,9 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// the Options panel stays in sync without forcing the user to reopen it.
         /// Safe to call even when the panel UI isn't built yet — it's a no-op in that case.
         /// </summary>
+        /// <summary>Bring the Translation tab forward — the server, the model, the keys.</summary>
+        public void ShowTranslationTab() => _tabBar?.SelectTab("Translation");
+
         public void RefreshFromConfig()
         {
             // Guard: UI might not be constructed yet (e.g. early mod init)

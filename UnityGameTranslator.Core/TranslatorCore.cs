@@ -4542,6 +4542,20 @@ namespace UnityGameTranslator.Core
             if (_unreachable != ConnectionProblem.None) _reachAgain = true;
         }
 
+        /// <summary>
+        /// The server just answered a request of the player's own — a connection test, a model list
+        /// refreshed: the held queue resumes at once (2026-09-23, the user). If the answer came
+        /// from another address than the one translating, the next line fails and holds it again,
+        /// put back whole — nothing is lost by trusting it.
+        /// </summary>
+        public static void BackendAnswered()
+        {
+            _reachAgain = false;
+            if (_unreachable == ConnectionProblem.None) return;
+            _unreachable = ConnectionProblem.None;
+            Adapter?.LogInfo("[Translation] The translation server answered a test: the queue resumes.");
+        }
+
         /// <summary>The whole text of the item in the worker's hand, or null.</summary>
         private static volatile string _inFlightText;
 
@@ -4852,8 +4866,8 @@ namespace UnityGameTranslator.Core
                 if (!response.IsSuccessStatusCode)
                     return new ConnectionTestResult { Status = (int)response.StatusCode };
 
-                // Something answered: a held queue gets one more try.
-                TryBackendAgain();
+                // Something answered: a held queue resumes.
+                BackendAnswered();
                 return new ConnectionTestResult { Success = true };
             }
 
@@ -4990,6 +5004,9 @@ namespace UnityGameTranslator.Core
                 }
                 models.Sort(StringComparer.OrdinalIgnoreCase);
                 LogDebug($"[AI] FetchModels parsed {models.Count} model(s)");
+
+                // The server answered with its models: a held queue resumes.
+                BackendAnswered();
                 return models.ToArray();
             }
             catch (Exception e)

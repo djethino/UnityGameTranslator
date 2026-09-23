@@ -177,13 +177,15 @@ namespace UnityGameTranslator.Core.Checks
                 "every box starts hidden: six callouts, a connection line, a toast", "the code shows each when its moment comes");
             check(overlay.Acts.Keys.OrderBy(k => k).SequenceEqual(new[] {
                       "failuresFix", "failuresIgnore", "modDownload", "modIgnore", "modManager", "syncAction", "syncBranch", "syncCompare", "syncFork",
-                      "syncIgnore", "syncSettings", "unreachableIgnore", "webNotifDismiss", "webNotifView" }),
-                "overlay.json asks for the fourteen acts its code handles", $"got {string.Join(",", overlay.Acts.Keys)}");
-            // 🔴 An unreachable server is a STATE, red, with its way out: not a toast that fades while
+                      "syncIgnore", "syncSettings", "unreachableIgnore", "unreachableSettings", "webNotifDismiss", "webNotifView" }),
+                "overlay.json asks for the fifteen acts its code handles", $"got {string.Join(",", overlay.Acts.Keys)}");
+            // 🔴 An unreachable server is a STATE, red, with its ways out: not a toast that fades while
             // the queue status comes back saying "Translating…" (2026-09-23).
             check(overlay.Nodes["UnreachableBox"].Word("tone") == "Error"
+                  && overlay.Nodes["UnreachableSettingsBtn"].Word("act") == "unreachableSettings"
                   && overlay.Nodes["UnreachableIgnoreBtn"].Word("act") == "unreachableIgnore",
-                "an unreachable translation server has its own red box, with Ignore", "it stays until an answer comes back or live translation is paused");
+                "an unreachable translation server has its own red box, with Settings and Ignore",
+                "Settings opens the Translation tab to fix it; Ignore pauses live translation");
             check(overlay.Nodes["ConnectionDot"].Flag("wrap") == false && overlay.Nodes["ConnectionDot"].Int("minWidth") == 12,
                 "the connection dot keeps its own glyph's width and never folds", "it is what keeps the words flush against it on the right");
             check(!upload.Pinned && upload.TitleBar && ScreenDocument.Parse(JObject.Parse(@"{""name"":""X"",""size"":{""width"":500,""height"":200},""body"":[],""footer"":[]}")).TitleBar,

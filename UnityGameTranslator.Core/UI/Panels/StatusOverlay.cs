@@ -385,6 +385,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 case "webNotifDismiss": return OnWebNotifDismissClicked;
                 case "failuresFix": return OnFailuresFixClicked;
                 case "failuresIgnore": return OnFailuresIgnoreClicked;
+                case "unreachableSettings": return Intents.OpenTranslationSettings;
                 case "unreachableIgnore": return Intents.PauseLiveTranslation;
                 default: return null;
             }

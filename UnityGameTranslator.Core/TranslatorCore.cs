@@ -2021,6 +2021,9 @@ namespace UnityGameTranslator.Core
             // (instances don't exist yet at scene change time)
             VariableManager.MarkNeedsRefresh();
 
+            // A held queue gets one more try: a new scene is a new moment, and the server may be back.
+            TryBackendAgain();
+
             if (DebugMode)
                 Adapter?.LogInfo($"Scene: {sceneName}");
         }
@@ -2552,6 +2555,10 @@ namespace UnityGameTranslator.Core
                 string json = JsonConvert.SerializeObject(Config, Formatting.Indented);
                 File.WriteAllText(ConfigPath, json);
                 LogDebug("Config saved");
+
+                // Settings saved can be the server's address, its key, a proxy: a held queue gets
+                // one more try.
+                TryBackendAgain();
             }
             catch (Exception e)
             {
@@ -4497,14 +4504,43 @@ namespace UnityGameTranslator.Core
         private static volatile bool _backendSilent;
 
         /// <summary>
-        /// Said once, and again only after an answer: the request never left the machine.
+        /// Why the translation server cannot be reached, or <see cref="ConnectionProblem.None"/>:
+        /// the request never left the machine (a firewall, no network, a refused port).
         ///
-        /// ⚠ **Not <see cref="_backendSilent"/>, on purpose.** That one also holds the queue back and
-        /// keeps what is on screen owed, which is right for a server that is slow — each retry is
-        /// paced by the timeout. A refused connection fails at once, so the same rule would send a
-        /// request per scan pass, as fast as the scanner runs. This flag only decides what is SAID.
+        /// 🔴 **A state, and the queue is HELD while it lasts** (2026-09-23, the user: "block the
+        /// queue — trying or showing Translating is pointless"). Such a request fails at once, so
+        /// letting the worker go on emptied two thousand lines in seconds, each one lost, under a
+        /// "Translating…" that was never true. Nothing is taken from the queue while this is set,
+        /// the corner notification says it in place of the queue status, and one line is tried
+        /// again only when <see cref="TryBackendAgain"/> is called by an event that can have
+        /// changed the answer: a scene loaded, settings saved, a connection test that worked.
+        ///
+        /// ⚠ **No timer**, per the rule of this project: nothing says when a firewall is lifted,
+        /// and a request per tick would hammer a server that is merely down.
+        /// ⚠ **Not <see cref="_backendSilent"/>**: that one is a slow server, paced by the timeout.
         /// </summary>
-        private static volatile bool _backendUnreachable;
+        private static volatile ConnectionProblem _unreachable = ConnectionProblem.None;
+
+        /// <summary>
+        /// Raised by an event that makes a new try worthwhile; lowered only when the worker has
+        /// actually taken a line to try — never before it knows it will act.
+        /// </summary>
+        private static volatile bool _reachAgain;
+
+        /// <summary>Why the translation server cannot be reached; None while it can.</summary>
+        public static ConnectionProblem BackendUnreachable => _unreachable;
+
+        /// <summary>No answer came in time from the translation server, and none since.</summary>
+        public static bool BackendSilent => _backendSilent;
+
+        /// <summary>
+        /// Something happened that can have made the server reachable again: let the worker try one
+        /// line. Does nothing while it is reachable.
+        /// </summary>
+        public static void TryBackendAgain()
+        {
+            if (_unreachable != ConnectionProblem.None) _reachAgain = true;
+        }
 
         /// <summary>The whole text of the item in the worker's hand, or null.</summary>
         private static volatile string _inFlightText;
@@ -4572,22 +4608,25 @@ namespace UnityGameTranslator.Core
             {
                 var response = httpClient.SendAsync(request).Result;
                 _backendSilent = false;
-                _backendUnreachable = false;
+                if (_unreachable != ConnectionProblem.None)
+                {
+                    _unreachable = ConnectionProblem.None;
+                    Adapter?.LogInfo("[Translation] The translation server answers again: the queue resumes.");
+                }
                 return response;
             }
             // Never reached: a firewall, no network, an address that does not resolve. Nothing
-            // left the machine, so there is no answer to wait for — only a cause to name. Before
-            // this branch it surfaced from each backend as the wrapper's own sentence, "One or more
-            // errors occurred.", and the player was told nothing at all.
-            // ⚠ Said once, like the silence above, and again only after an answer.
-            catch (AggregateException agg) when (Connectivity.Explain(agg) is string cause
+            // left the machine, so there is no answer to wait for — only a cause to name, and a
+            // queue to hold (see _unreachable). Before this branch it surfaced from each backend as
+            // the wrapper's own sentence, "One or more errors occurred.", and the queue ran dry.
+            catch (AggregateException agg) when (Connectivity.Explain(agg) != null
                                                  && Connectivity.Classify(agg) != ConnectionProblem.NoAnswer)
             {
-                if (_backendUnreachable) return null;
-                _backendUnreachable = true;
-
-                Adapter?.LogWarning($"[Translation] Cannot reach {request.RequestUri?.Host}: {Connectivity.ForLog(agg)}");
-                try { Host?.Warn("Cannot reach the translation server. " + cause); } catch { }
+                // Logged when the state begins, not at every try: the corner says it meanwhile.
+                if (_unreachable == ConnectionProblem.None)
+                    Adapter?.LogWarning($"[Translation] Cannot reach {request.RequestUri?.Host}: {Connectivity.ForLog(agg)} "
+                                        + "The queue is held until a scene loads or the settings are saved.");
+                _unreachable = Connectivity.Classify(agg);
                 return null;
             }
             catch (AggregateException agg) when (agg.GetBaseException() is TaskCanceledException)
@@ -4808,10 +4847,15 @@ namespace UnityGameTranslator.Core
             /// <summary>Why nothing came back (<see cref="Connectivity.Describe"/>), otherwise null.</summary>
             public string Error;
 
-            internal static ConnectionTestResult From(HttpResponseMessage response) =>
-                response.IsSuccessStatusCode
-                    ? new ConnectionTestResult { Success = true }
-                    : new ConnectionTestResult { Status = (int)response.StatusCode };
+            internal static ConnectionTestResult From(HttpResponseMessage response)
+            {
+                if (!response.IsSuccessStatusCode)
+                    return new ConnectionTestResult { Status = (int)response.StatusCode };
+
+                // Something answered: a held queue gets one more try.
+                TryBackendAgain();
+                return new ConnectionTestResult { Success = true };
+            }
 
             internal static ConnectionTestResult From(Exception e) =>
                 new ConnectionTestResult { Error = Connectivity.Describe(e) };
@@ -4977,6 +5021,16 @@ namespace UnityGameTranslator.Core
                     return;
                 }
 
+                // The server cannot be reached: the queue is HELD. Nothing is taken until an event
+                // makes one more try worthwhile (see _unreachable) — trying anyway fails at once and
+                // loses the line.
+                if (_unreachable != ConnectionProblem.None && !_reachAgain)
+                {
+                    for (int i = 0; i < 10 && !ShuttingDown; i++)
+                        Thread.Sleep(10);
+                    continue;
+                }
+
                 QueuedText queued = null;
                 string textToTranslate = null;
                 List<object> componentsToUpdate = null;
@@ -4986,6 +5040,9 @@ namespace UnityGameTranslator.Core
                 // from the text — and nothing can be lost by looking up one of the two and
                 // forgetting the other, which is what a re-queue used to do.
                 queued = _queue.Take();
+
+                // Lowered by the work: a line is in hand, so the try asked for is happening.
+                if (queued != null) _reachAgain = false;
                 if (queued != null)
                 {
                     textToTranslate = queued.Text;
@@ -6178,6 +6235,8 @@ namespace UnityGameTranslator.Core
                     Failures.AttachElements(normalized, paths);
                 });
             }
+
+            public bool Unreachable => _unreachable != ConnectionProblem.None;
 
             public void Backoff(float seconds)
             {

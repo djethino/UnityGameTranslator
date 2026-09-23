@@ -173,12 +173,17 @@ namespace UnityGameTranslator.Core.Checks
             check(overlay.Body.Count == 1 && overlay.Body[0].Kind == "stack" && overlay.Body[0].Int("pad") != null && overlay.Body[0].Int("spacing") != null,
                 "one stack, whose spacing and padding the document states in pixels", "the code sizes the window from them — read there, never copied");
             check(overlay.Body[0].Children.All(b => !b.StartsVisible || b.Kind == "toast")
-                  && overlay.Body[0].Children.Count(b => b.Kind == "callout") == 5 && overlay.Nodes["ToastBox"].Kind == "toast",
-                "every box starts hidden: five callouts, a connection line, a toast", "the code shows each when its moment comes");
+                  && overlay.Body[0].Children.Count(b => b.Kind == "callout") == 6 && overlay.Nodes["ToastBox"].Kind == "toast",
+                "every box starts hidden: six callouts, a connection line, a toast", "the code shows each when its moment comes");
             check(overlay.Acts.Keys.OrderBy(k => k).SequenceEqual(new[] {
                       "failuresFix", "failuresIgnore", "modDownload", "modIgnore", "modManager", "syncAction", "syncBranch", "syncCompare", "syncFork",
-                      "syncIgnore", "syncSettings", "webNotifDismiss", "webNotifView" }),
-                "overlay.json asks for the thirteen acts its code handles", $"got {string.Join(",", overlay.Acts.Keys)}");
+                      "syncIgnore", "syncSettings", "unreachableIgnore", "webNotifDismiss", "webNotifView" }),
+                "overlay.json asks for the fourteen acts its code handles", $"got {string.Join(",", overlay.Acts.Keys)}");
+            // 🔴 An unreachable server is a STATE, red, with its way out: not a toast that fades while
+            // the queue status comes back saying "Translating…" (2026-09-23).
+            check(overlay.Nodes["UnreachableBox"].Word("tone") == "Error"
+                  && overlay.Nodes["UnreachableIgnoreBtn"].Word("act") == "unreachableIgnore",
+                "an unreachable translation server has its own red box, with Ignore", "it stays until an answer comes back or live translation is paused");
             check(overlay.Nodes["ConnectionDot"].Flag("wrap") == false && overlay.Nodes["ConnectionDot"].Int("minWidth") == 12,
                 "the connection dot keeps its own glyph's width and never folds", "it is what keeps the words flush against it on the right");
             check(!upload.Pinned && upload.TitleBar && ScreenDocument.Parse(JObject.Parse(@"{""name"":""X"",""size"":{""width"":500,""height"":200},""body"":[],""footer"":[]}")).TitleBar,

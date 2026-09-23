@@ -124,6 +124,9 @@ namespace UnityGameTranslator.Core.UI
         /// <summary>Something the Main shows moved: an upload landed, notes were saved, an update was found.</summary>
         public static void StateChanged() => TranslatorUIManager.MainPanel?.RefreshUI();
 
+        /// <summary>Pause live translation — the same act as its hotkey, which turns it back on.</summary>
+        public static void PauseLiveTranslation() => TranslatorUIManager.SetLiveTranslation(false);
+
         /// <summary>The overlay's corner was changed in the options.</summary>
         public static void OverlayPositionChanged() => TranslatorUIManager.StatusOverlay?.ApplyPositionFromConfig();
     }

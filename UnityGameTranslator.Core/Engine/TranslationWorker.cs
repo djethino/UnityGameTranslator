@@ -18,6 +18,12 @@ namespace UnityGameTranslator.Core
         /// </summary>
         string Translate(string normalized, List<string> numbers, bool ownUi, out bool rateLimited);
 
+        /// <summary>
+        /// Whether the backend cannot be reached at all — the request never left the machine.
+        /// Asked after a null answer: the line is then put back, since nothing was said about it.
+        /// </summary>
+        bool Unreachable { get; }
+
         /// <summary>Write one line into the cache of the side it belongs to (AddToCache).</summary>
         void Store(string key, string value, string tag);
 
@@ -77,6 +83,8 @@ namespace UnityGameTranslator.Core
         RefusedEarlier,
         /// <summary>The backend refused for now: the SAME item was put back and the worker backed off.</summary>
         RateLimited,
+        /// <summary>The backend could not be reached: the SAME item was put back, the queue is held.</summary>
+        Unreachable,
         /// <summary>The backend answered nothing, and it was not a rate limit.</summary>
         NoAnswer,
         /// <summary>The answer invented a placeholder the source does not have: discarded, nothing stored.</summary>
@@ -110,7 +118,7 @@ namespace UnityGameTranslator.Core
     /// | cache | is a usable translation already there? | the components are told now; then on to capture, or <see cref="WorkerOutcome.CacheHit"/> |
     /// | capture-only | are we collecting rather than translating? | <see cref="WorkerOutcome.Captured"/> / <see cref="WorkerOutcome.NotCaptured"/> — no backend, ever |
     /// | refused earlier | did this text fail its placeholders this session? | <see cref="WorkerOutcome.RefusedEarlier"/> |
-    /// | backend | the one call | <see cref="WorkerOutcome.RateLimited"/> (same item back, back off) / <see cref="WorkerOutcome.NoAnswer"/> |
+    /// | backend | the one call | <see cref="WorkerOutcome.RateLimited"/> (same item back, back off) / <see cref="WorkerOutcome.Unreachable"/> (same item back, queue held) / <see cref="WorkerOutcome.NoAnswer"/> |
     /// | invented | did the answer make up a placeholder? | <see cref="WorkerOutcome.Invented"/> — nothing stored, nothing shown |
     /// | current | was the translation replaced while we waited? | <see cref="WorkerOutcome.Stale"/> — dropped |
     /// | filing | what becomes of the answer, from its origin (<see cref="Answers.Store"/>)? | stored under the key shape, or nowhere |
@@ -232,6 +240,14 @@ namespace UnityGameTranslator.Core
                 host.Warn($"[Worker] Rate limited — re-queued, backing off {delaySec:F1}s ({ctx.Queue.Count} pending)");
                 host.Backoff(delaySec);
                 return WorkerOutcome.RateLimited;
+            }
+
+            // Never reached: the line goes back whole, like a rate limit, and the host holds the
+            // queue. Dropped here, it was lost for the scene — two thousand of them in seconds.
+            if (translation == null && host.Unreachable)
+            {
+                ctx.Queue.PutBack(item);
+                return WorkerOutcome.Unreachable;
             }
 
             // Given up this session, just now: the elements it came from are the one thing the

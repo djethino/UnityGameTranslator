@@ -70,6 +70,12 @@ namespace UnityGameTranslator.Core.UI.Panels
         private LabelHandle _aiStatusLabel;
         private LabelHandle _aiQueueLabel;
 
+        // The translation server cannot be reached: the fact, why, and Ignore (pauses live
+        // translation). Shown IN PLACE of the AI queue box, which would claim a translation is
+        // under way while the queue is held.
+        private Host _unreachableBox;
+        private LabelHandle _unreachableCause;
+
         // Lines the AI gave up on this session: the fact, and the way to the Failures tab
         private Host _failuresBox;
         private LabelHandle _failuresLabel;
@@ -344,6 +350,9 @@ namespace UnityGameTranslator.Core.UI.Panels
             _webNotifTitle = _screen.Label("WebNotifTitle");
             _webNotifViewBtn = _screen.Button("WebNotifViewBtn");
 
+            _unreachableBox = _screen.Host("UnreachableBox");
+            _unreachableCause = _screen.Label("UnreachableCause");
+
             _aiBox = _screen.Host("AIBox");
             _aiStatusLabel = _screen.Label("AIStatusLabel");
             _aiQueueLabel = _screen.Label("AIQueueLabel");
@@ -376,6 +385,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 case "webNotifDismiss": return OnWebNotifDismissClicked;
                 case "failuresFix": return OnFailuresFixClicked;
                 case "failuresIgnore": return OnFailuresIgnoreClicked;
+                case "unreachableIgnore": return Intents.PauseLiveTranslation;
                 default: return null;
             }
         }
@@ -440,6 +450,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (_modUpdateBox != null) _modUpdateBox.Visible = false;
             if (_syncBox != null) _syncBox.Visible = false;
             if (_aiBox != null) _aiBox.Visible = false;
+            if (_unreachableBox != null) _unreachableBox.Visible = false;
             if (_connectionBox != null) _connectionBox.Visible = false;
         }
 
@@ -569,8 +580,9 @@ namespace UnityGameTranslator.Core.UI.Panels
             int queueCount = TranslatorCore.QueueCount;
             bool isTranslating = TranslatorCore.IsTranslating;
             bool showAI = aiEnabled && (queueCount > 0 || isTranslating);
+            bool unreachable = aiEnabled && TranslatorCore.BackendUnreachable != ConnectionProblem.None;
 
-            return showModUpdate || showSyncNotification || showAI;
+            return showModUpdate || showSyncNotification || showAI || unreachable;
         }
 
         /// <summary>
@@ -743,7 +755,16 @@ namespace UnityGameTranslator.Core.UI.Panels
             bool aiEnabled = TranslatorCore.Config.IsTranslationEnabled;
             int queueCount = TranslatorCore.QueueCount;
             bool isTranslating = TranslatorCore.IsTranslating;
-            bool showAI = aiEnabled && (queueCount > 0 || isTranslating);
+
+            // 🔴 The server cannot be reached: the queue is held, so this box speaks INSTEAD of the
+            // queue status — "Translating…" beside a held queue is the lie the user saw (2026-09-23).
+            // It stays until an answer comes back or Ignore pauses live translation.
+            var unreachable = aiEnabled ? TranslatorCore.BackendUnreachable : ConnectionProblem.None;
+            if (_unreachableBox != null) _unreachableBox.Visible = unreachable != ConnectionProblem.None;
+            if (unreachable != ConnectionProblem.None)
+                _unreachableCause?.Show(Tr(Connectivity.Explain(unreachable) ?? ""));
+
+            bool showAI = aiEnabled && unreachable == ConnectionProblem.None && (queueCount > 0 || isTranslating);
 
             if (showAI && _aiBox != null)
             {
@@ -894,7 +915,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // 🔴 Every box of the stack, the site's notification included: left out of this list,
             // it was drawn without a height of its own, over the buttons of the box above it.
-            foreach (var box in new[] { _modUpdateBox, _syncBox, _webNotifBox, _failuresBox, _aiBox, _connectionBox, _toast?.Handle })
+            foreach (var box in new[] { _modUpdateBox, _syncBox, _webNotifBox, _failuresBox, _unreachableBox, _aiBox, _connectionBox, _toast?.Handle })
             {
                 if (box == null || !box.Visible) continue;
 
@@ -937,6 +958,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (_syncBox != null && _syncBox.Visible) height += 60;
             if (_webNotifBox != null && _webNotifBox.Visible) height += 60;
             if (_failuresBox != null && _failuresBox.Visible) height += 60;
+            if (_unreachableBox != null && _unreachableBox.Visible) height += 80;
             if (_aiBox != null && _aiBox.Visible) height += 50;
             if (_connectionBox != null && _connectionBox.Visible) height += 20;
             if (_toast != null && _toast.Visible) height += 50;

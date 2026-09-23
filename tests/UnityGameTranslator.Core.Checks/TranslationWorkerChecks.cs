@@ -38,6 +38,7 @@ namespace UnityGameTranslator.Core.Checks
         {
             public string Answer;
             public bool RateLimited;
+            public bool Unreachable { get; set; }
             public readonly List<string> Calls = new List<string>();
             public readonly List<string> Said = new List<string>();
 
@@ -202,6 +203,18 @@ namespace UnityGameTranslator.Core.Checks
             check(floor.Trace.EndsWith("backoff:0.1", StringComparison.Ordinal),
                 "the back-off never drops below a tenth of a second",
                 "a zero delay is a hot loop against a server that just said no");
+
+            // 🔴 A server that cannot be reached: the line goes back whole and nothing waits here —
+            // the host holds the queue until an event (2026-09-23). Dropped, it was lost for the
+            // scene, and a blocked server emptied two thousand lines in seconds.
+            var cut = new Bench { Host = { Answer = null, Unreachable = true } };
+            var line = cut.Item("Apply", ownUi: true, target: "the button");
+            var unreachable = cut.Run(line);
+            var kept = cut.Queue.Take();
+            check(unreachable == WorkerOutcome.Unreachable && cut.Trace == "translate:Apply:ui"
+                  && ReferenceEquals(kept, line) && kept.FromOwnUI && kept.Targets.Count == 1,
+                "an unreachable server puts the SAME item back, stores nothing and does not back off",
+                "the queue is held by the host until a scene loads or settings are saved; a timer here would be a wait the project forbids");
         }
 
         private static void NoAnswer(Action<bool, string, string> check)

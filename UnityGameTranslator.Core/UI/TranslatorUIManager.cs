@@ -5934,9 +5934,21 @@ namespace UnityGameTranslator.Core.UI
                 return;
             }
 
-            config.enable_ai = !config.enable_ai;
+            SetLiveTranslation(!config.enable_ai);
+        }
 
-            if (config.enable_ai)
+        /// <summary>
+        /// Pause or resume live translation — the ONE act behind the hotkey and the corner's
+        /// "Ignore" on an unreachable translation server (2026-09-23: "Ignore, and then nothing
+        /// more until the AI engine is turned back on"). Turned back on the usual ways: this hotkey,
+        /// the options.
+        /// </summary>
+        internal static void SetLiveTranslation(bool on)
+        {
+            var config = TranslatorCore.Config;
+            config.enable_ai = on;
+
+            if (on)
             {
                 TranslatorCore.EnsureWorkerRunning();
                 ShowHotkeyFeedback($"Translation: ON ({config.translation_backend})", true);
@@ -5949,6 +5961,7 @@ namespace UnityGameTranslator.Core.UI
 
             TranslatorCore.SaveConfig();
             OptionsPanel?.RefreshFromConfig();
+            StatusOverlay?.RefreshOverlay();
         }
 
         /// <summary>

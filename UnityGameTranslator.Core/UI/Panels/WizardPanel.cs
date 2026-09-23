@@ -681,14 +681,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                 _wizardGoogleStatusLabel.Say("Testing...");
                 _wizardGoogleStatusLabel.Tone = Tone.Secondary;
 
-                _wizardGoogleStatusLabel.Show("Testing...");
-                _wizardGoogleStatusLabel.Tone = Tone.Secondary;
-                bool success = await TranslatorCore.TestGoogleConnection(_googleApiKey);
+                var result = await TranslatorCore.TestGoogleConnection(_googleApiKey);
                 TranslatorUIManager.RunOnMainThread(() =>
-                {
-                    _wizardGoogleStatusLabel.Show(success ? "Connected!" : "Failed - check API key");
-                    _wizardGoogleStatusLabel.Tone = success ? Tone.Success : Tone.Error;
-                });
+                    ConnectionTests.Tell(_wizardGoogleStatusLabel, result, "Connected!", "Failed - check API key"));
             }
             catch (Exception _e)
             {
@@ -709,14 +704,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                 _wizardDeeplStatusLabel.Say("Testing...");
                 _wizardDeeplStatusLabel.Tone = Tone.Secondary;
 
-                _wizardDeeplStatusLabel.Show("Testing...");
-                _wizardDeeplStatusLabel.Tone = Tone.Secondary;
-                bool success = await TranslatorCore.TestDeepLConnection(_deeplApiKey, _deeplUseFree);
+                var result = await TranslatorCore.TestDeepLConnection(_deeplApiKey, _deeplUseFree);
                 TranslatorUIManager.RunOnMainThread(() =>
-                {
-                    _wizardDeeplStatusLabel.Show(success ? "Connected!" : "Failed - check API key and plan type");
-                    _wizardDeeplStatusLabel.Tone = success ? Tone.Success : Tone.Error;
-                });
+                    ConnectionTests.Tell(_wizardDeeplStatusLabel, result, "Connected!", "Failed - check API key and plan type"));
             }
             catch (Exception _e)
             {
@@ -789,23 +779,14 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             try
             {
-                bool success = await TranslatorCore.TestAIConnection(url, apiKey);
+                var result = await TranslatorCore.TestAIConnection(url, apiKey);
 
                 // After await, we may be on a background thread (IL2CPP issue)
                 TranslatorUIManager.RunOnMainThread(() =>
                 {
-                    if (success)
-                    {
-                        _aiStatusLabel.Say("Connection successful!");
-                        _aiStatusLabel.Tone = Tone.Success;
-                        // Auto-refresh models on successful test
-                        RefreshModels();
-                    }
-                    else
-                    {
-                        _aiStatusLabel.Say("Connection failed");
-                        _aiStatusLabel.Tone = Tone.Error;
-                    }
+                    ConnectionTests.Tell(_aiStatusLabel, result, "Connection successful!", null);
+                    // Auto-refresh models on successful test
+                    if (result.Success) RefreshModels();
                 });
             }
             catch (Exception e)

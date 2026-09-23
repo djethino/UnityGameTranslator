@@ -1290,21 +1290,10 @@ namespace UnityGameTranslator.Core.UI.Panels
             _googleTestStatusLabel.Say("Testing...");
             _googleTestStatusLabel.Tone = Tone.Secondary;
 
-            bool success = await TranslatorCore.TestGoogleConnection(apiKey);
+            var result = await TranslatorCore.TestGoogleConnection(apiKey);
 
             TranslatorUIManager.RunOnMainThread(() =>
-            {
-                if (success)
-                {
-                    _googleTestStatusLabel.Say("Connected!");
-                    _googleTestStatusLabel.Tone = Tone.Success;
-                }
-                else
-                {
-                    _googleTestStatusLabel.Say("Failed - check API key");
-                    _googleTestStatusLabel.Tone = Tone.Error;
-                }
-            });
+                ConnectionTests.Tell(_googleTestStatusLabel, result, "Connected!", "Failed - check API key"));
         }
 
         private async void TestDeepLConnection()
@@ -1321,21 +1310,10 @@ namespace UnityGameTranslator.Core.UI.Panels
             _deeplTestStatusLabel.Tone = Tone.Secondary;
 
             bool useFree = _deeplUseFreeToggle.IsOn;
-            bool success = await TranslatorCore.TestDeepLConnection(apiKey, useFree);
+            var result = await TranslatorCore.TestDeepLConnection(apiKey, useFree);
 
             TranslatorUIManager.RunOnMainThread(() =>
-            {
-                if (success)
-                {
-                    _deeplTestStatusLabel.Say("Connected!");
-                    _deeplTestStatusLabel.Tone = Tone.Success;
-                }
-                else
-                {
-                    _deeplTestStatusLabel.Say("Failed - check API key and plan type");
-                    _deeplTestStatusLabel.Tone = Tone.Error;
-                }
-            });
+                ConnectionTests.Tell(_deeplTestStatusLabel, result, "Connected!", "Failed - check API key and plan type"));
         }
 
         private async void OnCheckModUpdatesNowClicked()
@@ -1413,22 +1391,13 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             try
             {
-                bool success = await TranslatorCore.TestAIConnection(url, apiKey);
+                var result = await TranslatorCore.TestAIConnection(url, apiKey);
 
                 TranslatorUIManager.RunOnMainThread(() =>
                 {
-                    if (success)
-                    {
-                        _aiTestStatusLabel.Say("Connection successful!");
-                        _aiTestStatusLabel.Tone = Tone.Success;
-                        // Auto-refresh models on successful test
-                        RefreshModels();
-                    }
-                    else
-                    {
-                        _aiTestStatusLabel.Say("Connection failed");
-                        _aiTestStatusLabel.Tone = Tone.Error;
-                    }
+                    ConnectionTests.Tell(_aiTestStatusLabel, result, "Connection successful!", null);
+                    // Auto-refresh models on successful test
+                    if (result.Success) RefreshModels();
                 });
             }
             catch (Exception e)

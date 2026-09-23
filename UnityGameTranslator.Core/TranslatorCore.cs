@@ -4433,7 +4433,7 @@ namespace UnityGameTranslator.Core
             }
             catch (Exception e)
             {
-                Adapter.LogWarning($"Error preloading model: {e.Message}");
+                Adapter.LogWarning($"Error preloading model: {Connectivity.ForLog(e)}");
             }
         }
 
@@ -4495,6 +4495,16 @@ namespace UnityGameTranslator.Core
 
         /// <summary>Said once, and again only after an answer has come back.</summary>
         private static volatile bool _backendSilent;
+
+        /// <summary>
+        /// Said once, and again only after an answer: the request never left the machine.
+        ///
+        /// ⚠ **Not <see cref="_backendSilent"/>, on purpose.** That one also holds the queue back and
+        /// keeps what is on screen owed, which is right for a server that is slow — each retry is
+        /// paced by the timeout. A refused connection fails at once, so the same rule would send a
+        /// request per scan pass, as fast as the scanner runs. This flag only decides what is SAID.
+        /// </summary>
+        private static volatile bool _backendUnreachable;
 
         /// <summary>The whole text of the item in the worker's hand, or null.</summary>
         private static volatile string _inFlightText;
@@ -4562,7 +4572,23 @@ namespace UnityGameTranslator.Core
             {
                 var response = httpClient.SendAsync(request).Result;
                 _backendSilent = false;
+                _backendUnreachable = false;
                 return response;
+            }
+            // Never reached: a firewall, no network, an address that does not resolve. Nothing
+            // left the machine, so there is no answer to wait for — only a cause to name. Before
+            // this branch it surfaced from each backend as the wrapper's own sentence, "One or more
+            // errors occurred.", and the player was told nothing at all.
+            // ⚠ Said once, like the silence above, and again only after an answer.
+            catch (AggregateException agg) when (Connectivity.Explain(agg) is string cause
+                                                 && Connectivity.Classify(agg) != ConnectionProblem.NoAnswer)
+            {
+                if (_backendUnreachable) return null;
+                _backendUnreachable = true;
+
+                Adapter?.LogWarning($"[Translation] Cannot reach {request.RequestUri?.Host}: {Connectivity.ForLog(agg)}");
+                try { Host?.Warn("Cannot reach the translation server. " + cause); } catch { }
+                return null;
             }
             catch (AggregateException agg) when (agg.GetBaseException() is TaskCanceledException)
             {
@@ -4766,12 +4792,37 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// What a connection test found: it worked, the server answered with an error, or the
+        /// request never got an answer — and then why, in words a player can act on.
+        ///
+        /// 🔴 **A bare bool is what made the test lie.** Every failure read "Failed - check API
+        /// key", so a firewall blocking the game sent the player to re-type a key that was right.
+        /// </summary>
+        public sealed class ConnectionTestResult
+        {
+            public bool Success;
+
+            /// <summary>The HTTP status when the server answered with an error, otherwise null.</summary>
+            public int? Status;
+
+            /// <summary>Why nothing came back (<see cref="Connectivity.Describe"/>), otherwise null.</summary>
+            public string Error;
+
+            internal static ConnectionTestResult From(HttpResponseMessage response) =>
+                response.IsSuccessStatusCode
+                    ? new ConnectionTestResult { Success = true }
+                    : new ConnectionTestResult { Status = (int)response.StatusCode };
+
+            internal static ConnectionTestResult From(Exception e) =>
+                new ConnectionTestResult { Error = Connectivity.Describe(e) };
+        }
+
+        /// <summary>
         /// Test connection to AI server via OpenAI-compatible /v1/models endpoint.
         /// </summary>
         /// <param name="url">The server URL to test</param>
         /// <param name="apiKey">Optional API key for authenticated servers</param>
-        /// <returns>True if connection successful</returns>
-        public static async System.Threading.Tasks.Task<bool> TestAIConnection(string url, string apiKey = null)
+        public static async System.Threading.Tasks.Task<ConnectionTestResult> TestAIConnection(string url, string apiKey = null)
         {
             string endpoint = Endpoints.Resolve(url, "models");
             LogDebug($"[AI] Testing connection: GET {endpoint} (proxy_mode={Config?.proxy_mode ?? "default"})");
@@ -4784,19 +4835,19 @@ namespace UnityGameTranslator.Core
                 }
                 var response = await httpClient.SendAsync(request);
                 LogDebug($"[AI] Test response: {(int)response.StatusCode} {response.ReasonPhrase}");
-                return response.IsSuccessStatusCode;
+                return ConnectionTestResult.From(response);
             }
             catch (Exception e)
             {
-                Adapter?.LogWarning($"[AI] Connection test failed ({endpoint}): {e.GetType().Name}: {e.Message}");
-                return false;
+                Adapter?.LogWarning($"[AI] Connection test failed ({endpoint}): {Connectivity.ForLog(e)}");
+                return ConnectionTestResult.From(e);
             }
         }
 
         /// <summary>
         /// Test Google Translate API connection by translating a sample word.
         /// </summary>
-        public static async System.Threading.Tasks.Task<bool> TestGoogleConnection(string apiKey)
+        public static async System.Threading.Tasks.Task<ConnectionTestResult> TestGoogleConnection(string apiKey)
         {
             try
             {
@@ -4815,19 +4866,19 @@ namespace UnityGameTranslator.Core
                 request.Headers.Add("X-Goog-Api-Key", apiKey);
 
                 var response = await httpClient.SendAsync(request);
-                return response.IsSuccessStatusCode;
+                return ConnectionTestResult.From(response);
             }
             catch (Exception e)
             {
-                Adapter?.LogWarning($"[Google] Connection test failed: {e.Message}");
-                return false;
+                Adapter?.LogWarning($"[Google] Connection test failed: {Connectivity.ForLog(e)}");
+                return ConnectionTestResult.From(e);
             }
         }
 
         /// <summary>
         /// Test DeepL API connection by translating a sample word.
         /// </summary>
-        public static async System.Threading.Tasks.Task<bool> TestDeepLConnection(string apiKey, bool useFree)
+        public static async System.Threading.Tasks.Task<ConnectionTestResult> TestDeepLConnection(string apiKey, bool useFree)
         {
             try
             {
@@ -4849,12 +4900,12 @@ namespace UnityGameTranslator.Core
                 request.Headers.Add("Authorization", $"DeepL-Auth-Key {apiKey}");
 
                 var response = await httpClient.SendAsync(request);
-                return response.IsSuccessStatusCode;
+                return ConnectionTestResult.From(response);
             }
             catch (Exception e)
             {
-                Adapter?.LogWarning($"[DeepL] Connection test failed: {e.Message}");
-                return false;
+                Adapter?.LogWarning($"[DeepL] Connection test failed: {Connectivity.ForLog(e)}");
+                return ConnectionTestResult.From(e);
             }
         }
 
@@ -4899,7 +4950,7 @@ namespace UnityGameTranslator.Core
             }
             catch (Exception e)
             {
-                Adapter?.LogWarning($"[AI] Failed to fetch models ({endpoint}): {e.GetType().Name}: {e.Message}");
+                Adapter?.LogWarning($"[AI] Failed to fetch models ({endpoint}): {Connectivity.ForLog(e)}");
                 return new string[0];
             }
         }
@@ -5033,7 +5084,7 @@ namespace UnityGameTranslator.Core
                     }
                     catch (Exception e)
                     {
-                        Adapter?.LogWarning($"[AI] Worker error: {e.Message}");
+                        Adapter?.LogWarning($"[AI] Worker error: {Connectivity.ForLog(e)}");
 
                         // A retranslation in flight had its line taken out of the file. Whatever
                         // just went wrong, the human must not be left with one line fewer than
@@ -5314,7 +5365,7 @@ namespace UnityGameTranslator.Core
             }
             catch (Exception e)
             {
-                Adapter?.LogWarning($"[AI] Translation error: {e.Message}");
+                Adapter?.LogWarning($"[AI] Translation error: {Connectivity.ForLog(e)}");
                 return null;
             }
         }
@@ -5482,7 +5533,7 @@ namespace UnityGameTranslator.Core
             }
             catch (Exception e)
             {
-                Adapter?.LogWarning($"[Google] Translation error: {e.Message}");
+                Adapter?.LogWarning($"[Google] Translation error: {Connectivity.ForLog(e)}");
                 return null;
             }
         }
@@ -5561,7 +5612,7 @@ namespace UnityGameTranslator.Core
             }
             catch (Exception e)
             {
-                Adapter?.LogWarning($"[DeepL] Translation error: {e.Message}");
+                Adapter?.LogWarning($"[DeepL] Translation error: {Connectivity.ForLog(e)}");
                 return null;
             }
         }
@@ -5640,7 +5691,7 @@ namespace UnityGameTranslator.Core
             }
             catch (Exception e)
             {
-                Adapter?.LogWarning($"[API] Translation error: {e.Message}");
+                Adapter?.LogWarning($"[API] Translation error: {Connectivity.ForLog(e)}");
                 return null;
             }
         }

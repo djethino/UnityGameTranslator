@@ -804,6 +804,9 @@ namespace UnityGameTranslator.Core
                 // The same routing the TMP/UI.Text/TextMesh setter gets — input mirrors,
                 // procedural text, reveals, the already-written check. This used to call
                 // TranslateTextWithTracking on its own and inherited none of it.
+                // The game's text, kept before routing turns `value` into our translation: a
+                // text: rule is written against the game's words (FontRules.Find).
+                string gameText = value;
                 var outcome = RouteText(__instance, component, TypeHelper.GetInstanceID(__instance),
                                         isOwnUI, "Generic", ref value);
                 if (outcome == RouteOutcome.Stop) return;
@@ -818,9 +821,8 @@ namespace UnityGameTranslator.Core
                 {
                     long gid = TypeHelper.GetInstanceID(__instance);
                     string goPath = component != null ? TranslatorCore.GetGameObjectPath(component.gameObject) : null;
-                    genericOverride = TranslatorCore.FindFontOverride(gid, goPath, settingsFontName ?? fontName, value);
-                    if (genericOverride != null && genericOverride.size_multiplier > 0.001f)
-                        FontManager.ApplyTemporaryScale((int)gid, genericOverride.size_multiplier);
+                    genericOverride = TranslatorCore.FindFontOverride(gid, goPath, settingsFontName ?? fontName, gameText);
+                    FontManager.ApplyRuleScale((int)gid, genericOverride);
                 }
                 TextShaping.RtlPresenter.Present(__instance, TypeHelper.GetInstanceID(__instance), ref value,
                                                  settingsFontName ?? fontName, genericOverride);
@@ -3707,20 +3709,14 @@ namespace UnityGameTranslator.Core
                     if (TranslatorCore.FontOverrides.Count > 0)
                     {
                         string goPath = comp != null ? TranslatorCore.GetGameObjectPath(comp.gameObject) : null;
+                        // textValue is still the game's text here: routing has not run yet.
                         var fontOverride = TranslatorCore.FindFontOverride(compId, goPath, settingsFontName, textValue);
                         fontOverrideMatched = fontOverride;
-                        if (fontOverride != null)
+                        // The rule's size on, or off when no rule (or a sizeless one) applies now.
+                        FontManager.ApplyRuleScale(compId, fontOverride);
+                        if (fontOverride != null && !string.IsNullOrEmpty(fontOverride.replacement))
                         {
-                            // Override font replacement if specified
-                            if (!string.IsNullOrEmpty(fontOverride.replacement))
-                            {
-                                settingsFontName = fontOverride.replacement;
-                            }
-                            // Override scale if specified (> 0)
-                            if (fontOverride.size_multiplier > 0.001f)
-                            {
-                                FontManager.ApplyTemporaryScale(compId, fontOverride.size_multiplier);
-                            }
+                            settingsFontName = fontOverride.replacement;
                         }
                     }
 
@@ -4752,6 +4748,8 @@ namespace UnityGameTranslator.Core
                 // Same routing as the TMP/UI.Text/TextMesh setter — see RouteText. The font work
                 // above is already done by this point; stage D still runs on the non-Stop
                 // outcomes (a re-set logical translation needs its shaped form too).
+                // The game's text, kept before routing turns __0 into our translation (see Generic).
+                string gameText = __0;
                 var outcome = RouteText(__instance, component, TypeHelper.GetInstanceID(__instance),
                                         isOwnUI, "TMP", ref __0);
                 if (outcome == RouteOutcome.Stop) return;
@@ -4763,9 +4761,8 @@ namespace UnityGameTranslator.Core
                 {
                     long aid = TypeHelper.GetInstanceID(__instance);
                     string goPath = TranslatorCore.GetGameObjectPath(component.gameObject);
-                    altOverride = TranslatorCore.FindFontOverride(aid, goPath, fontName, __0);
-                    if (altOverride != null && altOverride.size_multiplier > 0.001f)
-                        FontManager.ApplyTemporaryScale((int)aid, altOverride.size_multiplier);
+                    altOverride = TranslatorCore.FindFontOverride(aid, goPath, fontName, gameText);
+                    FontManager.ApplyRuleScale((int)aid, altOverride);
                 }
                 TextShaping.RtlPresenter.Present(__instance, TypeHelper.GetInstanceID(__instance), ref __0,
                                                  fontName, altOverride);
@@ -4867,6 +4864,8 @@ namespace UnityGameTranslator.Core
                 bool isOwnUI = TranslatorCore.IsOwnUITranslatable(component);
                 // Same routing as the TMP/UI.Text/TextMesh setter — see RouteText. tk2d has no
                 // font scale of its own here; stage D still runs on the non-Stop outcomes.
+                // The game's text, kept before routing turns `value` into our translation (see Generic).
+                string gameText = value;
                 var outcome = RouteText(__instance, component, TypeHelper.GetInstanceID(__instance),
                                         isOwnUI, "tk2d", ref value);
                 if (outcome == RouteOutcome.Stop) return;
@@ -4876,7 +4875,7 @@ namespace UnityGameTranslator.Core
                 FontOverrideRule tk2dOverride = null;
                 if (TranslatorCore.FontOverrides.Count > 0)
                     tk2dOverride = TranslatorCore.FindFontOverride(TypeHelper.GetInstanceID(__instance),
-                        TranslatorCore.GetGameObjectPath(component.gameObject), fontName, value);
+                        TranslatorCore.GetGameObjectPath(component.gameObject), fontName, gameText);
                 TextShaping.RtlPresenter.Present(__instance, TypeHelper.GetInstanceID(__instance), ref value,
                                                  fontName, tk2dOverride);
             }

@@ -65,8 +65,9 @@ namespace UnityGameTranslator.Core
     /// <summary>
     /// Which font rule applies to a given label, and what has already been decided for each target.
     ///
-    /// 🔴 **Why this is stateful, like the exclusions.** The answer is taken once per target and
-    /// kept, because it is asked on every text write. And there is a second memory that matters
+    /// 🔴 **Why this is stateful, like the exclusions.** The answer is kept per target, because it
+    /// is asked on every text write — and taken again only when the target's text changes and a
+    /// rule reads text (see <see cref="_decided"/>). And there is a second memory that matters
     /// more: a rule whose pattern is invalid, or which ran past its time budget, is switched off
     /// **for the rest of the run** — a verdict, said once, that must not be written back to the
     /// file. Both are sequences, and neither can be seen from a single question.
@@ -90,12 +91,30 @@ namespace UnityGameTranslator.Core
     {
         private readonly List<FontOverrideRule> _rules = new List<FontOverrideRule>();
 
+        /// <summary>One answer, and the text it was given on — so a new text can be told apart.</summary>
+        private struct Decision
+        {
+            public FontOverrideRule Rule;
+            public string Text;
+        }
+
         /// <summary>
         /// ⚠ Keyed by long, like every other per-target map: uGUI passes an instance id, UI Toolkit
         /// passes an id from beyond the int range. Holds nulls too — "nothing matches this one" is
         /// an answer worth keeping, or every ordinary label pays the whole list on every write.
+        ///
+        /// 🔴 **Kept per target, but no longer for ever when a rule reads the text** (2026-09-24,
+        /// user: "c'est à corriger"). A dialogue line is a new text in the same label; the answer
+        /// taken on its first line used to hold for every line after, so an alert styled by a
+        /// <c>text:</c> rule stayed styled through the calm lines that followed, and a label whose
+        /// first text matched nothing never picked the rule up. The answer now remembers the text it
+        /// was taken on and is taken again when that text changes — only when some rule reads text
+        /// at all, so the common case (path and font rules) still pays the list once per target.
         /// </summary>
-        private readonly Dictionary<long, FontOverrideRule> _decided = new Dictionary<long, FontOverrideRule>();
+        private readonly Dictionary<long, Decision> _decided = new Dictionary<long, Decision>();
+
+        /// <summary>True when an enabled rule looks at the text — <c>text:</c>, or no prefix.</summary>
+        private bool _readsText;
 
         /// <summary>
         /// Where the two per-session verdicts go: an invalid pattern, and one that ran too long.
@@ -112,14 +131,22 @@ namespace UnityGameTranslator.Core
         public bool Any => _rules.Count > 0;
 
         /// <summary>
-        /// The first rule that matches this target, or null when none does — remembered either way.
+        /// The first rule that matches this target, or null when none does — remembered either way,
+        /// and taken again when the target's text has changed and some rule reads text.
         ///
         /// ⚠ First match wins, so the order in the file is a decision its author made.
         /// </summary>
+        /// <param name="text">
+        /// The text the GAME wrote — never our translation of it: a <c>text:</c> rule is written
+        /// against the game's words, and two callers giving two different texts for one target
+        /// would flip its answer back and forth. <c>null</c> when the caller does not know that
+        /// text (a pass that only reads the screen back): the answer already taken is kept.
+        /// </param>
         public FontOverrideRule Find(long targetId, string path, string fontName, string text)
         {
-            if (_decided.TryGetValue(targetId, out var cached))
-                return cached;
+            if (_decided.TryGetValue(targetId, out var cached)
+                && (text == null || !_readsText || string.Equals(text, cached.Text, StringComparison.Ordinal)))
+                return cached.Rule;
 
             FontOverrideRule matched = null;
             for (int i = 0; i < _rules.Count; i++)
@@ -133,7 +160,7 @@ namespace UnityGameTranslator.Core
                 }
             }
 
-            _decided[targetId] = matched;
+            _decided[targetId] = new Decision { Rule = matched, Text = text };
             return matched;
         }
 
@@ -220,6 +247,15 @@ namespace UnityGameTranslator.Core
         {
             _rules.Clear();
             if (rules != null) _rules.AddRange(rules);
+            _readsText = false;
+            foreach (var rule in _rules)
+            {
+                if (!rule.enabled || string.IsNullOrEmpty(rule.match)) continue;
+                bool path = rule.match.StartsWith("path:", StringComparison.OrdinalIgnoreCase);
+                bool font = rule.match.StartsWith("font:", StringComparison.OrdinalIgnoreCase);
+                // text:, or no prefix at all — which Matches tries against the text after the path.
+                if (!path && !font) { _readsText = true; break; }
+            }
             ForgetAll();
         }
 

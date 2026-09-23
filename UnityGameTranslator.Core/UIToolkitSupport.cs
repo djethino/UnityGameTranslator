@@ -690,7 +690,9 @@ namespace UnityGameTranslator.Core
                 _originalFontName.TryGetValue(__instance, out string uitkFont);
                 FontOverrideRule uitkOverride = null;
                 if (TranslatorCore.FontOverrides.Count > 0)
-                    uitkOverride = TranslatorCore.FindFontOverride(IdFor(__instance), PathOf(__instance), uitkFont, value);
+                    // `before`, not `value`: routing has turned value into our translation, and a
+                    // text: rule is written against the game's words (FontRules.Find).
+                    uitkOverride = TranslatorCore.FindFontOverride(IdFor(__instance), PathOf(__instance), uitkFont, before);
                 TextShaping.RtlPresenter.Present(__instance, IdFor(__instance), ref value, uitkFont, uitkOverride);
                 if (!string.Equals(before, value, StringComparison.Ordinal))
                 {
@@ -1291,7 +1293,7 @@ namespace UnityGameTranslator.Core
                 _originalFontName.TryGetValue(element, out string font);
                 FontOverrideRule rule = null;
                 if (TranslatorCore.FontOverrides.Count > 0)
-                    rule = TranslatorCore.FindFontOverride(IdFor(element), PathOf(element), font, value);
+                    rule = TranslatorCore.FindFontOverride(IdFor(element), PathOf(element), font, text);  // the text as written, before routing
                 TextShaping.RtlPresenter.Present(element, IdFor(element), ref value, font, rule);
             }
             catch { }
@@ -1710,7 +1712,7 @@ namespace UnityGameTranslator.Core
                 _originalFontName.TryGetValue(element, out string scanFont);
                 FontOverrideRule scanOverride = null;
                 if (TranslatorCore.FontOverrides.Count > 0)
-                    scanOverride = TranslatorCore.FindFontOverride(IdFor(element), PathOf(element), scanFont, translated);
+                    scanOverride = TranslatorCore.FindFontOverride(IdFor(element), PathOf(element), scanFont, current);  // the game's text, not ours
                 TextShaping.RtlPresenter.Present(element, IdFor(element), ref translated, scanFont, scanOverride);
                 if (string.IsNullOrEmpty(translated) || translated == current) return;
 
@@ -1933,8 +1935,9 @@ namespace UnityGameTranslator.Core
                 string replacementName = settingsName;
                 if (TranslatorCore.FontOverrides.Count > 0)
                 {
-                    var rule = TranslatorCore.FindFontOverride(IdFor(element), PathOf(element),
-                                                               settingsName, _textProp.GetValue(element, null) as string);
+                    // No text: what the element shows here may be our translation. The answer the
+                    // text write took on the game's words is kept (FontRules.Find, null text).
+                    var rule = TranslatorCore.FindFontOverride(IdFor(element), PathOf(element), settingsName, null);
                     if (rule != null && !string.IsNullOrEmpty(rule.replacement))
                         replacementName = rule.replacement;
                 }

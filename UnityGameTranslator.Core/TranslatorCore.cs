@@ -1403,14 +1403,6 @@ namespace UnityGameTranslator.Core
 
         #endregion
 
-        /// <summary>
-        /// Clear the font override cache (call on scene change).
-        /// </summary>
-        public static void ClearFontOverrideCache()
-        {
-            fontOverrides.ForgetAll();
-        }
-
         // Panel construction mode: when true, all translations are skipped
         // This prevents texts created during panel construction from being queued before we can register them
         private static int _constructionModeCount = 0;

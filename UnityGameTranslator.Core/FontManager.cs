@@ -1856,11 +1856,21 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// Set a per-component scale override (from font override rules).
+        /// Put the size a font rule asks for on a component — or take it off when the rule that
+        /// applies now asks for none, or no rule applies any more.
+        ///
+        /// 🔴 **Setting only was the defect.** This used to be ApplyTemporaryScale, which wrote and
+        /// never removed: once a rule had matched a component, its size stayed there for the rest
+        /// of the session, whatever the component showed next. That was hidden while a rule was
+        /// decided once per component; now that a text change decides again (FontRules), the size
+        /// has to follow the decision both ways. Called with every answer, null included.
         /// </summary>
-        public static void ApplyTemporaryScale(int componentId, float scale)
+        public static void ApplyRuleScale(int componentId, FontOverrideRule rule)
         {
-            _componentScaleOverrides[componentId] = scale;
+            if (rule != null && rule.size_multiplier > 0.001f)
+                _componentScaleOverrides[componentId] = rule.size_multiplier;
+            else
+                _componentScaleOverrides.Remove(componentId);
         }
 
         /// <summary>
@@ -2894,15 +2904,13 @@ namespace UnityGameTranslator.Core
             {
                 var comp = component as Component;
                 string goPath = comp != null ? TranslatorCore.GetGameObjectPath(comp.gameObject) : null;
-                string text = TypeHelper.GetText(component);
-                var rule = TranslatorCore.FindFontOverride(instanceId, goPath, settingsFontName, text);
-                if (rule != null)
-                {
-                    if (rule.size_multiplier > 0.001f)
-                        ApplyTemporaryScale(instanceId, rule.size_multiplier);
-                    if (!string.IsNullOrEmpty(rule.replacement))
-                        return rule.replacement;
-                }
+                // ⚠ No text: what the component shows here may be our translation, and a text:
+                // rule is written against the game's words. The answer the text write took on the
+                // game's text is kept (FontRules.Find, null text).
+                var rule = TranslatorCore.FindFontOverride(instanceId, goPath, settingsFontName, null);
+                ApplyRuleScale(instanceId, rule);
+                if (rule != null && !string.IsNullOrEmpty(rule.replacement))
+                    return rule.replacement;
             }
             catch (Exception ex)
             {

@@ -2635,7 +2635,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
                 // Force refresh all text to apply new settings (fonts, translations, overrides)
                 // This re-triggers ProcessTextPatchPrefix for all components, which:
-                // - Re-evaluates font override patterns (ApplyTemporaryScale)
+                // - Re-evaluates font override patterns (FontManager.ApplyRuleScale)
                 // - Re-applies font scale via ApplyFontScale (uses per-component overrides)
                 // reapplyAllScales: discrete Apply — re-derive size for components the game doesn't
                 // re-trigger so a changed scale/enable/override lands everywhere (issue #21).

@@ -29,6 +29,39 @@ namespace UnityGameTranslator.Core.Checks
             HowAPatternIsRead(check);
             WhenAPatternMisbehaves(check);
             TheMemory(check);
+            WhenTheTextChanges(check);
+        }
+
+        /// <summary>
+        /// 🔴 A dialogue line is a new text in the same label (user, 2026-09-24: "c'est à corriger").
+        /// The answer used to be taken on a label's FIRST text and kept for every line after it.
+        /// </summary>
+        private static void WhenTheTextChanges(Action<bool, string, string> check)
+        {
+            var alert = Rule("text:Alert", "Loud");
+            var rules = With(alert);
+
+            check(rules.Find(1, "Canvas/Dialogue", "Arial", "Calm line") == null
+                  && ReferenceEquals(rules.Find(1, "Canvas/Dialogue", "Arial", "Alert: danger"), alert)
+                  && rules.Find(1, "Canvas/Dialogue", "Arial", "Calm again") == null,
+                "a rule reading the text follows each new text of the same label, on and then off",
+                "an alert styled by a text: rule stayed styled through the calm lines after it, and a label whose first line matched nothing never picked the rule up");
+
+            rules.Find(2, "Canvas/Dialogue", "Arial", "Alert: danger");
+            check(ReferenceEquals(rules.Find(2, "Canvas/Dialogue", "Arial", null), alert),
+                "a caller that does not know the game's text keeps the answer already taken",
+                "a pass reading the screen back sees OUR translation; deciding on it would flip the label back and forth between two answers");
+
+            check(rules.Find(3, "Canvas/Dialogue", "Arial", null) == null
+                  && ReferenceEquals(rules.Find(3, "Canvas/Dialogue", "Arial", "Alert!"), alert),
+                "and an answer taken without a text is taken again once the text arrives",
+                "the read-back pass can reach a label before its first write; the rule must not be lost for it");
+
+            var mixed = With(Rule("path:Canvas/Quest/**", "ByPath"), Rule("text:Alert", "Loud"));
+            check(mixed.Find(4, "Canvas/Quest/Title", "Arial", "Alert").replacement == "ByPath"
+                  && mixed.Find(4, "Canvas/Quest/Title", "Arial", "Calm").replacement == "ByPath",
+                "a new text still gives the first rule that matches",
+                "deciding again is the same decision, not a new order");
         }
 
         private static FontOverrideRule Rule(string match, string replacement = "Noto", bool enabled = true)
@@ -180,7 +213,7 @@ namespace UnityGameTranslator.Core.Checks
 
             var answer = rules.Find(1, "Canvas/Quest/Title", "Arial", "Go");
             check(ReferenceEquals(rules.Find(1, "somewhere/else/entirely", "Other", "Other"), answer),
-                "a target is decided once and kept",
+                "with no rule reading text, a target is decided once and kept",
                 "the path, the font and the text are re-read on every write; deciding again each time is the cost this avoids");
 
             rules.Find(2, "Canvas/Shop/Price", "Arial", "10");
@@ -196,8 +229,8 @@ namespace UnityGameTranslator.Core.Checks
 
             rules.ForgetAll();
             check(rules.Any && rules.Rules.Count == 1,
-                "and a scene change forgets answers, never rules",
-                "instance ids do not survive a scene; what somebody wrote does");
+                "and forgetting answers never forgets rules",
+                "the fonts moving forgets what was decided against them; what somebody wrote stays");
 
             var empty = new FontRules();
             check(!empty.Any && empty.Find(1, "Canvas/Q", "Arial", "Go") == null,

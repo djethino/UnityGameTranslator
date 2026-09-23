@@ -745,7 +745,10 @@ namespace UnityGameTranslator.Core.UI.Panels
         private string Readable(string proposal)
         {
             if (string.IsNullOrEmpty(proposal) || _failurePrepared == null) return proposal ?? "";
-            return Backends.Restore(_failurePrepared.Value, proposal, AnswerFrom.Model) ?? proposal;
+            // Cleaned first, as the model loop cleans an answer before judging it. A proposal
+            // recorded since 2026-09-23 is already clean and this changes nothing; one kept from an
+            // earlier session was recorded as the model said it.
+            return Backends.Restore(_failurePrepared.Value, Answers.Clean(proposal)) ?? proposal;
         }
 
         private void OpenFailure(FailedLine line)
@@ -971,7 +974,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// An answer came back. Raised on the WORKER thread — everything below touches Unity
         /// objects, so it hops to the main thread first.
         /// </summary>
-        private void OnRetranslateFinished(string key, string value, TranslatorCore.RetranslateOutcome outcome)
+        private void OnRetranslateFinished(string key, string value, RetranslateOutcome outcome)
         {
             TranslatorUIManager.RunOnMainThread(() => ShowRetranslateResult(key, value, outcome));
         }
@@ -981,7 +984,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// AddToCache would have stored — so it is NOT passed through <see cref="Readable"/>,
         /// which restores a model's wire answer and belongs to the ledger's attempts alone.
         /// </summary>
-        private void ShowRetranslateResult(string key, string value, TranslatorCore.RetranslateOutcome outcome)
+        private void ShowRetranslateResult(string key, string value, RetranslateOutcome outcome)
         {
             // The event is static and every screen that can ask is listening: this one answers
             // only for the line it asked about.
@@ -998,7 +1001,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 return;
             }
 
-            if (outcome == TranslatorCore.RetranslateOutcome.Replaced && value != null)
+            if (outcome == RetranslateOutcome.Replaced && value != null)
             {
                 _failInput.Text = value;
                 CheckFailInput();
@@ -1008,7 +1011,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 _failStatus.Say("New translation proposed — Save to keep it");
                 _failStatus.Tone = Tone.Success;
             }
-            else if (outcome == TranslatorCore.RetranslateOutcome.Unchanged)
+            else if (outcome == RetranslateOutcome.Unchanged)
             {
                 _failStatus.Say("The AI gave the same translation again — nothing changed");
                 _failStatus.Tone = Tone.Warning;

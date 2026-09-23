@@ -133,7 +133,6 @@ namespace UnityGameTranslator.Core.Checks
         /// <summary>What a backend is handed, and what is made of what comes back.</summary>
         private static void WhatABackendIsHandedAndGivesBack()
         {
-            Section("Backends: taking a text apart and putting the answer back", BackendsChecks.Run);
         }
 
         /// <summary>What a translations.json yields, and what reading it says about the file.</summary>

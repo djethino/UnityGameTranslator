@@ -799,7 +799,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                         // say nothing to a reader and they ate most of the twenty-five characters
                         // this excerpt is allowed, so the notification quoted punctuation instead
                         // of words. Stripping is the socle's, shared with the translation path.
-                        string text = Flatten(TextNormalization.StripMarkupTags(TranslatorCore.CurrentText));
+                        string text = Flatten(Markup.Strip(TranslatorCore.CurrentText));
                         if (text.Length > 25) text = text.Substring(0, 25) + "…";
                         _aiStatusLabel.Show(attempt > 0
                             ? Tr("Retrying") + $"{again}: {text}"

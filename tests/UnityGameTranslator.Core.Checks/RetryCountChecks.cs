@@ -41,15 +41,12 @@ namespace UnityGameTranslator.Core.Checks
                 "and the count is lowered twice: when a line ends, and when the next one starts",
                 "🔴 either alone leaves a window — one exit added to the worker loop, or one line that never reaches its end, and the next text wears the previous one's count");
 
-            check(core.Contains("NoteAttempt(attempt, maxAttempts)", StringComparison.Ordinal),
-                "the repair loop says which attempt is running",
+            // The repair loop is the socle's LineTranslation since 2026-09-23. That it tells its
+            // OnAttempt BEFORE each request is held there (LineTranslationChecks); what the mod
+            // must still do is hand it this counter.
+            check(core.Contains("OnAttempt = NoteAttempt", StringComparison.Ordinal),
+                "the repair loop is told which attempt is running",
                 "without it the counter never rises and the whole thing is decoration");
-
-            int said = core.IndexOf("NoteAttempt(attempt, maxAttempts)", StringComparison.Ordinal);
-            int called = core.IndexOf("CallAIWithMessages", said < 0 ? 0 : said, StringComparison.Ordinal);
-            check(said >= 0 && (called < 0 || said < called),
-                "and says it BEFORE the call, not after",
-                "the wait is the attempt: a counter that appears once the answer is back has nothing left to explain");
 
             check(overlay.Contains("TranslatorCore.RetryAttempt", StringComparison.Ordinal)
                   && overlay.Contains("attempt > 0", StringComparison.Ordinal),

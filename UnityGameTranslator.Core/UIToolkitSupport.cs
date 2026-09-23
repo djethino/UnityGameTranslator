@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using UnityEngine;
+using UnityGameTranslator.Common;
 
 namespace UnityGameTranslator.Core
 {
@@ -644,7 +645,7 @@ namespace UnityGameTranslator.Core
             string focused = FocusedText(element);
             if (string.IsNullOrEmpty(focused)) return false;
 
-            string candidate = TextNormalization.StripMarkupTags(text).Trim();
+            string candidate = Markup.Strip(text).Trim();
             if (candidate.Length == 0) return false;
             if (!string.Equals(candidate, focused.Trim(), StringComparison.Ordinal)) return false;
 

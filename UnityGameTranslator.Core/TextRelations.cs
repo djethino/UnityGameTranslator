@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using UnityGameTranslator.Common;
 
 namespace UnityGameTranslator.Core
 {
@@ -154,8 +155,8 @@ namespace UnityGameTranslator.Core
             // markup at all and this is asked on the hottest path in the mod.
             if (previous.IndexOf('<') < 0 && current.IndexOf('<') < 0) return false;
 
-            return string.Equals(TextNormalization.StripMarkupTags(previous),
-                                 TextNormalization.StripMarkupTags(current),
+            return string.Equals(Markup.Strip(previous),
+                                 Markup.Strip(current),
                                  StringComparison.Ordinal);
         }
 
@@ -265,7 +266,7 @@ namespace UnityGameTranslator.Core
         /// </summary>
         private static int TokensLeft(string text)
         {
-            string bare = DropOwnPlaceholders(TextNormalization.StripMarkupTags(text));
+            string bare = DropOwnPlaceholders(Markup.Strip(text));
             int n = 0;
             for (int i = 0; i < bare.Length; i++)
                 if (bare[i] == '*' || bare[i] == '{') n++;
@@ -299,7 +300,7 @@ namespace UnityGameTranslator.Core
         /// </summary>
         private static string Flatten(string text)
         {
-            string stripped = DropOwnPlaceholders(TextNormalization.StripMarkupTags(text));
+            string stripped = DropOwnPlaceholders(Markup.Strip(text));
 
             var sb = new System.Text.StringBuilder(stripped.Length);
             bool lastWasSpace = false;

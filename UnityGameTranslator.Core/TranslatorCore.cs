@@ -1830,9 +1830,6 @@ namespace UnityGameTranslator.Core
             return false;
         }
 
-        // Security: Maximum text length for AI translation requests (prevents DoS)
-        private const int MaxAITextLength = 15000;
-
         // Marker for skipped translations (text not in expected source language)
         private const string SkipTranslationMarker = Answers.SkipMarker;
 
@@ -3888,16 +3885,8 @@ namespace UnityGameTranslator.Core
 
         #region Retranslation (asking again for a line the human did not like)
 
-        /// <summary>What became of a retranslation the human asked for.</summary>
-        public enum RetranslateOutcome
-        {
-            /// <summary>A different translation came back and is now in the file.</summary>
-            Replaced,
-            /// <summary>The backend kept answering the same thing. Nothing changed.</summary>
-            Unchanged,
-            /// <summary>Nothing usable came back. The previous translation was put back.</summary>
-            Failed
-        }
+        // What became of a retranslation — RetranslateOutcome — is the socle's since 2026-09-23:
+        // the Manager reaches the same three verdicts when it answers the browser editor.
 
         /// <summary>
         /// Fired when a retranslation ends, WHATEVER the outcome — the editors show a waiting state
@@ -4053,7 +4042,8 @@ namespace UnityGameTranslator.Core
 
         /// <summary>
         /// Ask again, up to Config.AttemptsAllowed times, until the answer differs from the one the
-        /// human rejected. Each round draws a new seed — where the provider honours it, the run is
+        /// human rejected — the socle's <see cref="Retranslation.Run"/>, the verdicts the Manager
+        /// reaches too. Each round draws a new seed — where the provider honours it, the run is
         /// reproducible; where it ignores it, the temperature alone does the work (see
         /// Negotiation.SendSeed).
         /// </summary>
@@ -4077,67 +4067,33 @@ namespace UnityGameTranslator.Core
             // that failed validation is not hammered on every scan, and this is a human asking once.
             _queue.ForgetRefused(normalizedKey);
 
-            string backend = Config.translation_backend;
-            bool deterministicBackend = backend == "google" || backend == "deepl";
-            string accepted = null;
-            bool sameAnswerAgain = false;
+            bool service = LineTranslation.IsTranslationService(Config.translation_backend);
+            int rounds = Retranslation.Rounds(service, Config.AttemptsAllowed);
 
-            int rounds = deterministicBackend ? 1 : Config.AttemptsAllowed;
-            for (int round = 0; round < rounds; round++)
+            RetranslateResult result = Retranslation.Run(normalizedKey, request.HadEntry, request.PreviousValue, rounds, round =>
             {
-                string candidate;
-                if (deterministicBackend)
-                {
-                    candidate = TranslateWithAPI(normalizedKey, extractedNumbers);
-                }
-                else
-                {
-                    // A configured seed is offset by the round, never used as-is: a single fixed
-                    // seed would redraw the very answer being rejected, every round, forever.
-                    // Left unset, each round draws its own — variation without reproducibility.
-                    int seed;
-                    if (Config.ai_seed_retranslate.HasValue)
-                        seed = unchecked(Config.ai_seed_retranslate.Value + round);
-                    else
-                        lock (retranslateRandom) { seed = retranslateRandom.Next(1, int.MaxValue); }
+                if (service) return TranslateWithAPI(normalizedKey);
 
-                    candidate = TranslateWithAI(normalizedKey, extractedNumbers, request.IsOwnUI,
-                        new Variation { Temperature = Config.TemperatureRetranslate, Seed = seed });
-                }
+                int seed = Retranslation.SeedFor(Config.ai_seed_retranslate, round,
+                    () => { lock (retranslateRandom) { return retranslateRandom.Next(1, int.MaxValue); } });
+                string candidate = TranslateWithAI(normalizedKey, request.IsOwnUI,
+                    new Variation { Temperature = Config.TemperatureRetranslate, Seed = seed });
 
-                if (string.IsNullOrEmpty(candidate))
-                    continue;
-
-                // A refusal marker must never be written over an existing translation: stored as
-                // tag S it would replace the line with its own source text, which is a loss
-                // dressed up as a decision.
-                if (Answers.Read(candidate) != AnswerKind.Translation)
-                {
+                if (candidate != null && Answers.Read(candidate) != AnswerKind.Translation)
                     Adapter?.LogWarning("[Retranslate] Backend refused the line, keeping the previous translation");
-                    continue;
-                }
-
-                if (Placeholders.Invented(normalizedKey, candidate).Count > 0)
-                    continue;
-
-                if (request.HadEntry && string.Equals(candidate, request.PreviousValue, StringComparison.Ordinal))
-                {
-                    sameAnswerAgain = true;
+                else if (request.HadEntry && string.Equals(candidate, request.PreviousValue, StringComparison.Ordinal))
                     LogDebug($"[Retranslate] Round {round + 1}/{rounds} returned the same text, asking again");
-                    continue;
-                }
+                return candidate;
+            });
 
-                accepted = candidate;
-                break;
-            }
-
-            if (accepted == null)
+            if (result.Outcome != RetranslateOutcome.Replaced)
             {
                 RestorePreviousEntry(request);
-                FinishRetranslation(request, request.PreviousValue,
-                    sameAnswerAgain ? RetranslateOutcome.Unchanged : RetranslateOutcome.Failed);
+                FinishRetranslation(request, request.PreviousValue, result.Outcome);
                 return;
             }
+
+            string accepted = result.Value;
 
             // A proposal stops here: the answer goes to whoever asked and the file stays as it is,
             // game screen included. Applying it would be deciding for the human — the very thing
@@ -5215,233 +5171,109 @@ namespace UnityGameTranslator.Core
             public int? Seed;
         }
 
-        private static string TranslateWithAI(string textWithPlaceholders, List<string> extractedNumbers,
-            bool isOwnUI = false, Variation variation = null)
+        private static string TranslateWithAI(string textWithPlaceholders, bool isOwnUI = false, Variation variation = null)
         {
-            // Security: Reject text that's too long (prevents DoS via large requests).
-            // QueueForTranslation turns these back at the door, so this is belt and braces for a
-            // caller that reaches here another way. It stores NOTHING: caching the refusal wrote
-            // the whole text as its own key AND value, and tagged it "S" — a human decision.
-            if (textWithPlaceholders.Length > MaxAITextLength)
-            {
-                Adapter?.LogWarning($"[AI] Text too long ({textWithPlaceholders.Length} chars), skipping");
-                return null;
-            }
-
             try
             {
-                string textToTranslate = textWithPlaceholders;
-                TextType textType = Prompts.Classify(textToTranslate);
-
-                // Structure into tokens, padding held back — the same preparation the
-                // translation-API path uses, and the order in it is the rule. See Engine/Backends.
-                var prepared = Backends.Prepare(textToTranslate);
-                if (prepared.NothingToSend) return null;
-
-                string textForAI = prepared.ToSend;
-                List<string> extractedTags = prepared.Tags;
-
-                if (Config.debug_ai && extractedTags.Count > 0)
-                    Adapter?.LogInfo($"[AI] Extracted {extractedTags.Count} markup tags from text");
-
-                // Detect which placeholder types are in the PROCESSED text
-                bool hasNlPlaceholders = textForAI.Contains(Backends.LineBreak);
-                bool hasTagPlaceholders = extractedTags.Count > 0;
-                bool hasNumberPlaceholders = extractedNumbers != null && extractedNumbers.Count > 0;
-                // Presence in THIS text, not "variables exist somewhere": announcing a placeholder
-                // the text does not contain invites the model to invent one — small models answered
-                // "[!STR*0]" alone, or appended it to an otherwise correct translation.
-                bool hasVarPlaceholders = textForAI.Contains(VariableManager.Prefix);
-
-                // === BUILD PROMPT based on processed text ===
-                // The wording lives in UnityGameTranslator.Common.Prompts, shared with the bench
-                // that scores models against these very instructions. Nothing there reads a
-                // configuration: what the prompt depends on is handed over, so the same question
-                // can be asked outside a running game.
-                var markers = new Prompts.Markers
-                {
-                    LineBreaks = hasNlPlaceholders,
-                    Tags = hasTagPlaceholders,
-                    Numbers = hasNumberPlaceholders,
-                    Variables = hasVarPlaceholders,
-                };
-
                 string targetLang = Config.GetTargetLanguage();
                 string sourceLang = Config.GetSourceLanguage();
 
-                string systemPrompt = isOwnUI
-                    ? Prompts.ForOwnInterface(targetLang, textType, markers)
-                    // The game's own name, never the folder's — see GameInfo.product_name.
-                    : Prompts.ForGameText(targetLang, sourceLang, CurrentGame?.product_name,
-                                          Config.game_context,
-                                          Config.strict_source_language, textType, markers);
-
-                if (Config.debug_ai)
+                // The asking — preparation, the three attempts, the judging, the restoring — is the
+                // socle's LineTranslation, shared with the Manager's bench and with the Manager
+                // answering the browser editor while the game is closed. What stays here is what
+                // only a running game knows: which prompt, which settings, and what to remember.
+                var job = new ModelJob
                 {
-                    Adapter?.LogInfo($"[AI] System prompt:\n{systemPrompt}");
-                }
-
-                // === BUILD REQUEST ===
-                // Reasoning is disabled through the reasoning_effort parameter (see
-                // SendChatRequest), never by appending a marker to the text: the model treats such
-                // a marker as content and TRANSLATES it, leaving "/inga_tänkningar" style residue
-                // glued to the result — measured on every model tested, including ones that do not
-                // reason at all. See analyse/no-think-hack-tests.md.
-                string userContent = textForAI;
-                int maxTokens = Math.Max(200, textToTranslate.Length * 2);
-
-                // Frozen sequences: placeholders + the game's own delimiters around them.
-                // Empty when the text has no placeholder → single attempt, no validation.
-                var frozenSequences = Placeholders.FrozenSequences(textForAI);
-                bool needsValidation = frozenSequences.Count > 0;
-
-                // === ATTEMPTS: initial call + up to 2 validation retries ===
-                // temperature 0 is deterministic: an identical retry would return the
-                // same broken answer, so each retry must change something.
-                // Attempt 1: normal request, temperature 0.
-                // Attempt 2: corrective dialogue — failed answer as assistant turn
-                //            + compact targeted feedback (context changed → output changes).
-                // Attempt 3: fresh request WITHOUT the failed answer (breaks anchoring),
-                //            reinforced system prompt + temperature 0.3 to leave the
-                //            deterministic basin that failed twice.
-                string translation = null;
-                List<string> validationErrors = null;
-                // Every refused answer, kept for the Failures tab: what came back and what was wrong
-                // with it are the two things somebody needs to settle the line by hand.
-                var attempts = new List<FailedAttempt>();
-                string failedResponse = null;
-                bool isValid = false;
-
-                // A retranslation raises the floor for all three: the whole point is to leave the
-                // basin the rejected answer came from, so a placeholder repair must not quietly
-                // drop back to a deterministic draw and hand back the same text.
-                double baseTemperature = variation != null ? variation.Temperature : Config.TemperatureNormal;
-                int? baseSeed = variation != null ? variation.Seed : Config.ai_seed;
-                int maxAttempts = Config.AttemptsAllowed;
-
-                for (int attempt = 0; attempt < maxAttempts && !isValid; attempt++)
-                {
-                    // Said before the call, not after it: the wait IS the attempt, and a counter
-                    // that appears once the answer is back has nothing left to explain.
-                    NoteAttempt(attempt, maxAttempts);
-
-                    JArray messagesArray;
-                    double temperature = baseTemperature;
+                    // The wording lives in UnityGameTranslator.Common.Prompts. Nothing there reads a
+                    // configuration: what the prompt depends on is handed over.
+                    Instructions = (markers, textType) =>
+                    {
+                        string prompt = isOwnUI
+                            ? Prompts.ForOwnInterface(targetLang, textType, markers)
+                            // The game's own name, never the folder's — see GameInfo.product_name.
+                            : Prompts.ForGameText(targetLang, sourceLang, CurrentGame?.product_name,
+                                                  Config.game_context, Config.strict_source_language,
+                                                  textType, markers);
+                        if (Config.debug_ai) Adapter?.LogInfo($"[AI] System prompt:\n{prompt}");
+                        return prompt;
+                    },
+                    // A retranslation raises the floor for every attempt: the point is to leave the
+                    // basin the rejected answer came from, so a placeholder repair must not drop
+                    // back to a deterministic draw and hand back the same text.
+                    Temperature = variation != null ? variation.Temperature : Config.TemperatureNormal,
+                    Seed = variation != null ? variation.Seed : Config.ai_seed,
+                    RepairTemperature = Config.TemperatureRepair,
                     // Attempts past the first are repairs — a job with its own settings, because it
                     // asks a different question: the same translation, correctly marked up.
-                    int? seed = attempt == 0 ? baseSeed : (variation != null ? variation.Seed : Config.ai_seed_repair);
+                    RepairSeed = variation != null ? variation.Seed : Config.ai_seed_repair,
+                    Attempts = Config.AttemptsAllowed,
+                    // Said before the call, not after it: the wait IS the attempt.
+                    OnAttempt = NoteAttempt,
+                };
 
-                    if (attempt == 0)
-                    {
-                        messagesArray = new JArray
-                        {
-                            new JObject { ["role"] = "system", ["content"] = systemPrompt },
-                            new JObject { ["role"] = "user", ["content"] = userContent }
-                        };
-                    }
-                    else if (attempt == 1)
-                    {
-                        string correction = Placeholders.Correction(validationErrors, frozenSequences);
-                        messagesArray = new JArray
-                        {
-                            new JObject { ["role"] = "system", ["content"] = systemPrompt },
-                            new JObject { ["role"] = "user", ["content"] = userContent },
-                            new JObject { ["role"] = "assistant", ["content"] = failedResponse },
-                            new JObject { ["role"] = "user", ["content"] = correction }
-                        };
-                        if (Config.debug_ai)
-                            Adapter?.LogInfo($"[AI] Retry 1 (corrective dialogue):\n{correction}");
-                    }
-                    else
-                    {
-                        temperature = Math.Max(Config.TemperatureRepair, baseTemperature);
-                        string reinforcedPrompt = systemPrompt + "\n" + Placeholders.MandatorySequences(frozenSequences);
-                        messagesArray = new JArray
-                        {
-                            new JObject { ["role"] = "system", ["content"] = reinforcedPrompt },
-                            new JObject { ["role"] = "user", ["content"] = userContent }
-                        };
-                        if (Config.debug_ai)
-                            Adapter?.LogInfo("[AI] Retry 2 (fresh reinforced prompt, temperature 0.3)");
-                    }
+                LineAnswer answer = LineTranslation.AskModel(textWithPlaceholders, job, SendChat);
+                string excerpt = textWithPlaceholders.Substring(0, Math.Min(60, textWithPlaceholders.Length));
 
-                    translation = SendChatRequest(messagesArray, temperature, maxTokens, seed);
+                for (int i = 0; i < answer.Attempts.Count; i++)
+                    Adapter?.LogWarning($"[AI] Attempt {i + 1}/{Config.AttemptsAllowed}: invalid placeholders ({string.Join("; ", answer.Attempts[i].Errors)}) for: {excerpt}...");
 
-                    // Transport/HTTP error (incl. 429): retrying here is pointless,
-                    // the worker handles re-queueing on rate limit
-                    if (translation == null)
-                        return null;
-
-                    if (Config.debug_ai)
-                    {
-                        Adapter?.LogInfo($"[AI Raw] {translation.Substring(0, Math.Min(80, translation.Length))}");
-                    }
-
-                    // Refusal, translation, or neither — see Prompts.ReadAnswer. A refusal is the
-                    // marker ALONE: the caller keeps the original and tags it "S", which it can
-                    // only decide if the answer says nothing else. An answer that translates AND
-                    // carries the marker is thrown away rather than guessed at: read as a refusal
-                    // it drops a line that was fine, read as a translation it writes the marker
-                    // into the game, and neither shows up until someone reads their own text.
-                    var kind = Answers.Read(translation);
-                    if (kind == AnswerKind.Skip)
-                        return translation;
-
-                    if (kind == AnswerKind.Unusable)
-                    {
-                        Adapter?.LogWarning($"[AI] Answer carries the skip marker without being it, discarded: {textToTranslate.Substring(0, Math.Min(60, textToTranslate.Length))}...");
-                        return null;
-                    }
-
-                    if (!needsValidation)
-                        break;
-
-                    isValid = Placeholders.Accepts(textForAI, translation, frozenSequences, out validationErrors);
-                    if (!isValid)
-                    {
-                        // Deterministic trailing-[!nl] repair before rejecting — the
-                        // repaired candidate must pass the FULL validation itself.
-                        string repairedCandidate = Placeholders.RepairTrailingBreaks(textForAI, translation);
-                        if (repairedCandidate != null &&
-                            Placeholders.Accepts(textForAI, repairedCandidate, frozenSequences, out _))
-                        {
-                            translation = repairedCandidate;
-                            isValid = true;
-                            Adapter?.LogInfo($"[AI] Repaired missing trailing [!nl] token(s), validation OK for: {textToTranslate.Substring(0, Math.Min(60, textToTranslate.Length))}...");
-                        }
-                    }
-                    if (!isValid)
-                    {
-                        failedResponse = translation;
-                        attempts.Add(new FailedAttempt { Value = translation, Errors = new List<string>(validationErrors ?? new List<string>()) });
-                        Adapter?.LogWarning($"[AI] Attempt {attempt + 1}/{maxAttempts}: invalid placeholders ({string.Join("; ", validationErrors)}) for: {textToTranslate.Substring(0, Math.Min(60, textToTranslate.Length))}...");
-                    }
-                }
-
-                if (needsValidation && !isValid)
+                switch (answer.Outcome)
                 {
-                    // Never cache the corruption. In-memory marker only:
-                    // left untranslated this session, retried on next launch.
-                    _queue.NoteRefused(textWithPlaceholders);
-                    Failures.Note(new FailedLine { Key = textWithPlaceholders, Source = textToTranslate, Attempts = attempts });
-                    Adapter?.LogWarning($"[AI] Placeholder validation failed after {maxAttempts} attempts, left untranslated: {textToTranslate.Substring(0, Math.Min(60, textToTranslate.Length))}...");
-                    return null;
+                    case LineOutcome.Translated:
+                        if (answer.Repaired)
+                            Adapter?.LogInfo($"[AI] Repaired missing trailing [!nl] token(s), validation OK for: {excerpt}...");
+                        if (Config.debug_ai && !string.IsNullOrEmpty(answer.Text))
+                            Adapter?.LogInfo($"[AI Clean] {answer.Text.Substring(0, Math.Min(80, answer.Text.Length))}");
+                        return answer.Text;
+
+                    case LineOutcome.Declined:
+                        return answer.Text;
+
+                    case LineOutcome.TooLong:
+                        // QueueForTranslation turns these back at the door; this is for a caller that
+                        // reaches here another way. It stores NOTHING: caching the refusal wrote the
+                        // whole text as its own key AND value, tagged "S" — a human decision.
+                        Adapter?.LogWarning($"[AI] Text too long ({textWithPlaceholders.Length} chars), skipping");
+                        return null;
+
+                    case LineOutcome.Unusable:
+                        Adapter?.LogWarning($"[AI] Answer carries the skip marker without being it, discarded: {excerpt}...");
+                        return null;
+
+                    case LineOutcome.Refused:
+                        // Never cache the corruption. In-memory marker only: left untranslated this
+                        // session — and kept for the Failures tab, with every answer refused.
+                        _queue.NoteRefused(textWithPlaceholders);
+                        Failures.Note(new FailedLine { Key = textWithPlaceholders, Source = textWithPlaceholders, Attempts = answer.Attempts });
+                        Adapter?.LogWarning($"[AI] Placeholder validation failed after {answer.Requests} attempts, left untranslated: {excerpt}...");
+                        return null;
+
+                    default:
+                        // Nothing to send, or the request itself failed (said by SendChatRequest; a
+                        // rate limit is re-queued by the worker).
+                        return null;
                 }
-
-                // Markup, line breaks, the model's chatter, then the padding — that order,
-                // for the reasons written where it lives.
-                translation = Backends.Restore(prepared, translation, AnswerFrom.Model);
-
-                if (Config.debug_ai && !string.IsNullOrEmpty(translation))
-                    Adapter?.LogInfo($"[AI Clean] {translation.Substring(0, Math.Min(80, translation.Length))}");
-
-                return translation;
             }
             catch (Exception e)
             {
                 Adapter?.LogWarning($"[AI] Translation error: {Connectivity.ForLog(e)}");
                 return null;
             }
+        }
+
+        /// <summary>The socle's <see cref="ChatSend"/>, over this runtime's HTTP and negotiation.</summary>
+        private static string SendChat(IReadOnlyList<ChatMessage> messages, double temperature, int maxTokens, int? seed)
+        {
+            var messagesArray = new JArray();
+            foreach (var message in messages)
+                messagesArray.Add(new JObject { ["role"] = message.Role, ["content"] = message.Content });
+
+            string answer = SendChatRequest(messagesArray, temperature, maxTokens, seed);
+
+            if (Config.debug_ai && answer != null)
+                Adapter?.LogInfo($"[AI Raw] {answer.Substring(0, Math.Min(80, answer.Length))}");
+
+            return answer;
         }
 
         /// <summary>
@@ -5574,7 +5406,7 @@ namespace UnityGameTranslator.Core
                         requestObj["source"] = sourceCode;
                 }
 
-                string endpoint = "https://translation.googleapis.com/language/translate/v2";
+                string endpoint = Endpoints.GoogleTranslate;
                 string jsonRequest = requestObj.ToString(Newtonsoft.Json.Formatting.None);
                 var httpContent = new StringContent(jsonRequest, Encoding.UTF8, "application/json");
 
@@ -5650,9 +5482,7 @@ namespace UnityGameTranslator.Core
                         requestObj["source_lang"] = sourceCode;
                 }
 
-                string endpoint = Config.deepl_use_free
-                    ? "https://api-free.deepl.com/v2/translate"
-                    : "https://api.deepl.com/v2/translate";
+                string endpoint = Endpoints.DeepLTranslate(Config.deepl_use_free);
 
                 string jsonRequest = requestObj.ToString(Newtonsoft.Json.Formatting.None);
                 var httpContent = new StringContent(jsonRequest, Encoding.UTF8, "application/json");
@@ -5695,10 +5525,10 @@ namespace UnityGameTranslator.Core
         /// Translate text using a translation API (Google or DeepL).
         /// Handles pre/post-processing (placeholders, tags, whitespace) like TranslateWithAI but without prompts.
         /// </summary>
-        private static string TranslateWithAPI(string textWithPlaceholders, List<string> extractedNumbers)
+        private static string TranslateWithAPI(string textWithPlaceholders)
         {
             // Same as the AI path: refused at the queue door, nothing stored if we get here anyway
-            if (textWithPlaceholders.Length > MaxAITextLength)
+            if (textWithPlaceholders.Length > Limits.AiTextLength)
             {
                 Adapter?.LogWarning($"[API] Text too long ({textWithPlaceholders.Length} chars), skipping");
                 return null;
@@ -5706,62 +5536,42 @@ namespace UnityGameTranslator.Core
 
             try
             {
-                string textToTranslate = textWithPlaceholders;
-
-                // The same preparation the model path uses, written once. See Engine/Backends.
-                var prepared = Backends.Prepare(textToTranslate);
+                // The same preparation the model path uses, written once — see the socle's Backends.
+                var prepared = Backends.Prepare(textWithPlaceholders);
                 if (prepared.NothingToSend) return null;
 
-                string textForAPI = prepared.ToSend;
-
-                // === CALL THE API ===
                 string translation = null;
                 switch (Config.translation_backend)
                 {
                     case "google":
-                        translation = TranslateWithGoogle(textForAPI);
+                        translation = TranslateWithGoogle(prepared.ToSend);
                         break;
                     case "deepl":
-                        translation = TranslateWithDeepL(textForAPI);
+                        translation = TranslateWithDeepL(prepared.ToSend);
                         break;
                 }
 
-                if (string.IsNullOrEmpty(translation))
-                    return null;
+                // Validated and restored by the socle, as the Manager does for the same services.
+                LineAnswer answer = LineTranslation.CheckServiceAnswer(prepared, translation);
+                string excerpt = textWithPlaceholders.Substring(0, Math.Min(60, textWithPlaceholders.Length));
 
-                // Structural placeholder validation. No retry here: these APIs take
-                // no prompt, so there is nothing to correct — but a broken result
-                // must never reach the cache (it would be permanent). The deterministic
-                // trailing-[!nl] repair applies before rejecting, same as the AI path.
-                var frozenSequences = Placeholders.FrozenSequences(textForAPI);
-                if (frozenSequences.Count > 0
-                    && !Placeholders.Accepts(textForAPI, translation, frozenSequences, out var apiErrors))
+                switch (answer.Outcome)
                 {
-                    string repairedCandidate = Placeholders.RepairTrailingBreaks(textForAPI, translation);
-                    if (repairedCandidate != null &&
-                        Placeholders.Accepts(textForAPI, repairedCandidate, frozenSequences, out _))
-                    {
-                        translation = repairedCandidate;
-                        Adapter?.LogInfo($"[API] Repaired missing trailing [!nl] token(s), validation OK for: {textToTranslate.Substring(0, Math.Min(60, textToTranslate.Length))}...");
-                    }
-                    else
-                    {
-                        _queue.NoteRefused(textWithPlaceholders);
-                        // One answer, one refusal: the API is asked once, so the record holds one attempt.
-                        Failures.Note(new FailedLine
-                        {
-                            Key = textWithPlaceholders,
-                            Source = textToTranslate,
-                            Attempts = new List<FailedAttempt> { new FailedAttempt { Value = translation, Errors = new List<string>(apiErrors) } },
-                        });
-                        Adapter?.LogWarning($"[API] Invalid placeholders ({string.Join("; ", apiErrors)}), left untranslated: {textToTranslate.Substring(0, Math.Min(60, textToTranslate.Length))}...");
-                        return null;
-                    }
-                }
+                    case LineOutcome.Translated:
+                        if (answer.Repaired)
+                            Adapter?.LogInfo($"[API] Repaired missing trailing [!nl] token(s), validation OK for: {excerpt}...");
+                        return answer.Text;
 
-                // Same restoration, minus the one step that does not apply: these services take
-                // no instructions, so there is no chatter to remove and anything removed is text.
-                return Backends.Restore(prepared, translation, AnswerFrom.TranslationApi);
+                    case LineOutcome.Refused:
+                        // A broken result must never reach the cache: it would be permanent.
+                        _queue.NoteRefused(textWithPlaceholders);
+                        Failures.Note(new FailedLine { Key = textWithPlaceholders, Source = textWithPlaceholders, Attempts = answer.Attempts });
+                        Adapter?.LogWarning($"[API] Invalid placeholders ({string.Join("; ", answer.Attempts[0].Errors)}), left untranslated: {excerpt}...");
+                        return null;
+
+                    default:
+                        return null;
+                }
             }
             catch (Exception e)
             {
@@ -6113,13 +5923,13 @@ namespace UnityGameTranslator.Core
             // Nothing is stored now: the line stays untranslated in the game, which is the honest
             // signal, and the check being deterministic on the text itself, the scanner simply
             // turns back here on every pass — nothing queued, nothing sent.
-            if (text.Length > MaxAITextLength)
+            if (text.Length > Limits.AiTextLength)
             {
                 // Once per text: this runs on every scan, and a warning repeated forever is
                 // noise. Silence would be worse — a line that never gets translated has to say
                 // why somewhere.
                 if (_queue.NoteTooLong(text))
-                    Adapter?.LogWarning($"[Queue] Text too long ({text.Length} chars, limit {MaxAITextLength}), left untranslated");
+                    Adapter?.LogWarning($"[Queue] Text too long ({text.Length} chars, limit {Limits.AiTextLength}), left untranslated");
                 return false;
             }
             // Last line of defence, here rather than only at the call sites: this is the single door
@@ -6215,12 +6025,11 @@ namespace UnityGameTranslator.Core
         {
             public static readonly WorkerHost Instance = new WorkerHost();
 
-            public string Translate(string normalized, List<string> numbers, bool ownUi, out bool rateLimited)
+            public string Translate(string normalized, bool ownUi, out bool rateLimited)
             {
-                string backend = Config.translation_backend;
-                string answer = (backend == "google" || backend == "deepl")
-                    ? TranslateWithAPI(normalized, numbers)
-                    : TranslateWithAI(normalized, numbers, ownUi);   // LLM backend (default)
+                string answer = LineTranslation.IsTranslationService(Config.translation_backend)
+                    ? TranslateWithAPI(normalized)
+                    : TranslateWithAI(normalized, ownUi);   // LLM backend (default)
                 rateLimited = answer == null && _apiRateLimited;
                 if (rateLimited) _apiRateLimited = false;
                 return answer;

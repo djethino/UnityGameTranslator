@@ -967,12 +967,12 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// A retranslation ended. Raised on the WORKER thread — everything below touches Unity
         /// objects, so it hops to the main thread first.
         /// </summary>
-        private void OnRetranslateFinished(string key, string value, TranslatorCore.RetranslateOutcome outcome)
+        private void OnRetranslateFinished(string key, string value, RetranslateOutcome outcome)
         {
             TranslatorUIManager.RunOnMainThread(() => ApplyRetranslateResult(key, value, outcome));
         }
 
-        private void ApplyRetranslateResult(string key, string value, TranslatorCore.RetranslateOutcome outcome)
+        private void ApplyRetranslateResult(string key, string value, RetranslateOutcome outcome)
         {
             var rows = _pendingRetranslateRows.FindAll(r => r.Key == key);
             if (rows.Count == 0)
@@ -987,7 +987,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
             _pendingRetranslateRows.RemoveAll(r => r.Key == key);
 
-            bool proposed = outcome == TranslatorCore.RetranslateOutcome.Replaced && value != null;
+            bool proposed = outcome == RetranslateOutcome.Replaced && value != null;
 
             foreach (var row in rows)
             {
@@ -1008,11 +1008,11 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             switch (outcome)
             {
-                case TranslatorCore.RetranslateOutcome.Replaced:
+                case RetranslateOutcome.Replaced:
                     _statusLabel.Say("New translation proposed — Save to keep it, Revert to drop it");
                     _statusLabel.Tone = Tone.Success;
                     break;
-                case TranslatorCore.RetranslateOutcome.Unchanged:
+                case RetranslateOutcome.Unchanged:
                     _statusLabel.Say("The AI gave the same translation again — nothing changed");
                     _statusLabel.Tone = Tone.Warning;
                     break;

@@ -22,7 +22,7 @@ namespace UnityGameTranslator.Core.Checks
         {
             LineEndings(check);
             Numbers(check);
-            Markup(check);
+            TagAndNumberSlots(check);
             Letters(check);
             ReadbackForm(check);
             Probes(check);
@@ -128,27 +128,12 @@ namespace UnityGameTranslator.Core.Checks
                 "it is fed by live values read one at a time, so it is normal for it to hold a gap");
         }
 
-        private static void Markup(Action<bool, string, string> check)
+        // Lifting and restoring markup moved to the socle (Markup, 2026-09-23), with its cases. What
+        // stays here is where the two kinds of slot meet — numbers are still this file's.
+        private static void TagAndNumberSlots(Action<bool, string, string> check)
         {
-            check(TextNormalization.StripMarkupTags("<b>Play</b>") == "Play",
-                "markup comes off for a comparison",
-                "a game wrapping the typed value in colour tags must still match what was typed");
-
-            string lifted = TextNormalization.ExtractMarkupTags("<b>Play</b> now", out var tags);
-            check(lifted == "[!t*0]Play[!t*1] now" && tags.Count == 2
-                  && tags[0] == "<b>" && tags[1] == "</b>",
-                "a tag leaves a slot of its own",
-                "the model reorders words freely and would carry a tag to the wrong one — the slot is what pins it");
-
-            check(TextNormalization.RestoreMarkupTags(lifted, tags) == "<b>Play</b> now",
-                "and the slots take the tags back", "same round trip, same stake");
-
-            check(TextNormalization.RestoreMarkupTags("[!t*0]x", null) == "[!t*0]x",
-                "with nothing to put back, the text is left alone",
-                "inventing a tag would be worse than leaving the slot visible");
-
             // ⚠ Two families of slot, two spellings. They travel together and must not collide.
-            string both = TextNormalization.ExtractMarkupTags("<b>3</b>", out var t2);
+            string both = UnityGameTranslator.Common.Markup.Extract("<b>3</b>", out var t2);
             both = TextNormalization.ExtractNumbersToPlaceholders(both, out var n2);
             check(both == "[!t*0][!v*0][!t*1]" && t2.Count == 2 && n2.Count == 1,
                 "a number inside a tag gets its own kind of slot",

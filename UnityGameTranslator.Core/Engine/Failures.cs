@@ -1,14 +1,11 @@
 using System;
 using System.Collections.Generic;
+using UnityGameTranslator.Common;
 
 namespace UnityGameTranslator.Core
 {
-    /// <summary>One answer the AI gave for a line, and why it was refused.</summary>
-    public sealed class FailedAttempt
-    {
-        public string Value;
-        public List<string> Errors = new List<string>();
-    }
+    // FailedAttempt — one answer the AI gave for a line, and why it was refused — lives in the
+    // socle (LineTranslation.cs) since 2026-09-23: the loop that produces it moved there.
 
     /// <summary>
     /// A line the AI could not translate this session: every attempt broke a placeholder. Kept

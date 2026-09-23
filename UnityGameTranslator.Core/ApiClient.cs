@@ -1685,15 +1685,10 @@ namespace UnityGameTranslator.Core
         /// </summary>
         private static string GetAiBackendLabel()
         {
+            // The socle's words, which the Manager also sends when it holds the session.
             var config = TranslatorCore.Config;
-            if (config == null || !config.enable_ai) return null;
-            switch (config.translation_backend)
-            {
-                case "llm": return string.IsNullOrEmpty(config.ai_model) ? "LLM" : config.ai_model;
-                case "google": return "Google Translate";
-                case "deepl": return "DeepL";
-                default: return config.translation_backend;
-            }
+            return config == null ? null
+                : LineTranslation.BackendLabel(config.enable_ai, config.translation_backend, config.ai_model);
         }
 
         /// <summary>

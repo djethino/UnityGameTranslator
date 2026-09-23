@@ -42,7 +42,7 @@ namespace UnityGameTranslator.Core.Checks
             public readonly List<string> Calls = new List<string>();
             public readonly List<string> Said = new List<string>();
 
-            public string Translate(string normalized, List<string> numbers, bool ownUi, out bool rateLimited)
+            public string Translate(string normalized, bool ownUi, out bool rateLimited)
             {
                 Calls.Add($"translate:{normalized}{(ownUi ? ":ui" : "")}");
                 rateLimited = RateLimited;

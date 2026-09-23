@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using UnityEngine;
+using UnityGameTranslator.Common;
 
 namespace UnityGameTranslator.Core
 {
@@ -1804,7 +1805,7 @@ namespace UnityGameTranslator.Core
         {
             if (string.IsNullOrEmpty(text)) return false;
 
-            string candidate = TextNormalization.StripMarkupTags(text).Trim();
+            string candidate = Markup.Strip(text).Trim();
             if (candidate.Length == 0) return false;
 
             // Internal mirror. Structural: it only matches a component that lives INSIDE the input

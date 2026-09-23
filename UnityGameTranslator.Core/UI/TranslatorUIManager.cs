@@ -4251,10 +4251,9 @@ namespace UnityGameTranslator.Core.UI
             _pushInFlight = false;
             _keepaliveInFlight = false;
             _browserLeftSince = -1f;
-            _seenRetranslateIds.Clear();
             // Nobody left to hand an answer to. The proposals themselves are held by
             // TranslatorCore and simply go nowhere — none of them wrote anything.
-            lock (_browserRetranslateRequests) { _browserRetranslateRequests.Clear(); }
+            _pageRetranslations.Clear();
         }
 
         /// <summary>
@@ -4677,45 +4676,33 @@ namespace UnityGameTranslator.Core.UI
             await ApiClient.EndEditSession(modKey);
         }
 
-        // Request ids already honored: the browser RE-EMITS its retranslate
-        // request every 30s while pending (SSE delivery is not guaranteed —
-        // events published during a reconnection gap are lost), always with
-        // the same id. Bounded FIFO, cleared with the session.
-        private static readonly Queue<string> _seenRetranslateIds = new Queue<string>();
-        private const int MaxSeenRetranslateIds = 32;
-
-        // Retranslations the BROWSER is waiting for: key → its request id. The answer arrives
-        // through TranslatorCore's notification (worker thread) with no idea who asked, so this is
-        // what tells a browser request apart from an in-game one — both can be pending at once,
-        // and the in-game editor answers itself.
-        private static readonly Dictionary<string, string> _browserRetranslateRequests =
-            new Dictionary<string, string>();
+        // The page's per-line requests: the ids already honoured (the browser RE-EMITS every 30s
+        // while pending — SSE delivery is not guaranteed — always with the same id) and, for each
+        // line in flight, the request it answers. The answer arrives through TranslatorCore's
+        // notification with no idea who asked, so this is what tells a browser request apart from
+        // an in-game one. The socle's PageRetranslations, which also carries the guards — the
+        // Manager answers the same page with the same class.
+        private static readonly PageRetranslations _pageRetranslations = new PageRetranslations();
 
         /// <summary>
         /// Send a finished retranslation back to the browser that asked for it. Subscribed once at
         /// init; raised on the worker thread, and everything it touches is HTTP, so it stays there.
         /// </summary>
         private static void OnRetranslateFinishedForBrowser(string key, string value,
-            TranslatorCore.RetranslateOutcome outcome)
+            RetranslateOutcome outcome)
         {
-            string requestId;
-            lock (_browserRetranslateRequests)
-            {
-                if (!_browserRetranslateRequests.TryGetValue(key, out requestId)) return;
-                _browserRetranslateRequests.Remove(key);
-            }
+            // Null: the in-game editor asked, and answers itself. Empty: a page too old to send
+            // ids, which the site would refuse an answer for.
+            string requestId = _pageRetranslations.Settle(key);
+            if (string.IsNullOrEmpty(requestId)) return;
 
             string modKey = _editSessionModKey;
             if (string.IsNullOrEmpty(modKey)) return;
 
-            string outcomeName = outcome == TranslatorCore.RetranslateOutcome.Replaced ? "replaced"
-                : outcome == TranslatorCore.RetranslateOutcome.Unchanged ? "unchanged"
-                : "failed";
-
             // Fire and forget: the page frees its waiting row on its own timer if this never
             // arrives, and nothing in the file depends on it.
             _ = ApiClient.SendRetranslationResult(modKey, requestId, key,
-                outcome == TranslatorCore.RetranslateOutcome.Replaced ? value : null, outcomeName);
+                outcome == RetranslateOutcome.Replaced ? value : null, Retranslation.Word(outcome));
         }
 
         /// <summary>
@@ -4736,49 +4723,40 @@ namespace UnityGameTranslator.Core.UI
             {
                 var asked = ApiReaders.ReadEditRetranslate(ApiClient.ParseJsonSafe(jsonData));
                 string key = asked.Key;
-                if (string.IsNullOrEmpty(key)) return;
 
-                string requestId = asked.RequestId;
-                if (!string.IsNullOrEmpty(requestId))
+                // The guards, in the socle so the Manager applies the very same ones: a new id,
+                // translation on (IsTranslationEnabled, not enable_ai: with the backend set to
+                // "none" nothing can answer), and above all a line that IS in our file — the key
+                // comes from the browser verbatim, and arbitrary text must never be fed to the
+                // player's backend (cost, prompt abuse). Remembered BEFORE the request: the worker
+                // can finish before the next line would otherwise run.
+                switch (_pageRetranslations.Admit(asked.RequestId, key, TranslatorCore.Config.IsTranslationEnabled,
+                                                  TranslatorCore.HasTranslationKey))
                 {
-                    if (_seenRetranslateIds.Contains(requestId))
-                    {
-                        TranslatorCore.LogDebug("[EditSSE] Duplicate retranslate request (browser retry), ignored");
+                    case PageRequestVerdict.Answer:
+                        break;
+                    case PageRequestVerdict.Duplicate:
+                    case PageRequestVerdict.AlreadyPending:
+                        TranslatorCore.LogDebug("[EditSSE] Retranslate request already being answered (browser retry), ignored");
                         return;
-                    }
-                    _seenRetranslateIds.Enqueue(requestId);
-                    while (_seenRetranslateIds.Count > MaxSeenRetranslateIds)
-                        _seenRetranslateIds.Dequeue();
-                }
-
-                // IsTranslationEnabled, not enable_ai: with the backend set to "none" the flag says
-                // yes and nothing can answer, and capture-only mode would file the line as an
-                // empty human entry — the browser would watch its line go blank.
-                if (!TranslatorCore.Config.IsTranslationEnabled)
-                {
-                    TranslatorCore.LogWarning("[EditSSE] Retranslate requested but translation is disabled, ignored");
-                    return;
-                }
-
-                if (!TranslatorCore.HasTranslationKey(key))
-                {
-                    TranslatorCore.LogWarning("[EditSSE] Retranslate requested for a key not in the local file, ignored");
-                    return;
+                    case PageRequestVerdict.TranslationOff:
+                        TranslatorCore.LogWarning("[EditSSE] Retranslate requested but translation is disabled, ignored");
+                        return;
+                    case PageRequestVerdict.NotInFile:
+                        TranslatorCore.LogWarning("[EditSSE] Retranslate requested for a key not in the local file, ignored");
+                        return;
+                    default:
+                        return;
                 }
 
                 TranslatorCore.LogInfo("[EditSSE] Browser requested AI retranslation of one entry");
-
-                // Remembered so the answer can be sent back to the page it belongs to. Written
-                // BEFORE the request: the worker can finish before this line would otherwise run.
-                if (!string.IsNullOrEmpty(requestId))
-                    lock (_browserRetranslateRequests) { _browserRetranslateRequests[key] = requestId; }
 
                 // A PROPOSAL, like the in-game editor: nothing is written, the page stages it as a
                 // pending edit and its own Save decides. The result travels by its own endpoint
                 // (SendRetranslationResult) — the content push carries the whole file and skips
                 // itself when nothing changed, which is exactly the case here.
                 if (!TranslatorCore.RemoveTranslationForRetranslate(key, storeResult: false))
-                    lock (_browserRetranslateRequests) { _browserRetranslateRequests.Remove(key); }
+                    _pageRetranslations.Forget(key);
             }
             catch (Exception e)
             {

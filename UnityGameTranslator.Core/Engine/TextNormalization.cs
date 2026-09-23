@@ -180,72 +180,8 @@ namespace UnityGameTranslator.Core
             @"(?<!\[!v\*)(-?\d+(?:[.,]\d+)?%?)",
             RegexOptions.Compiled);
 
-        // Matches any XML/HTML-like tag: <tag>, </tag>, <tag attr="val">, <tag/>, etc.
-        internal static readonly Regex MarkupTagPattern = new Regex(
-            @"<[^>]+>",
-            RegexOptions.Compiled);
-
-        internal const string TagPlaceholderPrefix = "[!t*";
-        internal const string TagPlaceholderSuffix = "]";
-
-        /// <summary>
-        /// Remove all markup tags from a text — for comparisons against raw values
-        /// (e.g. input mirrors: games wrap the typed value in color tags).
-        /// </summary>
-        public static string StripMarkupTags(string text)
-        {
-            if (string.IsNullOrEmpty(text)) return text;
-            return MarkupTagPattern.Replace(text, "");
-        }
-
-        /// <summary>
-        /// Extract markup tags from text, replacing them with [!t*N] placeholders.
-        /// Returns the processed text and the list of extracted tags.
-        /// </summary>
-        public static string ExtractMarkupTags(string text, out List<string> extractedTags)
-        {
-            extractedTags = new List<string>();
-            if (string.IsNullOrEmpty(text))
-                return text;
-
-            var matches = MarkupTagPattern.Matches(text);
-            if (matches.Count == 0)
-                return text;
-
-            var result = new StringBuilder(text.Length);
-            int lastIndex = 0;
-
-            foreach (Match match in matches)
-            {
-                // Append text before this tag
-                result.Append(text, lastIndex, match.Index - lastIndex);
-                // Replace tag with placeholder
-                int tagIndex = extractedTags.Count;
-                extractedTags.Add(match.Value);
-                result.Append(TagPlaceholderPrefix).Append(tagIndex).Append(TagPlaceholderSuffix);
-                lastIndex = match.Index + match.Length;
-            }
-
-            // Append remaining text after last tag
-            result.Append(text, lastIndex, text.Length - lastIndex);
-            return result.ToString();
-        }
-
-        /// <summary>
-        /// Restore [!t*N] placeholders back to their original markup tags.
-        /// </summary>
-        public static string RestoreMarkupTags(string text, List<string> tags)
-        {
-            if (string.IsNullOrEmpty(text) || tags == null || tags.Count == 0)
-                return text;
-
-            string result = text;
-            for (int i = 0; i < tags.Count; i++)
-            {
-                result = result.Replace($"{TagPlaceholderPrefix}{i}{TagPlaceholderSuffix}", tags[i]);
-            }
-            return result;
-        }
+        // Markup tags (<b>, <color=…>) and their [!t*N] slots live in the socle's Markup since
+        // 2026-09-23: Backends moved there, and it is the one that lifts and restores them.
 
         /// <summary>
         /// Normalize line endings to Unix format (\n).

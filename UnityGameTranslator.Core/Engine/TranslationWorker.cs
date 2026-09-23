@@ -16,7 +16,7 @@ namespace UnityGameTranslator.Core
         /// answer, or null when there is none; <paramref name="rateLimited"/> is true when the
         /// backend refused for now (a 429), in which case the answer is null too.
         /// </summary>
-        string Translate(string normalized, List<string> numbers, bool ownUi, out bool rateLimited);
+        string Translate(string normalized, bool ownUi, out bool rateLimited);
 
         /// <summary>
         /// Whether the backend cannot be reached at all — the request never left the machine.
@@ -222,7 +222,7 @@ namespace UnityGameTranslator.Core
             }
 
             // Dispatch to the appropriate backend — the host's choice.
-            translation = host.Translate(normalizedOriginal, extractedNumbers, isOwnUI, out bool rateLimited);
+            translation = host.Translate(normalizedOriginal, isOwnUI, out bool rateLimited);
 
             if (ctx.Debug)
                 host.Debug($"[Worker] {ctx.Backend} returned: {(translation == null ? "(null)" : translation.Substring(0, Math.Min(40, translation.Length)))}");

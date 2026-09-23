@@ -159,31 +159,21 @@ namespace UnityGameTranslator.Core
         public int? ai_seed_repair { get; set; } = null;
         public int? ai_seed_retranslate { get; set; } = null;
 
-        /// <summary>Attempts as an actually usable number, whatever the file says.</summary>
+        /// <summary>
+        /// Attempts as an actually usable number, whatever the file says. The bounds are the
+        /// socle's (<see cref="LineTranslation.ClampAttempts"/>): the Manager reads this game's file
+        /// to answer the browser editor, and must read the same number.
+        /// </summary>
         [JsonIgnore]
-        public int AttemptsAllowed
-        {
-            get
-            {
-                if (ai_max_attempts < 1) return 1;
-                if (ai_max_attempts > 10) return 10;
-                return ai_max_attempts;
-            }
-        }
+        public int AttemptsAllowed => LineTranslation.ClampAttempts(ai_max_attempts);
 
-        /// <summary>Temperatures clamped to what an OpenAI-compatible server accepts.</summary>
+        /// <summary>Temperatures clamped to what an OpenAI-compatible server accepts (<see cref="LineTranslation.ClampTemperature"/>).</summary>
         [JsonIgnore]
-        public double TemperatureNormal => ClampTemperature(ai_temperature);
+        public double TemperatureNormal => LineTranslation.ClampTemperature(ai_temperature);
         [JsonIgnore]
-        public double TemperatureRepair => ClampTemperature(ai_temperature_repair);
+        public double TemperatureRepair => LineTranslation.ClampTemperature(ai_temperature_repair);
         [JsonIgnore]
-        public double TemperatureRetranslate => ClampTemperature(ai_temperature_retranslate);
-
-        private static double ClampTemperature(double value)
-        {
-            if (double.IsNaN(value) || value < 0.0) return 0.0;
-            return value > 2.0 ? 2.0 : value;
-        }
+        public double TemperatureRetranslate => LineTranslation.ClampTemperature(ai_temperature_retranslate);
 
         #endregion
 
@@ -213,7 +203,7 @@ namespace UnityGameTranslator.Core
         /// through it. One place to say no.
         /// </summary>
         [JsonIgnore]
-        public bool IsTranslationEnabled => enable_ai && translation_backend != "none";
+        public bool IsTranslationEnabled => LineTranslation.IsEnabled(enable_ai, translation_backend);
 
         /// <summary>
         /// Returns true if the active backend requires online mode.

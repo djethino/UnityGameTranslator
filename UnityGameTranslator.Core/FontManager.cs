@@ -719,6 +719,7 @@ namespace UnityGameTranslator.Core
             // items stayed in the original font after a restart). New scene → fresh
             // passes and a fresh revert budget.
             _fontRevertCounts.Clear();
+            _gameManagedFontComponents.Clear();
             ClearForceComplete();
             if (_fallbackAssets.Count > 0)
                 RequestPendingRefresh();
@@ -2124,9 +2125,9 @@ namespace UnityGameTranslator.Core
                 RestoreAllComponentsForFont(fontName);
 
                 // Clear ALL font-replaced cache so components get re-evaluated on rescan.
-                // Some components may be in _fontReplacedComponentIds but NOT in
+                // Some components may be in _replacedFor but NOT in
                 // _originalFontsPerComponent (e.g. already-replaced on first encounter).
-                _fontReplacedComponentIds.Clear();
+                _replacedFor.Clear();
 
                 TranslatorCore.LogDebug($"[FontManager] Font settings changed for '{fontName}': " +
                     $"enabled={enabled}, fallback='{fallbackFont ?? "(none)"}' (was '{oldFallback ?? "(none)"}')");
@@ -2211,7 +2212,7 @@ namespace UnityGameTranslator.Core
                     // Component gone — just drop the tracking RestoreOriginalFont would have cleared.
                     _originalFontsPerComponent.Remove(instanceId);
                     _originalMaterialsPerComponent.Remove(instanceId);
-                    _fontReplacedComponentIds.Remove(instanceId);
+                    _replacedFor.Remove(instanceId);
                 }
 
                 _replacedComponentRefs.Remove(instanceId);
@@ -2426,7 +2427,7 @@ namespace UnityGameTranslator.Core
             _fallbackAssets.Remove(fallbackName);
             // Components still reference the dead asset: force ApplyFontReplacement to
             // re-run on them, and let fallback lists / reverse fallbacks be re-added.
-            _fontReplacedComponentIds.Clear();
+            _replacedFor.Clear();
             _fallbackAppliedFonts.Clear();
             asset = null;
             return false;
@@ -2596,8 +2597,17 @@ namespace UnityGameTranslator.Core
         /// Apply font replacement: SetFont to the replacement, add original as fallback.
         /// Stores original font for runtime restore.
         /// </summary>
-        // Cache of components already font-replaced (avoids reflection GetFontName on every set_text)
-        private static readonly HashSet<int> _fontReplacedComponentIds = new HashSet<int>();
+        /// <summary>
+        /// Components wearing one of our replacements, and the settings font name it was put on
+        /// them FOR — the fast path of every set_text (no reflection once a component is ours).
+        ///
+        /// 🔴 **A name, not just "replaced"** (2026-09-24). It was a set, so "already replaced"
+        /// meant "leave it", whatever the component should wear NOW: a font rule borrowing another
+        /// font, then matching no longer, left the component on the old replacement for the rest of
+        /// the session, and nothing ever gave it its own font back. Comparing the name costs the
+        /// same lookup plus one string comparison, and a different name is the signal to change.
+        /// </summary>
+        private static readonly Dictionary<int, string> _replacedFor = new Dictionary<int, string>();
 
         // Fonts for which the one-shot replacement diagnostic was already logged (issue #21)
         private static readonly HashSet<string> _replacementDiagLogged = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -2609,6 +2619,30 @@ namespace UnityGameTranslator.Core
             // Debug toggle: skip font replacement entirely (original fonts stay).
             if (!TranslatorCore.FontReplacementActive)
                 return;
+
+            // Fast check: already wearing the replacement asked for under this name (no reflection).
+            // First, before anything reads `originalFontObj`: on a component that is ours, the caller
+            // read OUR font, not the game's.
+            int instanceId = TypeHelper.GetInstanceID(component);
+            if (instanceId != -1 && _replacedFor.TryGetValue(instanceId, out var replacedFor))
+            {
+                if (string.Equals(replacedFor, originalFontName, StringComparison.Ordinal))
+                    return;
+
+                // What it wears was asked under another name — a font rule that moved or stopped
+                // matching. Back to the GAME's font first, through the one restore path (it keeps the
+                // game's material preset and runs under the setter guard — issue #21), then on to
+                // the replacement asked for now, if there is one.
+                TranslatorCore.LogDebug($"[FontReplace] Component {instanceId}: replacement for '{replacedFor}' → for '{originalFontName}'");
+                bool originalKnown = _originalFontsPerComponent.ContainsKey(instanceId);
+                RestoreOriginalFont(component);
+                _replacedFor.Remove(instanceId);
+                // ⚠ The caller's font was our old replacement. Kept as "original", every later
+                // restore would put our own font back. Read the game's again when the restore gave
+                // it back; when it never knew it (a component met already wearing ours), record
+                // nothing rather than something false.
+                originalFontObj = originalKnown ? TypeHelper.GetFont(component) : null;
+            }
 
             // Phase B: cache the ORIGINAL font's design-scale (= faceInfo.scale) — the value that
             // makes our standard-normalized replacement match the original's em size. Used by
@@ -2650,11 +2684,6 @@ namespace UnityGameTranslator.Core
                 }
             }
 
-            // Fast check: already replaced this component (skip all reflection)
-            int instanceId = TypeHelper.GetInstanceID(component);
-            if (instanceId != -1 && _fontReplacedComponentIds.Contains(instanceId))
-                return;
-
             var replacementFont = GetTMPReplacementFont(originalFontName);
             if (replacementFont == null) return;
 
@@ -2668,12 +2697,12 @@ namespace UnityGameTranslator.Core
             string replacementName = (replacementFont is UnityEngine.Object rObj) ? rObj.name : null;
             if (currentFontName == replacementName)
             {
-                if (instanceId != -1) _fontReplacedComponentIds.Add(instanceId);
+                if (instanceId != -1) _replacedFor[instanceId] = originalFontName;
                 return;
             }
 
             // Store original font and component ref for this component (for restore)
-            if (instanceId != -1 && !_originalFontsPerComponent.ContainsKey(instanceId))
+            if (instanceId != -1 && originalFontObj != null && !_originalFontsPerComponent.ContainsKey(instanceId))
             {
                 _originalFontsPerComponent[instanceId] = originalFontObj;
                 _replacedComponentRefs[instanceId] = component;
@@ -2695,9 +2724,9 @@ namespace UnityGameTranslator.Core
             // SetFont to replacement
             TypeHelper.SetFont(component, replacementFont);
 
-            // Mark as replaced (skip reflection on subsequent set_text calls)
+            // Mark as replaced, and for which name (skip reflection on subsequent set_text calls)
             if (instanceId != -1)
-                _fontReplacedComponentIds.Add(instanceId);
+                _replacedFor[instanceId] = originalFontName;
 
             // Bind a material pointing at OUR atlas — without this, TMP renders with the
             // old font's atlas/shader → empty rectangles. Prefer an ADAPTED clone of the
@@ -2793,13 +2822,34 @@ namespace UnityGameTranslator.Core
         // postfix watches — suppress re-application while a restore is in progress.
         private static bool _suppressFontSetterReapply = false;
 
-        // How many times the game re-asserted its own font on a component after we
-        // replaced it. Past the cap we leave the component alone: the game is actively
-        // driving that font (per-frame animation…) and fighting it inline caused broken
-        // rendering (glyphs sampled in the wrong atlas when we interleaved between the
-        // game's font= and material= assignments).
+        // How many times the game re-asserted its own font on a component after we replaced
+        // it, IN THIS APPEARANCE of the component. Past the cap we leave the component alone:
+        // the game is actively driving that font (per-frame animation…) and fighting it inline
+        // caused broken rendering (glyphs sampled in the wrong atlas when we interleaved between
+        // the game's font= and material= assignments — issue #21).
+        //
+        // 🔴 **Per appearance, not per session** (2026-09-24). The count was kept until the next
+        // scene, so a menu replaying its intro animation each time it opens used up the budget by
+        // its fourth opening and stayed in the game's font from then on. The give-up rested on
+        // "the game's font shows the text fine" — false in the usual case, where the replacement
+        // exists because the game's font LACKS the target language's glyphs: giving up meant
+        // boxes. A component shown again (OnComponentEnabled) starts a new count; one fought every
+        // frame is never re-enabled in between and still runs out.
         private static readonly Dictionary<int, int> _fontRevertCounts = new Dictionary<int, int>();
         private const int MaxFontRevertsPerComponent = 3;
+
+        /// <summary>
+        /// Components the game has put its own font back on at least once this scene.
+        ///
+        /// ⚠ **Kept apart from the count above, and NOT reset when the component is shown again.**
+        /// The two were one number. This one gates our OWN mesh events during a reveal
+        /// (TranslatorScanner) — resetting it on each appearance would bring back the empty
+        /// dialogue bubbles of issue #21, once per opening.
+        /// </summary>
+        private static readonly HashSet<int> _gameManagedFontComponents = new HashSet<int>();
+
+        /// <summary>Components already announced as given up, so the line is said once each.</summary>
+        private static readonly HashSet<int> _giveUpAnnounced = new HashSet<int>();
 
         /// <summary>
         /// True when the game keeps re-assigning its own font on this component after our
@@ -2811,7 +2861,28 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static bool IsGameManagedFontComponent(int instanceId)
         {
-            return _fontRevertCounts.TryGetValue(instanceId, out int reverts) && reverts > 0;
+            return _gameManagedFontComponents.Contains(instanceId);
+        }
+
+        /// <summary>
+        /// A text component was enabled — shown again. A new appearance gets a new budget: a
+        /// component given up on in its last appearance is tried again, through the deferred
+        /// direct pass, never inline (the game may be about to assign font then material).
+        /// Called by the OnEnable postfix of TextMeshProUGUI / TextMeshPro.
+        /// </summary>
+        public static void OnComponentEnabled(object component)
+        {
+            if (_fallbackAssets.Count == 0) return;
+            int instanceId = TypeHelper.GetInstanceID(component);
+            if (instanceId == -1) return;
+            if (!_fontRevertCounts.TryGetValue(instanceId, out int reverts)) return;
+
+            _fontRevertCounts.Remove(instanceId);
+            if (reverts > MaxFontRevertsPerComponent)
+            {
+                TranslatorCore.LogDebug($"[FontReplace] Component {instanceId} shown again — replacement tried again");
+                _directApplyNudge = true;
+            }
         }
 
         // Nudge: the font-setter postfix requests a direct-apply pass on the next scan
@@ -2873,13 +2944,21 @@ namespace UnityGameTranslator.Core
             string effectiveFontName = ResolveFontNameWithOverrides(component, instanceId, settingsFontName);
             if (string.IsNullOrEmpty(GetConfiguredFallback(effectiveFontName))) return;
 
-            if (_fontReplacedComponentIds.Remove(instanceId))
+            if (_replacedFor.Remove(instanceId))
             {
+                _gameManagedFontComponents.Add(instanceId);
                 _fontRevertCounts.TryGetValue(instanceId, out int reverts);
                 _fontRevertCounts[instanceId] = reverts + 1;
                 if (reverts + 1 > MaxFontRevertsPerComponent)
                 {
-                    TranslatorCore.LogDebug($"[FontReplace] Component {instanceId} keeps being reverted to '{fontName}' by the game — leaving it alone");
+                    // Said once per component, and outside debug: a text left in the game's font
+                    // is exactly what a player reports, and this line is the whole answer.
+                    if (_giveUpAnnounced.Add(instanceId))
+                    {
+                        string where = ownComp != null ? TranslatorCore.GetGameObjectPath(ownComp.gameObject) : instanceId.ToString();
+                        TranslatorCore.LogInfo($"[FontReplace] The game keeps putting its font '{fontName}' back on {where}. " +
+                                               "The replacement stays off there until it is shown again.");
+                    }
                     return;
                 }
                 TranslatorCore.LogDebug($"[FontReplace] Game re-assigned '{fontName}' on a replaced component — deferred re-apply scheduled");
@@ -2996,7 +3075,7 @@ namespace UnityGameTranslator.Core
                     var c = comps[_sceneTmpAt];
                     if (c == null) continue;
                     int id = c.GetInstanceID();
-                    if (_fontReplacedComponentIds.Contains(id)) continue; // already ours
+                    if (_replacedFor.ContainsKey(id)) continue; // already ours
 
                     // The game actively re-asserts its font on this one — don't fight it
                     if (_fontRevertCounts.TryGetValue(id, out int reverts) && reverts > MaxFontRevertsPerComponent)
@@ -3019,7 +3098,7 @@ namespace UnityGameTranslator.Core
                     if (string.IsNullOrEmpty(GetConfiguredFallback(effectiveFontName))) continue;
 
                     ApplyFontReplacement(c, fontObj, effectiveFontName);
-                    if (_fontReplacedComponentIds.Contains(id)) applied++;
+                    if (_replacedFor.ContainsKey(id)) applied++;
                 }
 
                 _sceneTmp = null;   // cycle complete — the next call looks the scene up again
@@ -3187,7 +3266,7 @@ namespace UnityGameTranslator.Core
             {
                 // Unmark BEFORE SetFont and suppress the font-setter postfix: restoring
                 // assigns the original font through the same setter it watches.
-                _fontReplacedComponentIds.Remove(instanceId);
+                _replacedFor.Remove(instanceId);
                 _suppressFontSetterReapply = true;
                 try
                 {
@@ -3241,6 +3320,7 @@ namespace UnityGameTranslator.Core
 
             // Toggle = explicit user action → fresh revert budget for every component
             _fontRevertCounts.Clear();
+            _gameManagedFontComponents.Clear();
 
             // --- Path 1: per-component replacements (Normal TMP path) ---
             var componentIds = new List<int>(_replacedComponentRefs.Keys);
@@ -3301,7 +3381,7 @@ namespace UnityGameTranslator.Core
             // Invalidate every cache that could make the scanner or the Harmony patches
             // think a component is already processed. This mirrors what UpdateFontSettings()
             // does on a per-font basis — without it, the patches short-circuit on
-            // _fontReplacedComponentIds.Contains(id) and nothing gets re-evaluated,
+            // _replacedFor.ContainsKey(id) and nothing gets re-evaluated,
             // which is exactly the "font toggle does nothing at runtime" bug.
             foreach (var clone in _unityFallbackFonts.Values)
             {
@@ -3316,7 +3396,7 @@ namespace UnityGameTranslator.Core
             _excludedCharsPerClone.Clear();
             _cloneSupportedChars.Clear();
             _originalFontsPerComponent.Clear();
-            _fontReplacedComponentIds.Clear();
+            _replacedFor.Clear();
 
             // Scanner caches: processed text hashes must be cleared so the scanner
             // re-evaluates every component on the next pass.
@@ -5317,7 +5397,7 @@ namespace UnityGameTranslator.Core
             _gameUnityFonts.Clear();
             _gameFontsScanned = false;
             _fallbackAppliedFonts.Clear();
-            _fontReplacedComponentIds.Clear();
+            _replacedFor.Clear();
             _originalFontsPerComponent.Clear();
             _replacedComponentRefs.Clear();
         }

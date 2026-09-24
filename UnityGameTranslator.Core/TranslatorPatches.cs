@@ -322,6 +322,7 @@ namespace UnityGameTranslator.Core
                 // Graphic.OnEnable postfix — detect when text components are activated
                 // and re-apply clone font + warm atlas (fixes transparent text on inactive→active)
                 patchCount += PatchGraphicOnEnable(patcher);
+                patchCount += PatchTmpOnEnable(patcher);
 
                 // Image replacement patches — intercept sprite/texture assignments
                 patchCount += PatchImageComponents(patcher);
@@ -2474,6 +2475,50 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// Patch OnEnable of the two concrete TMP components — a text shown again. A component the
+        /// game kept putting its font back on is given up on for its current appearance only; being
+        /// shown again is the event that earns it another try (FontManager.OnComponentEnabled).
+        ///
+        /// ⚠ **Not a duplicate of the Graphic hook above: that one never fires for TMP.** Both
+        /// TextMeshProUGUI.OnEnable and TextMeshPro.OnEnable override without calling base
+        /// (read in TMP 3.0.6's TMPro_UGUI_Private.cs / TMPro_Private.cs), and TextMeshPro is not a
+        /// Graphic at all. Looked up by TMP_Text's own namespace, which carries the Il2Cpp prefix.
+        /// </summary>
+        private static int PatchTmpOnEnable(Action<MethodInfo, MethodInfo, MethodInfo> patcher)
+        {
+            if (TypeHelper.TMP_TextType == null || TypeHelper.UseAlternateTMP) return 0;
+
+            int count = 0;
+            var postfix = typeof(TranslatorPatches).GetMethod(nameof(TMPText_OnEnable_Postfix),
+                BindingFlags.Static | BindingFlags.Public);
+            foreach (string concrete in new[] { "TextMeshProUGUI", "TextMeshPro" })
+            {
+                try
+                {
+                    var concreteType = TypeHelper.TMP_TextType.Assembly.GetType(TypeHelper.TMP_TextType.Namespace + "." + concrete);
+                    var onEnable = concreteType?.GetMethod("OnEnable",
+                        BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly,
+                        null, Type.EmptyTypes, null);
+                    if (onEnable == null)
+                    {
+                        // Degraded, not broken: a given-up component then waits for the next scene
+                        // instead of its next appearance.
+                        TranslatorCore.LogWarning($"[Patches] {concrete}.OnEnable not found, appearance hook skipped");
+                        continue;
+                    }
+                    patcher(onEnable, null, postfix);
+                    count++;
+                }
+                catch (Exception ex)
+                {
+                    TranslatorCore.LogWarning($"[Patches] Failed to patch {concrete}.OnEnable: {ex.Message}");
+                }
+            }
+            TranslatorCore.LogDebug($"[Patches] TMP OnEnable postfix applied on {count} type(s)");
+            return count;
+        }
+
+        /// <summary>
         /// Postfix for Graphic.OnEnable. Fires for ALL graphics (Image, RawImage, Text...).
         /// Must exit fast for non-text components.
         /// For text components with clone fonts: re-apply font + warm atlas.
@@ -3956,6 +4001,27 @@ namespace UnityGameTranslator.Core
             catch (Exception ex)
             {
                 TranslatorCore.LogDebug($"[Patches] SetFont postfix error: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Postfix on TextMeshProUGUI / TextMeshPro OnEnable: a text component shown again.
+        /// Only resets a budget and at most nudges the deferred pass — never touches the font
+        /// here, where the game may be about to assign its font and then its material.
+        /// </summary>
+        public static void TMPText_OnEnable_Postfix(object __instance)
+        {
+            if (__instance == null) return;
+
+            try
+            {
+                if (!TranslatorCore.FontReplacementActive) return;
+                if (TypeHelper.UseAlternateTMP) return; // TMProOld uses the fallback-list path
+                FontManager.OnComponentEnabled(__instance);
+            }
+            catch (Exception ex)
+            {
+                TranslatorCore.LogDebug($"[Patches] OnEnable postfix error: {ex.Message}");
             }
         }
 

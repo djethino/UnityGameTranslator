@@ -5356,7 +5356,8 @@ namespace UnityGameTranslator.Core
 
                 TranslatorCore.FontSettingsMap.TryGetValue(info.Name, out var s);
                 info.IsConfigured = s != null
-                    && (!string.IsNullOrEmpty(s.fallback) || Math.Abs(s.size_percent - 1.0f) > 0.001f);
+                    && (!string.IsNullOrEmpty(s.fallback) || Math.Abs(s.size_percent - 1.0f) > 0.001f
+                        || !string.IsNullOrEmpty(s.rtl_alignment));
             }
 
             // Fonts the user already configured first — their own decisions must stay easy to find

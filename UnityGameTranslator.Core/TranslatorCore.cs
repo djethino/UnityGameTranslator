@@ -1034,6 +1034,11 @@ namespace UnityGameTranslator.Core
                     fontObj["scale_auto"] = true;
                 if (Math.Abs(kvp.Value.size_percent - 1.0f) > 0.001f)
                     fontObj["size_percent"] = kvp.Value.size_percent;
+                // Same rule as the rules' rtl_alignment below: a font field that only lives in
+                // memory is unchecked at every launch and never reaches whoever downloads this
+                // translation. Absent is the default (mirror).
+                if (!string.IsNullOrEmpty(kvp.Value.rtl_alignment))
+                    fontObj["rtl_alignment"] = kvp.Value.rtl_alignment;
                 fontsObj[kvp.Key] = fontObj;
             }
 
@@ -1057,7 +1062,8 @@ namespace UnityGameTranslator.Core
                 if (!string.IsNullOrEmpty(rule.comment))
                     ruleObj["comment"] = rule.comment;
                 // Written and read like every other field — a rule field that only lives in
-                // memory is gone at the next launch (rtl_alignment was, for a day).
+                // memory is gone at the next launch (rtl_alignment was, for a day; the font's own
+                // rtl_alignment, in BuildFontsSection above, for three weeks).
                 if (!string.IsNullOrEmpty(rule.rtl_alignment))
                     ruleObj["rtl_alignment"] = rule.rtl_alignment;
                 overridesArray.Add(ruleObj);
@@ -1126,6 +1132,7 @@ namespace UnityGameTranslator.Core
                     settings.size_percent = sizePercentToken != null
                         ? sizePercentToken.Value<float>()
                         : (settings.scale_auto ? 1.0f : settings.scale);
+                    settings.rtl_alignment = fontObj["rtl_alignment"]?.Value<string>();
                 }
                 result[fontProp.Name] = settings;
             }

@@ -420,6 +420,13 @@ namespace UnityGameTranslator.Core
                                && !string.IsNullOrEmpty(settings["fallback"].Value<string>());
             if (disabled || hasFallback) return true;
 
+            // Written only when somebody moved it off the default (mirror), so its presence alone
+            // is a decision. Left out, a font whose only setting is "keep the game's alignment"
+            // was not compared, and a merge dropped it without showing it.
+            var rtl = settings["rtl_alignment"];
+            if (rtl != null && rtl.Type == JTokenType.String && !string.IsNullOrEmpty(rtl.Value<string>()))
+                return true;
+
             var sizePercent = settings["size_percent"];
             if (sizePercent != null && sizePercent.Type != JTokenType.Null)
             {

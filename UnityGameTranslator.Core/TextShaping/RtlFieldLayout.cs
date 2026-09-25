@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Text;
 using Topten.RichTextKit;
 using Topten.RichTextKit.Utils;
+using UnityGameTranslator.Common;
 
 namespace UnityGameTranslator.Core.TextShaping
 {
@@ -42,8 +43,8 @@ namespace UnityGameTranslator.Core.TextShaping
         // Tokens travel through shaping and bidi as one private-use codepoint of class L — the
         // composer's placeholder mechanic, applied here to tags as well (see the summary). Same
         // range as the composer's placeholders: a sentinel never reaches a screen.
-        private const int SentinelBase = 0xF100;
-        private const int SentinelMax = 0x400;
+        private const int SentinelBase = RtlComposer.PlaceholderBase;
+        private const int SentinelMax = RtlComposer.SentinelMax;
 
         /// <summary>Everything decided before any line is known — the text an engine measures.</summary>
         internal sealed class Prepared
@@ -211,24 +212,13 @@ namespace UnityGameTranslator.Core.TextShaping
         private static int TokenEnd(string text, int i)
         {
             char c = text[i];
-            int close;
-            if (c == '[' && i + 1 < text.Length && text[i + 1] == '!' && (close = FindClose(text, i + 2, ']', 32)) > 0)
-                return close + 1;
+            int length, close;
+            if ((length = Placeholders.LengthAt(text, i)) > 0)
+                return i + length;
             if (c == '<' && i + 1 < text.Length && text[i + 1] != ' ' && text[i + 1] != '<'
-                && (close = FindClose(text, i + 1, '>', 128)) > 0)
+                && (close = RtlComposer.TagEnd(text, i, stopAtLineBreak: true)) > 0)
                 return close + 1;
             return i;
-        }
-
-        private static int FindClose(string text, int from, char close, int maxSpan)
-        {
-            int limit = Math.Min(text.Length, from + maxSpan);
-            for (int i = from; i < limit; i++)
-            {
-                if (text[i] == close) return i;
-                if (text[i] == '\n' || (close == '>' && text[i] == '<')) return -1;
-            }
-            return -1;
         }
 
         private static void AppendCp(StringBuilder sb, int cp, List<string> tokens)

@@ -59,9 +59,21 @@ namespace UnityGameTranslator.Core.TextShaping
         // ⚠ Both ranges sit ABOVE the private codepoints our font assets hand to unmapped
         // glyphs (TtfFontPipeline.PrivateGlyphBase..PrivateGlyphLast = E000..F0FF): those DO
         // travel in displayed text, a sentinel never does, and the two must not overlap.
-        private const int PlaceholderBase = 0xF100;
+        internal const int PlaceholderBase = 0xF100;
         private const int TagBase = 0xF500;
-        private const int SentinelMax = 0x400;
+
+        /// <summary>How many tokens of one kind a text can carry: the width of its sentinel range.</summary>
+        internal const int SentinelMax = TagBase - PlaceholderBase;
+
+        /// <summary>
+        /// How far after its '&lt;' a tag's '&gt;' may stand: TextMesh Pro's own limit. Its parser
+        /// copies a tag into <c>m_htmlTag = new char[128]</c> and stops when that is full
+        /// (TMP_Text.ValidateHtmlTag, identical in 2.0.1 and 3.0.6), so at most 127 characters sit
+        /// between the brackets. A longer "tag" is text to the game, and must be text here too —
+        /// read as structure it would be lifted out of a line the game shows as written. The same
+        /// bound stops a lone '&lt;' in a sentence from swallowing what follows.
+        /// </summary>
+        internal const int TagSpan = 128;
 
         // Mirrored by RTL convention though not Bidi_Mirrored in the UCD — guillemets read
         // outward-in in RTL text. Borrowed from RTLTMPro's table; real brackets are NOT here,
@@ -241,9 +253,10 @@ namespace UnityGameTranslator.Core.TextShaping
         #region Tokenization
 
         /// <summary>
-        /// Swap every protected span for one sentinel codepoint. Placeholders <c>[!…]</c> and
-        /// rich-text tags <c>&lt;…&gt;</c> under the same validity rule the measured
-        /// implementation uses — no space after <c>&lt;</c>, no nested <c>&lt;</c>. Both bounded.
+        /// Swap every protected span for one sentinel codepoint. Placeholders as the socle's grammar
+        /// names them (<see cref="Placeholders.LengthAt"/>), and rich-text tags <c>&lt;…&gt;</c>
+        /// under the rule the measured implementation uses — no space after <c>&lt;</c>, no nested
+        /// <c>&lt;</c>, closed within <see cref="TagSpan"/>.
         /// </summary>
         private static string Tokenize(string text, List<string> placeholders, List<string> tags)
         {
@@ -252,18 +265,16 @@ namespace UnityGameTranslator.Core.TextShaping
             while (i < text.Length)
             {
                 char c = text[i];
-                int end;
-                if (c == '[' && i + 1 < text.Length && text[i + 1] == '!'
-                    && (end = FindClose(text, i + 2, ']', 32)) > 0
-                    && placeholders.Count < SentinelMax)
+                int end, length;
+                if ((length = Placeholders.LengthAt(text, i)) > 0 && placeholders.Count < SentinelMax)
                 {
                     sb.Append((char)(PlaceholderBase + placeholders.Count));
-                    placeholders.Add(text.Substring(i, end - i + 1));
-                    i = end + 1;
+                    placeholders.Add(text.Substring(i, length));
+                    i += length;
                     continue;
                 }
                 if (c == '<' && i + 1 < text.Length && text[i + 1] != ' ' && text[i + 1] != '<'
-                    && (end = FindClose(text, i + 1, '>', 128)) > 0
+                    && (end = TagEnd(text, i, stopAtLineBreak: false)) > 0
                     && tags.Count < SentinelMax)
                 {
                     sb.Append((char)(TagBase + tags.Count));
@@ -277,14 +288,18 @@ namespace UnityGameTranslator.Core.TextShaping
             return sb.ToString();
         }
 
-        /// <summary>The index of <paramref name="close"/>, or -1 — bounded, and a '&lt;' aborts a tag scan.</summary>
-        private static int FindClose(string text, int from, char close, int maxSpan)
+        /// <summary>
+        /// The index of the '&gt;' closing the tag opened at <paramref name="open"/>, or -1 — within
+        /// <see cref="TagSpan"/>, and a '&lt;' aborts, as TextMesh Pro's parser does. Shared with the
+        /// RTL field and the legacy index map, so the three agree on what a tag is.
+        /// </summary>
+        internal static int TagEnd(string text, int open, bool stopAtLineBreak)
         {
-            int limit = Math.Min(text.Length, from + maxSpan);
-            for (int i = from; i < limit; i++)
+            int limit = Math.Min(text.Length, open + 1 + TagSpan);
+            for (int i = open + 1; i < limit; i++)
             {
-                if (text[i] == close) return i;
-                if (close == '>' && text[i] == '<') return -1;
+                if (text[i] == '>') return i;
+                if (text[i] == '<' || (stopAtLineBreak && text[i] == '\n')) return -1;
             }
             return -1;
         }

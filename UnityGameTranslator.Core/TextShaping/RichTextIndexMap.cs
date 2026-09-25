@@ -89,7 +89,7 @@ namespace UnityGameTranslator.Core.TextShaping
             {
                 // <quad …> — standalone, one glyph. Attributes (or nothing) up to '>'.
                 if (raw[i] != ' ' && raw[i] != '=' && raw[i] != '>' && raw[i] != '/') return false;
-                int close = FindTagEnd(raw, i);
+                int close = RtlComposer.TagEnd(raw, at, stopAtLineBreak: false);
                 if (close < 0) return false;
                 end = close; isQuad = true;
                 return true;
@@ -117,25 +117,12 @@ namespace UnityGameTranslator.Core.TextShaping
                 }
                 // <size=…>: the '=' is what separates the tag from a literal '<size>' rendered as text.
                 if (raw[i] != '=') return false;
-                int close = FindTagEnd(raw, i + 1);
+                int close = RtlComposer.TagEnd(raw, at, stopAtLineBreak: false);
                 if (close < 0) return false;
                 end = close;
                 return true;
             }
             return false;
-        }
-
-        /// <summary>Index of the closing '&gt;', or -1 — a '&lt;' aborts (the parser restarts there).</summary>
-        private static int FindTagEnd(string raw, int from)
-        {
-            // Same bound the composer's tokenizer uses: a runaway '<' must not swallow the text.
-            int limit = Math.Min(raw.Length, from + 128);
-            for (int i = from; i < limit; i++)
-            {
-                if (raw[i] == '>') return i;
-                if (raw[i] == '<') return -1;
-            }
-            return -1;
         }
     }
 }

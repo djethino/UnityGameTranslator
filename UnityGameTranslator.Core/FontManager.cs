@@ -1756,7 +1756,9 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static float GetFontScale(string fontName)
         {
-            if (string.IsNullOrEmpty(fontName))
+            // Translations off = the game as it ships, sizes included: the deliberate percent and
+            // the override rules are part of the translation, like the font they size.
+            if (string.IsNullOrEmpty(fontName) || !TranslatorCore.TranslationsActive)
                 return 1.0f;
 
             if (TranslatorCore.FontSettingsMap.TryGetValue(fontName, out var settings))
@@ -1841,6 +1843,8 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static float GetFontScale(string fontName, int componentId)
         {
+            if (!TranslatorCore.TranslationsActive) return 1.0f;   // see GetFontScale(string)
+
             // Per-component override (from font override rules) REPLACES the font-wide deliberate
             // size_percent for this component — but the design-scale baseline (native-size correction)
             // must still apply, else an overridden title/label loses it and renders too small.
@@ -2272,7 +2276,7 @@ namespace UnityGameTranslator.Core
         /// Falls back to the replacement font's own material whenever the preset can't be
         /// transplanted (non-SDF shader, missing material, any failure).
         /// </summary>
-        private static void ApplyAdaptedMaterial(object component, object replacementFont, object originalSharedMaterial)
+        private static void ApplyAdaptedMaterial(object component, object replacementFont, object originalFont, object originalSharedMaterial)
         {
             var origMat = TypeHelper.Il2CppCast(originalSharedMaterial, typeof(Material)) as Material
                           ?? originalSharedMaterial as Material;
@@ -2330,29 +2334,47 @@ namespace UnityGameTranslator.Core
                             adapted.SetFloat(p, fontMat.GetFloat(p));
                     }
 
-                    // Recompute TMP's shader ratios for OUR atlas's SDF params (the cloned material's
-                    // _ScaleRatioA/B/C were computed for the game atlas — needed for correct edge AA).
-                    try
-                    {
-                        var shaderUtils = replacementFont.GetType().Assembly.GetType("TMPro.ShaderUtilities");
-                        shaderUtils?.GetMethod("UpdateShaderRatios", BindingFlags.Public | BindingFlags.Static)
-                                  ?.Invoke(null, new object[] { adapted });
-                    }
-                    catch (Exception ex) { TranslatorCore.LogDebug($"[FontReplace] UpdateShaderRatios failed: {ex.Message}"); }
-
-                    // The underlay/outline offsets are relative to the SDF spread (gradientScale). Our
-                    // atlas's gradientScale differs from the game's, so rescale those params by the ratio
-                    // so the effect keeps the dev's authored look — proportional to the font, same relative
-                    // spacing at any size (issue #21: shadow too spaced on replaced text; validated on Frog,
-                    // game grad 21 / our grad 64 = 0.328). Derived per material, universal across games.
+                    // 🔴 The dev's widths and offsets (outline, underlay/shadow) are numbers in the
+                    // GAME atlas's units, and an atlas unit is not a size on screen. The shader turns
+                    // a width w into w × _GradientScale ATLAS PIXELS, and an atlas pixel is
+                    // 1 / (its sampling point size) of the text's em. So the same look on our atlas is
+                    //   w_ours = w_game × (grad_game / grad_ours) × (point_ours / point_game).
+                    // The grad ratio alone was used until 2026-09-25 (issue #21, shadow on replaced
+                    // text) — right only when both atlases are sampled at the same size. They rarely
+                    // are: a game font at 139 points against ours at 48 made an outline 2.9 times too
+                    // wide, enough to erase a whole menu.
+                    float emRatio = SamplingPointRatio(originalFont, replacementFont, origMat.name);
                     float gradRatio = (ourGrad > 0.0001f && !float.IsNaN(origGrad)) ? origGrad / ourGrad : 1f;
-                    if (Math.Abs(gradRatio - 1f) > 0.0001f)
+                    float unitRatio = gradRatio * emRatio;
+                    if (Math.Abs(unitRatio - 1f) > 0.0001f)
                     {
                         foreach (var p in new[] { "_UnderlayOffsetX", "_UnderlayOffsetY", "_UnderlayDilate",
                                                   "_UnderlaySoftness", "_OutlineWidth", "_OutlineSoftness" })
-                            if (adapted.HasProperty(p)) adapted.SetFloat(p, adapted.GetFloat(p) * gradRatio);
-                        TranslatorCore.LogDebug($"[FontReplace] '{origMat.name}' underlay/outline rescaled ×{gradRatio:F3} (grad {origGrad:F0}→{ourGrad:F0})");
+                            if (adapted.HasProperty(p)) adapted.SetFloat(p, adapted.GetFloat(p) * unitRatio);
+                        TranslatorCore.LogDebug($"[FontReplace] '{origMat.name}' underlay/outline rescaled ×{unitRatio:F3} (grad {origGrad:F0}→{ourGrad:F0} ×{gradRatio:F3}, sampling size ×{emRatio:F3})");
                     }
+
+                    // 🔴 A TRANSPARENT outline is a thinning tool: an SDF outline is drawn across the
+                    // glyph's edge, half of it eats into the face, and with no colour nothing is
+                    // drawn in its place. The dev slimmed THEIR font by that much — a share of THEIR
+                    // stroke. The same width on a replacement with thinner strokes is a far larger
+                    // share, up to all of it (2026-09-25: a card label and a whole menu blank in
+                    // Arabic). What keeps the dev's intent is the same SHARE of the replacement's
+                    // stroke, so both strokes are measured on their atlases and the face dilate sets
+                    // the net thinning to it (ThinLikeTheGame).
+                    // ⚠ Transparent outlines only (user's decision, 2026-09-25): a visible outline
+                    // thins the face too, but the text stays readable in the outline's colour — that
+                    // is TMP's ordinary look, left as the dev set it.
+                    if (adapted.HasProperty("_OutlineWidth") && adapted.HasProperty("_FaceDilate")
+                        && adapted.HasProperty("_OutlineColor") && adapted.GetColor("_OutlineColor").a <= 0.01f
+                        && adapted.GetFloat("_OutlineWidth") > 0.0001f)
+                        ThinLikeTheGame(adapted, origMat, fontMat, originalFont, replacementFont, origGrad, ourGrad);
+
+                    // Recompute TMP's shader ratios for OUR atlas's SDF params and the widths just
+                    // set (the cloned material's _ScaleRatioA/B/C were computed for the game atlas
+                    // and its own widths — needed for correct edge AA). Last, so they describe the
+                    // material as it will be drawn.
+                    UpdateShaderRatios(adapted, replacementFont);
 
                     UnityEngine.Object.DontDestroyOnLoad(adapted);
                     adapted.hideFlags |= HideFlags.DontUnloadUnusedAsset;
@@ -2371,6 +2393,142 @@ namespace UnityGameTranslator.Core
                 TranslatorCore.LogWarning($"[FontReplace] Adapted material failed: {ex.Message} — using replacement font material");
                 SetFontSharedMaterial(component, replacementFont);
             }
+        }
+
+        /// <summary>TMP's own ratio computation, run on a material after its widths changed.</summary>
+        private static void UpdateShaderRatios(Material material, object anyTmpObject)
+        {
+            try
+            {
+                var shaderUtils = anyTmpObject.GetType().Assembly.GetType("TMPro.ShaderUtilities");
+                shaderUtils?.GetMethod("UpdateShaderRatios", BindingFlags.Public | BindingFlags.Static)
+                          ?.Invoke(null, new object[] { material });
+            }
+            catch (Exception ex) { TranslatorCore.LogDebug($"[FontReplace] UpdateShaderRatios failed: {ex.Message}"); }
+        }
+
+        /// <summary>
+        /// The size one atlas pixel stands for, as the text's em sees it: TMP scales a glyph by
+        /// fontSize × faceInfo.scale / faceInfo.pointSize, so an atlas sampled at P points with
+        /// scale s spends P / s pixels on an em. NaN when the asset does not say (TMProOld).
+        /// </summary>
+        private static float SamplingPoint(object fontAsset)
+        {
+            if (fontAsset != null && CustomFontLoader.TryGetModernFaceInfo(fontAsset, out float ps, out float sc) && ps > 0f)
+                return ps / (sc > 0f ? sc : 1f);
+            return float.NaN;
+        }
+
+        /// <summary>
+        /// point_ours / point_game — the second half of converting a width from the game's atlas
+        /// to ours (see ApplyAdaptedMaterial). 1 when either asset does not state its size: the
+        /// conversion then stays the grad ratio alone, as it was, and the log says so.
+        /// </summary>
+        private static float SamplingPointRatio(object originalFont, object replacementFont, string materialName)
+        {
+            float game = SamplingPoint(originalFont), ours = SamplingPoint(replacementFont);
+            if (float.IsNaN(game) || float.IsNaN(ours))
+            {
+                TranslatorCore.LogDebug($"[FontReplace] '{materialName}': sampling size unknown (game {game}, ours {ours}) — widths converted by the grad ratio only");
+                return 1f;
+            }
+            return ours / game;
+        }
+
+        // Stroke width of an atlas, in its own pixels, per texture — measured once (a GPU
+        // read-back of the whole atlas), then reused by every material drawn from it.
+        private static readonly Dictionary<int, float> _strokeWidthPx = new Dictionary<int, float>();
+
+        /// <summary>
+        /// Typical stroke width of the glyphs on an SDF atlas, in atlas pixels: the inside of the
+        /// glyphs (alpha ≥ 0.5, the edge) has area A and boundary length L, and a stroke of width w
+        /// and length l has A = w·l and L ≈ 2·l, so w ≈ 2A / L. Measured over the whole atlas — the
+        /// glyphs this font actually carries, whatever the script. Pixel edges overstate a curved
+        /// boundary a little; the same bias on both atlases mostly cancels in their ratio, which is
+        /// all this is used for. NaN when the texture cannot be read back.
+        /// </summary>
+        private static float StrokeWidthPx(Texture texture)
+        {
+            if (texture == null) return float.NaN;
+            int id = texture.GetInstanceID();
+            if (_strokeWidthPx.TryGetValue(id, out float cached)) return cached;
+
+            float result = float.NaN;
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            Texture2D copy = null;
+            try
+            {
+                var tex2D = TypeHelper.Il2CppCast(texture, typeof(Texture2D)) as Texture2D ?? texture as Texture2D;
+                copy = tex2D != null ? TextureUtils.MakeReadableCopy(tex2D) : null;
+                byte[] raw = copy != null ? TextureUtils.GetRawTextureDataSafe(copy) : null;
+                int w = copy != null ? copy.width : 0, h = copy != null ? copy.height : 0;
+                if (raw != null && raw.Length >= w * h * 4 && w > 1 && h > 1)
+                {
+                    long area = 0, edges = 0;
+                    for (int y = 0; y < h; y++)
+                    {
+                        int row = y * w;
+                        for (int x = 0; x < w; x++)
+                        {
+                            bool inside = raw[(row + x) * 4 + 3] >= 128;
+                            if (inside) area++;
+                            if (x + 1 < w && inside != (raw[(row + x + 1) * 4 + 3] >= 128)) edges++;
+                            if (y + 1 < h && inside != (raw[(row + w + x) * 4 + 3] >= 128)) edges++;
+                        }
+                    }
+                    if (edges > 0) result = (float)(2.0 * area / edges);
+                    TranslatorCore.LogDebug($"[FontReplace] stroke of atlas '{texture.name}' {w}x{h}: {result:F2} px (inside {area} px, boundary {edges}) in {watch.ElapsedMilliseconds} ms");
+                }
+                else
+                    TranslatorCore.LogDebug($"[FontReplace] stroke of atlas '{texture.name}': not readable back");
+            }
+            catch (Exception ex) { TranslatorCore.LogDebug($"[FontReplace] stroke of atlas '{texture.name}' failed: {ex.Message}"); }
+            finally { if (copy != null) UnityEngine.Object.Destroy(copy); }
+
+            _strokeWidthPx[id] = result;
+            return result;
+        }
+
+        /// <summary>
+        /// A transparent outline, carried over from the game's material: take off the replacement's
+        /// strokes the SAME SHARE the dev took off theirs. Net thinning per side, in atlas pixels, is
+        /// (outline − dilate) × _ScaleRatioA × _GradientScale — outline and dilate go through the same
+        /// factor in the shader — and the dev's share is that over half the game's stroke. The dilate
+        /// is solved for, with the ratio TMP recomputes from it (it clamps when the widths fill the
+        /// spread), a few rounds since each depends on the other.
+        /// When a stroke cannot be measured, the widths stay as converted to our atlas's units —
+        /// the dev's thinning at the same size — and the log says so.
+        /// </summary>
+        private static void ThinLikeTheGame(Material adapted, Material origMat, Material fontMat,
+                                            object originalFont, object replacementFont, float origGrad, float ourGrad)
+        {
+            float outlineGame = origMat.GetFloat("_OutlineWidth");
+            float dilateGame = origMat.HasProperty("_FaceDilate") ? origMat.GetFloat("_FaceDilate") : 0f;
+            float ratioGame = origMat.HasProperty("_ScaleRatioA") ? origMat.GetFloat("_ScaleRatioA") : 1f;
+            float thinGamePx = (outlineGame - dilateGame) * ratioGame * origGrad;
+            if (!(thinGamePx > 0f) || !(ourGrad > 0f)) return;   // the dev's dilate already cancels it
+
+            float strokeGame = StrokeWidthPx(origMat.HasProperty("_MainTex") ? origMat.GetTexture("_MainTex") : null);
+            float strokeOurs = StrokeWidthPx(fontMat.HasProperty("_MainTex") ? fontMat.GetTexture("_MainTex") : null);
+            if (float.IsNaN(strokeGame) || float.IsNaN(strokeOurs) || strokeGame <= 0f || strokeOurs <= 0f)
+            {
+                TranslatorCore.LogDebug($"[FontReplace] '{origMat.name}': stroke not measured (game {strokeGame}, ours {strokeOurs}) — thinning kept at the dev's size");
+                return;
+            }
+
+            float share = Math.Min(1f, thinGamePx / (strokeGame / 2f));
+            float thinOursPx = share * strokeOurs / 2f;
+            float outlineOurs = adapted.GetFloat("_OutlineWidth");
+            float dilate = adapted.GetFloat("_FaceDilate");
+            for (int round = 0; round < 4; round++)
+            {
+                UpdateShaderRatios(adapted, replacementFont);
+                float ratio = adapted.HasProperty("_ScaleRatioA") ? adapted.GetFloat("_ScaleRatioA") : 1f;
+                if (!(ratio > 0f)) break;
+                dilate = Math.Max(-1f, Math.Min(1f, outlineOurs - thinOursPx / (ratio * ourGrad)));
+                adapted.SetFloat("_FaceDilate", dilate);
+            }
+            TranslatorCore.LogDebug($"[FontReplace] '{origMat.name}': dev thins {thinGamePx:F2} px of a {strokeGame:F2} px stroke ({share:P0} of each half); ours {strokeOurs:F2} px → {thinOursPx:F2} px, face dilate {dilate:F3}");
         }
 
         private static void SetFontSharedMaterial(object component, object fontAsset)
@@ -2734,7 +2892,7 @@ namespace UnityGameTranslator.Core
             // (issue #21: green title with drop shadow rendered plain red when the
             // replacement font's generic material was assigned instead). ApplyAdaptedMaterial
             // rescales the shadow/outline for our atlas's gradientScale so they keep the dev's look.
-            ApplyAdaptedMaterial(component, replacementFont, originalSharedMaterial);
+            ApplyAdaptedMaterial(component, replacementFont, originalFontObj, originalSharedMaterial);
 
             // Force mesh regeneration so the new font renders immediately
             TypeHelper.ForceMeshUpdate(component);

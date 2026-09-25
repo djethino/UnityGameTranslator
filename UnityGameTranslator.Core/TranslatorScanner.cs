@@ -236,9 +236,15 @@ namespace UnityGameTranslator.Core
         private static HashSet<int> inputFieldTextIds = new HashSet<int>();
 
         // Track original text per component (before translation was applied)
-        // Key: component InstanceID, Value: original text before translation
+        // Key: component InstanceID, Value: original text before translation, and the component
+        // it belongs to — so a scene change forgets the components it destroyed and only those.
         // Used to restore originals when translations are disabled at runtime
-        private static Dictionary<int, string> componentOriginals = new Dictionary<int, string>();
+        private struct OriginalText
+        {
+            public object Component;
+            public string Text;
+        }
+        private static Dictionary<int, OriginalText> componentOriginals = new Dictionary<int, OriginalText>();
 
         #endregion
 
@@ -274,7 +280,13 @@ namespace UnityGameTranslator.Core
             processedTextHashes.Clear();
             inputFieldTextIds.Clear();
             ScanProbe.Forget();
-            componentOriginals.Clear();
+            // 🔴 Only the components the scene change DESTROYED. A component that survives it — a
+            // pause menu, a HUD, anything under DontDestroyOnLoad — still shows its translation,
+            // and its original is the only way switching translations off can give it back:
+            // clearing them all left a whole menu in the target language (in the replacement font
+            // restored to the game's, which had none of its letters: blank) once the player had
+            // moved past the title screen.
+            ForgetDestroyedOriginals();
             _renderWatch.Clear();
 
             // Clear all per-type caches and reset discovery strategies
@@ -1810,7 +1822,7 @@ namespace UnityGameTranslator.Core
                     if (processedIds.Contains(kvp.Key)) continue;
                     if (kvp.Value == null) continue;
 
-                    RefreshPatchRef(kvp, glyphsChanged, ref refreshed, probe);
+                    RefreshPatchRef(kvp, glyphsChanged, globalRestore, ref refreshed, ref restored, probe);
                 }
 
                 pass2Seen = probe.Seen;
@@ -1898,7 +1910,7 @@ namespace UnityGameTranslator.Core
             public List<KeyValuePair<int, object>> PatchRefs;
             public HashSet<int> Processed = new HashSet<int>();
             public int NextCached, NextPatchRef;
-            public bool GlyphsChanged, ReapplyAllScales, GlobalRestore;
+            public bool GlyphsChanged, ReapplyAllScales, GlobalRestore, TranslationsSwitched;
             public int Refreshed, Restored, Frames;
             public System.Diagnostics.Stopwatch Spent = new System.Diagnostics.Stopwatch();
         }
@@ -1912,13 +1924,23 @@ namespace UnityGameTranslator.Core
         /// ⚠ A second request replaces the first rather than queueing: what was asked LAST is what
         /// the screen has to end up showing, and the work already done was applied, not lost.
         /// </summary>
-        public static void SpreadRefreshAllText(bool reapplyAllScales = false, bool glyphsChanged = true)
+        /// <param name="translationsSwitched">
+        /// The translations switch just changed. Off, the game gets back EVERYTHING the mod
+        /// changed, not only its texts — fonts on every path (TMProOld fallback lists, UI.Text font
+        /// names) and images; on, the images are put back too (fonts come back with the texts).
+        /// Done at the END of the spread, so it lands with the last texts instead of ahead of them.
+        /// </param>
+        public static void SpreadRefreshAllText(bool reapplyAllScales = false, bool glyphsChanged = true,
+                                                bool translationsSwitched = false)
         {
             var pass = new SpreadPass
             {
                 GlyphsChanged = glyphsChanged,
                 ReapplyAllScales = reapplyAllScales,
                 GlobalRestore = !TranslatorCore.TranslationsActive,
+                // A pass replacing one that had a switch to finish carries that switch on: what was
+                // asked last is what the screen shows, but the switch still has to be completed.
+                TranslationsSwitched = translationsSwitched || (_spread != null && _spread.TranslationsSwitched),
             };
 
             // Same first act as the immediate pass, and for the same reason: on the way OUT, UI
@@ -1979,7 +2001,7 @@ namespace UnityGameTranslator.Core
                     var kvp = pass.PatchRefs[pass.NextPatchRef++];
                     if (kvp.Value == null || pass.Processed.Contains(kvp.Key)) continue;
 
-                    RefreshPatchRef(kvp, pass.GlyphsChanged, ref pass.Refreshed);
+                    RefreshPatchRef(kvp, pass.GlyphsChanged, pass.GlobalRestore, ref pass.Refreshed, ref pass.Restored);
                 }
 
                 // Everything walked: the sizes, then the report. ⚠ Not spread itself — it is one
@@ -1987,6 +2009,17 @@ namespace UnityGameTranslator.Core
                 // which is what says whether it ever needs to be.
                 long beforeScales = pass.Spent.ElapsedTicks;
                 if (pass.ReapplyAllScales) TranslatorPatches.ReapplyScaleToAllComponents();
+
+                if (pass.TranslationsSwitched)
+                {
+                    if (pass.GlobalRestore)
+                    {
+                        FontManager.RestoreAllOriginalFonts();
+                        ImageReplacer.RestoreAllOriginalImages();
+                    }
+                    else
+                        ImageReplacer.ApplyToScene();
+                }
 
                 double freq = System.Diagnostics.Stopwatch.Frequency;
                 double totalMs = pass.Spent.ElapsedTicks / freq * 1000.0;
@@ -2047,8 +2080,8 @@ namespace UnityGameTranslator.Core
         /// "what does a component get", free to drift — and the difference would show up as a
         /// game where one of the two ways leaves text behind.
         /// </summary>
-        private static void RefreshPatchRef(KeyValuePair<int, object> kvp, bool glyphsChanged,
-                                            ref int refreshed, PatchRefProbe probe = null)
+        private static void RefreshPatchRef(KeyValuePair<int, object> kvp, bool glyphsChanged, bool globalRestore,
+                                            ref int refreshed, ref int restored, PatchRefProbe probe = null)
         {
             if (probe != null) probe.Seen++;
 
@@ -2064,6 +2097,26 @@ namespace UnityGameTranslator.Core
                 // component before anything was cached (2026-09-18).
                 var textProp = TextPropertyOf(kvp.Value.GetType());
                 if (textProp?.GetMethod == null || textProp?.SetMethod == null) return;
+
+                // 🔴 Translations off: the original, and the game's font under it — exactly what
+                // RefreshComponent does for the scanner's components. This pass only re-set the
+                // current text, and with the prefix switched off that re-set our translation: a
+                // component the setter had seen but the scanner had not kept it, switch or no switch.
+                if (globalRestore)
+                {
+                    string original = GetOriginalText(kvp.Key);
+                    if (original != null)
+                    {
+                        FontManager.RestoreOriginalFont(kvp.Value);
+                        textProp.SetValue(kvp.Value, original, null);
+                        TypeHelper.ForceMeshUpdate(kvp.Value);
+                        TypeHelper.SetAllDirty(kvp.Value);
+                        ClearOriginalText(kvp.Key);
+                        processedTextHashes.Remove(kvp.Key);
+                        restored++;
+                        return;
+                    }
+                }
 
                 string currentText = textProp.GetValue(kvp.Value, null) as string;
                 if (probe != null) probe.LookupTicks += probe.Watch.ElapsedTicks - tMark;
@@ -2280,7 +2333,7 @@ namespace UnityGameTranslator.Core
             // Always update: the same component can show different texts over time
             // (e.g., tooltip reused for different items). The get_text patch needs
             // the CURRENT original, not the first one ever seen.
-            componentOriginals[instanceId] = originalText;
+            componentOriginals[instanceId] = new OriginalText { Component = component, Text = originalText };
         }
 
         /// <summary>
@@ -2294,10 +2347,7 @@ namespace UnityGameTranslator.Core
             int instanceId = GetComponentInstanceId(component);
             if (instanceId == -1) return null;
 
-            if (componentOriginals.TryGetValue(instanceId, out string original))
-                return original;
-
-            return null;
+            return GetOriginalText(instanceId);
         }
 
         /// <summary>
@@ -2305,9 +2355,21 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static string GetOriginalText(int instanceId)
         {
-            if (componentOriginals.TryGetValue(instanceId, out string original))
-                return original;
+            if (componentOriginals.TryGetValue(instanceId, out var original))
+                return original.Text;
             return null;
+        }
+
+        /// <summary>The originals of components a scene change destroyed — see OnSceneChange.</summary>
+        private static void ForgetDestroyedOriginals()
+        {
+            if (componentOriginals.Count == 0) return;
+            List<int> gone = null;
+            foreach (var kvp in componentOriginals)
+                if (!TypeHelper.IsUnityObjectAlive(kvp.Value.Component))
+                    (gone ?? (gone = new List<int>())).Add(kvp.Key);
+            if (gone == null) return;
+            foreach (int id in gone) componentOriginals.Remove(id);
         }
 
         /// <summary>

@@ -2124,12 +2124,20 @@ namespace UnityGameTranslator.Core
             => SetupCompleted && Config.enable_translations;
 
         /// <inheritdoc cref="TranslationsActive"/>
+        /// <remarks>
+        /// 🔴 Under the translations switch too (user, 2026-09-25: "disabling translation means
+        /// back to the original as if UGT had changed nothing, re-enabling means everything back").
+        /// Fonts and images are replaced FOR the translation; with the translations off, a
+        /// replacement font left in place drew the game's own English in our font — and the scene
+        /// pass put it back seconds after the switch had taken it away, so the text visibly
+        /// changed shape under the player's eyes.
+        /// </remarks>
         public static bool FontReplacementActive
-            => SetupCompleted && Config.enable_font_replacement;
+            => TranslationsActive && Config.enable_font_replacement;
 
-        /// <inheritdoc cref="TranslationsActive"/>
+        /// <inheritdoc cref="FontReplacementActive"/>
         public static bool ImageReplacementActive
-            => SetupCompleted && Config.enable_image_replacement;
+            => TranslationsActive && Config.enable_image_replacement;
 
         public static void OnUpdate(float currentTime)
         {

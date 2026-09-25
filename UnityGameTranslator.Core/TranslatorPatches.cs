@@ -819,6 +819,13 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static void GenericText_SetText_Prefix(object __instance, ref string value)
         {
+            int presented = TextShaping.RtlPresenter.PresentCount;
+            GenericText_SetText(__instance, ref value);
+            if (!BypassTextPrefix) TextShaping.RtlPresenter.ReleaseIfNotPresented(__instance, value, presented);
+        }
+
+        private static void GenericText_SetText(object __instance, ref string value)
+        {
             if (string.IsNullOrEmpty(value)) return;
             if (BypassTextPrefix) return;
             if (!TranslatorCore.TranslationsActive) return;
@@ -3696,7 +3703,19 @@ namespace UnityGameTranslator.Core
             return RouteOutcome.Translated;
         }
 
+        // 🔴 Every setter prefix goes through this shape: its body, then the right-to-left state
+        // handed back when the write never reached the presenter. The body has a dozen ways out
+        // before stage D (translations off, font off, skipped, nothing to translate) and each of
+        // them used to leave a component we had flipped right-to-left showing the game's own
+        // text backwards. One wrapper per prefix, instead of a call at every early return.
         private static void ProcessTextPatchPrefix(object __instance, ref string textValue, string componentType)
+        {
+            int presented = TextShaping.RtlPresenter.PresentCount;
+            ProcessTextPatchPrefixBody(__instance, ref textValue, componentType);
+            if (!BypassTextPrefix) TextShaping.RtlPresenter.ReleaseIfNotPresented(__instance, textValue, presented);
+        }
+
+        private static void ProcessTextPatchPrefixBody(object __instance, ref string textValue, string componentType)
         {
             if (string.IsNullOrEmpty(textValue)) return;
 
@@ -4841,6 +4860,13 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static void AlternateTMP_SetText_Prefix(object __instance, ref string __0)
         {
+            int presented = TextShaping.RtlPresenter.PresentCount;
+            AlternateTMP_SetText(__instance, ref __0);
+            if (!BypassTextPrefix) TextShaping.RtlPresenter.ReleaseIfNotPresented(__instance, __0, presented);
+        }
+
+        private static void AlternateTMP_SetText(object __instance, ref string __0)
+        {
             if (string.IsNullOrEmpty(__0)) return;
             // Our own write (render repair, mod UI) — never translate or track it. This replaces
             // _skipTextResetInstances, a HashSet that expressed the same intent here and was read
@@ -4991,6 +5017,13 @@ namespace UnityGameTranslator.Core
         /// Uses object type since tk2dTextMesh is not available at compile time.
         /// </summary>
         public static void Tk2dTextMesh_SetText_Prefix(object __instance, ref string value)
+        {
+            int presented = TextShaping.RtlPresenter.PresentCount;
+            Tk2dTextMesh_SetText(__instance, ref value);
+            if (!BypassTextPrefix) TextShaping.RtlPresenter.ReleaseIfNotPresented(__instance, value, presented);
+        }
+
+        private static void Tk2dTextMesh_SetText(object __instance, ref string value)
         {
             if (string.IsNullOrEmpty(value)) return;
             if (BypassTextPrefix) return;

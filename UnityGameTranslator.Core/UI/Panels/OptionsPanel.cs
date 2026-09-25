@@ -1721,7 +1721,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                     // ⚠ Spread over frames: the same pass, over the same components, carried by the
                     // tick's own budget — 689 ms in one frame became a few frames of text settling
                     // in. See TranslatorScanner.SpreadRefreshAllText.
-                    TranslatorScanner.SpreadRefreshAllText(reapplyAllScales: true);
+                    TranslatorScanner.SpreadRefreshAllText(reapplyAllScales: true,
+                        translationsSwitched: changedKeys.Contains("enable_translations"));
                 }
                 else
                 {

@@ -55,6 +55,41 @@ namespace UnityGameTranslator.Core.TextShaping
 
         private static int _logBudget = 8;
 
+        // How many times Present has been entered — main thread only, like everything here. A
+        // setter prefix compares it before and after its body to know whether the write it just
+        // handled went through Present (see ReleaseIfNotPresented).
+        internal static int PresentCount;
+
+        /// <summary>
+        /// A write that left a setter prefix WITHOUT going through <see cref="Present"/>: the
+        /// translations switched off, the font's translation off, a text skipped or not to be
+        /// translated. Present is what gives a component its own right-to-left flag, alignment
+        /// and wrap back when it moves on to a left-to-right text — so a component we had turned
+        /// right-to-left kept that state under the game's own English, which then read backwards
+        /// (switching translation off showed "KNUJ" for "JUNK").
+        /// Cheap for every other write: three dictionary lookups on components we never touched.
+        /// </summary>
+        internal static void ReleaseIfNotPresented(object instance, string value, int presentCountBefore)
+        {
+            if (PresentCount != presentCountBefore || instance == null || string.IsNullOrEmpty(value)) return;
+            if (!TranslatorCore.IsMainThread) return;
+            try
+            {
+                long compId = TypeHelper.GetInstanceID(instance);
+                if (compId == -1) return;
+                if (!_flaggedOriginal.ContainsKey(compId) && !_alignedOriginal.ContainsKey(compId)
+                    && !_wrapOriginal.ContainsKey(compId)) return;
+                // Our own output coming back (an echo, a reflowed line) keeps the state it needs —
+                // the same two tests Present applies before restoring.
+                if (RtlText.ContainsPresentationForms(value) || TranslatorCore.TryGetPresentedLogical(value) != null)
+                    return;
+                RestoreIfFlagged(instance, compId, RtlProp(instance));
+                if (_reflows.TryGetValue(compId, out var queued) && queued.Kind != ReflowKind.UGuiWords)
+                    _reflows.Remove(compId);
+            }
+            catch (Exception ex) { TranslatorCore.LogDebug($"[RtlPresenter] release failed: {ex.Message}"); }
+        }
+
         /// <summary>
         /// Present one outgoing string in place. Cheap for the overwhelming majority of texts:
         /// one range scan says "nothing to do".
@@ -67,6 +102,7 @@ namespace UnityGameTranslator.Core.TextShaping
             // The composer and shaper sit on shared buffers — off the main thread, leave the
             // logical text alone rather than corrupt another call's.
             if (!TranslatorCore.IsMainThread) return;
+            PresentCount++;
 
             long tPerf = Perf.Start();
             try
@@ -1436,7 +1472,27 @@ namespace UnityGameTranslator.Core.TextShaping
                     ? TranslatorCore.GetGameObjectPath(c.gameObject) : "?";
                 string role = settingsFontName == null ? "not registered"
                     : FontManager.IsTranslationEnabled(settingsFontName) ? "registered" : "translation off for this font";
-                TranslatorCore.LogDebug($"[RtlPresenter] font comp={compId} {instance.GetType().Name} settings='{settingsFontName ?? "-"}' ({role}) drawn with '{current}' at {path}");
+
+                // The material the component draws with, and the texture it samples: a component
+                // wearing a material PRESET of the game (an outline, a glow) keeps the game's atlas
+                // there while the glyph coordinates now point into ours — the text then draws
+                // nothing at all, with the right font named above.
+                string material = "?";
+                try
+                {
+                    var matProp = instance.GetType().GetProperty("fontSharedMaterial", BindingFlags.Public | BindingFlags.Instance)
+                                  ?? instance.GetType().GetProperty("material", BindingFlags.Public | BindingFlags.Instance);
+                    if (matProp?.GetValue(instance, null) is UnityEngine.Material m && m != null)
+                    {
+                        string tex = m.mainTexture != null ? m.mainTexture.name : "(no texture)";
+                        material = $"'{m.name}' shader '{(m.shader != null ? m.shader.name : "?")}' texture '{tex}'";
+                    }
+                }
+                catch (Exception ex) { material = "unreadable: " + ex.Message; }
+
+                TranslatorCore.LogDebug($"[RtlPresenter] font comp={compId} {instance.GetType().Name} settings='{settingsFontName ?? "-"}' ({role}) drawn with '{current}', material {material}, at {path}");
+                if (TypeHelper.TMP_TextType != null && TypeHelper.TMP_TextType.IsInstanceOfType(instance))
+                    RtlInputFields.ProbeAfterLayout(instance);
             }
             catch (Exception ex) { TranslatorCore.LogDebug($"[RtlPresenter] font comp={compId} unreadable: {ex.Message}"); }
         }

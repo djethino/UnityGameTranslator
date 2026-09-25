@@ -5896,7 +5896,9 @@ namespace UnityGameTranslator.Core.UI
             // components the game doesn't re-trigger don't stay at the old scaled fontSize (issue #21).
             // ⚠ Spread over frames: a key pressed mid-play must not stop the game for half a
             // second — see TranslatorScanner.SpreadRefreshAllText.
-            TranslatorScanner.SpreadRefreshAllText(reapplyAllScales: true);
+            // translationsSwitched: off gives the game back its fonts and images too, on puts the
+            // images back — see TranslatorScanner.SpreadRefreshAllText.
+            TranslatorScanner.SpreadRefreshAllText(reapplyAllScales: true, translationsSwitched: true);
             OptionsPanel?.RefreshFromConfig();
             ShowHotkeyFeedback(config.enable_translations ? "Translations: ON" : "Translations: OFF", config.enable_translations);
         }

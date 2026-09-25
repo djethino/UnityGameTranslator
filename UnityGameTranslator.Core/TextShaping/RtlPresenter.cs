@@ -888,6 +888,117 @@ namespace UnityGameTranslator.Core.TextShaping
                 if (text[i] != WordBreaker.ZeroWidthSpace) sb.Append(text[i]);
         }
 
+        /// <summary>
+        /// Where the engine would start each line of <paramref name="text"/> in this UI.Text's box,
+        /// now, with a generator of our own — for an INPUT FIELD's label (RtlInputFields). Unlike a
+        /// label sized by its content, a field's text box is fixed by the field, so the width seen
+        /// before the text is assigned is the right one: no two-pass needed. Same one-pixel margin
+        /// as <see cref="BuildUGuiLinesNow"/>, so a recomposed line is never folded again by rounding.
+        /// Null, with the reason, when the generator API or the layout is not there.
+        /// </summary>
+        internal static List<int> UGuiLineStartsNow(object comp, string text, out string whyNot)
+        {
+            whyNot = null;
+            EnsureGeneratorPlumbing();
+            if (_generatorPopulate == null || _getGenerationSettings == null || _getPixelAdjustedRect == null
+                || _ownGenerator == null || _generatorLinesProp == null
+                || (_lineStartCharField == null && _lineStartCharProp == null))
+            { whyNot = "generator API not resolvable on this runtime"; return null; }
+
+            try
+            {
+                object rect = _getPixelAdjustedRect.Invoke(comp, null);
+                if (!(rect is UnityEngine.Rect r) || r.width < 1f) { whyNot = "no layout yet"; return null; }
+
+                var extents = new UnityEngine.Vector2(Math.Max(1f, r.width - 1f), r.height);
+                object settings = _getGenerationSettings.Invoke(comp, new object[] { extents });
+                if (settings == null) { whyNot = "no generation settings"; return null; }
+                var vertical = settings.GetType().GetField("verticalOverflow", BindingFlags.Public | BindingFlags.Instance);
+                if (vertical != null) vertical.SetValue(settings, Enum.ToObject(vertical.FieldType, 1));
+
+                if (!(bool)_generatorPopulate.Invoke(_ownGenerator, new object[] { text, settings }))
+                { whyNot = "generator refused to populate"; return null; }
+
+                var lines = _generatorLinesProp.GetValue(_ownGenerator, null) as System.Collections.IList;
+                var starts = new List<int>();
+                if (lines == null) return starts;
+                foreach (var line in lines)
+                {
+                    object v = _lineStartCharField != null ? _lineStartCharField.GetValue(line)
+                                                           : _lineStartCharProp.GetValue(line, null);
+                    starts.Add(Convert.ToInt32(v));
+                }
+                return starts;
+            }
+            catch (Exception ex) { whyNot = "populate failed: " + ex.Message; return null; }
+        }
+
+        // UICharInfo.cursorPos, UILineInfo.topY/height — read for an input field's caret.
+        private static FieldInfo _charCursorPosField;
+        private static FieldInfo _lineTopYField, _lineHeightField;
+        private static PropertyInfo _pixelsPerUnitProp;
+
+        /// <summary>
+        /// What a UI.Text's own generator says it drew: for every character its left x and width,
+        /// for every line its first character, top and height — in the component's local space
+        /// (generator pixels divided by pixelsPerUnit, as InputField's own caret code does). False
+        /// when the generator does not describe <paramref name="shown"/> (a frame behind) or cannot
+        /// be read on this runtime.
+        /// </summary>
+        internal static bool ReadUGuiGlyphs(object comp, string shown,
+                                            List<float> charX, List<float> charWidth,
+                                            List<int> lineStart, List<float> lineTop, List<float> lineHeight)
+        {
+            EnsureGeneratorPlumbing();
+            if (_cachedGeneratorProp == null || _generatorCharsProp == null || _generatorLinesProp == null
+                || _charWidthField == null) return false;
+            try
+            {
+                if (_charCursorPosField == null)
+                {
+                    var charType = _charWidthField.DeclaringType;
+                    _charCursorPosField = charType.GetField("cursorPos", BindingFlags.Public | BindingFlags.Instance);
+                    var lineType = _generatorLinesProp.PropertyType.GetGenericArguments()[0];
+                    _lineTopYField = lineType.GetField("topY", BindingFlags.Public | BindingFlags.Instance);
+                    _lineHeightField = lineType.GetField("height", BindingFlags.Public | BindingFlags.Instance);
+                    _pixelsPerUnitProp = TypeHelper.UI_TextType.GetProperty("pixelsPerUnit", BindingFlags.Public | BindingFlags.Instance);
+                }
+                if (_charCursorPosField == null || _lineTopYField == null || _lineHeightField == null || _pixelsPerUnitProp == null)
+                    return false;
+
+                object generator = _cachedGeneratorProp.GetValue(comp, null);
+                if (generator == null) return false;
+                var chars = _generatorCharsProp.GetValue(generator, null) as System.Collections.IList;
+                var lines = _generatorLinesProp.GetValue(generator, null) as System.Collections.IList;
+                if (chars == null || lines == null || lines.Count == 0) return false;
+                // A generator a frame behind describes the previous text: refuse rather than draw
+                // the caret against somebody else's glyphs. (Unity adds one terminator glyph.)
+                if (chars.Count < shown.Length || chars.Count > shown.Length + 1) return false;
+
+                float ppu = Convert.ToSingle(_pixelsPerUnitProp.GetValue(comp, null));
+                if (ppu <= 0f) ppu = 1f;
+
+                charX.Clear(); charWidth.Clear();
+                foreach (var c in chars)
+                {
+                    var pos = (UnityEngine.Vector2)_charCursorPosField.GetValue(c);
+                    charX.Add(pos.x / ppu);
+                    charWidth.Add(Convert.ToSingle(_charWidthField.GetValue(c)) / ppu);
+                }
+                lineStart.Clear(); lineTop.Clear(); lineHeight.Clear();
+                foreach (var line in lines)
+                {
+                    object v = _lineStartCharField != null ? _lineStartCharField.GetValue(line)
+                                                           : _lineStartCharProp.GetValue(line, null);
+                    lineStart.Add(Convert.ToInt32(v));
+                    lineTop.Add(Convert.ToSingle(_lineTopYField.GetValue(line)) / ppu);
+                    lineHeight.Add(Convert.ToSingle(_lineHeightField.GetValue(line)) / ppu);
+                }
+                return true;
+            }
+            catch { return false; }
+        }
+
         private static string BuildUGuiLinesNow(object comp, string assigned, out string whyNot)
         {
             whyNot = null;

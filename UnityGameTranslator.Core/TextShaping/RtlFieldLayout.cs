@@ -247,7 +247,8 @@ namespace UnityGameTranslator.Core.TextShaping
             for (int i = 0; i <= n; i++)
             {
                 bool hard = i < n && p.Cps[i] == '\n';
-                bool soft = wrapCps.Contains(i);
+                // An engine reports a line start after every hard break too: that is not a wrap.
+                bool soft = wrapCps.Contains(i) && i != ls;
                 if (i < n && !hard && !soft) continue;
                 if (soft && !hard)
                 {
@@ -520,8 +521,11 @@ namespace UnityGameTranslator.Core.TextShaping
             }
         }
 
-        /// <summary>A caret as a display boundary: the index of the gap it stands in.</summary>
-        private int BoundaryOf(int caret)
+        /// <summary>
+        /// A caret as a display boundary: the index of the gap it stands in — its place on the
+        /// screen, left to right, comparable between two carets of one line.
+        /// </summary>
+        internal int BoundaryOf(int caret)
         {
             CaretAnchor(caret, out int d, out bool right, out int line);
             if (d < 0) return _lineParaRtl[line] ? _lineDispEnd[line] : _lineDispStart[line];

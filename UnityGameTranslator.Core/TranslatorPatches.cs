@@ -257,6 +257,38 @@ namespace UnityGameTranslator.Core
                     TranslatorCore.LogWarning("[Patches] UI.Text type not found, skipping UI patches");
                 }
 
+                // UI.InputField — right-to-left editing (RtlInputFields): the click → character
+                // index, and the two arrow keys. Each looked up by its exact signature, and a
+                // missing one SAID: the field then keeps Unity's own behaviour for that gesture.
+                if (TypeHelper.UI_InputFieldType != null)
+                {
+                    var t = TypeHelper.UI_InputFieldType;
+                    const BindingFlags any = BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public;
+                    var fields = typeof(TextShaping.RtlInputFields);
+
+                    var click = t.GetMethod("GetCharacterIndexFromPosition", any, null, new[] { typeof(Vector2) }, null);
+                    var left = t.GetMethod("MoveLeft", any, null, new[] { typeof(bool), typeof(bool) }, null);
+                    var right = t.GetMethod("MoveRight", any, null, new[] { typeof(bool), typeof(bool) }, null);
+
+                    if (click != null)
+                    {
+                        patcher(click, null, fields.GetMethod(nameof(TextShaping.RtlInputFields.UGui_GetCharacterIndexFromPosition_Postfix), BindingFlags.Static | BindingFlags.Public));
+                        patchCount++;
+                    }
+                    if (left != null)
+                    {
+                        patcher(left, fields.GetMethod(nameof(TextShaping.RtlInputFields.UGui_MoveLeft_Prefix), BindingFlags.Static | BindingFlags.Public), null);
+                        patchCount++;
+                    }
+                    if (right != null)
+                    {
+                        patcher(right, fields.GetMethod(nameof(TextShaping.RtlInputFields.UGui_MoveRight_Prefix), BindingFlags.Static | BindingFlags.Public), null);
+                        patchCount++;
+                    }
+                    if (click == null || left == null || right == null)
+                        TranslatorCore.LogWarning($"[Patches] InputField right-to-left editing incomplete: click={(click != null)} left={(left != null)} right={(right != null)}");
+                }
+
                 // TextMesh.text setter (legacy 3D text)
                 if (TypeHelper.TextMeshType != null)
                 {
@@ -1726,7 +1758,7 @@ namespace UnityGameTranslator.Core
         private static readonly System.Collections.Generic.Dictionary<int, object> _parentInputFieldCache =
             new System.Collections.Generic.Dictionary<int, object>();
 
-        private static object GetParentInputFieldCached(object textComponent)
+        internal static object GetParentInputFieldCached(object textComponent)
         {
             int id = TypeHelper.GetInstanceID(textComponent);
             if (id == -1) return null;
@@ -3643,6 +3675,22 @@ namespace UnityGameTranslator.Core
             // Early exit: our own internal set_text (nudge) — don't translate/track it.
             if (BypassTextPrefix) return;
 
+            // 🔴 **Our own window shows right-to-left text right, whatever else is decided about
+            // it.** It is not translated here (the whitelist below skips everything but its
+            // registered chrome) and it does not follow the game's translation switch — but a
+            // Failures row, a list or the text editor holds Arabic the moment a game is translated
+            // into it, and uGUI draws that unjoined and backwards. Asked only of a text that
+            // carries a right-to-left letter: one range scan for every other write.
+            if (TextShaping.RtlText.ContainsStrongRtl(textValue) && __instance is Component ownCandidate
+                && TranslatorCore.IsOwnUI(ownCandidate) && !TranslatorCore.IsOwnUITranslatable(ownCandidate))
+            {
+                if (componentType == "Unity" && IsInputFieldTextComponentCached(__instance))
+                    TextShaping.RtlInputFields.PresentLabel(GetParentInputFieldCached(__instance), __instance, ref textValue);
+                else
+                    TextShaping.RtlPresenter.Present(__instance, TypeHelper.GetInstanceID(__instance), ref textValue);
+                return;
+            }
+
             // Early exit: translations globally disabled → zero overhead
             if (!TranslatorCore.TranslationsActive) return;
 
@@ -3801,6 +3849,18 @@ namespace UnityGameTranslator.Core
                 }
 
                 if (profiling) { t3 = _profSw.ElapsedTicks; _profFontOps += t3 - t2; }
+
+                // 🔴 An input field's label: what somebody TYPED, never translated — but a
+                // right-to-left one is presented for editing, with the caret, the clicks and the
+                // arrows mapped onto it (RtlInputFields). After the font work above, so the label
+                // wears its replacement font, and its clone atlas gets the presented characters.
+                if (componentType == "Unity" && IsInputFieldTextComponentCached(__instance))
+                {
+                    TextShaping.RtlInputFields.PresentLabel(GetParentInputFieldCached(__instance), __instance, ref textValue);
+                    if (unityCloneFont != null && !string.IsNullOrEmpty(textValue))
+                        FontManager.EnsureCharsInCloneAtlasDirect(textValue, unityCloneFont, unityCloneFallback);
+                    return;
+                }
 
                 // Kept here as well as inside RouteText: the font epilogue below compares against
                 // what arrived, to tell a translated component from an untouched one.

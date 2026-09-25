@@ -2854,6 +2854,11 @@ namespace UnityGameTranslator.Core
             UIToolkitSupport.FinishRecentPending();
             Perf.Stop(Perf.RtlReflow, tReflow);
 
+            // The caret and selection of every input field showing right-to-left text: drawn from
+            // the map, the field's own being made transparent (RtlInputFields). Free when no field
+            // is presented.
+            TextShaping.RtlInputFields.Tick();
+
             // The mod's pass-level profile, printed from the single tick like everything else.
             Perf.Frame(Time.unscaledDeltaTime);
             Perf.ReportIfDue(Time.realtimeSinceStartup);

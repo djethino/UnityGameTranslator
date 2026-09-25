@@ -1414,7 +1414,7 @@ namespace UnityGameTranslator.Core.TextShaping
 
         private static int _dumpBudget = 300;
 
-        private static string Escape(string s)
+        internal static string Escape(string s)
         {
             var b = new System.Text.StringBuilder(s.Length * 2);
             foreach (char c in s)

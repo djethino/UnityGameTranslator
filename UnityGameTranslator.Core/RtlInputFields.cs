@@ -126,7 +126,22 @@ namespace UnityGameTranslator.Core.TextShaping
             // Our own output: nothing learns from it, and the in-game editor recovers the typed
             // text behind it (D8 — nothing shaped ever reaches the cache, the file or a server).
             TranslatorCore.RegisterPresentedText(s.Shown, value);
+            Describe("uGUI", label, value, s.Shown);
             value = s.Shown;
+        }
+
+        // The first fields presented in a session, code point by code point: a screen cannot say
+        // whether a glyph drawn detached is a letter we did not shape or a font that draws its
+        // shaped form that way — the log can (first seen on a mod editor field, 2026-09-25).
+        private static int _describeBudget = 3;
+
+        private static void Describe(string kind, object label, string typed, string shown)
+        {
+            if (_describeBudget <= 0) return;
+            _describeBudget--;
+            string font = (label as Text)?.font != null ? (label as Text).font.name : "?";
+            TranslatorCore.LogInfo($"[RtlInputFields] {kind} field (font {font}) typed: {RtlPresenter.Escape(typed)}");
+            TranslatorCore.LogInfo($"[RtlInputFields] {kind} field shows: {RtlPresenter.Escape(shown)}");
         }
 
         private static void PresentTmpLabel(object fieldObj, object labelObj, ref string value)
@@ -159,6 +174,7 @@ namespace UnityGameTranslator.Core.TextShaping
             HideNative(s);
 
             TranslatorCore.RegisterPresentedText(s.Shown, value);
+            Describe("TMP", labelObj, value, s.Shown);
             value = s.Shown;
         }
 

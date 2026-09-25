@@ -1554,6 +1554,16 @@ namespace UnityGameTranslator.Core.UI.Panels
                         else _pendingFontOverrides.RemoveAt(capturedIndex);
                         RefreshFontOverridesList();
                         UpdateApplyButtonText();
+
+                        // The line under the rules still said "Added: … (Apply to save)" about a
+                        // rule that no longer exists. It now says what just happened: gone at once
+                        // for a rule never saved, waiting for Apply for one that was.
+                        if (_fontOverrideStatus != null)
+                        {
+                            string what = string.IsNullOrEmpty(rule.match) ? "(empty rule)" : rule.match;
+                            _fontOverrideStatus.Show(initial != null ? $"Removed: {what} (Apply to save)" : $"Removed: {what}");
+                            _fontOverrideStatus.Tone = Tone.Secondary;
+                        }
                     };
                     case "sizeChanged": return () =>
                     {

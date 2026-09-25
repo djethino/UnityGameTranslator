@@ -33,6 +33,7 @@ A mod that players install into any Unity game to play it in their language — 
 ### Font System
 - Automatic font detection (TextMeshPro, Unity UI.Text)
 - Fallback fonts for any writing system — Latin, CJK, Arabic, Devanagari, Cyrillic, Thai, Hebrew, and more
+- Right-to-left scripts (Arabic, Hebrew, Persian…) — joined letters and right-to-left order in the game's texts, and in what is typed into input fields (UI Text and TextMesh Pro): caret, clicks, selection and arrow keys follow the screen
 - Per-font scaling and enable/disable
 - **Font overrides by pattern** — override size for specific UI elements (tables, titles, tooltips)
   - Add overrides via inspector click, text search, or manual pattern

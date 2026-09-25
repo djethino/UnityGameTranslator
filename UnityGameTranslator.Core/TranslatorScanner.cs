@@ -1480,6 +1480,17 @@ namespace UnityGameTranslator.Core
             }
         }
 
+        /// <summary>
+        /// Record a system this game shows (texts-seen.json) — never from our own window, which
+        /// reaches the scan when the mod interface is translated. The hierarchy is only asked when
+        /// the system is new: a few times per game.
+        /// </summary>
+        private static void NoteShown(Component comp, Common.TextSystem system)
+        {
+            if (Engine.TextsSeen.Has(system) || TranslatorCore.IsOwnUI(comp)) return;
+            Engine.TextsSeen.Note(system);
+        }
+
         private static void ProcessOneComponent(object component, RegisteredTextType type)
         {
             try
@@ -1521,6 +1532,10 @@ namespace UnityGameTranslator.Core
                 // ancestor") for nearly all of them.
                 if (type.Category != "TextMesh" && TranslatorPatches.IsInputFieldTextComponentCached(component))
                 {
+                    // What this game shows (texts-seen.json): an input field, here as surely as
+                    // when the player types into it.
+                    if (type.Category == "TMP") NoteShown(comp, Common.TextSystem.InputTmp);
+                    else if (type.Category == "Unity") NoteShown(comp, Common.TextSystem.InputUiText);
                     inputFieldTextIds.Add(instanceId);
                     TranslatorCore.LogDebug($"[Scanner] Excluded InputField textComponent: {comp.gameObject.name}");
                     return;
@@ -1534,6 +1549,12 @@ namespace UnityGameTranslator.Core
                 finally { Perf.Stop(Perf.ScanText, tText); }
 
                 if (string.IsNullOrEmpty(currentText) || currentText.Length < 2) return;
+
+                // What this game shows (texts-seen.json) — the texts the scanner finds without
+                // any setter firing: static labels, scenes loaded with their words in place.
+                if (type.Category == "TMP") NoteShown(comp, Common.TextSystem.Tmp);
+                else if (type.Category == "Unity") NoteShown(comp, Common.TextSystem.UiText);
+                else Engine.TextsSeen.NoteGeneric(type.ComponentType?.Name);
 
                 // Skip mirrors of the user's typed input (game echoing the typed value
                 // into a display text). Transient skip — NOT a permanent exclusion:

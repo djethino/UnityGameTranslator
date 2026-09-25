@@ -819,6 +819,9 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static void GenericText_SetText_Prefix(object __instance, ref string value)
         {
+            // Game types only (NGUI, a custom component): the mod's own window is uGUI.
+            if (__instance != null && !string.IsNullOrEmpty(value) && TranslatorCore.IsMainThread)
+                Engine.TextsSeen.NoteGeneric(__instance.GetType().Name);
             int presented = TextShaping.RtlPresenter.PresentCount;
             GenericText_SetText(__instance, ref value);
             if (!BypassTextPrefix) TextShaping.RtlPresenter.ReleaseIfNotPresented(__instance, value, presented);
@@ -3710,9 +3713,35 @@ namespace UnityGameTranslator.Core
         // text backwards. One wrapper per prefix, instead of a call at every early return.
         private static void ProcessTextPatchPrefix(object __instance, ref string textValue, string componentType)
         {
+            NoteShown(__instance, componentType, textValue);
             int presented = TextShaping.RtlPresenter.PresentCount;
             ProcessTextPatchPrefixBody(__instance, ref textValue, componentType);
             if (!BypassTextPrefix) TextShaping.RtlPresenter.ReleaseIfNotPresented(__instance, textValue, presented);
+        }
+
+        /// <summary>
+        /// What this game shows, for UGT Manager (texts-seen.json): the system of this text, or
+        /// the input field it belongs to. Before any other decision — a text the translation leaves
+        /// alone is still shown. The input-field question is the cached one; our own window is only
+        /// looked for when a system not yet recorded is about to be, a few times per game.
+        /// </summary>
+        internal static void NoteShown(object instance, string componentType, string text)
+        {
+            if (instance == null || string.IsNullOrEmpty(text) || BypassTextPrefix || !TranslatorCore.IsMainThread) return;
+
+            Common.TextSystem plain, input;
+            switch (componentType)
+            {
+                case "TMP": plain = Common.TextSystem.Tmp; input = Common.TextSystem.InputTmp; break;
+                case "Unity": plain = Common.TextSystem.UiText; input = Common.TextSystem.InputUiText; break;
+                case "TextMesh": plain = Common.TextSystem.TextMesh; input = plain; break;
+                default: return;
+            }
+
+            var kind = componentType != "TextMesh" && IsInputFieldTextComponentCached(instance) ? input : plain;
+            if (Engine.TextsSeen.Has(kind)) return;
+            if (instance is Component c && TranslatorCore.IsOwnUI(c)) return;
+            Engine.TextsSeen.Note(kind);
         }
 
         private static void ProcessTextPatchPrefixBody(object __instance, ref string textValue, string componentType)
@@ -4860,6 +4889,8 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static void AlternateTMP_SetText_Prefix(object __instance, ref string __0)
         {
+            if (!string.IsNullOrEmpty(__0) && !BypassTextPrefix && TranslatorCore.IsMainThread)
+                Engine.TextsSeen.Note(Common.TextSystem.TmpLegacy);
             int presented = TextShaping.RtlPresenter.PresentCount;
             AlternateTMP_SetText(__instance, ref __0);
             if (!BypassTextPrefix) TextShaping.RtlPresenter.ReleaseIfNotPresented(__instance, __0, presented);
@@ -5018,6 +5049,8 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static void Tk2dTextMesh_SetText_Prefix(object __instance, ref string value)
         {
+            if (!string.IsNullOrEmpty(value) && !BypassTextPrefix && TranslatorCore.IsMainThread)
+                Engine.TextsSeen.Note(Common.TextSystem.Tk2d);
             int presented = TextShaping.RtlPresenter.PresentCount;
             Tk2dTextMesh_SetText(__instance, ref value);
             if (!BypassTextPrefix) TextShaping.RtlPresenter.ReleaseIfNotPresented(__instance, value, presented);

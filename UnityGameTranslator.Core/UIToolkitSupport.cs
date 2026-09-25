@@ -665,6 +665,10 @@ namespace UnityGameTranslator.Core
             // rather than throwing, which is not a failure anyone can diagnose from a log.
             if (!TranslatorCore.IsMainThread) return;
 
+            // What this game shows, for UGT Manager (texts-seen.json). Our own window is uGUI, so
+            // every UI Toolkit element is the game's.
+            Engine.TextsSeen.Note(Common.TextSystem.UiToolkit);
+
             // Never the player's own typing — the box itself, or a live echo of it elsewhere.
             if (IsInsideTextInput(__instance)) return;
             if (IsExcluded(__instance)) return;

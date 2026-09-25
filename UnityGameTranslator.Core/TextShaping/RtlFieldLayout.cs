@@ -75,7 +75,63 @@ namespace UnityGameTranslator.Core.TextShaping
             /// </summary>
             internal RtlFieldLayout Lay(IList<int> softWrapsInMeasure) =>
                 new RtlFieldLayout(this, softWrapsInMeasure);
+
+            /// <summary>The same, with the break points given as indices of the TYPED text.</summary>
+            internal RtlFieldLayout LayAtLogical(IList<int> softWrapsInLogical)
+            {
+                if (softWrapsInLogical == null) return Lay(null);
+                var measure = new List<int>(softWrapsInLogical.Count);
+                foreach (int i in softWrapsInLogical)
+                {
+                    if (i <= 0 || i >= Logical.Length) continue;
+                    measure.Add(MeasureStartOfCp[CpOfLogical[i]]);
+                }
+                return Lay(measure);
+            }
+
+            /// <summary>
+            /// The shaped text in LOGICAL order, ONE character per typed character: a letter merged
+            /// into the glyph before it (the alef of a lam-alef, a haraka joined to its shadda)
+            /// leaves a zero-width space in its slot, tokens are written as typed.
+            ///
+            /// 🔴 For an engine whose input field reads positions back from the drawn text by
+            /// index (TMP_InputField deletes <c>text.Remove(characterInfo[caret - 1].index, …)</c>):
+            /// given this string, every drawn character's index IS the typed character's index,
+            /// and all of the field's own editing stays right. Only the glyphs' places change
+            /// afterwards (see <see cref="RtlFieldLayout.LogicalOnScreen"/>).
+            /// </summary>
+            internal string PaddedShaped()
+            {
+                var sb = new StringBuilder(Logical.Length);
+                int lastCp = -1;
+                for (int i = 0; i < Logical.Length;)
+                {
+                    int cp = CpOfLogical[i];
+                    bool isToken = Cps[cp] - SentinelBase >= 0 && Cps[cp] - SentinelBase < Tokens.Count;
+                    if (isToken) { sb.Append(Logical[i]); i++; lastCp = cp; continue; }
+
+                    int width = char.IsHighSurrogate(Logical[i]) && i + 1 < Logical.Length ? 2 : 1;
+                    if (cp == lastCp)
+                    {
+                        for (int k = 0; k < width; k++) sb.Append(ZeroWidthSpace);
+                    }
+                    else
+                    {
+                        string glyph = char.ConvertFromUtf32(Cps[cp]);
+                        // A glyph of another width than the character it shows cannot keep the
+                        // one-for-one promise: the typed character stands in for it.
+                        if (glyph.Length == width) sb.Append(glyph);
+                        else sb.Append(Logical, i, width);
+                    }
+                    lastCp = cp;
+                    i += width;
+                }
+                return sb.ToString();
+            }
         }
+
+        /// <summary>What <see cref="Prepared.PaddedShaped"/> puts in a merged character's slot (U+200B).</summary>
+        internal const char ZeroWidthSpace = (char)0x200B;
 
         /// <summary>
         /// Shape the text and protect its tokens. Null when there is nothing to present (no
@@ -392,6 +448,11 @@ namespace UnityGameTranslator.Core.TextShaping
 
         internal int LineDisplayStart(int line) => _lineDispStart[line];
         internal int LineDisplayEnd(int line) => _lineDispEnd[line];
+        internal int LineLogicalStart(int line) => _lineLogStart[line];
+
+        /// <summary>The first typed character the glyph at display index <paramref name="d"/> shows, or -1.</summary>
+        internal int LogicalAtDisplay(int d) =>
+            d >= 0 && d < _logicalOfDisplay.Length ? _logicalOfDisplay[d] : -1;
 
         /// <summary>
         /// The line a caret belongs to. A caret at a soft wrap belongs to the line it starts —
@@ -536,6 +597,31 @@ namespace UnityGameTranslator.Core.TextShaping
         }
 
         private int Clamp(int caret) => caret < 0 ? 0 : caret > _logical.Length ? _logical.Length : caret;
+
+        /// <summary>
+        /// The typed characters of one line in the order they stand on screen, left to right —
+        /// for an engine that lays the text out in typing order and has its glyphs MOVED into
+        /// place afterwards (TMP, see RtlTmpFields). Characters drawn as one glyph (a ligature)
+        /// come together, the first one where the glyph is; a hard line break is not listed.
+        /// </summary>
+        internal List<int> LogicalOnScreen(int line)
+        {
+            var order = new List<int>();
+            if (line < 0 || line >= LineCount) return order;
+            int from = _lineDispStart[line], to = _lineDispEnd[line];
+            // Display index → typed characters, once for the line.
+            var byDisplay = new Dictionary<int, List<int>>();
+            for (int i = 0; i < _logical.Length; i++)
+            {
+                int d = _dispOfLogical[i];
+                if (d < from || d >= to || _logical[i] == '\n') continue;
+                if (!byDisplay.TryGetValue(d, out var list)) byDisplay[d] = list = new List<int>();
+                list.Add(i);
+            }
+            for (int d = from; d < to; d++)
+                if (byDisplay.TryGetValue(d, out var list)) order.AddRange(list);
+            return order;
+        }
 
         /// <summary>Display index of the glyph showing logical character <paramref name="i"/>.</summary>
         internal int DisplayOf(int i) => _dispOfLogical[Math.Max(0, Math.Min(_logical.Length - 1, i))];

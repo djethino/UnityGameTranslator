@@ -32,6 +32,42 @@ namespace UnityGameTranslator.Core.Checks
             WhereAClickLands(check);
             HowTheArrowsMove(check);
             SeveralLines(check);
+            ForAnEngineThatMovesGlyphs(check);
+        }
+
+        /// <summary>
+        /// TMP's input field reads positions back from its label by index, so its label is given the
+        /// shaped text one-for-one with what was typed, and only the glyphs are moved afterwards.
+        /// </summary>
+        private static void ForAnEngineThatMovesGlyphs(Action<bool, string, string> check)
+        {
+            var prep = RtlFieldLayout.Prepare("السلام لا بأس");
+            string padded = prep.PaddedShaped();
+            check(padded.Length == "السلام لا بأس".Length,
+                "the padded label is as long as the typed text",
+                "every drawn character's index is the typed one's — the field's own editing stays right");
+            // "السلام": alef, lam, seen, LAM, ALEF, meem — the ligature is at 3, the alef at 4.
+            check(padded[3] != 'ل' && padded[4] == RtlFieldLayout.ZeroWidthSpace,
+                "a lam-alef: the ligature in the lam's slot, a zero-width space in the alef's",
+                "the glyph where it is drawn, nothing visible where it merged");
+
+            var mixed = RtlFieldLayout.Prepare("abc مرحبا");
+            check(mixed.PaddedShaped().StartsWith("abc "),
+                "Latin stays as typed",
+                "only the right-to-left letters take their shaped forms");
+
+            var layout = mixed.Lay(null);
+            var onScreen = layout.LogicalOnScreen(0);
+            check(onScreen.SequenceEqual(new[] { 0, 1, 2, 3, 8, 7, 6, 5, 4 }),
+                "left to right on screen: abc, the space, then the Arabic word from its end",
+                "the order the glyphs are moved into");
+
+            // A break reported by an engine right after a hard line break is not a wrap.
+            var hard = RtlFieldLayout.Prepare("مرحبا\nعالم");
+            var withStart = hard.LayAtLogical(new[] { 6 });
+            check(withStart.LineCount == 2,
+                "a line start after a hard break adds no empty line",
+                "engines report every line start, hard ones included");
         }
 
         private static void WhatTheShaperMaps(Action<bool, string, string> check)

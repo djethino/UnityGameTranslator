@@ -94,8 +94,8 @@ namespace UnityGameTranslator.Core
         /// lists them, so a mod that did not would show "nothing kept" over the same folder the
         /// tool describes as holding four copies — two windows disagreeing about one disk.
         ///
-        /// ⚠ Read-only in practice: nothing new is written in those shapes, and the rotation never
-        /// touches them because they do not live in the backups folder.
+        /// ⚠ Nothing new is written in those shapes, and they rotate with the automatic copies they
+        /// stand for (see the rotation) — Keep moves one into a proper folder.
         /// </summary>
         private static List<BackupEntry> Legacy()
         {
@@ -620,14 +620,14 @@ namespace UnityGameTranslator.Core
         {
             try
             {
-                var root = Folder;
-                if (root == null) return;
+                if (Folder == null) return;
 
+                // 🔴 Through Delete, so the files older versions left rotate too (2026-09-25): the
+                // socle counts them among the automatic copies, and joining an id that is a loose
+                // file to the backups folder named a directory that never exists — so they were
+                // listed for ever and never dropped. Keep still takes one out of the cycle.
                 foreach (var id in Backups.AutomaticToDrop(List()))
-                {
-                    var directory = Path.Combine(root, id);
-                    if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
-                }
+                    Delete(id);
             }
             catch (Exception e)
             {

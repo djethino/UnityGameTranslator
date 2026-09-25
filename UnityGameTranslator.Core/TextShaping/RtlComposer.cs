@@ -65,7 +65,7 @@ namespace UnityGameTranslator.Core.TextShaping
         // Mirrored by RTL convention though not Bidi_Mirrored in the UCD — guillemets read
         // outward-in in RTL text. Borrowed from RTLTMPro's table; real brackets are NOT here,
         // the UAX#9 paired-bracket data answers those.
-        private static readonly Dictionary<int, int> ExtraMirrors = new Dictionary<int, int>
+        internal static readonly Dictionary<int, int> ExtraMirrors = new Dictionary<int, int>
         {
             [0x00AB] = 0x00BB, [0x00BB] = 0x00AB,   // « »
             [0x2039] = 0x203A, [0x203A] = 0x2039,   // ‹ ›
@@ -422,7 +422,7 @@ namespace UnityGameTranslator.Core.TextShaping
         }
 
         /// <summary>UAX#9 L2 on a resolved-levels sequence, in place — permutation tracked.</summary>
-        private static void Reorder(List<int> cps, List<sbyte> levels, List<int> orig)
+        internal static void Reorder(List<int> cps, List<sbyte> levels, List<int> orig)
         {
             sbyte max = 0;
             sbyte minOdd = sbyte.MaxValue;

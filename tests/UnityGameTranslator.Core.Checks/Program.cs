@@ -244,6 +244,8 @@ namespace UnityGameTranslator.Core.Checks
         {
             Section("Text shaping", TextShapingChecks.Run);
 
+            Section("Right-to-left text in an input field (caret, clicks, arrows)", RtlFieldChecks.Run);
+
             Section("Rich text index map (UI.Text line slicing)", RichTextIndexMapChecks.Run);
 
             Section("Indic reordering (pre-base vowel signs)", IndicReorderChecks.Run);

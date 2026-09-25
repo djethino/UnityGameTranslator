@@ -206,6 +206,16 @@ namespace UnityGameTranslator.Core
                         patchCount++;
                     }
 
+                    // TMP_Text.maxVisibleCharacters setter — a typewriter reveal counted on the
+                    // original, carried over to the translation (Engine/RevealScale).
+                    var maxVisibleProp = TypeHelper.TMP_TextType.GetProperty("maxVisibleCharacters", BindingFlags.Public | BindingFlags.Instance);
+                    if (maxVisibleProp?.SetMethod != null)
+                    {
+                        var prefix = typeof(TranslatorPatches).GetMethod(nameof(TMPText_SetMaxVisible_Prefix), BindingFlags.Static | BindingFlags.Public);
+                        patcher(maxVisibleProp.SetMethod, prefix, null);
+                        patchCount++;
+                    }
+
                     // TMP_Text.font setter — games re-assign fonts at any time (menu
                     // animations, presets, localization systems). The postfix re-applies
                     // our replacement when that happens: without it, the fast-path marker
@@ -2209,6 +2219,8 @@ namespace UnityGameTranslator.Core
                 // reach those entries.
                 _componentState.Remove(id);
                 _typewritingPending.Remove(id);
+                _revealCountsOnShown.Remove(id);
+                _revealLengths.Remove(id);
                 // Safe HERE and only here: the entry is the anti-cumulation reference, so it must
                 // survive a live component (see its declaration).
                 _originalMaxFontSizes.Remove(id);
@@ -4196,6 +4208,58 @@ namespace UnityGameTranslator.Core
             _fontNameCache[instanceId] = resolved;
             _patchedComponentRefs[instanceId] = instance;
             return resolved;
+        }
+
+        // Components whose game counts its reveal on the text SHOWN: left alone from then on
+        // (RevealScale.Verdict.CountsOnShown). And the visible lengths of the pair each component
+        // shows, measured once per pair rather than on every step of a reveal.
+        private static readonly HashSet<long> _revealCountsOnShown = new HashSet<long>();
+        private static readonly Dictionary<long, (string Source, string Shown, int SourceLength, int ShownLength)> _revealLengths =
+            new Dictionary<long, (string, string, int, int)>();
+
+        /// <summary>
+        /// TMP_Text.maxVisibleCharacters setter: a typewriter reveal counted on the original,
+        /// carried over to the translation shown (Engine/RevealScale). Without it the reveal stopped
+        /// at the original's length and cut a longer translation mid-word. Reacts to each write the
+        /// game makes — no timer, no window.
+        /// </summary>
+        public static void TMPText_SetMaxVisible_Prefix(object __instance, ref int value)
+        {
+            if (__instance == null || value <= 0 || value >= int.MaxValue / 2) return;
+            if (!TranslatorCore.TranslationsActive || !TranslatorCore.IsMainThread) return;
+
+            try
+            {
+                long id = TypeHelper.GetInstanceID(__instance);
+                if (id == -1 || _revealCountsOnShown.Contains(id)) return;
+                if (!_componentState.TryGetValue(id, out var state)
+                    || state.ReadBackSource == null || state.ReadBackTranslated == null) return;
+
+                // Still showing that translation? The getter hands the game the original, so either
+                // side of the pair means yes; anything else is a text this record is not about.
+                string current = TypeHelper.GetText(__instance);
+                if (current != state.ReadBackSource && current != state.ReadBackTranslated) return;
+
+                if (!_revealLengths.TryGetValue(id, out var lengths)
+                    || !ReferenceEquals(lengths.Source, state.ReadBackSource) || !ReferenceEquals(lengths.Shown, state.ReadBackTranslated))
+                {
+                    lengths = (state.ReadBackSource, state.ReadBackTranslated,
+                               Markup.Strip(state.ReadBackSource).Length, Markup.Strip(state.ReadBackTranslated).Length);
+                    _revealLengths[id] = lengths;
+                }
+
+                switch (Engine.RevealScale.Convert(value, lengths.SourceLength, lengths.ShownLength, out int scaled))
+                {
+                    case Engine.RevealScale.Verdict.Scaled:
+                        value = scaled;
+                        break;
+                    case Engine.RevealScale.Verdict.CountsOnShown:
+                        _revealCountsOnShown.Add(id);
+                        TranslatorCore.LogDebug($"[Reveal] comp={id} counts its reveal on the text shown — left alone");
+                        break;
+                }
+            }
+            catch (Exception ex) { TranslatorCore.LogDebug($"[Reveal] maxVisibleCharacters prefix: {ex.Message}"); }
         }
 
         public static void TMPText_SetFontSize_Prefix(object __instance, ref float value)

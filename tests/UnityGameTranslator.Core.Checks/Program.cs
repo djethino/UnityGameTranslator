@@ -187,6 +187,7 @@ namespace UnityGameTranslator.Core.Checks
         private static void WhenTheSweepHasBeenRound()
         {
             Section("One round of the sweep", ScanRoundChecks.Run);
+            Section("A typewriter reveal carried over to the translation", RevealScaleChecks.Run);
             Section("What a reveal in flight is told", RevealDoorChecks.Run);
         }
 

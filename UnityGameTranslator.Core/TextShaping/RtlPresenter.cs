@@ -125,6 +125,8 @@ namespace UnityGameTranslator.Core.TextShaping
 
                 bool mirror = TranslatorCore.ShouldMirrorRtlAlignment(settingsFontName, overrideRule);
 
+                DescribeFont(instance, compId, settingsFontName);
+
                 if (prop != null)
                 {
                     string flagged = RtlComposer.Compose(value, RtlOutput.RtlFlagged);
@@ -1413,6 +1415,31 @@ namespace UnityGameTranslator.Core.TextShaping
         }
 
         private static int _dumpBudget = 300;
+
+        // Components already described, so a text refreshed every frame costs one line, once.
+        private static readonly HashSet<long> _fontDescribed = new HashSet<long>();
+
+        /// <summary>
+        /// Debug only: which font draws a right-to-left text, and where the component sits — the
+        /// question a text shown EMPTY raises, and the only one the rest of the log cannot answer
+        /// for a component nobody can reach with the inspector (2026-09-25: a card and a menu on
+        /// one game stayed blank while the rest of its Arabic rendered).
+        /// </summary>
+        private static void DescribeFont(object instance, long compId, string settingsFontName)
+        {
+            if (!TranslatorCore.DebugMode || compId == -1 || !_fontDescribed.Add(compId)) return;
+            try
+            {
+                object font = TypeHelper.GetFont(instance);
+                string current = font is UnityEngine.Object uo && uo != null ? uo.name : "(none)";
+                string path = instance is UnityEngine.Component c && c != null
+                    ? TranslatorCore.GetGameObjectPath(c.gameObject) : "?";
+                string role = settingsFontName == null ? "not registered"
+                    : FontManager.IsTranslationEnabled(settingsFontName) ? "registered" : "translation off for this font";
+                TranslatorCore.LogDebug($"[RtlPresenter] font comp={compId} {instance.GetType().Name} settings='{settingsFontName ?? "-"}' ({role}) drawn with '{current}' at {path}");
+            }
+            catch (Exception ex) { TranslatorCore.LogDebug($"[RtlPresenter] font comp={compId} unreadable: {ex.Message}"); }
+        }
 
         internal static string Escape(string s)
         {

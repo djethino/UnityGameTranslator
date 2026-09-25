@@ -39,6 +39,21 @@ namespace UnityGameTranslator.Core
         public string target_language { get; set; } = "auto";
         public string source_language { get; set; } = "auto";
         public bool strict_source_language { get; set; } = false;
+
+        /// <summary>
+        /// Closing the game asks a local server (Ollama) to unload the model this session used.
+        /// On by default: left to itself Ollama keeps it on the graphics card five more minutes,
+        /// taking it from whatever game starts next.
+        /// </summary>
+        public bool ai_unload_on_exit { get; set; } = true;
+
+        /// <summary>
+        /// Keep the model loaded while the game runs, instead of the server's own delay (five
+        /// minutes for Ollama): no reload in the middle of play after a quiet spell. Off by
+        /// default — it holds the graphics card memory for the whole session. Released at exit
+        /// with <see cref="ai_unload_on_exit"/>; after a crash it stays until the server restarts.
+        /// </summary>
+        public bool ai_keep_loaded { get; set; } = false;
         public string game_context { get; set; } = "";
         /// <summary>
         /// How long the mod waits for a translation backend before giving up on ONE request.

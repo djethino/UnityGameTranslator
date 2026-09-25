@@ -88,6 +88,8 @@ namespace UnityGameTranslator.Core.UI.Panels
         private SearchableDropdown _modelDropdown;
         private FieldHandle _gameContextInput;
         private ToggleHandle _strictSourceToggle;
+        private ToggleHandle _unloadOnExitToggle;
+        private ToggleHandle _keepLoadedToggle;
         private LabelHandle _aiTestStatusLabel;
 
         /// <summary>
@@ -221,6 +223,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             public string ai_model;
             public string game_context;
             public bool strict_source_language;
+            public bool ai_unload_on_exit;
+            public bool ai_keep_loaded;
             public string google_api_key;
             public string deepl_api_key;
             public bool deepl_use_free;
@@ -288,6 +292,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                     ai_model = TranslatorCore.Config.ai_model ?? "",
                     game_context = TranslatorCore.Config.game_context ?? "",
                     strict_source_language = TranslatorCore.Config.strict_source_language,
+                    ai_unload_on_exit = TranslatorCore.Config.ai_unload_on_exit,
+                    ai_keep_loaded = TranslatorCore.Config.ai_keep_loaded,
                     google_api_key = TranslatorCore.Config.google_api_key ?? "",
                     deepl_api_key = TranslatorCore.Config.deepl_api_key ?? "",
                     deepl_use_free = TranslatorCore.Config.deepl_use_free,
@@ -453,6 +459,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             _modelDropdown = _screen.Dropdown("ModelDropdown");
             _gameContextInput = _screen.Field("ContextInput");
             _strictSourceToggle = _screen.Toggle("StrictSourceToggle");
+            _unloadOnExitToggle = _screen.Toggle("UnloadOnExitToggle");
+            _keepLoadedToggle = _screen.Toggle("KeepLoadedToggle");
             _aiMaxAttemptsInput = _screen.Field("MaxAttempts");
             _aiTemperatureInput = _screen.Field("Temp");
             _aiTemperatureRepairInput = _screen.Field("TempRepair");
@@ -997,6 +1005,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
             _gameContextInput.Text = TranslatorCore.Config.game_context ?? "";
             _strictSourceToggle.IsOn = TranslatorCore.Config.strict_source_language;
+            _unloadOnExitToggle.IsOn = TranslatorCore.Config.ai_unload_on_exit;
+            _keepLoadedToggle.IsOn = TranslatorCore.Config.ai_keep_loaded;
             _aiTestStatusLabel.Show("");
             // Set dropdowns BEFORE the enable toggle (which triggers UpdateBackendSections)
             string backend = TranslatorCore.Config.translation_backend ?? "none";
@@ -1558,6 +1568,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                 }
                 TranslatorCore.Config.game_context = _gameContextInput.Text;
                 TranslatorCore.Config.strict_source_language = _strictSourceToggle.IsOn;
+                TranslatorCore.Config.ai_unload_on_exit = _unloadOnExitToggle.IsOn;
+                TranslatorCore.Config.ai_keep_loaded = _keepLoadedToggle.IsOn;
                 string googleKey = _googleApiKeyInput?.Text;
                 TranslatorCore.Config.google_api_key = !string.IsNullOrEmpty(googleKey) ? googleKey : null;
                 string deeplKey = _deeplApiKeyInput?.Text;
@@ -1909,6 +1921,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             P.Track(_modelDropdown.Handle, () => (_modelDropdown.SelectedValue ?? "") != S().ai_model);
             P.Track(_gameContextInput, () => _gameContextInput.Text != S().game_context);
             P.Track(_strictSourceToggle, () => _strictSourceToggle.IsOn != S().strict_source_language);
+            P.Track(_unloadOnExitToggle, () => _unloadOnExitToggle.IsOn != S().ai_unload_on_exit);
+            P.Track(_keepLoadedToggle, () => _keepLoadedToggle.IsOn != S().ai_keep_loaded);
             P.Track(_googleApiKeyInput, () => (_googleApiKeyInput?.Text ?? "") != S().google_api_key);
             P.Track(_deeplApiKeyInput, () => (_deeplApiKeyInput?.Text ?? "") != S().deepl_api_key);
             P.Track(_deeplUseFreeToggle, () => _deeplUseFreeToggle.IsOn != S().deepl_use_free);

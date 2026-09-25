@@ -864,7 +864,9 @@ namespace UnityGameTranslator.Core
             // Render-health watchdog (issue #21): HERE — after the game's per-frame vertex
             // modification and right before the draw — detect a stalled reveal (glyphs
             // stuck invisible) and repair it in place, so it renders complete this frame.
+            long tWatch = Perf.Start();
             try { TranslatorScanner.TickRenderWatch(); } catch { }
+            Perf.Stop(Perf.RenderWatch, tWatch);
 
             if (!_pendingSceneRefresh) return;
             _pendingSceneRefresh = false;

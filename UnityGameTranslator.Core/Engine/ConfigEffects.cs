@@ -67,6 +67,7 @@ namespace UnityGameTranslator.Core
             "game_context", "timeout_ms", "rate_limit_retry_delay", "ai_max_attempts",
             "ai_temperature", "ai_temperature_repair", "ai_temperature_retranslate",
             "ai_seed", "ai_seed_repair", "ai_seed_retranslate", "preload_model",
+            "ai_unload_on_exit", "ai_keep_loaded",
             "cache_new_translations",
 
             // What the game gives us of the keyboard and the mouse, and whether it pauses: input,

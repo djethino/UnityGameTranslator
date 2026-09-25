@@ -4225,6 +4225,13 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static void TMPText_SetMaxVisible_Prefix(object __instance, ref int value)
         {
+            long tReveal = Perf.Start();
+            try { ScaleReveal(__instance, ref value); }
+            finally { Perf.Stop(Perf.Reveal, tReveal); }
+        }
+
+        private static void ScaleReveal(object __instance, ref int value)
+        {
             if (__instance == null || value <= 0 || value >= int.MaxValue / 2) return;
             if (!TranslatorCore.TranslationsActive || !TranslatorCore.IsMainThread) return;
 

@@ -2069,6 +2069,15 @@ namespace UnityGameTranslator.Core
                     Thread.Sleep(10);
             }
 
+            // 🔴 The model this game loaded goes with the game (ai_unload_on_exit, on by default).
+            // Left to the server, Ollama keeps it on the graphics card five more minutes and LM
+            // Studio keeps one it loaded on demand for an hour — and a game started in that time
+            // ran at a fraction of its frame rate beside a 27B model it never asked for. Waited
+            // for: sent in the background it would be cut with the process. Before the client is
+            // disposed, which it needs.
+            if (Config != null && Config.ai_unload_on_exit && _usedModel != null)
+                SendModelMemory(ModelMemory.Release(_usedModelUrl, _usedModel), wait: true);
+
             // Dispose HttpClient (cancels in-flight requests)
             try { httpClient?.Dispose(); } catch { }
 
@@ -4453,6 +4462,7 @@ namespace UnityGameTranslator.Core
                 if (response.IsSuccessStatusCode)
                 {
                     Adapter.LogInfo("Model preloaded successfully");
+                    NoteModelUsed();
                 }
                 else
                 {
@@ -4816,53 +4826,103 @@ namespace UnityGameTranslator.Core
         /// every line takes seconds instead of tenths of a second. That is worst exactly when it
         /// is most likely: right after someone switched model because the first felt slow.
         ///
-        /// ⚠ ONLY for a server on this machine or this network, and only because Ollama is the
-        /// only one where it means anything. vLLM and llama.cpp serve a single model per process,
-        /// so there is nothing to free; LM Studio manages its own lifetime and unloads through its
-        /// command line rather than its API. A cloud provider has no local memory to reclaim at
-        /// all — firing an unknown route at one would be traffic sent to a third party for
-        /// nothing, which is reason enough not to.
+        /// ⚠ ONLY for a server on this machine or this network. Which route frees a model depends
+        /// on the server — Ollama, LM Studio and llama.cpp's router each have one, vLLM has none
+        /// that is safe to call — and that knowledge is the socle's (<see cref="ModelMemory"/>).
+        /// A cloud provider has no local memory to reclaim at all; firing unknown routes at one
+        /// would be traffic sent to a third party for nothing.
         ///
-        /// ⚠ /api/generate is Ollama's own route, not part of the OpenAI-compatible surface the
-        /// rest of the mod speaks. It is used as a favour, never as a dependency: another local
-        /// server answers 404 and we are exactly where we were. Nothing waits for the result and
-        /// nothing reports it — a model left loaded is a slowdown, not a failure.
+        /// ⚠ None of these routes is part of the OpenAI-compatible surface the rest of the mod
+        /// speaks. A favour, never a dependency: a server that does not know a route answers 404
+        /// and we are exactly where we were. Nothing waits for the result and nothing reports it —
+        /// a model left loaded is a slowdown, not a failure.
         /// </summary>
-        public static void ReleaseModel(string baseUrl, string model)
+        public static void ReleaseModel(string baseUrl, string model) =>
+            SendModelMemory(ModelMemory.Release(baseUrl, model), wait: false);
+
+        /// <summary>
+        /// Send one of <see cref="ModelMemory"/>'s requests, in order, until a server says yes —
+        /// Ollama, LM Studio and llama.cpp each have their own route, and none of them says what
+        /// it is on the route the mod speaks. A route a server does not know answers "not found"
+        /// at once. Only ever for a server on this machine or network (ModelMemory refuses the
+        /// rest), a favour and never a dependency: nothing waits for it unless asked, and nothing
+        /// reports a refusal.
+        /// </summary>
+        /// <param name="wait">
+        /// Wait for the answers — only when the game is closing, where a request sent in the
+        /// background would be cut with the process before it left. Each one is bounded like the
+        /// release always was: a request that does not come back is given up.
+        /// </param>
+        /// <param name="done">Called once it is over, whatever became of it.</param>
+        private static void SendModelMemory(IReadOnlyList<ModelMemory.Request> requests, bool wait, Action done = null)
         {
-            if (string.IsNullOrEmpty(baseUrl) || string.IsNullOrEmpty(model)) return;
-            if (!Endpoints.IsOnYourOwnNetwork(baseUrl)) return;
+            if (requests == null || requests.Count == 0)
+            {
+                done?.Invoke();
+                return;
+            }
+            var client = httpClient;
 
-            // The native API sits at the root, not under the OpenAI-compatible surface — see
-            // Endpoints.RootOf, which knows the shapes people paste.
-            string url = Endpoints.RootOf(baseUrl) + "/api/generate";
-            string modelName = model;
-
-            System.Threading.Tasks.Task.Run(() =>
+            void Send()
             {
                 try
                 {
-                    var payload = new JObject
+                    foreach (var r in requests)
                     {
-                        ["model"] = modelName,
-                        ["keep_alive"] = 0
-                    };
+                        try
+                        {
+                            var payload = new JObject();
+                            foreach (var f in r.Fields) payload[f.Key] = JToken.FromObject(f.Value);
+                            var request = new HttpRequestMessage(HttpMethod.Post, r.Url)
+                            {
+                                Content = new StringContent(payload.ToString(), Encoding.UTF8, "application/json")
+                            };
+                            AddAIAuthHeader(request);
 
-                    var request = new HttpRequestMessage(HttpMethod.Post, url)
-                    {
-                        Content = new StringContent(payload.ToString(), Encoding.UTF8, "application/json")
-                    };
-                    AddAIAuthHeader(request);
+                            var send = client.SendAsync(request);
+                            if (!send.Wait(3000)) continue;
+                            if (send.Result.IsSuccessStatusCode)
+                            {
+                                LogDebug($"[AI] {r.Server} accepted {r.Url}");
+                                return;
+                            }
+                        }
+                        catch
+                        {
+                            // Not this server's route, or the server went: the next one is tried.
+                        }
+                    }
+                }
+                finally { done?.Invoke(); }
+            }
 
-                    httpClient.SendAsync(request).Wait(3000);
-                    LogDebug($"[AI] Asked {url} to release {modelName}");
-                }
-                catch
-                {
-                    // A server that does not know this route manages its own memory. Silence is
-                    // the right answer: nothing the player did has failed.
-                }
-            });
+            if (wait) Send();
+            else System.Threading.Tasks.Task.Run(Send);
+        }
+
+        // The model this session asked of a server on this machine or network — what closing the
+        // game hands back (ai_unload_on_exit). Written by the worker, read at shutdown.
+        private static volatile string _usedModelUrl, _usedModel;
+        // A keep-loaded request is on its way: the next answer does not send another.
+        private static int _keepLoadedInFlight;
+
+        /// <summary>
+        /// A request reached the model: remember it for the release at shutdown, and — with
+        /// ai_keep_loaded — tell the server to keep it. Needed after EVERY request, not once:
+        /// each OpenAI-compatible call puts Ollama's own keep-alive (5 minutes) back on the model,
+        /// so a pause longer than that in play unloaded it and the next line paid the reload.
+        /// Driven by the answers themselves — no timer.
+        /// </summary>
+        private static void NoteModelUsed()
+        {
+            string url = Config?.ai_url, model = Config?.ai_model;
+            if (string.IsNullOrEmpty(model) || !Endpoints.IsOnYourOwnNetwork(url)) return;
+            _usedModelUrl = url;
+            _usedModel = model;
+
+            if (Config.ai_keep_loaded && ModelMemory.KeepLoaded(url, model) is { } keep
+                && Interlocked.CompareExchange(ref _keepLoadedInFlight, 1, 0) == 0)
+                SendModelMemory(new[] { keep }, wait: false, done: () => Interlocked.Exchange(ref _keepLoadedInFlight, 0));
         }
 
         /// <summary>
@@ -5399,6 +5459,7 @@ namespace UnityGameTranslator.Core
 
                 if (response.IsSuccessStatusCode)
                 {
+                    NoteModelUsed();
                     string responseJson = response.Content.ReadAsStringAsync().Result;
                     var responseObj = ApiClient.ParseJsonSafe(responseJson);
                     return responseObj["choices"]?[0]?["message"]?["content"]?.ToString()?.Trim();

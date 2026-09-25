@@ -59,7 +59,9 @@ namespace UnityGameTranslator.Core
         internal const int SetterNote = 19;      // ...of which: recording the text system (texts-seen)
         internal const int SetterRelease = 20;   // ...of which: handing a right-to-left state back
         internal const int TmpLayout = 21;       // the GenerateTextMesh postfix (input fields, probe)
-        private const int SlotCount = 22;
+        internal const int Reveal = 22;          // the maxVisibleCharacters setter prefix (RevealScale)
+        internal const int RenderWatch = 23;     // TranslatorScanner.TickRenderWatch, every frame before the draw
+        private const int SlotCount = 24;
 
         private static readonly string[] Names =
         {
@@ -67,7 +69,7 @@ namespace UnityGameTranslator.Core
             "UITK.Font", "Font.Find", "UITK.Children", "UITK.Image",
             "Scan.Find", "UITK.Cycle", "UITK.Setter", "Scan.Process", "Scan.Text",
             "Scan.Gate", "Scan.Translate", "Scan.Apply",
-            "Setter", "Setter.Note", "Setter.Release", "TMP.Layout",
+            "Setter", "Setter.Note", "Setter.Release", "TMP.Layout", "Reveal", "RenderWatch",
         };
 
         private static readonly long[] _ticks = new long[SlotCount];

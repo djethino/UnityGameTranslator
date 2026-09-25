@@ -748,7 +748,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Cleaned first, as the model loop cleans an answer before judging it. A proposal
             // recorded since 2026-09-23 is already clean and this changes nothing; one kept from an
             // earlier session was recorded as the model said it.
-            return Backends.Restore(_failurePrepared.Value, Answers.Clean(proposal)) ?? proposal;
+            return Backends.Restore(_failurePrepared.Value, Answers.Clean(proposal, _failurePrepared.Value.ToSend)) ?? proposal;
         }
 
         private void OpenFailure(FailedLine line)

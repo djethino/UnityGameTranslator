@@ -3338,6 +3338,64 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// The content is exactly what the site holds, while this file's bookkeeping says otherwise
+        /// — settle the bookkeeping: the published content becomes the ancestor, the site's hash
+        /// the one last synced, and nothing is left to publish.
+        ///
+        /// 🔴 **Reconciled from the state, because a moment was missed.** A publication or a
+        /// download that did not stamp the file (the Manager's publish, before 2026-09-25) leaves
+        /// an ancestor from before it. The verdict compares content and says "Up to date"; the
+        /// counter measured against the stale ancestor said "14 local changes to upload", and the
+        /// corner notification, which reads the counter, offered Update while the main panel beside
+        /// it greyed Update. Two screens, one fact, two answers — nothing but this can make them
+        /// agree, because both are right about what they read.
+        ///
+        /// ⚠ **The published content, not the cache alone.** The hash counts, as present, the
+        /// interface lines the published copy still carries and the ancestor holds
+        /// (ModUiMigration.StillCountsAsPublished). The new ancestor keeps them, or the very next
+        /// hash would differ from the site's and the verdict would turn to "Upload".
+        ///
+        /// ⚠ **Lines only.** The settings baseline is left as it stands: the content hash says
+        /// nothing about the settings, so it cannot vouch that they were published too.
+        /// </summary>
+        /// <returns>True when something was settled.</returns>
+        public static bool SettleWhenContentIsPublished(string serverHash, string localHash)
+        {
+            if (string.IsNullOrEmpty(serverHash)
+                || !string.Equals(serverHash, localHash, StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            if (LocalChangesCount == 0
+                && string.Equals(LastSyncedHash, serverHash, StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            try
+            {
+                var published = new Dictionary<string, TranslationEntry>(TranslationCache);
+                foreach (var kvp in AncestorCache)
+                {
+                    if (!ModUiMigration.StillCountsAsPublished(kvp.Value?.Tag, TranslationCache.ContainsKey(kvp.Key)))
+                        continue;
+                    published[kvp.Key] = kvp.Value;
+                }
+
+                int before = LocalChangesCount;
+                LastSyncedHash = serverHash;
+                Store.NoteSynced(serverHash, null, published, SectionsOf(AncestorSettings));
+                cacheModified = true;
+
+                Adapter?.LogInfo($"[Sync] This file holds exactly the published version: its record "
+                                 + $"was behind ({before} change(s) counted against an older ancestor) — settled.");
+                return true;
+            }
+            catch (Exception e)
+            {
+                Adapter?.LogWarning($"[Sync] Could not settle the record of a file already published: {e.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>
         /// Migrate old placeholder format [vN] to new format [!v*N] in all cache entries.
         /// Returns the number of entries migrated.
         /// </summary>

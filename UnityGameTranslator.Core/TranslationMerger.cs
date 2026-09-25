@@ -189,7 +189,13 @@ namespace UnityGameTranslator.Core
                 case MergeReason.LocalModified: stats.LocalModifiedCount++; break;
                 case MergeReason.RemoteAdded: stats.RemoteAddedCount++; break;
                 case MergeReason.RemoteUpdated: stats.RemoteUpdatedCount++; break;
-                case MergeReason.Deleted: stats.DeletedCount++; break;
+                case MergeReason.Deleted:
+                    stats.DeletedCount++;
+                    // Which side let it go: the one that no longer has it. Gone from both is no
+                    // difference at all between the two.
+                    if (localEntry != null) stats.DeletedThereCount++;
+                    else if (remoteEntry != null) stats.DeletedHereCount++;
+                    break;
                 case MergeReason.Conflict: stats.ConflictCount++; break;
             }
 
@@ -306,6 +312,12 @@ namespace UnityGameTranslator.Core
 
         /// <summary>Keys deleted (in sync)</summary>
         public int DeletedCount { get; set; }
+
+        /// <summary>Of those, removed on the published side while this file still has them.</summary>
+        public int DeletedThereCount { get; set; }
+
+        /// <summary>Of those, removed from this file while the published side still has them.</summary>
+        public int DeletedHereCount { get; set; }
 
         /// <summary>Keys with conflicts</summary>
         public int ConflictCount { get; set; }

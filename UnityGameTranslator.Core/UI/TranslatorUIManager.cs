@@ -258,8 +258,11 @@ namespace UnityGameTranslator.Core.UI
                     // The merge classifies every key: a line both sides added identically is
                     // Unchanged, and counts nowhere — the comparison page will not list it either.
                     var stats = TranslationMerger.MergeWithTags(TranslatorCore.TranslationCache, remote, TranslatorCore.AncestorCache).Statistics;
-                    int there = stats.RemoteAddedCount + stats.RemoteUpdatedCount + stats.DeletedCount;
-                    int here = stats.LocalOnlyCount + stats.LocalModifiedCount;
+                    // ⚠ A deletion counts on the side that made it, and a line gone from BOTH is
+                    // no difference: counting every deletion as the site's announced lines "changed
+                    // there" between two identical files, beside a card saying Up to date.
+                    int there = stats.RemoteAddedCount + stats.RemoteUpdatedCount + stats.DeletedThereCount;
+                    int here = stats.LocalOnlyCount + stats.LocalModifiedCount + stats.DeletedHereCount;
                     state.LinesChanged = there + stats.ConflictCount;
                     state.LinesChangedHere = here + stats.ConflictCount;
                     state.LinesDifferingFromCopy = here + there + stats.ConflictCount;
@@ -2302,6 +2305,12 @@ namespace UnityGameTranslator.Core.UI
                         TranslatorCore.LogInfo("[Sync] The published translation has a newer version");
                         DetermineAndApplyUpdateDirection(fileHash, lineCount, voteCount);
                     }
+                    else
+                    {
+                        // Same content as the site's (see SettleWhenContentIsPublished). Hashed
+                        // again here: lines may have landed while the question travelled.
+                        TranslatorCore.SettleWhenContentIsPublished(state.Hash, TranslatorCore.ComputeContentHash());
+                    }
 
                     MainPanel?.RefreshUI();
                 });
@@ -3002,6 +3011,10 @@ namespace UnityGameTranslator.Core.UI
                     PendingUpdateDirection = UpdateDirection.None;
                 }
 
+                // The same content as the site's: whatever the file's record still says, nothing
+                // is waiting on either side, and every screen has to read it that way.
+                TranslatorCore.SettleWhenContentIsPublished(serverHash, localHash);
+
                 MainPanel?.RefreshUI();
             }
             catch (Exception e)
@@ -3081,6 +3094,7 @@ namespace UnityGameTranslator.Core.UI
                     HasPendingUpdate = false;
                     PendingUpdateInfo = null;
                     PendingUpdateDirection = UpdateDirection.None;
+                    TranslatorCore.SettleWhenContentIsPublished(serverHash, localHash);
                 }
 
                 MainPanel?.RefreshUI();

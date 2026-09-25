@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Text;
 using Topten.RichTextKit;
 using Topten.RichTextKit.Utils;
+using UnityGameTranslator.Common;
 
 namespace UnityGameTranslator.Core.TextShaping
 {
@@ -299,12 +300,13 @@ namespace UnityGameTranslator.Core.TextShaping
             for (int i = 0; i < tagInfos.Count; i++)
             {
                 string t = tagInfos[i].Text;
-                if (t.Length > 2 && t[1] == '/')
+                if (Markup.IsClosing(t))
                 {
-                    string name = TagName(t, 2);
+                    // Named by the socle, so a model's answer and the screen pair tags alike.
+                    string name = Markup.NameOf(t);
                     for (int s = stack.Count - 1; s >= 0; s--)
                     {
-                        if (TagName(tagInfos[stack[s]].Text, 1) != name) continue;
+                        if (Markup.NameOf(tagInfos[stack[s]].Text) != name) continue;
                         tagInfos[i].PairOpen = stack[s];
                         tagInfos[i].Depth = tagInfos[stack[s]].Depth = s;
                         stack.RemoveRange(s, stack.Count - s);
@@ -317,13 +319,6 @@ namespace UnityGameTranslator.Core.TextShaping
                     stack.Add(i);
                 }
             }
-        }
-
-        private static string TagName(string tag, int from)
-        {
-            int end = from;
-            while (end < tag.Length && char.IsLetterOrDigit(tag[end])) end++;
-            return tag.Substring(from, end - from).ToLowerInvariant();
         }
 
         private sealed class Insert

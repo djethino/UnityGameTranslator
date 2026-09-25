@@ -191,6 +191,14 @@ namespace UnityGameTranslator.Core.Checks
                     $"two sibling pairs each stay valid ({mode})",
                     "adjacent L-classed tags used to swap during reordering");
 
+                // The styled word is the three letters of خطر, shaped: they must all sit inside.
+                string shortColour = RtlComposer.Compose("<#FF0000>خطر</color> قريب", mode);
+                int so = shortColour.IndexOf("<#FF0000>", StringComparison.Ordinal);
+                int sc = shortColour.IndexOf("</color>", StringComparison.Ordinal);
+                check(so >= 0 && sc - so - "<#FF0000>".Length == 3,
+                    $"the short colour form wraps its whole word ({mode})",
+                    "unpaired, <#RRGGBB> coloured one letter and left the rest of the word plain");
+
                 string lone = RtlComposer.Compose("مرحبا <sprite=3> بكم", mode);
                 check(lone.Contains("<sprite=3>"),
                     $"an unpaired tag survives verbatim ({mode})",

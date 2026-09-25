@@ -401,7 +401,13 @@ namespace UnityGameTranslator.Core.TextShaping
         /// </summary>
         public static void Tmp_GenerateTextMesh_Postfix(object __instance)
         {
-            if (_probeAfterLayout.Count > 0 && __instance != null) ProbeLayout(__instance);
+            long tLayout = Perf.Start();
+            try { GenerateTextMeshDone(__instance); }
+            finally { Perf.Stop(Perf.TmpLayout, tLayout); }
+        }
+
+        private static void GenerateTextMeshDone(object __instance)
+        {
             if (_byTmpLabel.Count == 0 || __instance == null) return;
             try
             {
@@ -412,119 +418,6 @@ namespace UnityGameTranslator.Core.TextShaping
             }
             catch (Exception ex) { Note("TMP glyph move failed: " + ex.Message); }
         }
-
-        // Debug only: TMP texts whose FIRST layout after being presented right-to-left is to be
-        // described — what TMP actually built, for a text that shows nothing although the log
-        // says it was translated, shaped and given a font (2026-09-25, one game's card and menu).
-        private static readonly HashSet<int> _probeAfterLayout = new HashSet<int>();
-
-        /// <summary>Debug only: describe this TMP text once, right after its next layout.</summary>
-        internal static void ProbeAfterLayout(object tmpText)
-        {
-            if (!TranslatorCore.DebugMode || tmpText == null) return;
-            int id = TypeHelper.GetInstanceID(tmpText);
-            if (id != -1) _probeAfterLayout.Add(id);
-        }
-
-        private static void ProbeLayout(object text)
-        {
-            int id = TypeHelper.GetInstanceID(text);
-            if (!_probeAfterLayout.Remove(id)) return;
-            try
-            {
-                Tmp.Resolve();
-                var t = text.GetType();
-                string P(string name)
-                {
-                    try
-                    {
-                        var p = t.GetProperty(name, BindingFlags.Public | BindingFlags.Instance);
-                        return p == null ? "-" : Convert.ToString(p.GetValue(text, null), System.Globalization.CultureInfo.InvariantCulture);
-                    }
-                    catch (Exception ex) { return "!" + ex.GetType().Name; }
-                }
-
-                var sb = new System.Text.StringBuilder();
-                sb.Append($"[RtlProbe] comp={id} size={P("fontSize")} auto={P("enableAutoSizing")} style={P("fontStyle")} ");
-                sb.Append($"spacing={P("characterSpacing")} overflow={P("overflowMode")} maxVisible={P("maxVisibleCharacters")} ");
-                sb.Append($"firstVisible={P("firstVisibleCharacter")} color={P("color")} alpha={P("alpha")} rtl={P("isRightToLeftText")} ");
-                sb.Append($"scale={P("fontScale")} culled={P("isCulled")}");
-                if (text is Component c && c != null && c.transform is RectTransform rt)
-                    sb.Append($" rect={rt.rect.width:F0}x{rt.rect.height:F0} lossy={rt.lossyScale.x:F3}");
-
-                var info = Tmp.TextInfo?.GetValue(text, null);
-                if (info != null && Tmp.CharacterCount != null && Tmp.CharacterInfo != null)
-                {
-                    int count = Convert.ToInt32(Tmp.Get(Tmp.CharacterCount, info));
-                    var chars = Tmp.Get(Tmp.CharacterInfo, info);
-                    int visible = 0, firstVisible = -1;
-                    for (int k = 0; k < count; k++)
-                    {
-                        var ci = Tmp.Item(chars, k);
-                        if (ci != null && Tmp.CiVisible != null && (bool)Tmp.Get(Tmp.CiVisible, ci))
-                        {
-                            visible++;
-                            if (firstVisible < 0) firstVisible = k;
-                        }
-                    }
-                    sb.Append($" | chars={count} visible={visible}");
-                    if (firstVisible >= 0)
-                    {
-                        var ci = Tmp.Item(chars, firstVisible);
-                        var ciType = ci.GetType();
-                        string F(string name)
-                        {
-                            var m = (MemberInfo)ciType.GetField(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
-                                    ?? ciType.GetProperty(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-                            return m == null ? "-" : Convert.ToString(Tmp.Get(m, ci), System.Globalization.CultureInfo.InvariantCulture);
-                        }
-                        sb.Append($" first=U+{(int)Convert.ToChar(Tmp.Get(Member(ciType, "character"), ci)):X4} scale={F("scale")} pointSize={F("pointSize")} ");
-                        sb.Append($"bl={F("bottomLeft")} tr={F("topRight")} vColor={F("color")} mat={F("materialReferenceIndex")} vtx={F("vertexIndex")}");
-
-                        var meshes = Tmp.MeshInfo != null ? Tmp.Get(Tmp.MeshInfo, info) : null;
-                        int matIndex = Convert.ToInt32(Tmp.Get(Member(ciType, "materialReferenceIndex"), ci));
-                        var mesh = meshes != null ? Tmp.Item(meshes, matIndex) : null;
-                        if (mesh != null)
-                        {
-                            var mt = mesh.GetType();
-                            object Mm(string name) =>
-                                Tmp.Get((MemberInfo)mt.GetField(name, BindingFlags.Public | BindingFlags.Instance)
-                                        ?? mt.GetProperty(name, BindingFlags.Public | BindingFlags.Instance), mesh);
-                            int vi = Convert.ToInt32(Tmp.Get(Member(ciType, "vertexIndex"), ci));
-                            var uvs = Mm("uvs0");
-                            var cols = Mm("colors32");
-                            sb.Append($" meshVerts={Mm("vertexCount")} uv0={(uvs != null ? Convert.ToString(Tmp.Item(uvs, vi), System.Globalization.CultureInfo.InvariantCulture) : "-")}");
-                            sb.Append($" col32={(cols != null ? Convert.ToString(Tmp.Item(cols, vi), System.Globalization.CultureInfo.InvariantCulture) : "-")}");
-                        }
-                    }
-                }
-
-                // The material TMP draws with, the properties that decide whether an SDF glyph
-                // shows at all: dilate and weights move the edge, the scale ratios and gradient
-                // scale set the spread, the face colour's alpha hides everything.
-                var matProp = t.GetProperty("fontSharedMaterial", BindingFlags.Public | BindingFlags.Instance);
-                if (matProp?.GetValue(text, null) is Material m && m != null)
-                {
-                    sb.Append($" | mat '{m.name}'");
-                    foreach (var p in new[] { "_FaceDilate", "_WeightNormal", "_WeightBold", "_GradientScale", "_ScaleRatioA",
-                                              "_ScaleRatioB", "_ScaleRatioC", "_TextureWidth", "_TextureHeight", "_OutlineWidth",
-                                              "_OutlineSoftness", "_UnderlayDilate", "_UnderlaySoftness", "_Sharpness", "_PerspectiveFilter",
-                                              "_ScaleX", "_ScaleY", "_Stencil", "_StencilComp" })
-                        if (m.HasProperty(p)) sb.Append($" {p}={m.GetFloat(p).ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)}");
-                    foreach (var p in new[] { "_FaceColor", "_OutlineColor", "_UnderlayColor" })
-                        if (m.HasProperty(p)) sb.Append($" {p}={m.GetColor(p)}");
-                    var tex = m.HasProperty("_MainTex") ? m.GetTexture("_MainTex") : null;
-                    sb.Append(tex != null ? $" tex={tex.width}x{tex.height} id={tex.GetInstanceID()}" : " tex=null");
-                    sb.Append($" keywords=[{string.Join(",", m.shaderKeywords ?? new string[0])}]");
-                }
-                TranslatorCore.LogDebug(sb.ToString());
-            }
-            catch (Exception ex) { TranslatorCore.LogDebug($"[RtlProbe] comp={id} unreadable: {ex.GetType().Name} {ex.Message}"); }
-        }
-
-        private static MemberInfo Member(Type t, string name) =>
-            (MemberInfo)t.GetField(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
-            ?? t.GetProperty(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
 
         private static void MoveTmpGlyphs(FieldState s, object label)
         {

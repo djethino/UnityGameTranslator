@@ -1491,8 +1491,6 @@ namespace UnityGameTranslator.Core.TextShaping
                 catch (Exception ex) { material = "unreadable: " + ex.Message; }
 
                 TranslatorCore.LogDebug($"[RtlPresenter] font comp={compId} {instance.GetType().Name} settings='{settingsFontName ?? "-"}' ({role}) drawn with '{current}', material {material}, at {path}");
-                if (TypeHelper.TMP_TextType != null && TypeHelper.TMP_TextType.IsInstanceOfType(instance))
-                    RtlInputFields.ProbeAfterLayout(instance);
             }
             catch (Exception ex) { TranslatorCore.LogDebug($"[RtlPresenter] font comp={compId} unreadable: {ex.Message}"); }
         }

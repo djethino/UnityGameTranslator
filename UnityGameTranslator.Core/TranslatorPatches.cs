@@ -3713,10 +3713,16 @@ namespace UnityGameTranslator.Core
         // text backwards. One wrapper per prefix, instead of a call at every early return.
         private static void ProcessTextPatchPrefix(object __instance, ref string textValue, string componentType)
         {
+            long tSetter = Perf.Start();
+            long tNote = Perf.Start();
             NoteShown(__instance, componentType, textValue);
+            Perf.Stop(Perf.SetterNote, tNote);
             int presented = TextShaping.RtlPresenter.PresentCount;
             ProcessTextPatchPrefixBody(__instance, ref textValue, componentType);
+            long tRelease = Perf.Start();
             if (!BypassTextPrefix) TextShaping.RtlPresenter.ReleaseIfNotPresented(__instance, textValue, presented);
+            Perf.Stop(Perf.SetterRelease, tRelease);
+            Perf.Stop(Perf.Setter, tSetter);
         }
 
         /// <summary>

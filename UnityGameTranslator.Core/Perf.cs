@@ -51,7 +51,15 @@ namespace UnityGameTranslator.Core
         internal const int ScanGate = 15;        // ...of which: the questions asked before translating
         internal const int ScanTranslate = 16;   // ...of which: looking the text up and queueing it
         internal const int ScanApply = 17;       // ...of which: writing the answer onto the component
-        private const int SlotCount = 18;
+
+        // 🔴 The setters and the per-layout hook, measured (2026-09-25): two games dropped to 5 and
+        // 16 frames a second after a day of additions that each run on EVERY text write or EVERY
+        // mesh build, while every pass above stayed small — so the time was in code nothing timed.
+        internal const int Setter = 18;          // the whole TMP/UI.Text/TextMesh setter prefix
+        internal const int SetterNote = 19;      // ...of which: recording the text system (texts-seen)
+        internal const int SetterRelease = 20;   // ...of which: handing a right-to-left state back
+        internal const int TmpLayout = 21;       // the GenerateTextMesh postfix (input fields, probe)
+        private const int SlotCount = 22;
 
         private static readonly string[] Names =
         {
@@ -59,6 +67,7 @@ namespace UnityGameTranslator.Core
             "UITK.Font", "Font.Find", "UITK.Children", "UITK.Image",
             "Scan.Find", "UITK.Cycle", "UITK.Setter", "Scan.Process", "Scan.Text",
             "Scan.Gate", "Scan.Translate", "Scan.Apply",
+            "Setter", "Setter.Note", "Setter.Release", "TMP.Layout",
         };
 
         private static readonly long[] _ticks = new long[SlotCount];

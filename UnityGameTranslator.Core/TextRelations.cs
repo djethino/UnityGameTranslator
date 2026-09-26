@@ -77,20 +77,29 @@ namespace UnityGameTranslator.Core
         /// numbers lifted out, the head of the next level's tooltip (the same three lines, then a
         /// fourth): held as a head, it was never sent and stayed in the source language (2026-09-26).
         /// A reveal (grown) or a resume cut mid-sentence still counts as a head.
+        ///
+        /// 🔴 Same flag, second rule: **a head that several lines go on from differently is a stem,
+        /// not a reveal.** 金刚密宗 (a sect's name, written whole) begins both 金刚密宗亲传弟子 and
+        /// 金刚密宗入门弟子. A reveal resumed part-way heads ONE line, the one it goes on to show; a
+        /// name two titles share is a text of its own. Held, it stayed in the source language on
+        /// every screen naming the sect (2026-09-26).
         /// </param>
         public static bool IsHeadOfALongerLine(string text, IEnumerable<string> lines, bool blockEndingAtABreakIsWhole = false)
         {
             if (string.IsNullOrEmpty(text) || lines == null) return false;
+            char? onlyNext = null;
             foreach (var line in lines)
             {
                 if (line != null && line.Length > text.Length && line.StartsWith(text, StringComparison.Ordinal))
                 {
                     char next = line[text.Length];
-                    if (blockEndingAtABreakIsWhole && (next == '\n' || next == '\r')) continue;
-                    return true;
+                    if (!blockEndingAtABreakIsWhole) return true;
+                    if (next == '\n' || next == '\r') continue;
+                    if (onlyNext.HasValue && onlyNext.Value != next) return false;
+                    onlyNext = next;
                 }
             }
-            return false;
+            return onlyNext.HasValue;
         }
 
         /// <summary>Most characters a single typewriter step is assumed to reveal.</summary>

@@ -84,6 +84,16 @@
       "queued": ["聪慧"]
     },
     {
+      "id": "reveal/a-name-several-lines-go-on-from-is-sent",
+      "why": "a resumed reveal heads ONE line; 金刚密宗, a sect's name written whole, begins two titles that go on differently — a stem of its own, held as a head it stayed untranslated on every screen naming the sect (2026-09-26)",
+      "file": { "金刚密宗亲传弟子": "Disciple direct du Vajrayāna", "金刚密宗入门弟子": "Disciple novice du Vajrayāna" },
+      "steps": [
+        { "f": 1, "t": 0.0, "write": "金刚密宗", "shows": "金刚密宗" },
+        { "f": 60, "t": 1.0, "tick": true }
+      ],
+      "queued": ["金刚密宗"]
+    },
+    {
       "id": "reveal/letter-by-letter-a-known-line-costs-nothing",
       "why": "no fragment of a reveal is ever sent: the finished line is known, and the reveal is told the moment it is recognised",
       "file": { "Hello there": "Bonjour à tous" },

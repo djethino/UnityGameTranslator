@@ -233,6 +233,7 @@ namespace UnityGameTranslator.Core
             public bool ShownIsOurs;        // a translation (else the game's own text)
             public bool LayoutReachedFull;  // the pass in flight has reached the whole length
             public int LayoutSteps;         // steps of the pass in flight
+            public bool AssemblyMissing;    // the assembly shown still has a part waiting for an answer
 
             // --- Typewriting ---
             public string TypewritingText;

@@ -146,6 +146,8 @@ namespace UnityGameTranslator.Core.Checks
                         int queuedBefore = host.Queued.Count;
                         string previous = box.Shown;
                         string replayed = host.GameWrites(box, (string)o["in"]);
+                        if (f == debugFrame)
+                            Console.WriteLine($"  WRITE comp={box.Id} [{Clip((string)o["in"])}] -> [{Clip(replayed)}]");
                         for (int i = queuedBefore; i < host.Queued.Count; i++)
                             causes[host.Queued[i].Text] = $"f={f} after [{Clip(previous)}] came [{Clip((string)o["in"])}]";
                         if (replayed != recorded)

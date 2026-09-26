@@ -27,8 +27,14 @@ namespace UnityGameTranslator.Core
         /// when unknown, unless <paramref name="skipQueueing"/>). What a part of an assembly goes
         /// through — a concat delta, an appended block, a part put back when an answer arrives.
         /// </summary>
-        private string TranslateUnit(string text, object comp, bool isOwnUI, bool skipQueueing)
+        /// <param name="missing">
+        /// Whether something in it is still in the source language, waiting for an answer — an
+        /// assembly holding such a part is not remembered as the page's translation
+        /// (<see cref="RememberAssembledSource"/>).
+        /// </param>
+        private string TranslateUnit(string text, object comp, bool isOwnUI, bool skipQueueing, out bool missing)
         {
+            missing = false;
             if (string.IsNullOrEmpty(text)) return text;
             if (text.IndexOf('\n') >= 0)
             {
@@ -41,13 +47,16 @@ namespace UnityGameTranslator.Core
                 // every showing, with every one of its lines translated (2026-09-26).
                 var lines = LineParts(text);
                 if (lines.Count > 1 && (HasTranslatedLine(lines, isOwnUI) || HasKnownLine(lines, isOwnUI)))
-                    return TranslateLines(lines, comp, isOwnUI, skipQueueing);
+                    return TranslateLines(lines, comp, isOwnUI, skipQueueing, out missing);
             }
-            return Translate(text, comp, isOwnUI, skipTypewriting: true, skipQueueing: skipQueueing);
+            string done = Translate(text, comp, isOwnUI, skipTypewriting: true, skipQueueing: skipQueueing);
+            missing = StillSource(text, done, isOwnUI);
+            return done;
         }
 
-        private string TranslateLines(List<string> lines, object comp, bool isOwnUI, bool skipQueueing)
+        private string TranslateLines(List<string> lines, object comp, bool isOwnUI, bool skipQueueing, out bool missing)
         {
+            missing = false;
             var sb = new StringBuilder();
             foreach (string line in lines)
             {
@@ -55,11 +64,46 @@ namespace UnityGameTranslator.Core
                 // A line without a letter (a score, a count) is the same in every language: kept.
                 string done = string.IsNullOrEmpty(core) ? ""
                     : !HasLetter(core) || IsOurs(core, isOwnUI) ? core
-                    : KeepBreaks(core, Translate(core, comp, isOwnUI, skipTypewriting: true, skipQueueing: skipQueueing));
+                    : KeepBreaks(core, Translate(core, comp, isOwnUI, skipTypewriting: true,
+                                                 skipQueueing: skipQueueing || StartsWithOurs(core, comp)));
+                if (!string.IsNullOrEmpty(core) && StillSource(core, done, isOwnUI)) missing = true;
                 sb.Append(lead).Append(done).Append(trail);
             }
             return sb.ToString();
         }
+
+        /// <summary>
+        /// Does this line begin with a piece of what this component showed as OUR text — a line
+        /// the game rebuilt from the start of our translation and a piece of its own
+        /// ("Qualité ?" + "&lt;color&gt;下&lt;/color&gt;", 2026-09-26)? Sent, our words would go
+        /// to the model inside the game's; it is only looked up. A start the game's own text
+        /// shares is not ours, and does not count.
+        /// </summary>
+        private bool StartsWithOurs(string line, object comp)
+        {
+            long compId = comp != null ? _host.IdOf(comp) : -1;
+            var state = compId != -1 ? PeekState(compId) : null;
+            string ours = state?.LastTranslated;
+            if (string.IsNullOrEmpty(ours)) return false;
+            string raw = state.LastRaw ?? "";
+            foreach (string ourLine in ours.Split('\n'))
+            {
+                int k = 0;
+                while (k < line.Length && k < ourLine.Length && line[k] == ourLine[k]) k++;
+                if (k == 0) continue;
+                string start = line.Substring(0, k);
+                if (!HasLetter(start)) continue;
+                bool gameSaysItToo = false;
+                foreach (string rawLine in raw.Split('\n'))
+                    if (rawLine.StartsWith(start, StringComparison.Ordinal)) { gameSaysItToo = true; break; }
+                if (!gameSaysItToo) return true;
+            }
+            return false;
+        }
+
+        /// <summary>A part left as it came, with letters, and not a translation of ours.</summary>
+        private bool StillSource(string part, string done, bool isOwnUI)
+            => done == part && HasLetter(part) && !IsOurs(part.Trim(), isOwnUI);
 
         /// <summary>Does one of these lines already read as a translation (ours, handed back)?</summary>
         private bool HasTranslatedLine(List<string> lines, bool isOwnUI)
@@ -289,14 +333,16 @@ namespace UnityGameTranslator.Core
         private string AssembleGrowth(ComponentTextState state, object comp, long compId, bool isOwnUI,
                                       string source, string kept, string keptTranslation, string added, bool atHead)
         {
-            string keptDone = keptTranslation ?? TranslateUnit(kept, comp, isOwnUI, skipQueueing: true);
+            bool keptMissing = false, addedMissing = false;
+            string keptDone = keptTranslation ?? TranslateUnit(kept, comp, isOwnUI, skipQueueing: true, out keptMissing);
             SplitNewlines(added, out string lead, out string core, out string trail);
-            string addedDone = lead + (string.IsNullOrEmpty(core) ? "" : KeepBreaks(core, TranslateUnit(core, comp, isOwnUI, skipQueueing: false))) + trail;
+            string addedDone = lead + (string.IsNullOrEmpty(core) ? "" : KeepBreaks(core, TranslateUnit(core, comp, isOwnUI, skipQueueing: false, out addedMissing))) + trail;
             string assembled = atHead ? addedDone + keptDone : keptDone + addedDone;
 
             ForgetTypewriting(state);
             _typewritingPending.Remove(compId);
             state.Deltas = atHead ? new List<string> { added, kept } : new List<string> { kept, added };
+            state.AssemblyMissing = keptMissing || addedMissing;
             state.LastTranslated = assembled;
             TrackTranslation(compId, source, assembled);
             _concatTranslatedValues.Add(assembled);
@@ -324,8 +370,9 @@ namespace UnityGameTranslator.Core
             var lines = LineParts(text);
             if (lines.Count < 2 || !HasTranslatedLine(lines, isOwnUI)) return null;
             var state = StateFor(compId);
-            string assembled = TranslateLines(lines, target, isOwnUI, skipQueueing);
+            string assembled = TranslateLines(lines, target, isOwnUI, skipQueueing, out bool missing);
             state.Deltas = lines;
+            state.AssemblyMissing = missing;
             state.LastRaw = text;
             state.LastTranslated = assembled;
             TrackTranslation(compId, text, assembled);

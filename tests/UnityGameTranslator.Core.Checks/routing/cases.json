@@ -413,6 +413,20 @@
       "queued": [ "Weight 4" ]
     },
     {
+      "id": "lines/a-tooltip-seen-again-after-its-answers-came-is-translated",
+      "why": "🔴 seen in a game (2026-09-26): a tooltip first built while one of its lines was on its way, the pointer moves on, the answer arrives, the pointer comes back — the tooltip came back half in the source language, because the page assembled the first time was remembered as it was. Only a complete page is remembered; this one is assembled again, with the answer",
+      "file": { "Iron Sword": "Épée de fer", "Press Shift": "Maj pour détails", "Axe": "Hache" },
+      "steps": [
+        { "f": 5, "t": 1.0, "c": 9, "write": "Iron Sword", "shows": "Épée de fer" },
+        { "f": 5, "t": 1.0, "c": 9, "write": "Iron Sword\nDamage 12\nPress Shift", "shows": "Épée de fer\nDamage 12\nMaj pour détails" },
+        { "f": 6, "t": 1.1, "c": 9, "write": "Axe", "shows": "Hache" },
+        { "f": 7, "t": 1.2, "c": 9, "arrive": { "o": "Damage 12", "tr": "Dégâts 12" }, "shows": "Hache" },
+        { "f": 9, "t": 1.4, "c": 9, "write": "Iron Sword", "shows": "Épée de fer" },
+        { "f": 9, "t": 1.4, "c": 9, "write": "Iron Sword\nDamage 12\nPress Shift", "shows": "Épée de fer\nDégâts 12\nMaj pour détails" }
+      ],
+      "queued": [ "Damage 12" ]
+    },
+    {
       "id": "lines/a-reveal-crossing-a-line-break-is-one-line",
       "why": "no false positive: a text revealed letter by letter across a line break grows a few characters at a time — never a block of whole lines — and is sent once, whole, when it stops",
       "file": {},

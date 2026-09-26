@@ -208,35 +208,44 @@ namespace UnityGameTranslator.Core
                         ? Translate(whole, comp, isOwnUI, skipTypewriting: true, skipQueueing: true)
                         : null;
 
+                    bool missing;
                     if (whole != null && wholeTranslated != whole)
                     {
                         textValue = wholeTranslated;
+                        missing = false;
                     }
                     else
                     {
                         // Translate core delta directly (skip TW — concat deltas are immediate)
-                        string translatedCore = string.IsNullOrEmpty(deltaCore) ? "" : KeepBreaks(deltaCore, TranslateUnit(deltaCore, comp, isOwnUI, skipQueueing: false));
+                        bool deltaMissing = false;
+                        string translatedCore = string.IsNullOrEmpty(deltaCore) ? "" : KeepBreaks(deltaCore, TranslateUnit(deltaCore, comp, isOwnUI, skipQueueing: false, out deltaMissing));
                         string translatedDelta = leadingNL + translatedCore + trailingNL;
 
+                        // What came before: still missing a part if it was (a first part the reveal
+                        // was holding counts as missing when its lookup leaves it as it came).
+                        bool baseMissing = state.AssemblyMissing;
                         if (string.IsNullOrEmpty(lastTrans))
                         {
                             // First part wasn't translated yet (TW was capturing it before concat was detected).
                             // Translate it now.
                             lastTrans = Translate(lastRaw, comp, isOwnUI, skipTypewriting: true);
                             if (string.IsNullOrEmpty(lastTrans)) lastTrans = lastRaw;
+                            baseMissing = StillSource(lastRaw, lastTrans, isOwnUI);
                         }
+                        missing = baseMissing || deltaMissing;
 
                         textValue = lastTrans + translatedDelta;
                         // What this assembled text was made from, so the next append can try the
                         // whole again — the parts' own translations just replaced the tracked pair.
                         if (whole != null) TrackTranslation(compId, whole, textValue);
                     }
+                    state.AssemblyMissing = missing;
                     state.LastRaw = preTranslateText; // full raw text so far
                     state.LastTranslated = textValue;
                     // Cache the assembled result: raw source → assembled target (runtime only)
-                    _concatAssembledCache[preTranslateText] = textValue;
+                    RememberAssembledRaw(preTranslateText, textValue, missing);
                     _concatTranslatedValues.Add(textValue);
-                    if (whole != null) RememberAssembledSource(whole, textValue);
+                    if (whole != null) RememberAssembledSource(whole, textValue, missing);
                     handledAsConcat = true;
 
                     if (_host.DebugMode)
@@ -293,6 +302,7 @@ namespace UnityGameTranslator.Core
                     ? Translate(whole, comp, isOwnUI, skipTypewriting: true, skipQueueing: true)
                     : null;
 
+                bool missing = false;
                 if (whole != null && wholeTranslated != whole)
                 {
                     // A hit: tracked inside, so the next append starts from this page.
@@ -311,9 +321,13 @@ namespace UnityGameTranslator.Core
                     // has settled what is still unknown in it goes, line by line (TextRouter.Lines).
                     bool revealing = !writtenThisFrame && TextRelations.LooksLikeTypewriterGrowth(appendedTo, textValue);
                     if (revealing && !isOwnUI) IsTypewritingInProgress(compId, preTranslateText, comp);
-                    string transCore = string.IsNullOrEmpty(dCore) ? "" : KeepBreaks(dCore, TranslateUnit(dCore, comp, isOwnUI, skipQueueing: whole == null || revealing));
+                    bool deltaMissing = false;
+                    string transCore = string.IsNullOrEmpty(dCore) ? "" : KeepBreaks(dCore, TranslateUnit(dCore, comp, isOwnUI, skipQueueing: whole == null || revealing, out deltaMissing));
                     string translatedDelta = leadNL + transCore + trailNL;
                     textValue = lastTranslatedTarget + translatedDelta;
+                    // Our text before it was complete unless it was itself an assembly still waiting.
+                    bool continued = state.Deltas != null && priorSource != null && string.Join("", state.Deltas) == priorSource;
+                    missing = deltaMissing || (continued && state.AssemblyMissing);
 
                     if (whole != null)
                     {
@@ -332,13 +346,14 @@ namespace UnityGameTranslator.Core
                     }
                 }
                 state.LastTranslated = textValue;
+                state.AssemblyMissing = missing;
                 // Also cache with the raw text as key (for scanner refresh lookups)
-                _concatAssembledCache[preTranslateText] = textValue;
+                RememberAssembledRaw(preTranslateText, textValue, missing);
                 _concatTranslatedValues.Add(textValue);
                 // ⚠ And under its SOURCE when known: the raw text here is our shown form plus the
                 // game's part, which the game never writes again — the page in its own language is
                 // what it writes when it redraws.
-                if (whole != null) RememberAssembledSource(whole, textValue);
+                if (whole != null) RememberAssembledSource(whole, textValue, missing);
                 handledAsConcat = true;
 
                 if (_host.DebugMode)
@@ -686,19 +701,23 @@ namespace UnityGameTranslator.Core
             string whole = Translate(rawKey, component, false, skipTypewriting: true, skipQueueing: true);
             if (whole != rawKey)
             {
-                RememberAssembledSource(rawKey, whole);
+                RememberAssembledSource(rawKey, whole, missing: false);
                 state.LastTranslated = whole;
+                state.AssemblyMissing = false;
                 return whole;
             }
 
             var result = new System.Text.StringBuilder();
+            bool missing = false;
             foreach (string part in deltas)
             {
                 // Preserve newlines
                 SplitNewlines(part, out string leading, out string core, out string trailing);
 
+                bool partMissing = false;
                 string translated = string.IsNullOrEmpty(core) ? "" :
-                    KeepBreaks(core, TranslateUnit(core, component, false, skipQueueing: true));
+                    KeepBreaks(core, TranslateUnit(core, component, false, skipQueueing: true, out partMissing));
+                if (partMissing) missing = true;
                 result.Append(leading);
                 result.Append(translated);
                 result.Append(trailing);
@@ -709,10 +728,11 @@ namespace UnityGameTranslator.Core
             // What the component now shows, and what it was made from: the next append builds on
             // THIS text, not on the one assembled before the late translation arrived.
             state.LastTranslated = assembled;
+            state.AssemblyMissing = missing;
             TrackTranslation(compId, rawKey, assembled);
 
             // Update caches
-            RememberAssembledSource(rawKey, assembled);
+            RememberAssembledSource(rawKey, assembled, missing);
 
             return assembled;
         }
@@ -734,12 +754,33 @@ namespace UnityGameTranslator.Core
         /// A page we assembled, remembered under its SOURCE: the text in the game's own language
         /// that it stands for — what the game writes when it redraws the page whole.
         /// </summary>
-        private void RememberAssembledSource(string source, string assembled)
+        private void RememberAssembledSource(string source, string assembled, bool missing)
         {
             if (string.IsNullOrEmpty(source) || string.IsNullOrEmpty(assembled) || source == assembled) return;
-            _concatAssembledCache[source] = assembled;
             _concatTranslatedValues.Add(assembled);
+            // ⚠ Remembered as THE translation of that page only when none of its parts is still
+            // waiting for an answer: a page assembled while one was on its way came back AS IT WAS
+            // at every later showing — the answer had arrived, but the remembered page was served
+            // before any lookup, and a tooltip seen translated went back to half its source
+            // language (2026-09-26). Incomplete, it is assembled again at its next showing.
+            if (missing)
+            {
+                _concatAssembledCache.Remove(source);
+                _assembledSources.Remove(source);
+                return;
+            }
+            _concatAssembledCache[source] = assembled;
             _assembledSources.Add(source);
+        }
+
+        /// <summary>
+        /// An assembly remembered under the raw text the game wrote — the same rule as
+        /// <see cref="RememberAssembledSource"/>, for the raw form.
+        /// </summary>
+        private void RememberAssembledRaw(string raw, string assembled, bool missing)
+        {
+            if (!missing) _concatAssembledCache[raw] = assembled;
+            else _concatAssembledCache.Remove(raw);
         }
 
         /// <summary>

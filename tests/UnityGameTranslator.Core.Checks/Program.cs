@@ -47,6 +47,16 @@ namespace UnityGameTranslator.Core.Checks
             // recording; `--frame N` prints what the router logs during that frame.
             // `dotnet run -- tocase <text-trace.jsonl> <component> [first frame] [last frame]` —
             // one component's recorded sequence written out as a routing case (TraceToCase).
+            // `dotnet run -- lineparts <file>` — where a text (the file's content) is cut into lines
+            // by TextRouter.LineParts, to read a recorded text the way the router reads it.
+            if (args.Length >= 2 && args[0] == "lineparts")
+            {
+                Console.OutputEncoding = System.Text.Encoding.UTF8;
+                foreach (string part in TextRouter.LineParts(System.IO.File.ReadAllText(args[1])))
+                    Console.WriteLine("[" + part.Replace("\r", "\\r").Replace("\n", "\\n") + "]");
+                return 0;
+            }
+
             if (args.Length >= 3 && args[0] == "tocase")
                 return TraceToCase.Run(args[1], long.Parse(args[2]),
                     args.Length >= 4 ? int.Parse(args[3]) : int.MinValue,

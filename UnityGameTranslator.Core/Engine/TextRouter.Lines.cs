@@ -35,8 +35,12 @@ namespace UnityGameTranslator.Core
                 string whole = Translate(text, comp, isOwnUI, skipTypewriting: true, skipQueueing: true);
                 if (whole != text) return whole;
 
+                // Cut into lines when one of them is ours — or when the file already knows one of
+                // them on its own: the block was learnt line by line before (cut the first time it
+                // held a line of ours), and looked up whole it stayed in the source language at
+                // every showing, with every one of its lines translated (2026-09-26).
                 var lines = LineParts(text);
-                if (lines.Count > 1 && HasTranslatedLine(lines, isOwnUI))
+                if (lines.Count > 1 && (HasTranslatedLine(lines, isOwnUI) || HasKnownLine(lines, isOwnUI)))
                     return TranslateLines(lines, comp, isOwnUI, skipQueueing);
             }
             return Translate(text, comp, isOwnUI, skipTypewriting: true, skipQueueing: skipQueueing);
@@ -48,8 +52,9 @@ namespace UnityGameTranslator.Core
             foreach (string line in lines)
             {
                 SplitNewlines(line, out string lead, out string core, out string trail);
+                // A line without a letter (a score, a count) is the same in every language: kept.
                 string done = string.IsNullOrEmpty(core) ? ""
-                    : IsOurs(core, isOwnUI) ? core
+                    : !HasLetter(core) || IsOurs(core, isOwnUI) ? core
                     : KeepBreaks(core, Translate(core, comp, isOwnUI, skipTypewriting: true, skipQueueing: skipQueueing));
                 sb.Append(lead).Append(done).Append(trail);
             }
@@ -67,13 +72,44 @@ namespace UnityGameTranslator.Core
             return false;
         }
 
+        /// <summary>Does the file hold one of these lines on its own? A lookup, nothing sent.</summary>
+        private bool HasKnownLine(List<string> lines, bool isOwnUI)
+        {
+            var store = isOwnUI ? _host.OwnUiStore : _host.GameStore;
+            foreach (string line in lines)
+            {
+                string core = line.Trim('\r', '\n');
+                if (core.Length == 0) continue;
+                var look = TextGate.Lookup(core, isOwnUI, store, _host.NormalizeNumbers, _host.Variables, _host.MatchPattern);
+                if (look.Outcome == GateOutcome.Hit) return true;
+            }
+            return false;
+        }
+
         /// <summary>
         /// A line that is a translation of ours: one whole, or one line of one of several lines —
         /// the game rebuilds a text from lines it read back, one at a time.
         /// </summary>
+        /// ⚠ A line without a single letter (numbers, stars, a percentage) reads the same in every
+        /// language: it says nothing about whose it is, and taking it for ours cut whole character
+        /// sheets into lines sent one by one (107 sends instead of 39 on a recorded session).
         private bool IsOurs(string line, bool isOwnUI)
-            => _host.Readback.IsAlreadyTarget(line, NormalizeForCacheLookup(line).TrimEnd(), isOwnUI)
-               || _host.Readback.IsLineOfOurs(line, isOwnUI);
+            => HasLetter(line)
+               && (_host.Readback.IsAlreadyTarget(line, NormalizeForCacheLookup(line).TrimEnd(), isOwnUI)
+                   || _host.Readback.IsLineOfOurs(line, isOwnUI));
+
+        /// <summary>A letter of any script, markup set aside.</summary>
+        private static bool HasLetter(string line)
+        {
+            bool inTag = false;
+            foreach (char c in line)
+            {
+                if (c == '<') inTag = true;
+                else if (c == '>') inTag = false;
+                else if (!inTag && char.IsLetter(c)) return true;
+            }
+            return false;
+        }
 
         /// <summary>
         /// The text cut at its line breaks, each part keeping the break that ends it — never
@@ -270,16 +306,25 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// A text the stabiliser is about to send whole, holding a line that is already a
-        /// translation: its other lines are what is left to translate. Assembled line by line,
-        /// its parts recorded for answers to come back into; null when this is not such a text.
+        /// A text about to be looked up or sent whole — written by the game, or held by a reveal
+        /// that has just settled — holding a line that is already a translation: its other lines
+        /// are what is left to translate. Assembled line by line, its parts recorded for answers
+        /// to come back into; null when this is not such a text (nothing is done then).
         /// </summary>
-        private string AssembleFinalizedLines(long compId, object target, string text)
+        /// <param name="skipQueueing">
+        /// At a write: nothing is sent — the text may still be revealing, and its unfinished lines
+        /// would go out one state after another; the reveal holds it, and what is still unknown
+        /// is sent when it has settled (the stabiliser comes back here with this false).
+        /// </param>
+        private string AssembleLines(long compId, object target, string text, bool isOwnUI, bool skipQueueing)
         {
+            // A translation of ours whole is not a text made of pieces: it is left to the lookup,
+            // which knows it — cut, a name it kept as it was would have gone out on its own.
+            if (_host.Readback.IsAlreadyTarget(text, NormalizeForCacheLookup(text).TrimEnd(), isOwnUI)) return null;
             var lines = LineParts(text);
-            if (lines.Count < 2 || !HasTranslatedLine(lines, false)) return null;
+            if (lines.Count < 2 || !HasTranslatedLine(lines, isOwnUI)) return null;
             var state = StateFor(compId);
-            string assembled = TranslateLines(lines, target, false, skipQueueing: false);
+            string assembled = TranslateLines(lines, target, isOwnUI, skipQueueing);
             state.Deltas = lines;
             state.LastRaw = text;
             state.LastTranslated = assembled;

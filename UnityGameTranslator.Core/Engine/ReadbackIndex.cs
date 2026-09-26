@@ -263,6 +263,9 @@ namespace UnityGameTranslator.Core
             // A slot and the number the game put back in it are one token, its sign and % included
             // on both sides (the slot may or may not have swallowed them: "[!v*0]" held "-20%").
             s = System.Text.RegularExpressions.Regex.Replace(s, @"[-+−]?(\[![A-Za-z]+\*\d+\]|\d+([.,]\d+)*)%?", "#");
+            // Slots side by side are one run of digits once the game fills them ("[!v*0][!v*1]"
+            // shown as "2025100"), and a code in parts reads the same either way (an ISBN).
+            s = System.Text.RegularExpressions.Regex.Replace(s, @"#+", "#");
             s = System.Text.RegularExpressions.Regex.Replace(s, @"\s+", " ").Trim();
             return s.Length == 0 ? null : s;
         }

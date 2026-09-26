@@ -305,7 +305,13 @@ namespace UnityGameTranslator.Core
                     // stayed in the source language on a translated page for good, since nothing
                     // would ever ask for it. With an unknown source the part may be a fragment of
                     // something else, so it is still only looked up.
-                    string transCore = string.IsNullOrEmpty(dCore) ? "" : KeepBreaks(dCore, TranslateUnit(dCore, comp, isOwnUI, skipQueueing: whole == null));
+                    // 🔴 A few characters more, in a frame of their own, is a REVEAL going on after
+                    // our text, not a part: sent, every state it passed through went to the model
+                    // ("e", "ig", "ht 4"). Nothing is sent; the reveal holds the text, and once it
+                    // has settled what is still unknown in it goes, line by line (TextRouter.Lines).
+                    bool revealing = !writtenThisFrame && TextRelations.LooksLikeTypewriterGrowth(appendedTo, textValue);
+                    if (revealing && !isOwnUI) IsTypewritingInProgress(compId, preTranslateText, comp);
+                    string transCore = string.IsNullOrEmpty(dCore) ? "" : KeepBreaks(dCore, TranslateUnit(dCore, comp, isOwnUI, skipQueueing: whole == null || revealing));
                     string translatedDelta = leadNL + transCore + trailNL;
                     textValue = lastTranslatedTarget + translatedDelta;
 
@@ -350,6 +356,19 @@ namespace UnityGameTranslator.Core
             {
                 textValue = AssembleGrowth(state, comp, compId, isOwnUI, preTranslateText,
                                            keptLines, keptTranslation, addedLines, addedAtHead);
+                handledAsConcat = true;
+            }
+
+            // 🔴 A text of several lines holding a line of ours, written whole: the game built it
+            // from lines it read back and lines of its own. Looked up whole, it went to the model
+            // with our lines in it (TextRouter.Lines) — only its own lines go.
+            if (!handledAsConcat && compId != -1 && textValue.IndexOf('\n') >= 0
+                && AssembleLines(compId, comp, textValue, isOwnUI, skipQueueing: true) is string byLines)
+            {
+                // What is known goes up now; the text itself is left to the reveal, which sends
+                // what is still unknown once it has settled — never a line still being written.
+                if (!isOwnUI) IsTypewritingInProgress(compId, preTranslateText, comp);
+                textValue = byLines;
                 handledAsConcat = true;
             }
 

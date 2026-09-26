@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using Newtonsoft.Json.Linq;
 
 namespace UnityGameTranslator.Core.Checks
@@ -45,6 +46,32 @@ namespace UnityGameTranslator.Core.Checks
             int lastFrame = int.MinValue;
             string folder = Path.GetDirectoryName(Path.GetFullPath(tracePath));
 
+            // 🔴 Answers go in at the START of the frame they were recorded in: the worker stores
+            // an answer before the main thread's writes of that frame, while the trace records the
+            // arrival after them. Replayed in trace order, the game read back a translation the
+            // replay did not have yet, and the router saw its own output as new text.
+            var answers = new SortedDictionary<int, List<(string o, string tr)>>();
+            foreach (string line in File.ReadLines(tracePath))
+            {
+                if (line.IndexOf("\"k\":\"arrive\"", StringComparison.Ordinal) < 0) continue;
+                var a = JObject.Parse(line);
+                int af = (int)a["f"];
+                if (!answers.TryGetValue(af, out var list)) answers[af] = list = new List<(string, string)>();
+                list.Add(((string)a["o"], (string)a["tr"]));
+            }
+            void AnswersUpTo(int frame)
+            {
+                while (answers.Count > 0)
+                {
+                    var first = answers.Keys.First();
+                    if (first > frame) break;
+                    // Stored only: what the mod then wrote with it is in the trace as the writes
+                    // it became, and replaying those is replaying the application.
+                    foreach (var (o2, tr2) in answers[first]) host.Add(o2, tr2);
+                    answers.Remove(first);
+                }
+            }
+
             foreach (string line in File.ReadLines(tracePath))
             {
                 if (string.IsNullOrWhiteSpace(line)) continue;
@@ -71,6 +98,7 @@ namespace UnityGameTranslator.Core.Checks
                 // The stabiliser runs once a frame in the game.
                 if (f != lastFrame)
                 {
+                    AnswersUpTo(f);
                     int before = host.Queued.Count;
                     router.ProcessStabilizedTypewriting();
                     for (int i = before; i < host.Queued.Count; i++)
@@ -137,9 +165,7 @@ namespace UnityGameTranslator.Core.Checks
                         shown++;
                         host.Presented(BoxOf((long)o["c"]), (string)o["logical"], (string)o["shown"]);
                         break;
-                    case "arrive":
-                        host.Add((string)o["o"], (string)o["tr"]);
-                        break;
+                    // "arrive": stored at the start of its frame (AnswersUpTo, above).
                 }
             }
 

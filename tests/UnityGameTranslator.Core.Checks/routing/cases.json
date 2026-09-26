@@ -397,6 +397,22 @@
       "queued": [ "Weight 4" ]
     },
     {
+      "id": "lines/a-line-still-being-written-beside-one-of-ours-waits",
+      "why": "🔴 a text holding a line of ours and a line the game is still revealing: the line of ours goes up at once, the other is sent once, whole, when it stops — never the states it passes through",
+      "file": { "Iron Sword\nA plain blade.": "Épée de fer\nUne lame ordinaire." },
+      "steps": [
+        { "f": 5, "t": 1.00, "c": 7, "write": "Iron Sword\nA plain blade.", "shows": "Épée de fer\nUne lame ordinaire." },
+        { "f": 6, "t": 1.03, "c": 8, "write": "Une lame ordinaire.\nW", "shows": "Une lame ordinaire.\nW" },
+        { "f": 7, "t": 1.06, "c": 8, "write": "Une lame ordinaire.\nWe", "shows": "Une lame ordinaire.\nWe" },
+        { "f": 8, "t": 1.09, "c": 8, "write": "Une lame ordinaire.\nWeig", "shows": "Une lame ordinaire.\nWeig" },
+        { "f": 9, "t": 1.12, "c": 8, "write": "Une lame ordinaire.\nWeight", "shows": "Une lame ordinaire.\nWeight" },
+        { "f": 10, "t": 1.15, "c": 8, "write": "Une lame ordinaire.\nWeight 4", "shows": "Une lame ordinaire.\nWeight 4" },
+        { "f": 60, "t": 2.0, "tick": true },
+        { "f": 61, "t": 2.1, "c": 8, "arrive": { "o": "Weight 4", "tr": "Poids 4" }, "shows": "Une lame ordinaire.\nPoids 4" }
+      ],
+      "queued": [ "Weight 4" ]
+    },
+    {
       "id": "lines/a-reveal-crossing-a-line-break-is-one-line",
       "why": "no false positive: a text revealed letter by letter across a line break grows a few characters at a time — never a block of whole lines — and is sent once, whole, when it stops",
       "file": {},

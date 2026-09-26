@@ -3121,15 +3121,17 @@ namespace UnityGameTranslator.Core
 
                             // For concat components: the delta doesn't match the full text.
                             // Re-assemble using stored deltas + current cache translations.
-                            if (TranslatorPatches.IsConcatComponent(skipId))
+                            bool concat = TranslatorPatches.HasShownParts(skipId, comp);
+                            string reassembled = concat ? TranslatorPatches.ReassembleConcat(skipId, comp) : null;
+                            if (reassembled != null)
                             {
-                                string reassembled = TranslatorPatches.ReassembleConcat(skipId, comp);
-                                if (reassembled != null)
+                                try { TypeHelper.SetText(comp, reassembled); }
+                                catch (Exception ex)
                                 {
-                                    try { TypeHelper.SetText(comp, reassembled); }
-                                    catch { }
+                                    TranslatorCore.LogWarning($"[Apply REASSEMBLE] comp={skipId} could not be written: {ex.GetType().Name}: {ex.Message}");
                                 }
                             }
+                            TranslatorCore.LogDebug($"[Apply REASSEMBLE] comp={skipId} concat={concat} reassembled={(reassembled == null ? "none" : $"{reassembled.Length}c '{(reassembled.Length > 40 ? reassembled.Substring(0, 40) + "..." : reassembled)}'")}");
                         }
                         TranslatorCore.LogDebug($"[Apply SKIP] comp={skipId} expected='{expectedPreview}' actual='{actualPreview}'");
                     }

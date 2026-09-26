@@ -61,6 +61,17 @@ namespace UnityGameTranslator.Core.TextShaping
         internal static int PresentCount;
 
         /// <summary>
+        /// One form written to a component, said twice: as our own output (the gates refuse to
+        /// learn it — D8), and as what this component now holds for its translation, which is what
+        /// a game reads back when it appends to a text (TranslatorPatches.DetectReadBack).
+        /// </summary>
+        private static void RegisterShown(long compId, string presented, string logical)
+        {
+            TranslatorCore.RegisterPresentedText(presented, logical);
+            TranslatorPatches.NotePresented(compId, logical, presented);
+        }
+
+        /// <summary>
         /// A write that left a setter prefix WITHOUT going through <see cref="Present"/>: the
         /// translations switched off, the font's translation off, a text skipped or not to be
         /// translated. Present is what gives a component its own right-to-left flag, alignment
@@ -174,7 +185,7 @@ namespace UnityGameTranslator.Core.TextShaping
                     }
                     try { prop.SetValue(instance, true, null); } catch { }
                     MirrorAlignment(instance, compId, mirror);
-                    TranslatorCore.RegisterPresentedText(flagged, value);
+                    RegisterShown(compId, flagged, value);
                     Log(compId, "flagged", value, flagged);
                     value = flagged;
                     return;
@@ -187,7 +198,7 @@ namespace UnityGameTranslator.Core.TextShaping
                 if (TypeHelper.TextMeshType != null && TypeHelper.TextMeshType.IsAssignableFrom(type))
                 {
                     string perLine = ComposeVisualPerLine(value);
-                    TranslatorCore.RegisterPresentedText(perLine, value);
+                    RegisterShown(compId, perLine, value);
                     MirrorAlignment(instance, compId, mirror);
                     Log(compId, "visual/lines", value, perLine);
                     value = perLine;
@@ -199,7 +210,7 @@ namespace UnityGameTranslator.Core.TextShaping
                 if (TranslatorPatches.Tk2dType != null && TranslatorPatches.Tk2dType.IsAssignableFrom(type))
                 {
                     string final = ComposeTk2dPerLine(instance, value);
-                    TranslatorCore.RegisterPresentedText(final, value);
+                    RegisterShown(compId, final, value);
                     MirrorAlignment(instance, compId, mirror);
                     Log(compId, "visual/tk2d", value, final);
                     value = final;
@@ -301,7 +312,7 @@ namespace UnityGameTranslator.Core.TextShaping
                     UIToolkitSupport.RestoreWrap(instance);
                     string shapedNow = RtlComposer.ShapeLogicalOnly(value);
                     string visualNow = RtlComposer.Compose(value, RtlOutput.VisualOrder);
-                    TranslatorCore.RegisterPresentedText(visualNow, logicalSource);
+                    RegisterShown(compId, visualNow, logicalSource);
                     UIToolkitSupport.DeferUntilLaidOut(instance, logicalSource, value, shapedNow, visualNow, mirror);
                     Log(compId, "visual+walk/uitk", value, visualNow);
                     value = visualNow;
@@ -311,7 +322,7 @@ namespace UnityGameTranslator.Core.TextShaping
                 // Everything else: visual order — correct single-line. This branch is now the
                 // documented EXCEPTION (unknown frameworks), not the rule, and it says so.
                 string composed = RtlComposer.Compose(value, RtlOutput.VisualOrder);
-                TranslatorCore.RegisterPresentedText(composed, value);
+                RegisterShown(compId, composed, value);
                 MirrorAlignment(instance, compId, mirror);
                 if (_fallbackLogBudget > 0)
                 {
@@ -389,7 +400,7 @@ namespace UnityGameTranslator.Core.TextShaping
                 working = IndicReorderer.Reorder(working);
 
             if (ReferenceEquals(working, logical) || working == logical) return;
-            TranslatorCore.RegisterPresentedText(working, logical);
+            RegisterShown(compId, working, logical);
             Log(compId, (needsBreak ? "words+" : "") + (shaped ? "opentype" : needsReorder ? "indic" : "none"), logical, working);
             value = working;
 
@@ -483,7 +494,7 @@ namespace UnityGameTranslator.Core.TextShaping
         {
             string shapedLogical = RtlComposer.ShapeLogicalOnly(value);
             string assigned = assignedForm ?? shapedLogical;
-            TranslatorCore.RegisterPresentedText(assigned, logicalForRecord ?? value);
+            RegisterShown(compId, assigned, logicalForRecord ?? value);
             if (compId != -1)
                 _reflows[compId] = new Reflow
                 {
@@ -593,7 +604,7 @@ namespace UnityGameTranslator.Core.TextShaping
                         if (final == null) final = RtlComposer.Compose(entry.Logical, RtlOutput.VisualOrder);
                     }
 
-                    TranslatorCore.RegisterPresentedText(final, entry.Logical);
+                    RegisterShown(id, final, entry.Logical);
                     Log(id, "reflow/final", entry.Logical, final);
 
                     {

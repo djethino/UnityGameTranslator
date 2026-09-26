@@ -2037,6 +2037,11 @@ namespace UnityGameTranslator.Core
             // --- Read-back: what we translated, so an append can be reconstructed ---
             public string ReadBackSource;
             public string ReadBackTranslated;
+            // --- What the component actually holds when presenting changed our text ---
+            // (shaped right-to-left, word breaks, reordered signs): that is what a game reads back
+            // and appends to. PresentedFrom is the logical text it stands for, before any stage.
+            public string Presented;
+            public string PresentedFrom;
 
             // --- Typewriting ---
             public string TypewritingText;
@@ -2097,11 +2102,28 @@ namespace UnityGameTranslator.Core
         // Fast lookup for translated values (to skip target-language text that comes back)
         private static readonly HashSet<string> _concatTranslatedValues = new HashSet<string>();
 
-        /// <summary>Check if a component is in concat mode.</summary>
-        public static bool IsConcatComponent(long compId)
+        /// <summary>
+        /// Whether this component's text was built from parts it still shows — so a translation
+        /// arriving late for one of them can be put back into the whole (<see cref="ReassembleConcat"/>).
+        ///
+        /// ⚠ Parts, not the concat MODE: a game appending to a text we translated (CONCAT-FR) builds
+        /// a page in parts too without ever being flagged, and asking about the mode left its late
+        /// translations with nowhere to go — the page stayed half in the source language.
+        /// </summary>
+        public static bool HasShownParts(long compId, object component)
         {
             var state = PeekState(compId);
-            return state != null && state.Mode == TextMode.Concat;
+            if (state?.Deltas == null || state.Deltas.Count == 0 || state.LastTranslated == null) return false;
+
+            // The parts must be what the text on screen was made from: a component in concat
+            // mode, or one whose tracked source IS those parts joined. A text translated normally
+            // since then tracks its own source, and its leftover parts are not its own.
+            if (state.Mode != TextMode.Concat && state.ReadBackSource != string.Join("", state.Deltas)) return false;
+
+            // ⚠ Only while the component still shows what the parts made: a page the game has
+            // replaced since must never be overwritten by the rebuild of the one before it.
+            string current = TypeHelper.GetText(component);
+            return current == state.LastTranslated || current == ShownFormOf(state, state.LastTranslated);
         }
 
         /// <summary>Look up a text in the concat assembled cache. Returns FR translation or null.</summary>
@@ -2123,6 +2145,24 @@ namespace UnityGameTranslator.Core
             if (deltas == null || deltas.Count == 0)
                 return null;
 
+            // The whole text first: a file holding it as one entry translates it as one, rather
+            // than as parts glued together (or parts still in the source language).
+            string rawKey = string.Join("", deltas);
+
+            // 🔴 The previous assembly goes first: this is what it is rebuilt to replace, and the
+            // lookup below answers from it before the file — the old mix of translated and source
+            // parts came back as "the whole page's translation" and was written again, so a late
+            // translation never reached the screen.
+            InvalidateConcatCache(rawKey);
+            string whole = TranslatorCore.TranslateTextWithTracking(rawKey, component, false, skipTypewriting: true, skipQueueing: true);
+            if (whole != rawKey)
+            {
+                _concatAssembledCache[rawKey] = whole;
+                _concatTranslatedValues.Add(whole);
+                state.LastTranslated = whole;
+                return whole;
+            }
+
             var result = new System.Text.StringBuilder();
             foreach (string part in deltas)
             {
@@ -2140,8 +2180,13 @@ namespace UnityGameTranslator.Core
             }
 
             string assembled = result.ToString();
+
+            // What the component now shows, and what it was made from: the next append builds on
+            // THIS text, not on the one assembled before the late translation arrived.
+            state.LastTranslated = assembled;
+            TrackTranslation(compId, rawKey, assembled);
+
             // Update caches
-            string rawKey = string.Join("", deltas);
             _concatAssembledCache[rawKey] = assembled;
             _concatTranslatedValues.Add(assembled);
 
@@ -2928,6 +2973,36 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// Record the form a component is displayed in when presenting changed our text. Called by
+        /// the presenter for every form it writes. The logical text is found by walking back the
+        /// stages (word breaks, then right-to-left, then a reflow's final lines): each one
+        /// registered what it came from, so the chain is followed rather than guessed.
+        /// </summary>
+        internal static void NotePresented(long compId, string logical, string presented)
+        {
+            if (compId == -1 || string.IsNullOrEmpty(logical) || string.IsNullOrEmpty(presented)) return;
+            // Bounded by the number of presentation stages there are (syllabic, right-to-left,
+            // reflow) — each step back is one stage.
+            string root = logical;
+            for (int stage = 0; stage < 3; stage++)
+            {
+                string before = TranslatorCore.TryGetPresentedLogical(root);
+                if (before == null) break;
+                root = before;
+            }
+            var state = StateFor(compId);
+            state.Presented = presented;
+            state.PresentedFrom = root;
+        }
+
+        /// <summary>
+        /// The form this component shows for <paramref name="logical"/> when presenting changed it,
+        /// or <paramref name="logical"/> itself. What a game that reads the component back holds.
+        /// </summary>
+        private static string ShownFormOf(ComponentTextState state, string logical) =>
+            state.Presented != null && state.PresentedFrom == logical ? state.Presented : logical;
+
+        /// <summary>
         /// Detect if incoming text is a game read-back of translated text with appended content.
         /// If so, reconstruct the source-language equivalent and VERIFY it exists in cache.
         /// Returns null if not a read-back or if reconstructed text has no cache hit.
@@ -2941,22 +3016,37 @@ namespace UnityGameTranslator.Core
             string original = state.ReadBackSource;
             string translated = state.ReadBackTranslated;
 
+            // 🔴 What the component HOLDS, which is not the translation when presenting changed it
+            // (shaped right-to-left, word breaks): that form is what the game reads back and
+            // appends to. Matching the logical translation alone missed every such append.
+            string shown = ShownFormOf(state, translated);
+
             // The incoming text must START WITH the translated text but be LONGER
             // (the game appended something to the read-back).
             // ⚠ The SAME question the typewriting and concat detectors ask, so it asks it with the
             // same words — it was written out separately here and kept the linguistic comparison
             // when the other six moved to ordinal, which would have cut the suffix in the wrong
             // place on any text carrying a soft hyphen or a joiner.
-            if (TextRelations.Grows(translated, incomingText))
+            string prefix = TextRelations.Grows(translated, incomingText) ? translated
+                          : TextRelations.Grows(shown, incomingText) ? shown
+                          : null;
+            if (prefix != null)
             {
                 // Reconstruct: original source text + the appended suffix
-                string suffix = incomingText.Substring(translated.Length);
+                string suffix = incomingText.Substring(prefix.Length);
                 string reconstructed = original + suffix;
 
                 // SAFETY: only accept the reconstruction if it produces a cache hit.
                 // If the reconstructed text doesn't match any known key, this is NOT
                 // a read-back — it's a legitimate new text that happens to start with
                 // a previous translation. Return null to let normal flow handle it.
+                //
+                // 🔴 And not only against false positives: every caller takes what comes back as a
+                // TRANSLATION (TranslateTextWithTracking indexes it as our own output). Returned
+                // without a key behind it, the source text was learnt as "already translated" and
+                // the page stayed in the source language for good. An append the file has no whole
+                // key for is the concat path's job (CONCAT-FR in RouteText), which translates the
+                // appended part on its own.
                 string normalizedReconstructed = TranslatorCore.NormalizeForCacheLookup(reconstructed);
                 if (!TranslatorCore.TranslationCache.ContainsKey(normalizedReconstructed))
                 {
@@ -3498,9 +3588,15 @@ namespace UnityGameTranslator.Core
                 textValue = concatCached;
                 concatCacheHit = true;
             }
-            else if (_concatTranslatedValues.Contains(textValue))
+            else if (_concatTranslatedValues.Contains(textValue)
+                     || (TranslatorCore.TryGetPresentedLogical(textValue) is string shownLogical
+                         && _concatTranslatedValues.Contains(shownLogical)))
             {
                 // Text IS already a translated result → keep as-is
+                // ⚠ Its presented form too (shaped right-to-left, word breaks): that is what the
+                // component holds, and what a scanner refresh sets again. Unrecognised, that echo
+                // of our own assembly was taken for a new text, reset the component's parts, and a
+                // translation arriving late had nothing left to be put back into.
                 concatCacheHit = true;
             }
 
@@ -3592,6 +3688,8 @@ namespace UnityGameTranslator.Core
                 {
                     // Text grew — extract delta (pure source language)
                     string delta = textValue.Substring(lastRaw.Length);
+                    string priorPairSource = state.ReadBackSource;
+                    string priorPairTranslated = state.ReadBackTranslated;
 
                     // Store delta for re-assembly later (when AI translations arrive)
                     List<string> deltas = state.Deltas;
@@ -3611,21 +3709,46 @@ namespace UnityGameTranslator.Core
                     while (deltaCore.Length > 0 && deltaCore[0] == '\n') { leadingNL += "\n"; deltaCore = deltaCore.Substring(1); }
                     while (deltaCore.Length > 0 && deltaCore[deltaCore.Length - 1] == '\n') { trailingNL = "\n" + trailingNL; deltaCore = deltaCore.Substring(0, deltaCore.Length - 1); }
 
-                    // Translate core delta directly (skip TW — concat deltas are immediate)
-                    string translatedCore = string.IsNullOrEmpty(deltaCore) ? "" : TranslatorCore.TranslateTextWithTracking(deltaCore, comp, isOwnUI, skipTypewriting: true);
-                    string translatedDelta = leadingNL + translatedCore + trailingNL;
-
                     // Build display: previous translated + translated delta
                     string lastTrans = state.LastTranslated;
-                    if (string.IsNullOrEmpty(lastTrans))
-                    {
-                        // First part wasn't translated yet (TW was capturing it before concat was detected).
-                        // Translate it now.
-                        lastTrans = TranslatorCore.TranslateTextWithTracking(lastRaw, comp, isOwnUI, skipTypewriting: true);
-                        if (string.IsNullOrEmpty(lastTrans)) lastTrans = lastRaw;
-                    }
 
-                    textValue = lastTrans + translatedDelta;
+                    // What the text on screen was made from — the tracked pair, when it IS what is
+                    // on screen; the raw base when nothing was translated yet.
+                    string lastSource = string.IsNullOrEmpty(lastTrans) ? lastRaw
+                        : priorPairTranslated != null && priorPairTranslated == lastTrans ? priorPairSource
+                        : null;
+                    string whole = lastSource != null ? lastSource + delta : null;
+
+                    // 🔴 The whole text first, as CONCAT-FR does: a file holding it as one entry
+                    // (a page written sentence by sentence and captured whole) translates it as one.
+                    // Neither part is queued then — the whole answered.
+                    string wholeTranslated = whole != null
+                        ? TranslatorCore.TranslateTextWithTracking(whole, comp, isOwnUI, skipTypewriting: true, skipQueueing: true)
+                        : null;
+
+                    if (whole != null && wholeTranslated != whole)
+                    {
+                        textValue = wholeTranslated;
+                    }
+                    else
+                    {
+                        // Translate core delta directly (skip TW — concat deltas are immediate)
+                        string translatedCore = string.IsNullOrEmpty(deltaCore) ? "" : TranslatorCore.TranslateTextWithTracking(deltaCore, comp, isOwnUI, skipTypewriting: true);
+                        string translatedDelta = leadingNL + translatedCore + trailingNL;
+
+                        if (string.IsNullOrEmpty(lastTrans))
+                        {
+                            // First part wasn't translated yet (TW was capturing it before concat was detected).
+                            // Translate it now.
+                            lastTrans = TranslatorCore.TranslateTextWithTracking(lastRaw, comp, isOwnUI, skipTypewriting: true);
+                            if (string.IsNullOrEmpty(lastTrans)) lastTrans = lastRaw;
+                        }
+
+                        textValue = lastTrans + translatedDelta;
+                        // What this assembled text was made from, so the next append can try the
+                        // whole again — the parts' own translations just replaced the tracked pair.
+                        if (whole != null) TrackTranslation(compId, whole, textValue);
+                    }
                     state.LastRaw = preTranslateText; // full raw text so far
                     state.LastTranslated = textValue;
                     // Cache the assembled result: raw source → assembled target (runtime only)
@@ -3655,13 +3778,21 @@ namespace UnityGameTranslator.Core
 
             // Also detect concat for non-flagged components (the game appending source text to
             // the translation we already wrote)
+            // 🔴 Against what the component HOLDS as well as against the translation: when
+            // presenting changed it (shaped right-to-left, word breaks), the game reads that form
+            // back and appends to it. Matched against the logical translation alone, such an append
+            // was never seen — our shaped text plus the game's new sentence reached the screen as
+            // one untranslatable string, the sentence reading backwards under the right-to-left flag.
             string lastTranslatedTarget = state?.LastTranslated;
-            if (!handledAsConcat
-                && !string.IsNullOrEmpty(lastTranslatedTarget)
-                && TextRelations.Grows(lastTranslatedTarget, textValue))
+            string lastShown = !string.IsNullOrEmpty(lastTranslatedTarget) ? ShownFormOf(state, lastTranslatedTarget) : null;
+            string appendedTo = handledAsConcat || lastShown == null ? null
+                              : TextRelations.Grows(lastTranslatedTarget, textValue) ? lastTranslatedTarget
+                              : TextRelations.Grows(lastShown, textValue) ? lastShown
+                              : null;
+            if (appendedTo != null)
             {
                 // Game appended untranslated text to our translation → extract that delta
-                string delta = textValue.Substring(lastTranslatedTarget.Length);
+                string delta = textValue.Substring(appendedTo.Length);
 
                 // Preserve leading/trailing newlines
                 string leadNL = "", trailNL = "";
@@ -3669,9 +3800,51 @@ namespace UnityGameTranslator.Core
                 while (dCore.Length > 0 && dCore[0] == '\n') { leadNL += "\n"; dCore = dCore.Substring(1); }
                 while (dCore.Length > 0 && dCore[dCore.Length - 1] == '\n') { trailNL = "\n" + trailNL; dCore = dCore.Substring(0, dCore.Length - 1); }
 
-                string transCore = string.IsNullOrEmpty(dCore) ? "" : TranslatorCore.TranslateTextWithTracking(dCore, comp, isOwnUI, skipTypewriting: true, skipQueueing: true);
-                string translatedDelta = leadNL + transCore + trailNL;
-                textValue = lastTranslatedTarget + translatedDelta;
+                // 🔴 The WHOLE text first, when its source is known: what the translation on
+                // screen was made from, plus what the game appended. A file holding the page as one
+                // entry (a book written sentence by sentence and captured whole) had it, and the
+                // sentence alone was not in it — the appended part stayed in the source language
+                // beside a translated page until the game happened to rewrite the whole.
+                // ⚠ The source is known only when the tracked pair IS what is on screen.
+                string priorSource = state.ReadBackTranslated != null && state.ReadBackTranslated == lastTranslatedTarget
+                    ? state.ReadBackSource : null;
+                string whole = priorSource != null ? priorSource + delta : null;
+                string wholeTranslated = whole != null
+                    ? TranslatorCore.TranslateTextWithTracking(whole, comp, isOwnUI, skipTypewriting: true, skipQueueing: true)
+                    : null;
+
+                if (whole != null && wholeTranslated != whole)
+                {
+                    // A hit: tracked inside, so the next append starts from this page.
+                    textValue = wholeTranslated;
+                }
+                else
+                {
+                    // 🔴 The appended part is QUEUED when its source is known, as the concat
+                    // branch queues its parts. It was never sent: a sentence the file did not hold
+                    // stayed in the source language on a translated page for good, since nothing
+                    // would ever ask for it. With an unknown source the part may be a fragment of
+                    // something else, so it is still only looked up.
+                    string transCore = string.IsNullOrEmpty(dCore) ? "" : TranslatorCore.TranslateTextWithTracking(dCore, comp, isOwnUI, skipTypewriting: true, skipQueueing: whole == null);
+                    string translatedDelta = leadNL + transCore + trailNL;
+                    textValue = lastTranslatedTarget + translatedDelta;
+
+                    if (whole != null)
+                    {
+                        // What this assembled text was made from, so the next append can try the
+                        // whole again — the delta's own translation just replaced the tracked pair.
+                        TrackTranslation(compId, whole, textValue);
+
+                        // And its parts, so a translation arriving late for one of them is put
+                        // back into the page (HasShownParts → ReassembleConcat) — the same record
+                        // the concat branch keeps. Continued when the parts already make the
+                        // source this append grows from; started over otherwise.
+                        var parts = state.Deltas;
+                        if (parts == null || string.Join("", parts) != priorSource)
+                            parts = state.Deltas = new List<string> { priorSource };
+                        parts.Add(delta);
+                    }
+                }
                 state.LastTranslated = textValue;
                 // Also cache with the raw text as key (for scanner refresh lookups)
                 _concatAssembledCache[preTranslateText] = textValue;

@@ -3323,12 +3323,14 @@ namespace UnityGameTranslator.Core
             {
                 long id = TypeHelper.GetInstanceID(__instance);
                 if (id == -1 || _revealCountsOnShown.Contains(id)) return;
-                if (!TranslatorCore.Router.TryGetShownPair(id, out string pairSource, out string pairShown)) return;
+                if (!TranslatorCore.Router.TryGetShownPair(id, out string pairSource, out string pairShown, out string pairPresented)) return;
 
                 // Still showing that translation? The getter hands the game the original, so either
-                // side of the pair means yes; anything else is a text this record is not about.
+                // side of the pair means yes — and so does the form the translation is displayed
+                // in (shaped right-to-left), which is what such a component actually holds.
+                // Anything else is a text this record is not about.
                 string current = TypeHelper.GetText(__instance);
-                if (current != pairSource && current != pairShown) return;
+                if (current != pairSource && current != pairShown && current != pairPresented) return;
 
                 if (!_revealLengths.TryGetValue(id, out var lengths)
                     || !ReferenceEquals(lengths.Source, pairSource) || !ReferenceEquals(lengths.Shown, pairShown))

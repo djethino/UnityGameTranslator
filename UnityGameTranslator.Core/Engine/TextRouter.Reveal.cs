@@ -392,11 +392,18 @@ namespace UnityGameTranslator.Core
         /// The pair this component shows — source and translation — when it has one: what a
         /// reveal counted on the original is carried over to (Engine/RevealScale).
         /// </summary>
-        public bool TryGetShownPair(long compId, out string source, out string translated)
+        /// <param name="presented">
+        /// The form the translation is displayed in — itself when presenting changed nothing. A
+        /// component holding shaped right-to-left text holds THIS, and a reveal on it was never
+        /// recognised as one on our translation (a recorded book, 2026-09-26: 572 reveal counts,
+        /// none carried over).
+        /// </param>
+        public bool TryGetShownPair(long compId, out string source, out string translated, out string presented)
         {
             var state = PeekState(compId);
             source = state?.ReadBackSource;
             translated = state?.ReadBackTranslated;
+            presented = state != null && translated != null ? ShownFormOf(state, translated) : null;
             return source != null && translated != null;
         }
     }

@@ -2166,26 +2166,27 @@ namespace UnityGameTranslator.Core
                     tMark = probe.Watch.ElapsedTicks;
                 }
 
-                // Did the write change anything? Two questions, and the second exists because the
-                // first cannot answer alone.
+                // Did the write change anything? Asked against what THIS pass last had drawn, never
+                // against what the component reads now.
                 //
                 // 🔴 **The getter is patched and translates on READ.** So the string this holds is
                 // already the translated one, and reading it back after the write compares a
                 // translation with itself — blind to a component that just went from the original
-                // to the translation. That case is named instead of guessed: the value is one of
-                // ours, which the reverse index answers in constant time. Measured on the game
-                // that showed the freeze: 12 components out of 952, so the rebuild stays where it
-                // matters and goes from 1 678 ms to about 20 (2026-09-18).
+                // to the translation. The first answer to that was "the value is one of ours, so
+                // rebuild": true of the one that just changed, and just as true of every component
+                // that has shown the same translation for minutes. Measured 2026-09-26: 206 of 327
+                // rebuilt for nothing, 400 ms of a frame, once a second while the AI answered.
+                // What the pass drew last time tells the two apart: a text that differs from it
+                // is new to the mesh, one equal to it is not.
+                var after = textProp.GetValue(kvp.Value, null) as string;
                 bool showsSomethingNew = glyphsChanged
-                                         || TranslatorCore.IsReadbackOfOwnTranslation(currentText);
-                if (!showsSomethingNew)
-                {
-                    var after = textProp.GetValue(kvp.Value, null) as string;
-                    showsSomethingNew = !string.Equals(after, currentText, StringComparison.Ordinal);
-                }
+                    || !TranslatorPatches.PatchRefDrawn.TryGetValue(kvp.Key, out string drawn)
+                    || !string.Equals(drawn, after, StringComparison.Ordinal);
 
                 if (showsSomethingNew)
                 {
+                    TranslatorPatches.PatchRefDrawn[kvp.Key] = after;
+
                     // Pass 2 covers components seen by the patch but missed by the scanner pass —
                     // typically because their GameObject was inactive at scan time. On IL2CPP the
                     // property setter alone doesn't always force a mesh + material rebuild, so we

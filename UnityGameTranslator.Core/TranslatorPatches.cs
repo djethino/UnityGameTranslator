@@ -1983,6 +1983,7 @@ namespace UnityGameTranslator.Core
             _altTMPFontReplacedIds.Clear();
             _fontNameCache.Clear();
             _patchedComponentRefs.Clear();
+            PatchRefDrawn.Clear();
             TranslatorCore.Router.Clear();
         }
 
@@ -2001,6 +2002,7 @@ namespace UnityGameTranslator.Core
             foreach (int id in deadIds)
             {
                 _patchedComponentRefs.Remove(id);
+                PatchRefDrawn.Remove(id);
                 _fontNameCache.Remove(id);
                 _originalFontSizes.Remove(id);
                 _trueOriginalFontSizes.Remove(id);
@@ -2710,6 +2712,13 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static Dictionary<int, string> FontNameCache => _fontNameCache;
         public static Dictionary<int, object> PatchedComponentRefs => _patchedComponentRefs;
+
+        /// <summary>
+        /// What the scanner's refresh last had each patch-seen component draw — so it rebuilds a
+        /// mesh only when the text changed since, not every time the text is one of ours. See
+        /// TranslatorScanner.RefreshPatchRef. Forgotten with the component it describes.
+        /// </summary>
+        internal static readonly Dictionary<int, string> PatchRefDrawn = new Dictionary<int, string>();
 
         /// <summary>
         /// What an id points at when the router kept no target for it, whichever framework it came

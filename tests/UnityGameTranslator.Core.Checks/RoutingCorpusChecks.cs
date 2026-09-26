@@ -52,6 +52,8 @@ namespace UnityGameTranslator.Core.Checks
         private static string Replay(JObject c)
         {
             var host = new ReplayHost { RightToLeft = (string)c["present"] == "rtl" };
+            // `debugFrame`: prints the router's log for that frame — for reading a case, never left in one.
+            if (c["debugFrame"] != null) host.DebugFrame = (int)c["debugFrame"];
             var router = new TextRouter(host);
             host.Router = router;
 
@@ -87,6 +89,13 @@ namespace UnityGameTranslator.Core.Checks
                     // A refresh sets again what the component holds (the scanner's sweep, an Apply
                     // in the Fonts tab): our own output coming back through the setter.
                     host.GameWrites(box, box.Shown);
+                else if (step["sweep"] != null)
+                {
+                    // The scene sweep: reads the component back, asks the lookup (not the router),
+                    // and writes through the setter whatever differs.
+                    string swept = router.Translate(box.Shown, box);
+                    if (swept != box.Shown) host.GameWrites(box, swept);
+                }
                 else if (step["arrive"] is JObject arrival)
                     host.Arrive((string)arrival["o"], (string)arrival["tr"]);
 

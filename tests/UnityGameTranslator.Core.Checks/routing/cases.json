@@ -244,6 +244,53 @@
         { "f": 90, "t": 3.0, "tick": true }
       ],
       "queued": [ "Now all the fish are dead." ]
+    },
+    {
+      "id": "layout/our-translation-written-back-then-laid-out-again",
+      "why": "🔴 at its next showing the game writes back the translation it read from the component, whole, in a new frame, and lays it out again: that whole is answered early as ours, and the pass on it must still be followed — the words of our own translation were sent to the model one by one (2026-09-26)",
+      "file": { "Those fish are dead now.": "Ces poissons sont morts." },
+      "steps": [
+        { "f": 5, "t": 1.0, "write": "Those fish are dead now.", "shows": "Ces poissons sont morts." },
+        { "f": 5, "t": 1.0, "write": "Ces ", "shows": "Ces " },
+        { "f": 5, "t": 1.0, "write": "Ces poissons ", "shows": "Ces poissons " },
+        { "f": 5, "t": 1.0, "write": "Ces poissons sont morts.", "shows": "Ces poissons sont morts." },
+        { "f": 60, "t": 2.0, "write": "Ces poissons sont morts.", "shows": "Ces poissons sont morts." },
+        { "f": 60, "t": 2.0, "write": "Ces ", "shows": "Ces " },
+        { "f": 60, "t": 2.0, "write": "Ces poissons ", "shows": "Ces poissons " },
+        { "f": 60, "t": 2.0, "write": "Ces poissons sont ", "shows": "Ces poissons sont " },
+        { "f": 60, "t": 2.0, "write": "Ces poissons sont morts.", "shows": "Ces poissons sont morts." },
+        { "f": 90, "t": 3.0, "tick": true }
+      ],
+      "queued": []
+    },
+    {
+      "id": "layout/a-line-that-fits-is-translated-at-its-next-showing",
+      "why": "a text short enough for one line comes out of the pass exactly as it went in: it must not be remembered as the game's layout, or it would stay in the source language at every later showing",
+      "file": {},
+      "steps": [
+        { "f": 5, "t": 1.0, "write": "It's messed up!", "shows": "It's messed up!" },
+        { "f": 5, "t": 1.0, "write": "It's ", "shows": "It's " },
+        { "f": 5, "t": 1.0, "write": "It's messed ", "shows": "It's messed " },
+        { "f": 5, "t": 1.0, "write": "It's messed up!", "shows": "It's messed up!" },
+        { "f": 60, "t": 2.0, "tick": true },
+        { "f": 61, "t": 2.1, "arrive": { "o": "It's messed up!", "tr": "C'est n'importe quoi !" }, "shows": "C'est n'importe quoi !" },
+        { "f": 200, "t": 5.0, "write": "It's messed up!", "shows": "C'est n'importe quoi !" }
+      ],
+      "queued": [ "It's messed up!" ]
+    },
+    {
+      "id": "layout/the-sweep-reading-back-a-layout-sends-nothing",
+      "why": "🔴 the scene sweep reads the game's layout back and asks the lookup directly: taken for a new line, it replaced the whole the reveal was holding (dropped, never sent) and went to the model with the game's line breaks in it, a key no later showing matches (2026-09-26)",
+      "file": {},
+      "steps": [
+        { "f": 5, "t": 1.0, "write": "Now all the fish are dead.", "shows": "Now all the fish are dead." },
+        { "f": 5, "t": 1.0, "write": "Now ", "shows": "Now " },
+        { "f": 5, "t": 1.0, "write": "Now all the ", "shows": "Now all the " },
+        { "f": 5, "t": 1.0, "write": "Now all the \r\nfish are dead.", "shows": "Now all the \r\nfish are dead." },
+        { "f": 8, "t": 1.05, "sweep": true, "shows": "Now all the \r\nfish are dead." },
+        { "f": 90, "t": 3.0, "tick": true }
+      ],
+      "queued": [ "Now all the fish are dead." ]
     }
   ]
 }

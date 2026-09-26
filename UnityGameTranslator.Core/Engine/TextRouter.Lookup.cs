@@ -49,6 +49,14 @@ namespace UnityGameTranslator.Core
             if (TextNormalization.IsNumericOrSymbol(text))
                 return text;
 
+            // 🔴 The game's own layout of a text already held or sent whole (TextRouter.Route,
+            // "layout pass"). The setter never gets this far with it; the scene sweep does, reading
+            // the component back — and took it for a new line: it replaced the whole the reveal was
+            // holding (dropped, never sent), then went to the model with the game's line breaks in
+            // it, a key no later write of that line would ever match (2026-09-26).
+            if (_layoutResults.Contains(text))
+                return text;
+
             long compId = component != null ? _host.IdOf(component) : -1;
 
             // Read-back detection: if the game read translated text and appended

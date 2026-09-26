@@ -24,6 +24,30 @@ namespace UnityGameTranslator.Core
             // Own UI (UI-specific translation prompt) — computed once near the top.
             string preTranslateText = textValue;
 
+            // 🔴 === A LAYOUT PASS: the game places its own line breaks — leave it alone ===
+            // A game that cannot rely on its text component to wrap (a legacy TextMesh has no
+            // wrapping at all) writes the whole text, then rebuilds it from its first word, word
+            // by word, reading the component back and breaking the line where it overflows.
+            // Its input is what the component HOLDS — so if the whole was translated, the game
+            // lays out the translation itself, with its own measure: exactly what its developer
+            // meant. Every step of that pass is the start of a text we already decided about.
+            // Routed like new text, each word was translated and sent on its own, and the game
+            // built on our mixture ("sewage into le rivière à night"). Recorded in a game on
+            // 2026-09-26; analyse/banc-routage-texte.md, "remise en page".
+            //
+            // ⚠ First, before every early answer below: the whole the pass starts from may be
+            // one of them (our translation written back by the game), and a pass is recognised
+            // from what the component holds and the frame it was written in — not from what the
+            // branches below happened to record.
+            if (compId != -1)
+            {
+                var written = StateFor(compId);
+                bool sameFrame = written.WriteFrame == _host.Frame;
+                written.WriteFrame = _host.Frame;
+                if (FollowLayoutPass(written, comp, compId, textValue, sameFrame)) return RouteOutcome.Translated;
+            }
+            if (_layoutResults.Contains(textValue)) return RouteOutcome.Translated;
+
             // Check concat assembled cache: if this exact text was already assembled
             // by the concat system, apply the cached translation immediately.
             // This prevents scanner refresh from re-queuing assembled texts.
@@ -74,19 +98,6 @@ namespace UnityGameTranslator.Core
                     return RouteOutcome.StopButRescale;
                 }
             }
-
-            // 🔴 === A LAYOUT PASS: the game places its own line breaks — leave it alone ===
-            // A game that cannot rely on its text component to wrap (a legacy TextMesh has no
-            // wrapping at all) writes the whole text, then rebuilds it from its first word, word
-            // by word, reading the component back and breaking the line where it overflows.
-            // Its input is what the component HOLDS — so if the whole was translated, the game
-            // lays out the translation itself, with its own measure: exactly what its developer
-            // meant. Every step of that pass is the start of a text we already decided about.
-            // Routed like new text, each word was translated and sent on its own, and the game
-            // built on our mixture ("sewage into le rivière à night"). Recorded in a game on
-            // 2026-09-26; analyse/banc-routage-texte.md, "remise en page".
-            if (_layoutResults.Contains(textValue)) return RouteOutcome.Translated;
-            if (state != null && FollowLayoutPass(state, comp, compId, textValue)) return RouteOutcome.Translated;
 
             // === Frame tracking for concat detection ===
             // Count set_text calls per component per frame.
@@ -402,8 +413,13 @@ namespace UnityGameTranslator.Core
         ///
         /// ⚠ Steps are compared line breaks set aside and trailing spaces trimmed: the game inserts
         /// the breaks, and a step ends with the space before the next word the whole may not have.
+        ///
+        /// 🔴 The whole is what the component HOLDS when the first step arrives, read from it —
+        /// not what this router last recorded. A whole our lookup answered early (our translation
+        /// written back by the game, an assembly already known) left no record, and the pass the
+        /// game ran on it went word by word to the model, in the target language (2026-09-26).
         /// </summary>
-        private bool FollowLayoutPass(ComponentTextState state, object comp, long compId, string text)
+        private bool FollowLayoutPass(ComponentTextState state, object comp, long compId, string text, bool sameFrame)
         {
             int frame = _host.Frame;
             if (state.LayoutWhole != null && state.LayoutFrame != frame) state.LayoutWhole = null;
@@ -411,15 +427,15 @@ namespace UnityGameTranslator.Core
             if (state.LayoutWhole == null)
             {
                 // A pass starts in the frame its whole was written in.
-                if (state.LastFrame != frame) return false;
-                string whole = state.LastTranslated != null && IsLayoutPassStart(state.LastTranslated, text) ? state.LastTranslated
-                             : IsLayoutPassStart(state.LastRaw, text) ? state.LastRaw
-                             : null;
-                if (whole == null) return false;
-                state.LayoutWhole = StripBreaks(whole).TrimEnd();
+                if (!sameFrame) return false;
+                string held = _host.GetText(comp);
+                if (held != null) held = _host.Readback.PresentedLogical(held) ?? held;
+                if (!IsLayoutPassStart(held, text)) return false;
+                state.LayoutWhole = StripBreaks(held).TrimEnd();
+                state.LayoutHeld = held;
                 state.LayoutFrame = frame;
-                state.LayoutOurs = whole == state.LastTranslated;
-                _host.LayoutPassSeen(comp, whole);
+                state.LayoutOurs = held == state.LastTranslated || _concatTranslatedValues.Contains(held);
+                _host.LayoutPassSeen(comp, held);
             }
 
             string step = StripBreaks(text).TrimEnd();
@@ -435,16 +451,20 @@ namespace UnityGameTranslator.Core
             if (step.Length < state.LayoutWhole.Length) return true;
 
             // The last step: the whole, laid out by the game.
+            // ⚠ Remembered only when the game changed it: a text that fits on one line comes out
+            // exactly as it went in, and remembering the game's own text as "laid out" would
+            // leave every later write of it untranslated.
             if (state.LayoutOurs)
             {
                 state.LastTranslated = text;
                 _concatTranslatedValues.Add(text);
             }
-            else
+            else if (text != state.LayoutHeld)
             {
                 _layoutResults.Add(text);
             }
             state.LayoutWhole = null;
+            state.LayoutHeld = null;
             if (_host.DebugMode)
                 _host.LogDebug($"[LAYOUT] comp={compId} the game laid out {(state.LayoutOurs ? "our translation" : "its own text")} — left as it wrote it: '{Clip(text, 60)}'");
             return true;

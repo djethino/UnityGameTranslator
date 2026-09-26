@@ -205,8 +205,10 @@ namespace UnityGameTranslator.Core
 
             // --- A layout pass in flight (the game placing its own line breaks) ---
             public string LayoutWhole;      // the text being laid out, breaks set aside
+            public string LayoutHeld;       // that text as the component held it when the pass began
             public int LayoutFrame = -1;    // the frame it runs in: a pass never spans two
             public bool LayoutOurs;         // laying out our translation, or the game's own text
+            public int WriteFrame = -1;     // the frame of the last write, whatever became of it
 
             // --- Typewriting ---
             public string TypewritingText;

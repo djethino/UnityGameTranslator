@@ -290,9 +290,16 @@ namespace UnityGameTranslator.Core
             // The head of a line the file already holds: a reveal resumed part-way, stood still,
             // and is not a line of its own (TextRelations.IsHeadOfALongerLine). Held, not sent:
             // the reveal goes on from here, and the line it belongs to answers when it arrives.
+            //
+            // ⚠ **Not a text of one step that never grew.** Written at once and no longer than a
+            // single step of a reveal, it has shown no reveal at all — nothing says it is waiting
+            // for more. And short labels are heads of longer ones all the time where words are not
+            // spaced: 聪慧 ("Intelligent") is the head of 聪慧绝伦 ("Brilliant"), a talent of its
+            // own. Held as a head, it stayed in the source language for good (2026-09-26).
             var held = PeekState(compId);
             bool writtenWhole = held != null && !held.TypewritingGrew;
-            bool headOfKnown = !inCache && !alreadyTranslated
+            bool oneStepNeverGrown = writtenWhole && text.Length <= TextRelations.TypewriterMaxCharsPerStep;
+            bool headOfKnown = !inCache && !alreadyTranslated && !oneStepNeverGrown
                                && TextRelations.IsHeadOfALongerLine(normalizedText, _host.GameStore.Keys,
                                                                     blockEndingAtABreakIsWhole: writtenWhole);
 

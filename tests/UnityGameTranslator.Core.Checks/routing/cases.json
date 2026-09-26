@@ -74,6 +74,16 @@
       "queued": []
     },
     {
+      "id": "reveal/a-short-label-that-heads-a-longer-one-is-sent",
+      "why": "written at once, one step long and never growing, it has shown no reveal: 聪慧 is a talent of its own, not the head of 聪慧绝伦, and held as a head it stayed untranslated (2026-09-26)",
+      "file": { "聪慧绝伦": "Intelligence hors pair" },
+      "steps": [
+        { "f": 1, "t": 0.0, "write": "聪慧", "shows": "聪慧" },
+        { "f": 60, "t": 1.0, "tick": true }
+      ],
+      "queued": ["聪慧"]
+    },
+    {
       "id": "reveal/letter-by-letter-a-known-line-costs-nothing",
       "why": "no fragment of a reveal is ever sent: the finished line is known, and the reveal is told the moment it is recognised",
       "file": { "Hello there": "Bonjour à tous" },

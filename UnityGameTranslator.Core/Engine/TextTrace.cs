@@ -126,6 +126,12 @@ namespace UnityGameTranslator.Core
             Emit(new JObject { ["k"] = "apply", ["c"] = comp, ["how"] = how, ["current"] = current });
         }
 
+        public static void Layout(long comp, string whole, string stack)
+        {
+            if (!On) return;
+            Emit(new JObject { ["k"] = "layout", ["c"] = comp, ["whole"] = whole, ["stack"] = stack });
+        }
+
         public static void Reveal(long comp, int value, int scaled)
         {
             if (!On) return;

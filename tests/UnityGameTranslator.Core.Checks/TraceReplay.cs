@@ -99,6 +99,9 @@ namespace UnityGameTranslator.Core.Checks
                 }
             }
 
+            Console.WriteLine($"{host.LayoutPasses.Count} layout pass(es) recognised");
+            foreach (string whole in host.LayoutPasses.GetRange(0, Math.Min(5, host.LayoutPasses.Count)))
+                Console.WriteLine($"  laid out: [{Clip(whole)}]");
             Console.WriteLine($"{writes} writes replayed, {shown} presented forms, {diffs} answered differently");
             return diffs == 0 ? 0 : 1;
         }

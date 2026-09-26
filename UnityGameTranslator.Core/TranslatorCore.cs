@@ -6418,6 +6418,26 @@ namespace UnityGameTranslator.Core
             void ITextRouterHost.LogWarning(string message) => TranslatorCore.LogWarning(message);
             void ITextRouterHost.LogDebug(string message) => TranslatorCore.LogDebug(message);
 
+            // Which of the game's methods lays texts out, said a few times per session: a diagnostic
+            // for the layout pass (analyse/banc-routage-texte.md). ⚠ Unity's own stack extraction,
+            // not System.Diagnostics: on IL2CPP the game's frames are native and only the engine can
+            // name them.
+            private int _layoutStacksSaid;
+            private readonly HashSet<string> _layoutStacks = new HashSet<string>();
+
+            public void LayoutPassSeen(object component, string fullText)
+            {
+                if (_layoutStacksSaid >= 5) return;
+                string stack;
+                try { stack = UnityEngine.StackTraceUtility.ExtractStackTrace(); }
+                catch (Exception ex) { stack = $"(stack unavailable: {ex.GetType().Name}: {ex.Message})"; }
+                if (!_layoutStacks.Add(stack)) return;
+                _layoutStacksSaid++;
+                string head = fullText.Length > 60 ? fullText.Substring(0, 60) + "…" : fullText;
+                LogInfo($"[Layout] {Describe(component)} is laid out word by word by the game — '{head}'. Called from:\n{stack}");
+                TextTrace.Layout(IdOf(component), fullText, stack);
+            }
+
             public string Describe(object target)
             {
                 try

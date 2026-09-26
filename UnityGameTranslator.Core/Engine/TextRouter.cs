@@ -78,6 +78,13 @@ namespace UnityGameTranslator.Core
         void LogDebug(string message);
         /// <summary>A short description of the component for a debug line (type and name).</summary>
         string Describe(object component);
+
+        /// <summary>
+        /// The game has started laying out a text it just wrote whole: in the same frame it writes
+        /// it again from its first word, word by word, breaking lines where it chooses. Said once
+        /// per pass start; the host decides what to find out (which of the game's methods does it).
+        /// </summary>
+        void LayoutPassSeen(object component, string fullText);
     }
 
     /// <summary>What the caller must do once the text has been routed.</summary>

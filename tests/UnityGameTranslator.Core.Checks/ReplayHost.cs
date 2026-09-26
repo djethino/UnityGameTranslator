@@ -92,6 +92,10 @@ namespace UnityGameTranslator.Core.Checks
         public void LogDebug(string message) { }
         public string Describe(object component) => "box";
 
+        /// <summary>The layout passes the router recognised, with the text each one laid out.</summary>
+        public readonly List<string> LayoutPasses = new List<string>();
+        public void LayoutPassSeen(object component, string fullText) => LayoutPasses.Add(fullText);
+
         /// <summary>An entry of the file, stored and indexed as a load does.</summary>
         public void Add(string source, string translation, string tag = "A")
         {

@@ -85,6 +85,12 @@ namespace UnityGameTranslator.Core
                 {
                     state.FrameCallCount++;
 
+                    // A layout pass starting: the text just written whole, written again from its
+                    // first word (analyse/banc-routage-texte.md, "remise en page"). Only SAID for
+                    // now — nothing here decides differently because of it.
+                    if (IsLayoutPassStart(state.LastRaw, textValue))
+                        _host.LayoutPassSeen(comp, state.LastRaw);
+
                     // Flag as concat ONLY if the text is GROWING (prefix match).
                     // Without this, game init (default→real value = 2 set_text) false-positives.
                     if (state.FrameCallCount >= 2 && _host.ConcatDetection && state.Mode != TextMode.Concat)
@@ -376,6 +382,22 @@ namespace UnityGameTranslator.Core
                 translated += core.Substring(end);
             return translated;
         }
+
+        /// <summary>
+        /// Whether <paramref name="next"/>, written in the same frame as <paramref name="whole"/>,
+        /// starts a layout pass over it: strictly shorter, and its start once the line breaks the
+        /// game inserts are set aside. Only a text of several words qualifies — a label written
+        /// twice is not laid out.
+        /// </summary>
+        internal static bool IsLayoutPassStart(string whole, string next)
+        {
+            if (string.IsNullOrEmpty(whole) || string.IsNullOrEmpty(next)) return false;
+            if (whole.IndexOf(' ') < 0) return false;
+            string w = StripBreaks(whole), n = StripBreaks(next);
+            return n.Length > 0 && n.Length < w.Length && w.StartsWith(n, StringComparison.Ordinal);
+        }
+
+        private static string StripBreaks(string text) => text.Replace("\r", "").Replace("\n", "");
 
         /// <summary>At most <paramref name="max"/> characters of a text, for a log line.</summary>
         private static string Clip(string text, int max)

@@ -48,13 +48,6 @@ namespace UnityGameTranslator.Core.Checks
             }
         }
 
-        /// <summary>A component: an id and what it holds — the logical text, and the form on screen.</summary>
-        private sealed class Box
-        {
-            public long Id;
-            public string Shown = "";
-        }
-
         /// <summary>Plays one case; null when every expectation held, else what differed first.</summary>
         private static string Replay(JObject c)
         {
@@ -66,10 +59,10 @@ namespace UnityGameTranslator.Core.Checks
                 foreach (var kv in fileEntries)
                     host.Add(kv.Key, (string)kv.Value);
 
-            var boxes = new Dictionary<long, Box>();
-            Box BoxOf(long cid)
+            var boxes = new Dictionary<long, ReplayBox>();
+            ReplayBox BoxOf(long cid)
             {
-                if (!boxes.TryGetValue(cid, out var b)) boxes[cid] = b = new Box { Id = cid };
+                if (!boxes.TryGetValue(cid, out var b)) boxes[cid] = b = new ReplayBox { Id = cid };
                 return b;
             }
 
@@ -95,7 +88,7 @@ namespace UnityGameTranslator.Core.Checks
                     // in the Fonts tab): our own output coming back through the setter.
                     host.GameWrites(box, box.Shown);
                 else if (step["arrive"] is JObject arrival)
-                    host.Arrive((string)arrival["o"], (string)arrival["tr"], boxes.Values);
+                    host.Arrive((string)arrival["o"], (string)arrival["tr"]);
 
                 if (step["shows"] != null)
                 {
@@ -118,125 +111,6 @@ namespace UnityGameTranslator.Core.Checks
         }
 
         private static string Quote(string s) => s == null ? "null" : "'" + s.Replace("\n", "\\n") + "'";
-
-        /// <summary>
-        /// The engine, as far as routing sees one. Every answer is the plain one a game with this
-        /// file would give; nothing is tuned to make a case pass.
-        /// </summary>
-        private sealed class ReplayHost : ITextRouterHost
-        {
-            public TextRouter Router;
-            public bool RightToLeft;
-            public readonly List<(string Text, Box Box)> Queued = new List<(string, Box)>();
-
-            private readonly Dictionary<string, TranslationEntry> _store = new Dictionary<string, TranslationEntry>();
-            private readonly Dictionary<string, TranslationEntry> _ownUi = new Dictionary<string, TranslationEntry>();
-            private readonly ReadbackIndex _readback = new ReadbackIndex();
-            private readonly StaleSnapshot _stale = new StaleSnapshot();
-
-            public int Frame { get; set; }
-            public float Now { get; set; }
-
-            public bool DebugMode => false;
-            public bool TypewritingDetection => true;
-            public bool ConcatDetection => true;
-            public bool TranslationsActive => true;
-            public bool GateOpen => true;
-            public bool NormalizeNumbers => true;
-
-            public IDictionary<string, TranslationEntry> GameStore => _store;
-            public IDictionary<string, TranslationEntry> OwnUiStore => _ownUi;
-            public ReadbackIndex Readback => _readback;
-            public StaleSnapshot Stale => _stale;
-            public IVariableSubstitution Variables => null;
-            public string MatchPattern(string text) => null;
-            public bool RefreshVariables() => false;
-            public bool IsExpandedInPlace(string text) => false;
-            public void ForgetTemplate(string text) { }
-
-            public string SourceOf(string translation, bool ownUi)
-            {
-                foreach (var kv in ownUi ? _ownUi : _store)
-                    if (kv.Value.Value == translation) return kv.Key;
-                return null;
-            }
-
-            public long IdOf(object component) => component is Box b ? b.Id : -1;
-            public bool IsHidden(object component) => false;
-            public string GetText(object component) => (component as Box)?.Shown;
-            public void Write(object target, string text) { if (target is Box b) GameWrites(b, text); }
-            public bool IsGone(object target) => false;
-            public object FindTarget(long id) => null;
-
-            private readonly Dictionary<Box, string> _originals = new Dictionary<Box, string>();
-            public void StoreOriginal(object component, string original)
-            {
-                if (component is Box b && !_originals.ContainsKey(b)) _originals[b] = original;
-            }
-            public string GetOriginal(object component) => component is Box b && _originals.TryGetValue(b, out var o) ? o : null;
-            public void Showing(string text, object component) { }
-
-            public void Queue(string text, object component, bool ownUi)
-            {
-                if (!Queued.Any(q => q.Text == text && ReferenceEquals(q.Box, component)))
-                    Queued.Add((text, component as Box));
-            }
-            public void CountTranslated() { }
-            public void CountCacheHit() { }
-            public void CountAlreadyTranslated() { }
-
-            public void Log(string message) { }
-            public void LogWarning(string message) { }
-            public void LogDebug(string message) { }
-            public string Describe(object component) => "box";
-
-            /// <summary>An entry of the file, stored and indexed as a load does.</summary>
-            public void Add(string source, string translation)
-            {
-                string key = Router.NormalizeForCacheLookup(source);
-                _store[key] = TranslationEntry.FromValue(translation);
-                _readback.Index(key, translation, ownUi: false, normalizeNumbers: true);
-            }
-
-            /// <summary>
-            /// A write reaching the component through the setter: routed, then presented — the
-            /// order the setter prefix keeps (routing on the logical text, the screen composed last).
-            /// </summary>
-            public void GameWrites(Box box, string value)
-            {
-                string routed = value;
-                Router.Route(box, box.Id, isOwnUI: false, ref routed);
-                box.Shown = Present(box, routed);
-            }
-
-            /// <summary>RtlPresenter's flagged branch, for a right-to-left case; the text as is otherwise.</summary>
-            private string Present(Box box, string value)
-            {
-                if (!RightToLeft || string.IsNullOrEmpty(value) || !RtlText.NeedsPresentation(value)) return value;
-                string flagged = RtlComposer.Compose(value, RtlOutput.RtlFlagged);
-                _readback.RegisterPresented(flagged, value);
-                Router.NotePresented(box.Id, value, flagged);
-                return flagged;
-            }
-
-            /// <summary>What a person reads: the logical text behind a presented form.</summary>
-            public string LogicalOf(string shown) => _readback.PresentedLogical(shown) ?? shown;
-
-            /// <summary>
-            /// A translation coming back: stored, then applied to every component it was asked for —
-            /// written, rebuilt into its page, or left alone, as the router decides.
-            /// </summary>
-            public void Arrive(string original, string translation, IEnumerable<Box> all)
-            {
-                Add(original, translation);
-                foreach (var q in Queued.Where(q => q.Text == original && q.Box != null).ToList())
-                {
-                    var box = q.Box;
-                    var late = Router.Late(box.Id, box, box.Shown, original, translation, out string toWrite);
-                    if (late != TextRouter.LateOutcome.Skip) GameWrites(box, toWrite);
-                }
-            }
-        }
 
         private static string Find(params string[] parts)
         {

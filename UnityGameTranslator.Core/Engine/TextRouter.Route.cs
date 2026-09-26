@@ -181,7 +181,7 @@ namespace UnityGameTranslator.Core
                     else
                     {
                         // Translate core delta directly (skip TW — concat deltas are immediate)
-                        string translatedCore = string.IsNullOrEmpty(deltaCore) ? "" : Translate(deltaCore, comp, isOwnUI, skipTypewriting: true);
+                        string translatedCore = string.IsNullOrEmpty(deltaCore) ? "" : KeepBreaks(deltaCore, Translate(deltaCore, comp, isOwnUI, skipTypewriting: true));
                         string translatedDelta = leadingNL + translatedCore + trailingNL;
 
                         if (string.IsNullOrEmpty(lastTrans))
@@ -271,7 +271,7 @@ namespace UnityGameTranslator.Core
                     // stayed in the source language on a translated page for good, since nothing
                     // would ever ask for it. With an unknown source the part may be a fragment of
                     // something else, so it is still only looked up.
-                    string transCore = string.IsNullOrEmpty(dCore) ? "" : Translate(dCore, comp, isOwnUI, skipTypewriting: true, skipQueueing: whole == null);
+                    string transCore = string.IsNullOrEmpty(dCore) ? "" : KeepBreaks(dCore, Translate(dCore, comp, isOwnUI, skipTypewriting: true, skipQueueing: whole == null));
                     string translatedDelta = leadNL + transCore + trailNL;
                     textValue = lastTranslatedTarget + translatedDelta;
 
@@ -347,6 +347,34 @@ namespace UnityGameTranslator.Core
             core = text;
             while (core.Length > 0 && core[0] == '\n') { leading += "\n"; core = core.Substring(1); }
             while (core.Length > 0 && core[core.Length - 1] == '\n') { trailing = "\n" + trailing; core = core.Substring(0, core.Length - 1); }
+        }
+
+        /// <summary>
+        /// The line breaks a part opened or closed with, put back around its translation when the
+        /// translation lost them.
+        ///
+        /// ⚠ A part a game appends often starts with a paragraph break written "\r\n\r\n", which
+        /// <see cref="SplitNewlines"/> leaves in the core (it only takes "\n" apart). Found through
+        /// the trimmed rung — the file stored the sentence bare — its translation came back without
+        /// the break and two paragraphs were glued into one (recorded in a game, 2026-09-26).
+        /// A translation that already carries its breaks (an entry stored with them) is untouched,
+        /// and so is a text that was not translated.
+        /// </summary>
+        private static string KeepBreaks(string core, string translated)
+        {
+            if (string.IsNullOrEmpty(core) || string.IsNullOrEmpty(translated) || translated == core) return translated;
+
+            int start = 0;
+            while (start < core.Length && (core[start] == '\n' || core[start] == '\r')) start++;
+            int end = core.Length;
+            while (end > start && (core[end - 1] == '\n' || core[end - 1] == '\r')) end--;
+
+            if (start > 0 && translated[0] != '\n' && translated[0] != '\r')
+                translated = core.Substring(0, start) + translated;
+            char last = translated[translated.Length - 1];
+            if (end < core.Length && last != '\n' && last != '\r')
+                translated += core.Substring(end);
+            return translated;
         }
 
         /// <summary>At most <paramref name="max"/> characters of a text, for a log line.</summary>
@@ -464,7 +492,7 @@ namespace UnityGameTranslator.Core
                 SplitNewlines(part, out string leading, out string core, out string trailing);
 
                 string translated = string.IsNullOrEmpty(core) ? "" :
-                    Translate(core, component, false, skipTypewriting: true, skipQueueing: true);
+                    KeepBreaks(core, Translate(core, component, false, skipTypewriting: true, skipQueueing: true));
                 result.Append(leading);
                 result.Append(translated);
                 result.Append(trailing);

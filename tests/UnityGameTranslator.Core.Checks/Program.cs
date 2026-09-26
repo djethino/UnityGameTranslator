@@ -42,6 +42,11 @@ namespace UnityGameTranslator.Core.Checks
                 return 0;
             }
 
+            // `dotnet run -- replay <text-trace.jsonl> [max-diffs]` — a trace recorded in a game,
+            // played through the router: where it answers differently from the recording.
+            if (args.Length >= 2 && args[0] == "replay")
+                return TraceReplay.Run(args[1], args.Length >= 3 ? int.Parse(args[2]) : 20);
+
             HowATextIsNormalized();
             WhatAPatternCovers();
             HowANumberedSentenceIsRecognised();

@@ -179,8 +179,10 @@ namespace UnityGameTranslator.Core.Checks
             foreach (var q in host.Queued) if (IsWordPart(q.Text)) words++;
             Console.WriteLine($"{host.Queued.Count} line(s) sent for translation, {words} of them words sent alone");
             int listed = 0;
+            // REPLAY_LIST=1: every line sent, however many.
+            bool listAll = Environment.GetEnvironmentVariable("REPLAY_LIST") != null;
             foreach (var q in host.Queued)
-                if ((IsWordPart(q.Text) || host.Queued.Count <= 60) && listed++ < 60)
+                if ((IsWordPart(q.Text) || host.Queued.Count <= 60 || listAll) && (listAll || listed++ < 60))
                 {
                     Console.WriteLine($"  {(IsWordPart(q.Text) ? "sent alone" : "sent")}: [{Clip(q.Text)}] comp={q.Box?.Id}");
                     if (causes.TryGetValue(q.Text, out string cause)) Console.WriteLine($"    {cause}");

@@ -30,6 +30,18 @@
       "queued": [ "Something else entirely" ]
     },
     {
+      "id": "reveal/a-tooltip-swept-past-in-a-third-of-a-second-is-still-sent",
+      "why": "🔴 seen in a game (2026-09-26): a row of tooltips swept by the pointer, each written whole and replaced 0.3 s later. Dropped as 'replaced before it settled', each was dropped at every pass and stayed in the source language for good. A text written whole is finished from its first write: replaced, it is sent as it was — only a reveal cut short is dropped",
+      "file": {},
+      "steps": [
+        { "f": 1, "t": 0.0, "write": "Strength: +1 damage per point", "shows": "Strength: +1 damage per point" },
+        { "f": 20, "t": 0.3, "write": "Agility: +1 dodge per point", "shows": "Agility: +1 dodge per point" },
+        { "f": 40, "t": 0.6, "write": "Wisdom: +1 focus per point", "shows": "Wisdom: +1 focus per point" },
+        { "f": 90, "t": 1.5, "tick": true }
+      ],
+      "queued": [ "Strength: +1 damage per point", "Agility: +1 dodge per point", "Wisdom: +1 focus per point" ]
+    },
+    {
       "id": "reveal/letter-by-letter-a-known-line-costs-nothing",
       "why": "no fragment of a reveal is ever sent: the finished line is known, and the reveal is told the moment it is recognised",
       "file": { "Hello there": "Bonjour à tous" },

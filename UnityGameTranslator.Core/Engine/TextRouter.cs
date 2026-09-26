@@ -239,6 +239,7 @@ namespace UnityGameTranslator.Core
             public string TypewritingText;
             public float TypewritingSince;
             public bool TypewritingQueued;  // already handed over; do not hand it over twice
+            public bool TypewritingGrew;    // the held text grew (or its markup walked) — a reveal, not a text written whole
         }
 
         private readonly Dictionary<long, ComponentTextState> _componentState =

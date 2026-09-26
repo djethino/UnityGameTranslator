@@ -71,7 +71,7 @@ namespace UnityGameTranslator.Core
             if (_host.DebugMode)
                 _host.LogDebug($"[TW-GROW] comp={compId} {state.TypewritingText.Length}c → {currentText.Length}c '{Head(currentText)}'");
 
-            HoldTypewriting(state, compId, currentText, _host.Now);
+            HoldTypewriting(state, compId, currentText, _host.Now, grew: true);
         }
 
         /// <summary>First 30 characters of a text, for a log line.</summary>
@@ -85,9 +85,12 @@ namespace UnityGameTranslator.Core
         /// Hold this component's text back: a reveal is in progress, or has just restarted.
         /// Puts it on the work list so the stabilizer will look at it.
         /// </summary>
-        private void HoldTypewriting(ComponentTextState state, long compId, string text, float now)
+        /// <param name="grew">It got here by growing (or by its markup walking): a reveal in progress,
+        /// as opposed to a text the game wrote whole in one go.</param>
+        private void HoldTypewriting(ComponentTextState state, long compId, string text, float now, bool grew)
         {
             state.Mode = TextMode.Typewriter;
+            state.TypewritingGrew = grew;
             state.TypewritingText = text;
             state.TypewritingSince = now;
             state.TypewritingQueued = false;
@@ -127,7 +130,7 @@ namespace UnityGameTranslator.Core
                 // line as the game leaves it.
                 if (TextRelations.SameContent(state.TypewritingText, newText))
                 {
-                    HoldTypewriting(state, compId, newText, now);
+                    HoldTypewriting(state, compId, newText, now, grew: true);
                     return true;
                 }
 
@@ -144,7 +147,7 @@ namespace UnityGameTranslator.Core
                 if (TextRelations.SameAfterExpansion(state.TypewritingText, newText))
                 {
                     _host.ForgetTemplate(state.TypewritingText);
-                    HoldTypewriting(state, compId, newText, now);
+                    HoldTypewriting(state, compId, newText, now, grew: false);
                     return true;
                 }
 
@@ -159,7 +162,7 @@ namespace UnityGameTranslator.Core
 
                 if (isGrowing && elapsed < TypewritingStabilizeMs)
                 {
-                    HoldTypewriting(state, compId, newText, now);
+                    HoldTypewriting(state, compId, newText, now, grew: true);
                     return true;
                 }
 
@@ -171,7 +174,7 @@ namespace UnityGameTranslator.Core
                 if (isShrinkingOverwrite)
                 {
                     // Don't finalize the mixed state. Just update tracking and keep deferring.
-                    HoldTypewriting(state, compId, newText, now);
+                    HoldTypewriting(state, compId, newText, now, grew: true);
                     return true;
                 }
 
@@ -215,6 +218,15 @@ namespace UnityGameTranslator.Core
                         _host.LogDebug($"[TW-FINAL] comp={compId} isGrowing={isGrowing} elapsed={elapsed:F0}ms\n  prev({state.TypewritingText.Length}c)='{state.TypewritingText}'\n  new({newText.Length}c)='{newText}'");
                         ProcessFinalizedText(compId, state.TypewritingText);
                     }
+                    else if (WrittenWhole(state))
+                    {
+                        // 🔴 Written whole in one go, then replaced: not a reveal cut short but a
+                        // text somebody saw — a tooltip passed over in 0.3 s is still read. Dropped,
+                        // it was dropped at every pass and stayed in the source language for good
+                        // (2026-09-26, a row of attribute tooltips swept by the pointer).
+                        _host.LogDebug($"[TW-WHOLE] comp={compId} written whole, replaced after {elapsed:F0}ms — sent as it was\n  ({state.TypewritingText.Length}c)='{state.TypewritingText}'");
+                        ProcessFinalizedText(compId, state.TypewritingText);
+                    }
                     else
                     {
                         _host.LogDebug($"[TW-DROP] comp={compId} replaced after {elapsed:F0}ms, before it had settled — dropped, not sent\n  prev({state.TypewritingText.Length}c)='{state.TypewritingText}'\n  new({newText.Length}c)='{newText}'");
@@ -222,7 +234,7 @@ namespace UnityGameTranslator.Core
                 }
 
                 // Store new text as new start, defer it
-                HoldTypewriting(state, compId, newText, now);
+                HoldTypewriting(state, compId, newText, now, grew: false);
                 return true;
             }
 
@@ -234,9 +246,25 @@ namespace UnityGameTranslator.Core
                 // says what kind of component the mod is actually looking at.
                 _host.LogDebug($"[TW-NEW] comp={compId} {_host.Describe(state.Target)} FIRST text({newText.Length}c)='{newText}'");
             }
-            HoldTypewriting(state, compId, newText, now);
+            HoldTypewriting(state, compId, newText, now, grew: false);
             return true;
         }
+
+        /// <summary>
+        /// The text held was written whole — it never grew nor had its markup walk — and reads as
+        /// a finished text: longer than one step of a reveal, and not a template waiting for its
+        /// values (a `{0}` the game has not filled in yet is never a line anybody reads).
+        /// </summary>
+        private static bool WrittenWhole(ComponentTextState state)
+        {
+            string text = state.TypewritingText;
+            return !state.TypewritingGrew
+                   && text != null && text.Length > TextRelations.TypewriterMaxCharsPerStep
+                   && !TemplateSlot.IsMatch(text);
+        }
+
+        private static readonly System.Text.RegularExpressions.Regex TemplateSlot =
+            new System.Text.RegularExpressions.Regex(@"\{\d+(:[^{}]*)?\}", System.Text.RegularExpressions.RegexOptions.Compiled);
 
         /// <summary>
         /// Process a finalized typewriting text: queue for AI if not in cache,

@@ -278,10 +278,11 @@ namespace UnityGameTranslator.Core.Checks
             check(options.Nodes["CaptureKeyboardWhy"].Bind != null && !options.Nodes["CaptureKeyboardWhy"].StartsVisible
                   && !options.Nodes["PauseWhy"].StartsVisible && !options.Nodes["PauseBlocked"].StartsVisible,
                 "each capture box has a hidden line for the runtime's own reason; freezing has its three", "whether an intention can be honoured is the game's to say");
-            // 42 = the 38 settings acts plus the About tab's four doors out: this mod's source, the
-            // Manager, the website, the studio. A tab that only reads and links asks for no more.
-            check(options.Acts.Count == 42 && options.Nodes["AiAdvanced"].Kind == "collapsible" && options.Nodes["AiAdvanced"].Flag("expanded") == false,
-                "options.json asks for 42 acts and folds the AI's advanced settings", $"got {options.Acts.Count} acts");
+            // 43 = the 39 settings acts (the last one: recording the game's text writes) plus the
+            // About tab's four doors out: this mod's source, the Manager, the website, the studio. A
+            // tab that only reads and links asks for no more.
+            check(options.Acts.Count == 43 && options.Nodes["AiAdvanced"].Kind == "collapsible" && options.Nodes["AiAdvanced"].Flag("expanded") == false,
+                "options.json asks for 43 acts and folds the AI's advanced settings", $"got {options.Acts.Count} acts");
 
             // ⚠ The About tab carries the mod's only two pictures. A document can name a picture
             // and never hold one: if either box disappears, the code that fills it throws at

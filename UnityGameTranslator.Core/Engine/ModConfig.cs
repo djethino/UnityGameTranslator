@@ -101,6 +101,9 @@ namespace UnityGameTranslator.Core
         public bool normalize_numbers { get; set; } = true;
         public bool debug { get; set; } = false;
         public bool debug_ai { get; set; } = false;
+        // Every text the game writes, recorded to a file beside the translation (Engine/TextTrace):
+        // the cases the routing corpus replays. Off by default, local only.
+        public bool debug_text_trace { get; set; } = false;
         public bool preload_model { get; set; } = true;
 
         [JsonConverter(typeof(EncryptedTokenConverter))]

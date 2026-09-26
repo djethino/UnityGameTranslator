@@ -3043,6 +3043,13 @@ namespace UnityGameTranslator.Core
 
         private static void ApplyTranslationToComponents(string originalText, string translation, List<object> components)
         {
+            if (TextTrace.On)
+            {
+                var ids = new List<long>(components.Count);
+                foreach (var c in components) ids.Add(TypeHelper.GetInstanceID(c));
+                TextTrace.Arrive(originalText, translation, ids);
+            }
+
             foreach (var comp in components)
             {
                 try
@@ -3109,11 +3116,13 @@ namespace UnityGameTranslator.Core
                         TranslatorCore.NoteTranslationShown();
 
                         TranslatorCore.LogDebug($"[Apply OK] comp={id} {expectedPreview}");
+                        TextTrace.Apply(id, "ok", TypeHelper.GetText(comp));
                     }
                     else
                     {
                         // Clear tracking so scanner retries this component on next cycle
                         int skipId = TypeHelper.GetInstanceID(comp);
+                        bool reassembledNow = false;
                         if (skipId != -1)
                         {
                             processedTextHashes.Remove(skipId);
@@ -3125,6 +3134,7 @@ namespace UnityGameTranslator.Core
                             string reassembled = concat ? TranslatorPatches.ReassembleConcat(skipId, comp) : null;
                             if (reassembled != null)
                             {
+                                reassembledNow = true;
                                 try { TypeHelper.SetText(comp, reassembled); }
                                 catch (Exception ex)
                                 {
@@ -3134,6 +3144,7 @@ namespace UnityGameTranslator.Core
                             TranslatorCore.LogDebug($"[Apply REASSEMBLE] comp={skipId} concat={concat} reassembled={(reassembled == null ? "none" : $"{reassembled.Length}c '{(reassembled.Length > 40 ? reassembled.Substring(0, 40) + "..." : reassembled)}'")}");
                         }
                         TranslatorCore.LogDebug($"[Apply SKIP] comp={skipId} expected='{expectedPreview}' actual='{actualPreview}'");
+                        TextTrace.Apply(skipId, reassembledNow ? "reassemble" : "skip", TypeHelper.GetText(comp));
                     }
                 }
                 catch { }

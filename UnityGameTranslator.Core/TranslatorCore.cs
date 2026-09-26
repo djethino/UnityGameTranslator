@@ -1907,6 +1907,7 @@ namespace UnityGameTranslator.Core
 
             LoadConfig();
             DebugMode = Config.debug;
+            if (Config.debug_text_trace) SetTextTrace(true);
 
             // Always-on environment snapshot. Logged at LogInfo level (not LogDebug) so it
             // ships in user reports without them having to flip a debug flag first. Cheap
@@ -2174,6 +2175,37 @@ namespace UnityGameTranslator.Core
         {
             if (Config != null) Config.debug = on;
             DebugMode = on;
+        }
+
+        /// <summary>
+        /// Starts or stops the record of text writes (Engine/TextTrace), and keeps the setting
+        /// saying which. Called at load and by the Options Apply.
+        /// </summary>
+        public static void SetTextTrace(bool on)
+        {
+            if (Config != null) Config.debug_text_trace = on;
+            if (!on)
+            {
+                TextTrace.Stop(LogInfo);
+                return;
+            }
+
+            if (string.IsNullOrEmpty(ModFolder)) return;
+            try
+            {
+                // Frame and time from the engine, and only where the engine answers: a setter can
+                // run on another thread (Rewired's input thread), where Unity refuses the question.
+                TextTrace.Start(ModFolder, CachePath, Config?.target_language,
+                    () => IsMainThread ? UnityEngine.Time.frameCount : -1,
+                    () => IsMainThread ? UnityEngine.Time.realtimeSinceStartup : -1,
+                    LogInfo);
+            }
+            catch (Exception ex)
+            {
+                // Said and left off: a trace that cannot be written must not take anything else down.
+                if (Config != null) Config.debug_text_trace = false;
+                LogWarning($"[TextTrace] could not start: {ex.GetType().Name}: {ex.Message}");
+            }
         }
 
         #region Public Logging (for use by TranslatorPatches/TranslatorScanner)

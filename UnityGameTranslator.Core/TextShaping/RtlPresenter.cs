@@ -69,6 +69,7 @@ namespace UnityGameTranslator.Core.TextShaping
         {
             TranslatorCore.RegisterPresentedText(presented, logical);
             TranslatorPatches.NotePresented(compId, logical, presented);
+            TextTrace.Shown(compId, logical, presented);
         }
 
         /// <summary>

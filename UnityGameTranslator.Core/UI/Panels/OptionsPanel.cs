@@ -75,6 +75,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         private ToggleHandle _captureKeysOnlyToggle;
         private ToggleHandle _debugLoggingToggle;
         private ToggleHandle _debugAiToggle;
+        private ToggleHandle _textTraceToggle;
         private Components.HelpZone _helpZone;
         private SearchableDropdown _backendTypeDropdown; // UIStyles.BackendTypeLLM / BackendTypeApi
         private static readonly string[] BackendTypeOptions = { UIStyles.BackendTypeLLM, UIStyles.BackendTypeApi };
@@ -216,6 +217,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             public bool capture_keys_only;
             public bool debug;
             public bool debug_ai;
+            public bool debug_text_trace;
             public bool enable_ai;
             public string translation_backend;
             public string ai_url;
@@ -285,6 +287,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                     capture_keys_only = TranslatorCore.Config.capture_keys_only,
                     debug = TranslatorCore.Config.debug,
                     debug_ai = TranslatorCore.Config.debug_ai,
+                    debug_text_trace = TranslatorCore.Config.debug_text_trace,
                     enable_ai = TranslatorCore.Config.enable_ai,
                     translation_backend = TranslatorCore.Config.translation_backend ?? "none",
                     ai_url = TranslatorCore.Config.ai_url ?? Endpoints.OllamaDefault,
@@ -395,6 +398,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _notificationPositionDropdown = _screen.Dropdown("NotifPosition");
             _debugLoggingToggle = _screen.Toggle("DebugLoggingToggle");
             _debugAiToggle = _screen.Toggle("DebugAiToggle");
+            _textTraceToggle = _screen.Toggle("TextTraceToggle");
             _languagesEditableSection = _screen.Host("LanguagesEditableSection");
             _sourceLanguageDropdown = _screen.Dropdown("SourceLang");
             _targetLanguageDropdown = _screen.Dropdown("TargetLang");
@@ -558,6 +562,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 case "notifPositionChanged":
                 case "debugLoggingChanged":
                 case "debugAiChanged":
+                case "textTraceChanged":
                 case "targetChanged": return UpdateApplyButtonText;
                 case "sourceChanged": return OnSourceLanguageChanged;
                 case "opacityFocusedChanged":
@@ -980,6 +985,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _captureKeysOnlyToggle.IsOn = TranslatorCore.Config.capture_keys_only;
             if (_debugLoggingToggle != null) _debugLoggingToggle.IsOn = TranslatorCore.Config.debug;
             if (_debugAiToggle != null) _debugAiToggle.IsOn = TranslatorCore.Config.debug_ai;
+            if (_textTraceToggle != null) _textTraceToggle.IsOn = TranslatorCore.Config.debug_text_trace;
             _aiUrlInput.Text = TranslatorCore.Config.ai_url ?? Endpoints.OllamaDefault;
             RefreshAiLocality();
             _aiApiKeyInput.Text = TranslatorCore.Config.ai_api_key ?? "";
@@ -1531,6 +1537,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 TranslatorCore.Config.capture_keys_only = _captureKeysOnlyToggle.IsOn;
                 if (_debugLoggingToggle != null) TranslatorCore.SetRuntimeDebug(_debugLoggingToggle.IsOn);
                 if (_debugAiToggle != null) TranslatorCore.Config.debug_ai = _debugAiToggle.IsOn;
+                if (_textTraceToggle != null) TranslatorCore.SetTextTrace(_textTraceToggle.IsOn);
                 string newBackend = GetSelectedBackendConfig();
                 TranslatorCore.Config.translation_backend = newBackend;
                 // The toggle says whether translation runs; the dropdowns say what runs it. Two
@@ -1902,6 +1909,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             P.Track(_captureKeysOnlyToggle, () => _captureKeysOnlyToggle.IsOn != S().capture_keys_only);
             P.Track(_debugLoggingToggle, () => _debugLoggingToggle.IsOn != S().debug);
             P.Track(_debugAiToggle, () => _debugAiToggle.IsOn != S().debug_ai);
+            P.Track(_textTraceToggle, () => _textTraceToggle.IsOn != S().debug_text_trace);
             // The backend is one config value read from two dropdowns: the type owns a change
             // of kind (AI or service), the provider a change of service within the API kind.
             P.Track(_backendTypeDropdown?.Handle, () => (S().translation_backend == "llm") != (GetSelectedBackendConfig() == "llm"));

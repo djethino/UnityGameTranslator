@@ -3552,6 +3552,20 @@ namespace UnityGameTranslator.Core
         internal static RouteOutcome RouteText(object instance, object comp, long compId,
                                               bool isOwnUI, string componentType, ref string textValue)
         {
+            // Recorded around the whole decision, whichever way out it takes (Engine/TextTrace).
+            // Our own interface is not the game's text and is left out of the record.
+            if (!TextTrace.On || isOwnUI)
+                return RouteTextBody(instance, comp, compId, isOwnUI, componentType, ref textValue);
+
+            string incoming = textValue;
+            var outcome = RouteTextBody(instance, comp, compId, isOwnUI, componentType, ref textValue);
+            TextTrace.Write(compId, componentType, incoming, textValue, outcome.ToString());
+            return outcome;
+        }
+
+        private static RouteOutcome RouteTextBody(object instance, object comp, long compId,
+                                                  bool isOwnUI, string componentType, ref string textValue)
+        {
             // Don't translate InputField textComponent (user's typed text)
             if (componentType != "TextMesh" && IsInputFieldTextComponentCached(instance)) return RouteOutcome.Stop;
 
@@ -4399,8 +4413,13 @@ namespace UnityGameTranslator.Core
         public static void TMPText_SetMaxVisible_Prefix(object __instance, ref int value)
         {
             long tReveal = Perf.Start();
+            int asked = value;
             try { ScaleReveal(__instance, ref value); }
             finally { Perf.Stop(Perf.Reveal, tReveal); }
+
+            // What the game revealed and what reached the component, whichever way out (Engine/TextTrace).
+            if (TextTrace.On && __instance != null && !IsOwnUIText(__instance))
+                TextTrace.Reveal(TypeHelper.GetInstanceID(__instance), asked, value);
         }
 
         private static void ScaleReveal(object __instance, ref int value)

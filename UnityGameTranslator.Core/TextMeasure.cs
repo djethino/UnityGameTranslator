@@ -21,7 +21,11 @@ namespace UnityGameTranslator.Core
         private static readonly HashSet<string> _failedKinds = new HashSet<string>();
         private static MethodInfo _tmpPreferred;
 
-        public static float? Measure(object component, string line)
+        /// <param name="atSize">
+        /// The font size to measure at; null for the size the component draws at now. A bitmap
+        /// font rasterised per size (TextMesh) is measured AT that size; the others scale with it.
+        /// </param>
+        public static float? Measure(object component, string line, float? atSize)
         {
             if (component == null || line == null) return null;
             string kind = component.GetType().Name;
@@ -29,13 +33,19 @@ namespace UnityGameTranslator.Core
             try
             {
                 var textMesh = TypeHelper.Il2CppCast(component, typeof(TextMesh)) as TextMesh;
-                if (textMesh != null) return MeasureTextMesh(textMesh, line);
+                if (textMesh != null) return MeasureTextMesh(textMesh, line, atSize);
 
+                float? now = null;
                 if (TypeHelper.TMP_TextType != null && TypeHelper.TMP_TextType.IsInstanceOfType(component))
-                    return MeasureTmp(component, line);
-
-                var uiText = TypeHelper.Il2CppCast(component, typeof(UnityEngine.UI.Text)) as UnityEngine.UI.Text;
-                if (uiText != null) return MeasureUiText(uiText, line);
+                    now = MeasureTmp(component, line);
+                else
+                {
+                    var uiText = TypeHelper.Il2CppCast(component, typeof(UnityEngine.UI.Text)) as UnityEngine.UI.Text;
+                    if (uiText != null) now = MeasureUiText(uiText, line);
+                }
+                if (now == null || atSize == null) return now;
+                float current = TypeHelper.GetFontSize(component);
+                return current > 0f ? now.Value * atSize.Value / current : (float?)null;
             }
             catch (Exception ex)
             {
@@ -46,11 +56,11 @@ namespace UnityGameTranslator.Core
         }
 
         // Sum of the advances, as the font draws each character at the component's size and style.
-        private static float? MeasureTextMesh(TextMesh textMesh, string line)
+        private static float? MeasureTextMesh(TextMesh textMesh, string line, float? atSize)
         {
             var font = textMesh.font;
             if (font == null) return null;
-            int size = textMesh.fontSize;
+            int size = atSize.HasValue ? (int)Math.Round(atSize.Value) : textMesh.fontSize;
             FontStyle style = textMesh.fontStyle;
             font.RequestCharactersInTexture(line, size, style);
             float width = 0f;

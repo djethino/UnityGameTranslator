@@ -9,6 +9,7 @@ namespace UnityGameTranslator.Core.Checks
     {
         public long Id;
         public string Shown = "";
+        public float FontSize = 10f;   // a monospaced font: a character is FontSize / 10 wide
     }
 
     /// <summary>
@@ -103,7 +104,10 @@ namespace UnityGameTranslator.Core.Checks
         /// that way; a recorded game measures pixels, which a trace does not carry — there the
         /// router finds the widths contradicting the game's layout and cuts nothing, as it must.
         /// </summary>
-        public float? MeasureLine(object component, string line) => line.Length;
+        public float? MeasureLine(object component, string line, float? atSize)
+            => line.Length * (atSize ?? (component as ReplayBox)?.FontSize ?? 10f) / 10f;
+
+        public float? FontSizeOf(object component) => (component as ReplayBox)?.FontSize;
 
         /// <summary>An entry of the file, stored and indexed as a load does.</summary>
         public void Add(string source, string translation, string tag = "A")

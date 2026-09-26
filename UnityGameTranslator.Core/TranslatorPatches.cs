@@ -2162,6 +2162,12 @@ namespace UnityGameTranslator.Core
                     if (!TranslatorCore.FontSettingsMap.ContainsKey(settingsName))
                         continue;
                     ApplyFontScale(kvp.Value, settingsName);
+
+                    // A text the game broke into lines at the old size is broken again for the
+                    // new one (TextRouter.Relayout): the game only lays a line out when it first
+                    // shows it, so after an Apply its bubbles kept breaks made for another size.
+                    string relaid = TranslatorCore.Router.Relayout(kvp.Value, kvp.Key, TypeHelper.GetText(kvp.Value));
+                    if (relaid != null) TypeHelper.SetText(kvp.Value, relaid);
                 }
                 catch { }
             }
@@ -2463,6 +2469,16 @@ namespace UnityGameTranslator.Core
         /// left it at the unscaled size while its neighbours were scaled (mixed sizes down a menu or
         /// a scoreboard).
         /// </summary>
+        /// <summary>
+        /// Right after the size is (re)applied on a write: a layout the game made at another size
+        /// is broken again for this one (TextRouter.Relayout), in the text about to be written.
+        /// </summary>
+        private static void RelayoutIfResized(object instance, int compId, ref string textValue)
+        {
+            string relaid = TranslatorCore.Router.Relayout(instance, compId, textValue);
+            if (relaid != null) textValue = relaid;
+        }
+
         private static void ApplyFontScaleGated(object instance, Font unityCloneFont, string unityCloneName, string fontNameForScale)
         {
             if (unityCloneFont != null)
@@ -3055,6 +3071,7 @@ namespace UnityGameTranslator.Core
                         TextShaping.RtlPresenter.Present(__instance, compId, ref textValue,
                                                          settingsFontName ?? fontName, fontOverrideMatched);
                         ApplyFontScaleGated(__instance, unityCloneFont, unityCloneName, settingsFontName ?? fontName);
+                        RelayoutIfResized(__instance, compId, ref textValue);
                         return;
                 }
 
@@ -3094,6 +3111,7 @@ namespace UnityGameTranslator.Core
                 // Scaling on the original font before clone is applied causes size
                 // cumulation when the clone is applied later.
                 ApplyFontScaleGated(__instance, unityCloneFont, unityCloneName, settingsFontName ?? fontName);
+                RelayoutIfResized(__instance, compId, ref textValue);
 
                 if (profiling)
                 {

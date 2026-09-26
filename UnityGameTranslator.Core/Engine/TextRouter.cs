@@ -90,9 +90,14 @@ namespace UnityGameTranslator.Core
         /// The width of one line of text as this component draws it, in whatever unit the engine
         /// measures (only compared with other widths of the same component); null when the
         /// engine cannot say. Read from the game's own layouts, then used to wrap a translation
-        /// that arrived after the game laid out its source (TextRouter.Fit).
+        /// that arrived after the game laid out its source (TextRouter.Fit). <paramref name="atSize"/>:
+        /// as it would be drawn at that font size — the size the game laid out at, once the font
+        /// has been resized since; null for the size it draws at now.
         /// </summary>
-        float? MeasureLine(object component, string line);
+        float? MeasureLine(object component, string line, float? atSize);
+
+        /// <summary>The font size this component draws at now; null when it has none to give.</summary>
+        float? FontSizeOf(object component);
     }
 
     /// <summary>What the caller must do once the text has been routed.</summary>
@@ -218,7 +223,14 @@ namespace UnityGameTranslator.Core
             public bool LayoutOurs;         // laying out our translation, or the game's own text
             public int WriteFrame = -1;     // the frame of the last write, whatever became of it
             public string LastLayout;       // the last text the game laid out here, as it left it
+            public float? LastLayoutSize;   // ...at that font size: what its widths were measured at
             public string LastLayoutSource; // ...the game's own text it laid out (null when it was ours)
+            // What the component shows as a layout — the game's, or ours wrapped like it — and at
+            // what size: a resize re-lays it out (TextRouter.Relayout).
+            public string ShownWhole;       // the text laid out, without breaks
+            public string ShownLaidOut;     // ...as the component shows it
+            public float? ShownSize;
+            public bool ShownIsOurs;        // a translation (else the game's own text)
             public bool LayoutReachedFull;  // the pass in flight has reached the whole length
             public int LayoutSteps;         // steps of the pass in flight
 

@@ -24,6 +24,73 @@ namespace UnityGameTranslator.Core
         // text): the width is the engine's, of the text as the component draws it.
 
         /// <summary>
+        /// The game has laid out <paramref name="whole"/> on this component as
+        /// <paramref name="laidOut"/>: its measure is read from this layout later, at the size it
+        /// was made at, and this is what the component shows until something replaces it.
+        /// </summary>
+        private void NoteLayout(ComponentTextState state, object comp, string whole, string laidOut, bool ours)
+        {
+            float? size = _host.FontSizeOf(comp);
+            state.LastLayout = laidOut;
+            state.LastLayoutSize = size;
+            state.LastLayoutSource = ours ? null : whole;
+            state.ShownWhole = whole;
+            state.ShownLaidOut = laidOut;
+            state.ShownSize = size;
+            state.ShownIsOurs = ours;
+        }
+
+        /// <summary>
+        /// The font of a component the game lays out itself has been resized (Size % applied):
+        /// what it shows was broken into lines for the old size, and the game will not do it
+        /// again until the line shows anew. Returns the same text laid out again for the size it
+        /// draws at now — by the game's rule, at the width the game used — or null when there is
+        /// nothing to redo: not a layout this router knows, the size has not moved, or no width
+        /// can be read. Asked by the engine right after it changes a component's size.
+        /// </summary>
+        public string Relayout(object comp, long compId, string shown)
+        {
+            if (compId == -1 || shown == null) return null;
+            var state = PeekState(compId);
+            if (state?.ShownLaidOut == null || state.LastLayout == null || shown != state.ShownLaidOut) return null;
+
+            float? size = _host.FontSizeOf(comp);
+            if (size == null || state.ShownSize == null || Math.Abs(size.Value - state.ShownSize.Value) < 0.01f)
+                return null;
+
+            float? layoutSize = state.LastLayoutSize;
+            if (!TryReadFit(state.LastLayout, line => _host.MeasureLine(comp, line, layoutSize), out LineFit fit, out string whyNot))
+            {
+                SayFit($"[LAYOUT-FIT] comp={compId} resized, and not laid out again: {whyNot}");
+                return null;
+            }
+            string again = WrapLikeTheGame(state.ShownWhole, fit, line => _host.MeasureLine(comp, line, null));
+            if (again == null) return null;
+
+            if (state.ShownIsOurs)
+            {
+                state.LastTranslated = again;
+                _concatTranslatedValues.Add(again);
+            }
+            else
+            {
+                // The game's own text, laid out anew: its redraws of either form are its layout.
+                if (_layoutResults.TryGetValue(shown, out string source)) _layoutResults[again] = source;
+            }
+            state.ShownLaidOut = again;
+            state.ShownSize = size;
+            SayFit($"[LAYOUT-FIT] comp={compId} resized ({layoutSize:F0} → {size:F0}), laid out again at the game's width: '{Clip(again, 60)}'");
+            return again;
+        }
+
+        private void SayFit(string line)
+        {
+            if (_layoutFitSaid >= 5) return;
+            _layoutFitSaid++;
+            _host.Log(line);
+        }
+
+        /// <summary>
         /// The translation of <paramref name="source"/>, wrapped to the width the game used when it
         /// last laid out a text on this component — to go up where the game shows its layout of
         /// that source. <paramref name="translation"/> when it is known (a late answer), looked up
@@ -48,18 +115,16 @@ namespace UnityGameTranslator.Core
             if (source.IndexOf('\n') < 0)
                 translation = translation.Replace("\r\n", " ").Replace('\n', ' ');
 
-            Func<string, float?> measure = line => _host.MeasureLine(comp, line);
-            if (!TryReadFit(state.LastLayout, measure, out LineFit fit, out string whyNot))
+            // The game's widths at the size it laid out at; the translation at the size it will be
+            // drawn at. The same size unless the font was resized since (Size % applied).
+            float? layoutSize = state.LastLayoutSize;
+            if (!TryReadFit(state.LastLayout, line => _host.MeasureLine(comp, line, layoutSize), out LineFit fit, out string whyNot))
             {
-                if (_layoutFitSaid < 5)
-                {
-                    _layoutFitSaid++;
-                    _host.Log($"[LAYOUT-FIT] comp={compId} a translation arrived after the game laid out its source, and is not put up: {whyNot}");
-                }
+                SayFit($"[LAYOUT-FIT] comp={compId} a translation arrived after the game laid out its source, and is not put up: {whyNot}");
                 return null;
             }
 
-            string wrapped = WrapLikeTheGame(translation, fit, measure);
+            string wrapped = WrapLikeTheGame(translation, fit, line => _host.MeasureLine(comp, line, null));
             if (wrapped == null) return null;
 
             // Ours from now on: its redraws and read-backs are recognised as a translation, and the
@@ -68,11 +133,11 @@ namespace UnityGameTranslator.Core
             _concatTranslatedValues.Add(wrapped);
             _host.StoreOriginal(comp, source);
             TrackTranslation(compId, source, wrapped);
-            if (_layoutFitSaid < 5)
-            {
-                _layoutFitSaid++;
-                _host.Log($"[LAYOUT-FIT] comp={compId} wrapped to the game's width (kept {fit.Kept:F1}, refused {fit.Refused:F1}): '{Clip(wrapped, 60)}'");
-            }
+            state.ShownWhole = translation;
+            state.ShownLaidOut = wrapped;
+            state.ShownSize = _host.FontSizeOf(comp);
+            state.ShownIsOurs = true;
+            SayFit($"[LAYOUT-FIT] comp={compId} wrapped to the game's width (kept {fit.Kept:F1}, refused {fit.Refused:F1}): '{Clip(wrapped, 60)}'");
             return wrapped;
         }
 

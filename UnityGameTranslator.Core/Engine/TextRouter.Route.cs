@@ -474,10 +474,7 @@ namespace UnityGameTranslator.Core
                 // said anything about ("It's messed up!", 2026-09-26: its translation went up on
                 // one line and ran out of the bubble).
                 if (!state.LayoutReachedFull && state.LayoutSteps > 0)
-                {
-                    state.LastLayout = text;
-                    state.LastLayoutSource = state.LayoutOurs ? null : text;
-                }
+                    NoteLayout(state, comp, text, text, state.LayoutOurs);
                 state.LayoutWhole = null;
                 state.LayoutHeld = null;
                 // ⚠ Routed as the whole it is, not as the growth of the last step: left
@@ -516,8 +513,7 @@ namespace UnityGameTranslator.Core
             }
             // The game's own measure, read later from the LAST of these (TextRouter.Fit): an
             // earlier one may still carry the word that overflows.
-            state.LastLayout = text;
-            state.LastLayoutSource = state.LayoutOurs ? null : state.LayoutHeld;
+            NoteLayout(state, comp, state.LayoutHeld, text, state.LayoutOurs);
             state.LayoutReachedFull = true;
             if (_host.DebugMode)
                 _host.LogDebug($"[LAYOUT] comp={compId} the game laid out {(state.LayoutOurs ? "our translation" : "its own text")} — left as it wrote it: '{Clip(text, 60)}'");

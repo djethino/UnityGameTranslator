@@ -119,6 +119,14 @@ namespace UnityGameTranslator.Core.Checks
                     // A refresh sets again what the component holds (the scanner's sweep, an Apply
                     // in the Fonts tab): our own output coming back through the setter.
                     host.GameWrites(box, box.Shown);
+                else if (step["resize"] != null)
+                {
+                    // Size % applied: the font is resized, then — as ReapplyScaleToAllComponents
+                    // does — a text the game laid out is laid out again, written through the setter.
+                    box.FontSize = (float)step["resize"];
+                    string relaid = router.Relayout(box, box.Id, box.Shown);
+                    if (relaid != null) host.GameWrites(box, relaid);
+                }
                 else if (step["clear"] != null)
                     // The game empties the component: an empty text never reaches the router
                     // (the setters let it through untouched), the component simply holds nothing.

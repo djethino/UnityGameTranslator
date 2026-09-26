@@ -339,6 +339,26 @@
       "queued": [ "Now all the fish are dead." ]
     },
     {
+      "id": "layout/a-resize-lays-the-line-out-again-at-the-game-width",
+      "why": "🔴 asked by the user (2026-09-26): once Size % is applied, a line the game broke for the old size is broken again for the new one — at the width the game used, measured at the size it laid out at. The game only lays a line out when it first shows it, so nothing else would. The component here is monospaced: a character is FontSize / 10 wide",
+      "file": {},
+      "steps": [
+        { "f": 5, "t": 1.0, "write": "Now all the fish are dead.", "shows": "Now all the fish are dead." },
+        { "f": 5, "t": 1.0, "clear": true },
+        { "f": 5, "t": 1.0, "write": "Now ", "shows": "Now " },
+        { "f": 5, "t": 1.0, "write": "Now all the ", "shows": "Now all the " },
+        { "f": 5, "t": 1.0, "write": "Now all the \r\nfish are ", "shows": "Now all the \r\nfish are " },
+        { "f": 5, "t": 1.0, "write": "Now all the \r\nfish are \r\ndead.", "shows": "Now all the \r\nfish are \r\ndead." },
+        { "f": 60, "t": 2.0, "tick": true },
+        { "f": 61, "t": 2.1, "arrive": { "o": "Now all the fish are dead.", "tr": "Tous les poissons sont morts." }, "shows": "Tous les \r\npoissons \r\nsont morts." },
+        { "f": 70, "t": 2.5, "resize": 8, "shows": "Tous les \r\npoissons sont \r\nmorts." },
+        { "f": 80, "t": 3.0, "refresh": true, "shows": "Tous les \r\npoissons sont \r\nmorts." },
+        { "f": 90, "t": 3.5, "write": "Now all the \r\nfish are \r\ndead.", "shows": "Tous les \r\npoissons sont \r\nmorts." },
+        { "f": 95, "t": 3.7, "resize": 10, "shows": "Tous les \r\npoissons \r\nsont morts." }
+      ],
+      "queued": [ "Now all the fish are dead." ]
+    },
+    {
       "id": "layout/a-late-translation-is-wrapped-even-over-the-whole",
       "why": "🔴 the component the game lays out may show its whole again when the answer comes back: the translation still goes up wrapped to the game's width — written as it came, it ran out of the bubble on one line (2026-09-26)",
       "file": {},

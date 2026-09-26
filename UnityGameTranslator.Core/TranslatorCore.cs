@@ -6438,7 +6438,13 @@ namespace UnityGameTranslator.Core
                 TextTrace.Layout(IdOf(component), fullText, stack);
             }
 
-            public float? MeasureLine(object component, string line) => TextMeasure.Measure(component, line);
+            public float? MeasureLine(object component, string line, float? atSize) => TextMeasure.Measure(component, line, atSize);
+
+            public float? FontSizeOf(object component)
+            {
+                float size = TypeHelper.GetFontSize(component);
+                return size >= 0f ? size : (float?)null;
+            }
 
             public string Describe(object target)
             {

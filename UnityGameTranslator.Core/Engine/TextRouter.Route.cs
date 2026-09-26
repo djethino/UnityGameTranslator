@@ -51,7 +51,8 @@ namespace UnityGameTranslator.Core
                 // The game redraws its layout of a text: once that text has a translation, the
                 // translation goes up in its place, wrapped the way the game wraps (TextRouter.Fit)
                 // — otherwise every redraw would put the source back over it.
-                string wrapped = compId != -1 ? WrapTranslationOf(comp, compId, laidOutSource, null) : null;
+                string wrapped = compId != -1 && PeekState(compId)?.LastLayoutSource == laidOutSource
+                    ? WrapTranslationOf(comp, compId, laidOutSource, null) : null;
                 if (wrapped != null) textValue = wrapped;
                 return RouteOutcome.Translated;
             }
@@ -456,6 +457,8 @@ namespace UnityGameTranslator.Core
                 state.LayoutWhole = StripBreaks(whole).TrimEnd();
                 state.LayoutHeld = whole;
                 state.LayoutFrame = frame;
+                state.LayoutReachedFull = false;
+                state.LayoutSteps = 0;
                 state.LayoutOurs = whole == state.LastTranslated || _concatTranslatedValues.Contains(whole);
                 _host.LayoutPassSeen(comp, whole);
             }
@@ -466,6 +469,15 @@ namespace UnityGameTranslator.Core
             // also ends this way: its last step IS the whole.
             if (text == state.LayoutHeld)
             {
+                // A pass that never reached the full length before the whole came back: the
+                // text fits on one line, and that line is what the game kept — the only width it
+                // said anything about ("It's messed up!", 2026-09-26: its translation went up on
+                // one line and ran out of the bubble).
+                if (!state.LayoutReachedFull && state.LayoutSteps > 0)
+                {
+                    state.LastLayout = text;
+                    state.LastLayoutSource = state.LayoutOurs ? null : text;
+                }
                 state.LayoutWhole = null;
                 state.LayoutHeld = null;
                 // ⚠ Routed as the whole it is, not as the growth of the last step: left
@@ -484,6 +496,7 @@ namespace UnityGameTranslator.Core
             }
 
             state.FrameCallCount++;
+            state.LayoutSteps++;
             state.LastRaw = text;
             if (step.Length < state.LayoutWhole.Length) return true;
 
@@ -504,6 +517,8 @@ namespace UnityGameTranslator.Core
             // The game's own measure, read later from the LAST of these (TextRouter.Fit): an
             // earlier one may still carry the word that overflows.
             state.LastLayout = text;
+            state.LastLayoutSource = state.LayoutOurs ? null : state.LayoutHeld;
+            state.LayoutReachedFull = true;
             if (_host.DebugMode)
                 _host.LogDebug($"[LAYOUT] comp={compId} the game laid out {(state.LayoutOurs ? "our translation" : "its own text")} — left as it wrote it: '{Clip(text, 60)}'");
             return true;
@@ -553,21 +568,23 @@ namespace UnityGameTranslator.Core
         /// <param name="toWrite">The text to put on the component, or null on <see cref="LateOutcome.Skip"/>.</param>
         public LateOutcome Late(long compId, object component, string current, string original, string translation, out string toWrite)
         {
+            // 🔴 This component is one the game lays out itself, and that text is the one it laid
+            // out last: the translation goes up wrapped the way the game wraps (TextRouter.Fit),
+            // whether the component shows the game's layout or the whole again. Decided with the
+            // user on 2026-09-26 — left alone, the line stayed in the source language for as long
+            // as it was on screen; written as it came, it ran out of the bubble on one line.
+            bool shownIsTheSource = current == original
+                || (current != null && _layoutResults.TryGetValue(current, out string laidOutSource) && laidOutSource == original);
+            if (shownIsTheSource && compId != -1 && PeekState(compId)?.LastLayoutSource == original)
+            {
+                toWrite = WrapTranslationOf(component, compId, original, translation);
+                if (toWrite != null) return LateOutcome.Write;
+            }
+
             if (current == original)
             {
                 toWrite = translation;
                 return LateOutcome.Write;
-            }
-
-            // The component shows the game's own layout of that text: the translation goes up in
-            // its place, wrapped the way the game wraps (TextRouter.Fit). Decided with the user on
-            // 2026-09-26 — left alone, the line stayed in the source language for as long as it
-            // was on screen, since the game lays a line out only when it first shows it.
-            if (compId != -1 && current != null
-                && _layoutResults.TryGetValue(current, out string laidOutSource) && laidOutSource == original)
-            {
-                toWrite = WrapTranslationOf(component, compId, original, translation);
-                if (toWrite != null) return LateOutcome.Write;
             }
 
             // For concat components: the delta doesn't match the full text.

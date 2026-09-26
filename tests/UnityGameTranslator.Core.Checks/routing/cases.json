@@ -265,7 +265,7 @@
     },
     {
       "id": "layout/a-line-that-fits-is-translated-at-its-next-showing",
-      "why": "a text short enough for one line comes out of the pass exactly as it went in: it must not be remembered as the game's layout, or it would stay in the source language at every later showing",
+      "why": "a text short enough for one line comes out of the pass exactly as it went in: it must not be remembered as the game's layout, or it would stay in the source language at every later showing. Its one line IS the width the game kept: a longer translation arriving late is wrapped to it (on one line it ran out of the bubble, 2026-09-26); at the next showing the game lays the translation out itself",
       "file": {},
       "steps": [
         { "f": 5, "t": 1.0, "write": "It's messed up!", "shows": "It's messed up!" },
@@ -273,7 +273,7 @@
         { "f": 5, "t": 1.0, "write": "It's messed ", "shows": "It's messed " },
         { "f": 5, "t": 1.0, "write": "It's messed up!", "shows": "It's messed up!" },
         { "f": 60, "t": 2.0, "tick": true },
-        { "f": 61, "t": 2.1, "arrive": { "o": "It's messed up!", "tr": "C'est n'importe quoi !" }, "shows": "C'est n'importe quoi !" },
+        { "f": 61, "t": 2.1, "arrive": { "o": "It's messed up!", "tr": "C'est n'importe quoi !" }, "shows": "C'est n'importe\nquoi !" },
         { "f": 200, "t": 5.0, "write": "It's messed up!", "shows": "C'est n'importe quoi !" }
       ],
       "queued": [ "It's messed up!" ]
@@ -335,6 +335,23 @@
         { "f": 61, "t": 2.1, "arrive": { "o": "Now all the fish are dead.", "tr": "Tous les poissons sont morts." }, "shows": "Tous les \r\npoissons \r\nsont morts." },
         { "f": 100, "t": 3.0, "write": "Now all the \r\nfish are \r\ndead.", "shows": "Tous les \r\npoissons \r\nsont morts." },
         { "f": 101, "t": 3.1, "refresh": true, "shows": "Tous les \r\npoissons \r\nsont morts." }
+      ],
+      "queued": [ "Now all the fish are dead." ]
+    },
+    {
+      "id": "layout/a-late-translation-is-wrapped-even-over-the-whole",
+      "why": "🔴 the component the game lays out may show its whole again when the answer comes back: the translation still goes up wrapped to the game's width — written as it came, it ran out of the bubble on one line (2026-09-26)",
+      "file": {},
+      "steps": [
+        { "f": 5, "t": 1.0, "write": "Now all the fish are dead.", "shows": "Now all the fish are dead." },
+        { "f": 5, "t": 1.0, "clear": true },
+        { "f": 5, "t": 1.0, "write": "Now ", "shows": "Now " },
+        { "f": 5, "t": 1.0, "write": "Now all the ", "shows": "Now all the " },
+        { "f": 5, "t": 1.0, "write": "Now all the \r\nfish are ", "shows": "Now all the \r\nfish are " },
+        { "f": 5, "t": 1.0, "write": "Now all the \r\nfish are \r\ndead.", "shows": "Now all the \r\nfish are \r\ndead." },
+        { "f": 9, "t": 1.1, "write": "Now all the fish are dead.", "shows": "Now all the fish are dead." },
+        { "f": 60, "t": 2.0, "tick": true },
+        { "f": 61, "t": 2.1, "arrive": { "o": "Now all the fish are dead.", "tr": "Tous les poissons sont morts." }, "shows": "Tous les \r\npoissons \r\nsont morts." }
       ],
       "queued": [ "Now all the fish are dead." ]
     }

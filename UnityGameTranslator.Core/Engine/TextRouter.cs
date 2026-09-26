@@ -218,6 +218,9 @@ namespace UnityGameTranslator.Core
             public bool LayoutOurs;         // laying out our translation, or the game's own text
             public int WriteFrame = -1;     // the frame of the last write, whatever became of it
             public string LastLayout;       // the last text the game laid out here, as it left it
+            public string LastLayoutSource; // ...the game's own text it laid out (null when it was ours)
+            public bool LayoutReachedFull;  // the pass in flight has reached the whole length
+            public int LayoutSteps;         // steps of the pass in flight
 
             // --- Typewriting ---
             public string TypewritingText;

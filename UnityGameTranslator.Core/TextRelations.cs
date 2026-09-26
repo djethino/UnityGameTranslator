@@ -71,13 +71,24 @@ namespace UnityGameTranslator.Core
         /// lifted out on both sides, so "Tape 12" and "Tape [!v*0]" are one head. An equal line is
         /// not a head: that is a cache hit, answered before this is asked.
         /// </summary>
-        public static bool IsHeadOfALongerLine(string text, IEnumerable<string> lines)
+        /// <param name="blockEndingAtABreakIsWhole">
+        /// For a text written whole in one go: ending exactly where the longer line goes on to a
+        /// NEW line, it is a block of its own, not a head. 🔴 A talent tooltip (three lines) is,
+        /// numbers lifted out, the head of the next level's tooltip (the same three lines, then a
+        /// fourth): held as a head, it was never sent and stayed in the source language (2026-09-26).
+        /// A reveal (grown) or a resume cut mid-sentence still counts as a head.
+        /// </param>
+        public static bool IsHeadOfALongerLine(string text, IEnumerable<string> lines, bool blockEndingAtABreakIsWhole = false)
         {
             if (string.IsNullOrEmpty(text) || lines == null) return false;
             foreach (var line in lines)
             {
                 if (line != null && line.Length > text.Length && line.StartsWith(text, StringComparison.Ordinal))
+                {
+                    char next = line[text.Length];
+                    if (blockEndingAtABreakIsWhole && (next == '\n' || next == '\r')) continue;
                     return true;
+                }
             }
             return false;
         }

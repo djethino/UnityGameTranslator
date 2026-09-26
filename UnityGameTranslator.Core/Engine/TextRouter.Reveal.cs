@@ -286,8 +286,11 @@ namespace UnityGameTranslator.Core
             // The head of a line the file already holds: a reveal resumed part-way, stood still,
             // and is not a line of its own (TextRelations.IsHeadOfALongerLine). Held, not sent:
             // the reveal goes on from here, and the line it belongs to answers when it arrives.
+            var held = PeekState(compId);
+            bool writtenWhole = held != null && !held.TypewritingGrew;
             bool headOfKnown = !inCache && !alreadyTranslated
-                               && TextRelations.IsHeadOfALongerLine(normalizedText, _host.GameStore.Keys);
+                               && TextRelations.IsHeadOfALongerLine(normalizedText, _host.GameStore.Keys,
+                                                                    blockEndingAtABreakIsWhole: writtenWhole);
 
             if (_host.DebugMode)
             {

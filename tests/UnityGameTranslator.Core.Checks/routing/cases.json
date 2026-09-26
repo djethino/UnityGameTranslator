@@ -42,6 +42,26 @@
       "queued": [ "Strength: +1 damage per point", "Agility: +1 dodge per point", "Wisdom: +1 focus per point" ]
     },
     {
+      "id": "reveal/a-tooltip-that-is-the-first-lines-of-a-known-one-is-sent",
+      "why": "🔴 seen in a game (2026-09-26): a level-one talent tooltip is, numbers lifted out, the first lines of the next level's tooltip already in the file. Held as 'the head of a longer known line', it was never sent. Written whole and ending where the known one goes on to a new line, it is a text of its own",
+      "file": { "Blade +10\nCost: 8\n\nReplaces:\nKnife": "Lame +10\nCoût : 8\n\nRemplace :\nCouteau" },
+      "steps": [
+        { "f": 1, "t": 0.0, "write": "Blade +5\nCost: 4", "shows": "Blade +5\nCost: 4" },
+        { "f": 60, "t": 1.0, "tick": true }
+      ],
+      "queued": [ "Blade +5\nCost: 4" ]
+    },
+    {
+      "id": "reveal/a-resumed-line-cut-mid-sentence-is-still-held",
+      "why": "the case the head rule was written for (2026-09-12): a recording resumed part-way sets the first part of a known line at once and stands still — cut in the middle of a sentence, it is a head, and is not sent as a line of its own",
+      "file": { "The river runs red tonight, and nobody knows why.": "La rivière est rouge ce soir, et personne ne sait pourquoi." },
+      "steps": [
+        { "f": 1, "t": 0.0, "write": "The river runs red tonight, and", "shows": "The river runs red tonight, and" },
+        { "f": 60, "t": 1.0, "tick": true }
+      ],
+      "queued": []
+    },
+    {
       "id": "reveal/letter-by-letter-a-known-line-costs-nothing",
       "why": "no fragment of a reveal is ever sent: the finished line is known, and the reveal is told the moment it is recognised",
       "file": { "Hello there": "Bonjour à tous" },

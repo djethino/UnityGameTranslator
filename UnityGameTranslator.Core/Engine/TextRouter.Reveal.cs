@@ -281,6 +281,15 @@ namespace UnityGameTranslator.Core
             {
                 _host.Log($"[TW-PARTIAL] comp={compId} the head of a longer known line — held, not sent: '{Head40(text)}'");
             }
+            else if (AssembleFinalizedLines(compId, TargetOf(compId), text) is string assembled)
+            {
+                // 🔴 It holds a line that is already a translation — ours, read back and built
+                // into this text by the game (TextRouter.Lines). Sent whole, that line went to the
+                // model again with the game's own lines around it, and the mix was stored. Only
+                // the other lines were sent; what is known goes up now.
+                var target = TargetOf(compId);
+                if (target != null && assembled != text) _host.Write(target, assembled);
+            }
             else
             {
                 object target = TargetOf(compId);

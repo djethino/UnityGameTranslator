@@ -359,6 +359,59 @@
       "queued": [ "Now all the fish are dead." ]
     },
     {
+      "id": "lines/a-log-adding-an-entry-at-its-head-sends-the-entry-alone",
+      "why": "🔴 recorded in a game (2026-09-26): an event log adds each entry at its HEAD, in a write of its own; sent whole, the log went to the model at every event (keys of 4 123 characters). The entry added is translated alone, what was there keeps its translation, and the answer goes up in the whole",
+      "file": { "[1] The harvest is in.": "[1] La récolte est rentrée." },
+      "steps": [
+        { "f": 5, "t": 1.0, "write": "[1] The harvest is in.", "shows": "[1] La récolte est rentrée." },
+        { "f": 90, "t": 3.0, "write": "[2] A stranger arrived.\n[1] The harvest is in.", "shows": "[2] A stranger arrived.\n[1] La récolte est rentrée." },
+        { "f": 91, "t": 3.1, "arrive": { "o": "[2] A stranger arrived.", "tr": "[2] Un inconnu est arrivé." }, "shows": "[2] Un inconnu est arrivé.\n[1] La récolte est rentrée." },
+        { "f": 120, "t": 4.0, "tick": true }
+      ],
+      "queued": [ "[2] A stranger arrived." ]
+    },
+    {
+      "id": "lines/a-line-added-to-a-text-not-yet-translated-is-sent-alone",
+      "why": "a text already sent whole, then given one more line in a later write: only the line goes out — sent again whole, the same text would be paid for twice and stored twice",
+      "file": {},
+      "steps": [
+        { "f": 5, "t": 1.0, "write": "The gates are closed.", "shows": "The gates are closed." },
+        { "f": 60, "t": 2.0, "tick": true },
+        { "f": 90, "t": 3.0, "write": "The gates are closed.\nThe guards are asleep.", "shows": "The gates are closed.\nThe guards are asleep." },
+        { "f": 91, "t": 3.1, "arrive": { "o": "The guards are asleep.", "tr": "Les gardes dorment." }, "shows": "The gates are closed.\nLes gardes dorment." },
+        { "f": 92, "t": 3.2, "arrive": { "o": "The gates are closed.", "tr": "Les portes sont fermées." }, "shows": "Les portes sont fermées.\nLes gardes dorment." },
+        { "f": 150, "t": 5.0, "tick": true }
+      ],
+      "queued": [ "The gates are closed.", "The guards are asleep." ]
+    },
+    {
+      "id": "lines/a-line-of-ours-read-back-into-a-new-text-is-never-sent",
+      "why": "🔴 recorded in a game (2026-09-26): a tooltip rebuilt from a line of our translation read back plus lines of its own; sent whole, our line went to the model again and the mix was stored. Only the game's own lines go out — even when our line is one line of a translation of several",
+      "file": { "Iron Sword\nA plain blade.": "Épée de fer\nUne lame ordinaire." },
+      "steps": [
+        { "f": 5, "t": 1.0, "c": 7, "write": "Iron Sword\nA plain blade.", "shows": "Épée de fer\nUne lame ordinaire." },
+        { "f": 5, "t": 1.0, "c": 8, "write": "Une lame ordinaire.\nWeight 4", "shows": "Une lame ordinaire.\nWeight 4" },
+        { "f": 60, "t": 2.0, "tick": true },
+        { "f": 61, "t": 2.1, "c": 8, "arrive": { "o": "Weight 4", "tr": "Poids 4" }, "shows": "Une lame ordinaire.\nPoids 4" }
+      ],
+      "queued": [ "Weight 4" ]
+    },
+    {
+      "id": "lines/a-reveal-crossing-a-line-break-is-one-line",
+      "why": "no false positive: a text revealed letter by letter across a line break grows a few characters at a time — never a block of whole lines — and is sent once, whole, when it stops",
+      "file": {},
+      "steps": [
+        { "f": 1, "t": 0.00, "write": "Hi", "shows": "Hi" },
+        { "f": 2, "t": 0.03, "write": "Hi\n", "shows": "Hi\n" },
+        { "f": 3, "t": 0.06, "write": "Hi\nT", "shows": "Hi\nT" },
+        { "f": 4, "t": 0.09, "write": "Hi\nTh", "shows": "Hi\nTh" },
+        { "f": 5, "t": 0.12, "write": "Hi\nThe", "shows": "Hi\nThe" },
+        { "f": 6, "t": 0.15, "write": "Hi\nThere", "shows": "Hi\nThere" },
+        { "f": 60, "t": 2.0, "tick": true }
+      ],
+      "queued": [ "Hi\nThere" ]
+    },
+    {
       "id": "layout/a-late-translation-is-wrapped-even-over-the-whole",
       "why": "🔴 the component the game lays out may show its whole again when the answer comes back: the translation still goes up wrapped to the game's width — written as it came, it ran out of the bubble on one line (2026-09-26)",
       "file": {},

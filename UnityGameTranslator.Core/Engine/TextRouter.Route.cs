@@ -39,12 +39,13 @@ namespace UnityGameTranslator.Core
             // one of them (our translation written back by the game), and a pass is recognised
             // from what the component holds and the frame it was written in — not from what the
             // branches below happened to record.
+            bool writtenThisFrame = false;   // a previous write of this component in this frame
             if (compId != -1)
             {
                 var written = StateFor(compId);
-                bool sameFrame = written.WriteFrame == _host.Frame;
+                writtenThisFrame = written.WriteFrame == _host.Frame;
                 written.WriteFrame = _host.Frame;
-                if (FollowLayoutPass(written, comp, compId, textValue, sameFrame)) return RouteOutcome.Translated;
+                if (FollowLayoutPass(written, comp, compId, textValue, writtenThisFrame)) return RouteOutcome.Translated;
             }
             if (_layoutResults.TryGetValue(textValue, out string laidOutSource))
             {
@@ -214,7 +215,7 @@ namespace UnityGameTranslator.Core
                     else
                     {
                         // Translate core delta directly (skip TW — concat deltas are immediate)
-                        string translatedCore = string.IsNullOrEmpty(deltaCore) ? "" : KeepBreaks(deltaCore, Translate(deltaCore, comp, isOwnUI, skipTypewriting: true));
+                        string translatedCore = string.IsNullOrEmpty(deltaCore) ? "" : KeepBreaks(deltaCore, TranslateUnit(deltaCore, comp, isOwnUI, skipQueueing: false));
                         string translatedDelta = leadingNL + translatedCore + trailingNL;
 
                         if (string.IsNullOrEmpty(lastTrans))
@@ -304,7 +305,7 @@ namespace UnityGameTranslator.Core
                     // stayed in the source language on a translated page for good, since nothing
                     // would ever ask for it. With an unknown source the part may be a fragment of
                     // something else, so it is still only looked up.
-                    string transCore = string.IsNullOrEmpty(dCore) ? "" : KeepBreaks(dCore, Translate(dCore, comp, isOwnUI, skipTypewriting: true, skipQueueing: whole == null));
+                    string transCore = string.IsNullOrEmpty(dCore) ? "" : KeepBreaks(dCore, TranslateUnit(dCore, comp, isOwnUI, skipQueueing: whole == null));
                     string translatedDelta = leadNL + transCore + trailNL;
                     textValue = lastTranslatedTarget + translatedDelta;
 
@@ -336,6 +337,20 @@ namespace UnityGameTranslator.Core
 
                 if (_host.DebugMode)
                     _host.LogDebug($"[CONCAT-FR] comp={compId} delta({delta.Length}c)='{Clip(delta, 40)}'");
+            }
+
+            // === A TEXT THAT GROWS BY WHOLE LINES (TextRouter.Lines) ===
+            // An event log adding entries at its head, a list adding lines at its end, in writes
+            // of their own: the block added is translated alone, what was there keeps its
+            // translation. Sent whole, a log went back to the model at every event (2026-09-26).
+            // The appending half generalises CONCAT-FR above to a text not yet translated.
+            if (!handledAsConcat && state != null && !isConcatComp && !writtenThisFrame
+                && GrowsByLines(state, textValue, out string keptLines, out string keptTranslation,
+                                out string addedLines, out bool addedAtHead))
+            {
+                textValue = AssembleGrowth(state, comp, compId, isOwnUI, preTranslateText,
+                                           keptLines, keptTranslation, addedLines, addedAtHead);
+                handledAsConcat = true;
             }
 
             if (!handledAsConcat)
@@ -664,7 +679,7 @@ namespace UnityGameTranslator.Core
                 SplitNewlines(part, out string leading, out string core, out string trailing);
 
                 string translated = string.IsNullOrEmpty(core) ? "" :
-                    KeepBreaks(core, Translate(core, component, false, skipTypewriting: true, skipQueueing: true));
+                    KeepBreaks(core, TranslateUnit(core, component, false, skipQueueing: true));
                 result.Append(leading);
                 result.Append(translated);
                 result.Append(trailing);

@@ -48,6 +48,34 @@ namespace UnityGameTranslator.Core.Checks
             }
 
             TheGameWritesWhatTheRouterSays(check);
+            LinesAreCutOutsideStyledSpans(check);
+        }
+
+        /// <summary>
+        /// Where a text made of lines is cut (TextRouter.LineParts): at each line break, never
+        /// inside a styled span — in the markup of every engine served, whatever the script.
+        /// </summary>
+        private static void LinesAreCutOutsideStyledSpans(Action<bool, string, string> check)
+        {
+            void Case(string text, string[] expected, string what, string why)
+            {
+                var got = TextRouter.LineParts(text);
+                bool ok = got.SequenceEqual(expected);
+                check(ok, what, ok ? why : $"got [{string.Join(" | ", got.Select(Quote))}]  —  {why}");
+            }
+            Case("a\nb", new[] { "a\n", "b" }, "lines are cut at their breaks", "each keeps the break that ends it; joined back they are the text");
+            Case("<color=red>a\nb</color>\nc", new[] { "<color=red>a\nb</color>\n", "c" },
+                "not inside a Unity/TMP span", "a line cut inside a styled span loses its style");
+            Case("[b]a\nb[/b]\nc", new[] { "[b]a\nb[/b]\n", "c" },
+                "not inside a Godot BBCode span", "the same rule in the markup of another engine");
+            Case("<Bold>a\nb</>\nc", new[] { "<Bold>a\nb</>\n", "c" },
+                "not inside an Unreal rich-text style closed by </>", "Unreal closes a style without naming it");
+            Case("[门派1.1.4]事件一\n[自身1.1.1]事件二", new[] { "[门派1.1.4]事件一\n", "[自身1.1.1]事件二" },
+                "a bracketed label never closed is not a span", "an event log's date labels would otherwise glue every line together");
+            Case("<sprite=1>a\nb", new[] { "<sprite=1>a\n", "b" },
+                "nor a tag never closed", "a sprite or an icon opens nothing");
+            Case("مرحبا\nשלום\n你好\nสวัสดี", new[] { "مرحبا\n", "שלום\n", "你好\n", "สวัสดี" },
+                "whatever the script", "lines are lines in Arabic, Hebrew, Chinese and Thai alike: only the markup is read, never the text");
         }
 
         /// <summary>

@@ -77,7 +77,13 @@ namespace UnityGameTranslator.Core
             // See analyse/readback-substitution-fr-keys-analysis.md.
             public readonly ConcurrentDictionary<string, byte> Readback = new ConcurrentDictionary<string, byte>();
 
-            public void Clear() { Target.Clear(); Readback.Clear(); }
+            // Each line of a translated value of several lines, in the decoration-insensitive form.
+            // ⚠ Asked ONLY by a text being cut into lines (TextRouter.Lines), never by the gate: a
+            // translation keeping a word of the source on a line of its own would otherwise mark
+            // that word as translated everywhere.
+            public readonly ConcurrentDictionary<string, byte> Lines = new ConcurrentDictionary<string, byte>();
+
+            public void Clear() { Target.Clear(); Readback.Clear(); Lines.Clear(); }
         }
 
         private readonly Side _game = new Side();
@@ -224,6 +230,52 @@ namespace UnityGameTranslator.Core
 
             Of(ownUi).Target.TryAdd(normalized.TrimEnd(), 0);
             IndexReadback(key, value, ownUi);
+            IndexLines(key, value, ownUi);
+        }
+
+        /// <summary>The lines of a translated value of several lines — see <see cref="IsLineOfOurs"/>.</summary>
+        private void IndexLines(string key, string value, bool ownUi)
+        {
+            if (value.IndexOf('\n') < 0) return;
+            var keyLines = new HashSet<string>(StringComparer.Ordinal);
+            foreach (string k in key.Split('\n'))
+            {
+                string nk = LineKey(k);
+                if (nk != null) keyLines.Add(nk);
+            }
+            foreach (string line in value.Split('\n'))
+            {
+                string n = LineKey(line);
+                // A line the translation kept as it was in the source is not ours to claim.
+                if (n != null && !keyLines.Contains(n)) Of(ownUi).Lines.TryAdd(n, 0);
+            }
+        }
+
+        /// <summary>
+        /// One line in the form its readings compare in: markup out, numbers and our slots one
+        /// token, spaces collapsed. No minimum length, unlike the readback form: a short stat line
+        /// ("Poids 1") is a line like any other here, and this index is asked about lines alone.
+        /// </summary>
+        private static string LineKey(string line)
+        {
+            if (line == null) return null;
+            string s = System.Text.RegularExpressions.Regex.Replace(line, @"<[/A-Za-z][^<>]{0,63}>", "");
+            // A slot and the number the game put back in it are one token, its sign and % included
+            // on both sides (the slot may or may not have swallowed them: "[!v*0]" held "-20%").
+            s = System.Text.RegularExpressions.Regex.Replace(s, @"[-+−]?(\[![A-Za-z]+\*\d+\]|\d+([.,]\d+)*)%?", "#");
+            s = System.Text.RegularExpressions.Regex.Replace(s, @"\s+", " ").Trim();
+            return s.Length == 0 ? null : s;
+        }
+
+        /// <summary>
+        /// Is this one line one of the lines of a translation of ours? For a text the game composed
+        /// from lines it read back (TextRouter.Lines) — ours kept, its own translated. Not a gate
+        /// question: see <see cref="Side.Lines"/>.
+        /// </summary>
+        public bool IsLineOfOurs(string line, bool ownUi)
+        {
+            string n = LineKey(line);
+            return n != null && Of(ownUi).Lines.ContainsKey(n);
         }
 
         /// <summary>

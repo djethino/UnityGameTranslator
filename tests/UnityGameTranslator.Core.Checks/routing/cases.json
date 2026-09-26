@@ -211,6 +211,39 @@
         { "f": 120, "t": 2.0, "append": "\r\n\r\nNestled. ", "shows": " Première page. \r\n\r\nL'histoire.\n\nNichée. " }
       ],
       "queued": []
+    },
+    {
+      "id": "layout/the-game-lays-out-our-translation-itself",
+      "why": "🔴 a game that wraps its own lines (a TextMesh cannot) rebuilds the text it holds word by word in the same frame: holding our translation, it lays out the translation with its own measure — every step is left exactly as it wrote it, nothing is translated or sent word by word",
+      "file": { "Those fish are dead now.": "Ces poissons sont morts." },
+      "steps": [
+        { "f": 5, "t": 1.0, "write": "Those fish are dead now.", "shows": "Ces poissons sont morts." },
+        { "f": 5, "t": 1.0, "write": "Those fish are dead now.", "shows": "Ces poissons sont morts." },
+        { "f": 5, "t": 1.0, "write": "Ces ", "shows": "Ces " },
+        { "f": 5, "t": 1.0, "write": "Ces poissons ", "shows": "Ces poissons " },
+        { "f": 5, "t": 1.0, "write": "Ces poissons \r\nsont ", "shows": "Ces poissons \r\nsont " },
+        { "f": 5, "t": 1.0, "write": "Ces poissons \r\nsont morts.", "shows": "Ces poissons \r\nsont morts." },
+        { "f": 60, "t": 2.0, "write": "Ces poissons \r\nsont morts.", "shows": "Ces poissons \r\nsont morts." },
+        { "f": 90, "t": 3.0, "tick": true }
+      ],
+      "queued": []
+    },
+    {
+      "id": "layout/an-unknown-text-laid-out-is-sent-whole-never-by-word",
+      "why": "🔴 the text the game lays out is not in the file: it is sent as ONE line, never word by word (135 of 171 answers in one capture were single words), and the game's layout of it and its redraws are left as they are",
+      "file": { "fish ": "poisson ", "the ": "le " },
+      "steps": [
+        { "f": 5, "t": 1.0, "write": "Now all the fish are dead.", "shows": "Now all the fish are dead." },
+        { "f": 5, "t": 1.0, "write": "Now ", "shows": "Now " },
+        { "f": 5, "t": 1.0, "write": "Now all ", "shows": "Now all " },
+        { "f": 5, "t": 1.0, "write": "Now all the ", "shows": "Now all the " },
+        { "f": 5, "t": 1.0, "write": "Now all the \r\nfish ", "shows": "Now all the \r\nfish " },
+        { "f": 5, "t": 1.0, "write": "Now all the \r\nfish are dead. ", "shows": "Now all the \r\nfish are dead. " },
+        { "f": 5, "t": 1.0, "write": "Now all the \r\nfish are dead.", "shows": "Now all the \r\nfish are dead." },
+        { "f": 60, "t": 2.0, "write": "Now all the \r\nfish are dead.", "shows": "Now all the \r\nfish are dead." },
+        { "f": 90, "t": 3.0, "tick": true }
+      ],
+      "queued": [ "Now all the fish are dead." ]
     }
   ]
 }

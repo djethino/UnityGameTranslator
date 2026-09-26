@@ -203,6 +203,11 @@ namespace UnityGameTranslator.Core
             public string Presented;
             public string PresentedFrom;
 
+            // --- A layout pass in flight (the game placing its own line breaks) ---
+            public string LayoutWhole;      // the text being laid out, breaks set aside
+            public int LayoutFrame = -1;    // the frame it runs in: a pass never spans two
+            public bool LayoutOurs;         // laying out our translation, or the game's own text
+
             // --- Typewriting ---
             public string TypewritingText;
             public float TypewritingSince;
@@ -233,6 +238,10 @@ namespace UnityGameTranslator.Core
         // as opposed to our shown form with a part appended, which is a key too but never a text
         // the game writes on its own. Only a source says what a redrawn page stands for.
         private readonly HashSet<string> _assembledSources = new HashSet<string>();
+        // The game's own texts as its layout pass left them (line breaks placed by the game): the
+        // whole was held or sent as one line, and its redraws are left alone rather than sent again
+        // as lines of their own. Keyed by text, like the two above: it outlives any one component.
+        private readonly HashSet<string> _layoutResults = new HashSet<string>();
 
         /// <summary>The record for this component, created on first need.</summary>
         private ComponentTextState StateFor(long compId)
@@ -264,6 +273,7 @@ namespace UnityGameTranslator.Core
             _concatAssembledCache.Clear();
             _concatTranslatedValues.Clear();
             _assembledSources.Clear();
+            _layoutResults.Clear();
         }
 
         /// <summary>

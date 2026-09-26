@@ -42,10 +42,16 @@ namespace UnityGameTranslator.Core.Checks
                 return 0;
             }
 
-            // `dotnet run -- replay <text-trace.jsonl> [max-diffs]` — a trace recorded in a game,
-            // played through the router: where it answers differently from the recording.
+            // `dotnet run -- replay <text-trace.jsonl> [max-diffs] [--frame N]` — a trace recorded
+            // in a game, played through the router: where it answers differently from the
+            // recording; `--frame N` prints what the router logs during that frame.
             if (args.Length >= 2 && args[0] == "replay")
-                return TraceReplay.Run(args[1], args.Length >= 3 ? int.Parse(args[2]) : 20);
+            {
+                int frameAt = Array.IndexOf(args, "--frame");
+                int debugFrame = frameAt > 0 && frameAt + 1 < args.Length ? int.Parse(args[frameAt + 1]) : int.MinValue;
+                int maxDiffs = args.Length >= 3 && args[2] != "--frame" ? int.Parse(args[2]) : 20;
+                return TraceReplay.Run(args[1], maxDiffs, debugFrame);
+            }
 
             HowATextIsNormalized();
             WhatAPatternCovers();

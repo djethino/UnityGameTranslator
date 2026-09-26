@@ -39,7 +39,9 @@ namespace UnityGameTranslator.Core.Checks
         public int Frame { get; set; }
         public float Now { get; set; }
 
-        public bool DebugMode => false;
+        /// <summary>A frame whose router log is printed (`replay … --frame N`); none by default.</summary>
+        public int DebugFrame { get; set; } = int.MinValue;
+        public bool DebugMode => Frame == DebugFrame;
         public bool TypewritingDetection => true;
         public bool ConcatDetection => true;
         public bool TranslationsActive => true;
@@ -89,7 +91,7 @@ namespace UnityGameTranslator.Core.Checks
 
         public void Log(string message) { }
         public void LogWarning(string message) { }
-        public void LogDebug(string message) { }
+        public void LogDebug(string message) { if (DebugMode) System.Console.WriteLine("    [router] " + message); }
         public string Describe(object component) => "box";
 
         /// <summary>The layout passes the router recognised, with the text each one laid out.</summary>

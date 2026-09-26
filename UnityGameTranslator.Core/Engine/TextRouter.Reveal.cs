@@ -174,7 +174,11 @@ namespace UnityGameTranslator.Core
                 if (isShrinkingOverwrite)
                 {
                     // Don't finalize the mixed state. Just update tracking and keep deferring.
-                    HoldTypewriting(state, compId, newText, now, grew: true);
+                    // ⚠ Not "grew": a shorter text replacing one already sent is as often a new
+                    // tooltip as a game typing over our text, and only growth proves a reveal —
+                    // the next write says so if it is one. Marked as grown, a tooltip written whole
+                    // was taken for the head of a longer known line and never sent (2026-09-26).
+                    HoldTypewriting(state, compId, newText, now, grew: false);
                     return true;
                 }
 

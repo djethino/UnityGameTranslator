@@ -52,6 +52,18 @@
       "queued": [ "Blade +5\nCost: 4" ]
     },
     {
+      "id": "reveal/a-shorter-tooltip-after-a-sent-one-is-still-a-text-of-its-own",
+      "why": "🔴 seen in a game (2026-09-26): a tooltip replacing a longer one already sent was taken for the game typing over our text, marked as a reveal, and then held as the head of a longer known line — never sent. Only growth proves a reveal",
+      "file": { "Gear speed +20%\nCost: 8\n\nReplaces:\nWooden wheel": "Vitesse du mécanisme +20 %\nCoût : 8\n\nRemplace :\nRoue en bois" },
+      "steps": [
+        { "f": 1, "t": 0.0, "write": "Agility potential +5\nAgility +5\nCost: 4", "shows": "Agility potential +5\nAgility +5\nCost: 4" },
+        { "f": 60, "t": 1.0, "tick": true },
+        { "f": 200, "t": 3.0, "write": "Gear speed +10%\nCost: 4", "shows": "Gear speed +10%\nCost: 4" },
+        { "f": 260, "t": 4.0, "tick": true }
+      ],
+      "queued": [ "Agility potential +5\nAgility +5\nCost: 4", "Gear speed +10%\nCost: 4" ]
+    },
+    {
       "id": "reveal/a-resumed-line-cut-mid-sentence-is-still-held",
       "why": "the case the head rule was written for (2026-09-12): a recording resumed part-way sets the first part of a known line at once and stands still — cut in the middle of a sentence, it is a head, and is not sent as a line of its own",
       "file": { "The river runs red tonight, and nobody knows why.": "La rivière est rouge ce soir, et personne ne sait pourquoi." },

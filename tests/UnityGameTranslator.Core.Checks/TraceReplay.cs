@@ -24,7 +24,7 @@ namespace UnityGameTranslator.Core.Checks
     /// </summary>
     internal static class TraceReplay
     {
-        public static int Run(string tracePath, int maxDiffs, int debugFrame)
+        public static int Run(string tracePath, int maxDiffs, int debugFrame, int sweepEvery)
         {
             Console.OutputEncoding = System.Text.Encoding.UTF8;
             var host = new ReplayHost { RightToLeft = false, WritesThrough = false, DebugFrame = debugFrame };
@@ -75,6 +75,22 @@ namespace UnityGameTranslator.Core.Checks
                     router.ProcessStabilizedTypewriting();
                     for (int i = before; i < host.Queued.Count; i++)
                         causes[host.Queued[i].Text] = $"f={f} the stabiliser sent what it had held";
+
+                    // `--sweep N`: the scene sweep, every N frames — it reads each component back
+                    // and asks the lookup directly, as TranslatorScanner does. A trace does not
+                    // record it (it is not a game write), and it reaches paths the setter never does.
+                    if (sweepEvery > 0 && f / sweepEvery != lastFrame / sweepEvery)
+                    {
+                        int beforeSweep = host.Queued.Count;
+                        foreach (var box in boxes.Values)
+                        {
+                            if (string.IsNullOrEmpty(box.Shown)) continue;
+                            string swept = router.Translate(box.Shown, box);
+                            if (swept != box.Shown) host.GameWrites(box, swept);
+                        }
+                        for (int i = beforeSweep; i < host.Queued.Count; i++)
+                            causes[host.Queued[i].Text] = $"f={f} the sweep sent what a component showed";
+                    }
                     lastFrame = f;
                 }
 
@@ -136,7 +152,7 @@ namespace UnityGameTranslator.Core.Checks
             Console.WriteLine($"{host.Queued.Count} line(s) sent for translation, {words} of them words sent alone");
             int listed = 0;
             foreach (var q in host.Queued)
-                if ((IsWordPart(q.Text) || host.Queued.Count <= 30) && listed++ < 60)
+                if ((IsWordPart(q.Text) || host.Queued.Count <= 60) && listed++ < 60)
                 {
                     Console.WriteLine($"  {(IsWordPart(q.Text) ? "sent alone" : "sent")}: [{Clip(q.Text)}] comp={q.Box?.Id}");
                     if (causes.TryGetValue(q.Text, out string cause)) Console.WriteLine($"    {cause}");

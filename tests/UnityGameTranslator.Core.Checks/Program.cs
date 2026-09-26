@@ -56,8 +56,10 @@ namespace UnityGameTranslator.Core.Checks
             {
                 int frameAt = Array.IndexOf(args, "--frame");
                 int debugFrame = frameAt > 0 && frameAt + 1 < args.Length ? int.Parse(args[frameAt + 1]) : int.MinValue;
-                int maxDiffs = args.Length >= 3 && args[2] != "--frame" ? int.Parse(args[2]) : 20;
-                return TraceReplay.Run(args[1], maxDiffs, debugFrame);
+                int sweepAt = Array.IndexOf(args, "--sweep");
+                int sweepEvery = sweepAt > 0 && sweepAt + 1 < args.Length ? int.Parse(args[sweepAt + 1]) : 0;
+                int maxDiffs = args.Length >= 3 && !args[2].StartsWith("--") ? int.Parse(args[2]) : 20;
+                return TraceReplay.Run(args[1], maxDiffs, debugFrame, sweepEvery);
             }
 
             HowATextIsNormalized();

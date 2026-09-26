@@ -46,6 +46,36 @@ namespace UnityGameTranslator.Core.Checks
                     check(false, id, $"the replay threw: {ex.GetType().Name}: {ex.Message}");
                 }
             }
+
+            TheGameWritesWhatTheRouterSays(check);
+        }
+
+        /// <summary>
+        /// The one part of a late answer this replay does not play: the scanner's own write. The
+        /// replay host writes what <c>Router.Late</c> hands back; the scanner wrote the bare
+        /// translation instead, and every line wrapped to the game's width went up on one line,
+        /// out of its box, with every case here green (2026-09-26). Lexical, as the scanner is
+        /// welded to Unity: the Write branch writes <c>lateText</c>, never <c>translation</c>.
+        /// </summary>
+        private static void TheGameWritesWhatTheRouterSays(Action<bool, string, string> check)
+        {
+            string scanner = Find("UnityGameTranslator.Core", "TranslatorScanner.cs");
+            check(scanner != null, "the scanner's late write is found", "this check reads it; without it, it proves nothing");
+            if (scanner == null) return;
+
+            string text = File.ReadAllText(scanner);
+            int start = text.IndexOf("if (late == TextRouter.LateOutcome.Write)", StringComparison.Ordinal);
+            int end = start < 0 ? -1 : text.IndexOf("else", start, StringComparison.Ordinal);
+            string branch = start >= 0 && end > start ? text.Substring(start, end - start) : null;
+            check(branch != null,
+                "the scanner still asks the router what a late answer becomes",
+                "renamed, the check must say so rather than pass on an empty comparison");
+            if (branch == null) return;
+
+            check(branch.Contains("SetText(comp, lateText)", StringComparison.Ordinal)
+                  && !branch.Contains("SetText(comp, translation)", StringComparison.Ordinal),
+                "and writes what the router answered, not the bare translation",
+                "🔴 for a line the game lays out itself, the answer is the translation wrapped to the game's width; writing the bare translation throws that away");
         }
 
         /// <summary>Plays one case; null when every expectation held, else what differed first.</summary>

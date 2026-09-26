@@ -38,7 +38,7 @@ namespace UnityGameTranslator.Core.Checks
                 return b;
             }
 
-            int writes = 0, diffs = 0, shown = 0;
+            int writes = 0, diffs = 0, shown = 0, heldDiffs = 0;
             // For each line sent for translation, the write that sent it and what the component
             // held just before — what to read when a word goes out alone.
             var causes = new Dictionary<string, string>();
@@ -78,6 +78,18 @@ namespace UnityGameTranslator.Core.Checks
                         writes++;
                         var box = BoxOf((long)o["c"]);
                         string recorded = (string)o["out"];
+                        // What the component really held, when the trace says (recorded since
+                        // 2026-09-26): the game's truth wins over what the replay rebuilt, and each
+                        // disagreement is counted — it is a place where the router's picture of
+                        // the screen is wrong.
+                        string held = (string)o["held"];
+                        if (o["held"] != null && held != box.Shown)
+                        {
+                            heldDiffs++;
+                            if (heldDiffs <= 5)
+                                Console.WriteLine($"--- held #{heldDiffs} at f={f} comp={box.Id}: replay [{Clip(box.Shown)}] game [{Clip(held)}]");
+                            box.Shown = held;
+                        }
                         int queuedBefore = host.Queued.Count;
                         string previous = box.Shown;
                         string replayed = host.GameWrites(box, (string)o["in"]);
@@ -123,7 +135,7 @@ namespace UnityGameTranslator.Core.Checks
             Console.WriteLine($"{host.LayoutPasses.Count} layout pass(es) recognised");
             foreach (string whole in host.LayoutPasses.GetRange(0, Math.Min(5, host.LayoutPasses.Count)))
                 Console.WriteLine($"  laid out: [{Clip(whole)}]");
-            Console.WriteLine($"{writes} writes replayed, {shown} presented forms, {diffs} answered differently");
+            Console.WriteLine($"{writes} writes replayed, {shown} presented forms, {diffs} answered differently, {heldDiffs} held a text the replay did not expect");
             return diffs == 0 ? 0 : 1;
         }
 

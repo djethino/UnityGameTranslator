@@ -2770,8 +2770,9 @@ namespace UnityGameTranslator.Core
                 return RouteTextBody(instance, comp, compId, isOwnUI, componentType, ref textValue);
 
             string incoming = textValue;
+            string held = TypeHelper.GetText(comp);
             var outcome = RouteTextBody(instance, comp, compId, isOwnUI, componentType, ref textValue);
-            TextTrace.Write(compId, componentType, incoming, textValue, outcome.ToString());
+            TextTrace.Write(compId, componentType, incoming, textValue, outcome.ToString(), held);
             return outcome;
         }
 

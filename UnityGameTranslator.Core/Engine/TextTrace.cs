@@ -98,13 +98,18 @@ namespace UnityGameTranslator.Core
             }
         }
 
-        public static void Write(long comp, string type, string incoming, string routed, string route)
+        /// <param name="held">
+        /// What the component held when the write arrived, read from it — what the game reads
+        /// back. A replay that rebuilt it from our own outputs answered right where the game did
+        /// not (a layout pass on our translation, 2026-09-26): the component is the witness.
+        /// </param>
+        public static void Write(long comp, string type, string incoming, string routed, string route, string held)
         {
             if (!On) return;
             Emit(new JObject
             {
                 ["k"] = "write", ["c"] = comp, ["type"] = type,
-                ["in"] = incoming, ["out"] = routed, ["route"] = route,
+                ["in"] = incoming, ["out"] = routed, ["route"] = route, ["held"] = held,
             });
         }
 

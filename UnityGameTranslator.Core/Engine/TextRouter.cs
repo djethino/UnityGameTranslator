@@ -244,6 +244,7 @@ namespace UnityGameTranslator.Core
         // whole was held or sent as one line, and its redraws are left alone rather than sent again
         // as lines of their own. Keyed by text, like the two above: it outlives any one component.
         private readonly HashSet<string> _layoutResults = new HashSet<string>();
+        private int _layoutHeldSaid;   // [LAYOUT-HELD] lines said this session (bounded)
 
         /// <summary>The record for this component, created on first need.</summary>
         private ComponentTextState StateFor(long compId)

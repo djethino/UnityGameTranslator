@@ -430,12 +430,25 @@ namespace UnityGameTranslator.Core
                 if (!sameFrame) return false;
                 string held = _host.GetText(comp);
                 if (held != null) held = _host.Readback.PresentedLogical(held) ?? held;
-                if (!IsLayoutPassStart(held, text)) return false;
-                state.LayoutWhole = StripBreaks(held).TrimEnd();
-                state.LayoutHeld = held;
+                // ⚠ The records as well: on the first game this ran in, the component read back
+                // did not start the pass that visibly started from our translation, while the
+                // replay of the same writes found it — the two disagree somewhere nobody has
+                // seen yet. Said, bounded, until a trace carrying `held` shows where.
+                string whole = IsLayoutPassStart(held, text) ? held
+                             : IsLayoutPassStart(state.LastTranslated, text) ? state.LastTranslated
+                             : IsLayoutPassStart(state.LastRaw, text) ? state.LastRaw
+                             : null;
+                if (whole == null) return false;
+                if (whole != held && _layoutHeldSaid < 5)
+                {
+                    _layoutHeldSaid++;
+                    _host.Log($"[LAYOUT-HELD] comp={compId} a layout pass starts from '{Clip(whole, 60)}' but the component reads back '{Clip(held, 60)}'");
+                }
+                state.LayoutWhole = StripBreaks(whole).TrimEnd();
+                state.LayoutHeld = whole;
                 state.LayoutFrame = frame;
-                state.LayoutOurs = held == state.LastTranslated || _concatTranslatedValues.Contains(held);
-                _host.LayoutPassSeen(comp, held);
+                state.LayoutOurs = whole == state.LastTranslated || _concatTranslatedValues.Contains(whole);
+                _host.LayoutPassSeen(comp, whole);
             }
 
             string step = StripBreaks(text).TrimEnd();

@@ -1,5 +1,5 @@
 {
-  "$comment": "Sequences of writes replayed through Engine/TextRouter (RoutingCorpusChecks). A step sets the frame `f` and the time `t` (seconds), then one of: `write` (the game sets the text), `append` (the game reads what the component holds — our output in its shown form — and writes it back with more), `tick` (the stabiliser runs), `arrive` (a translation comes back for `o`). `shows` is what a person reads on the component after the step (the logical text behind a presented form). `queued` is everything sent for translation, in order. `present: rtl` presents right-to-left text as the flagged branch of RtlPresenter does. `file` holds source → translation, numbers written as [!v*N] where the file would. See analyse/banc-routage-texte.md (root).",
+  "$comment": "Sequences of writes replayed through Engine/TextRouter (RoutingCorpusChecks). A step sets the frame `f` and the time `t` (seconds), then one of: `write` (the game sets the text), `append` (the game reads what the component holds — our output in its shown form — and writes it back with more), `refresh` (what the component holds is set again, as the scanner's sweep does), `tick` (the stabiliser runs), `arrive` (a translation comes back for `o`). `shows` is what a person reads on the component after the step (the logical text behind a presented form). `queued` is everything sent for translation, in order. `present: rtl` presents right-to-left text as the flagged branch of RtlPresenter does. `file` holds source → translation, numbers written as [!v*N] where the file would. See analyse/banc-routage-texte.md (root).",
   "cases": [
     {
       "id": "lookup/a-known-line-is-shown-translated",
@@ -154,6 +154,30 @@
         { "f": 200, "t": 3.5, "arrive": { "o": "Nobody knows yet. ", "tr": "Personne ne le sait encore. " }, "shows": "Chapitre 1" }
       ],
       "queued": [ "Nobody knows yet. " ]
+    },
+    {
+      "id": "concat/a-page-the-file-lacks-then-appended-ends-fully-translated",
+      "why": "the game rewrites a whole page the file lacks and appends to it before the answer: each late answer is put back into the page, and the last one leaves no source text on it (2026-09-26, option A)",
+      "steps": [
+        { "f": 1, "t": 0.0, "write": "Page two begins. ", "shows": "Page two begins. " },
+        { "f": 1, "t": 0.0, "write": "Page two begins. It goes on. ", "shows": "Page two begins. It goes on. " },
+        { "f": 50, "t": 1.0, "arrive": { "o": "It goes on. ", "tr": "Elle continue. " }, "shows": "Page two begins. Elle continue. " },
+        { "f": 60, "t": 2.0, "arrive": { "o": "Page two begins. ", "tr": "La page deux commence. " }, "shows": "La page deux commence. Elle continue. " }
+      ],
+      "queued": [ "It goes on. ", "Page two begins. " ]
+    },
+    {
+      "id": "concat/a-shaped-page-refreshed-between-two-late-answers-keeps-its-parts",
+      "why": "🔴 a refresh sets our shaped assembly again; unrecognised, that echo was taken for a new text, the page's parts were dropped and the last answer had nowhere to go — the page stayed half in the source language",
+      "present": "rtl",
+      "steps": [
+        { "f": 1, "t": 0.0, "write": "Page two begins. ", "shows": "Page two begins. " },
+        { "f": 1, "t": 0.0, "write": "Page two begins. It goes on. ", "shows": "Page two begins. It goes on. " },
+        { "f": 50, "t": 1.0, "arrive": { "o": "It goes on. ", "tr": "وتستمر. " }, "shows": "Page two begins. وتستمر. " },
+        { "f": 55, "t": 1.5, "refresh": true, "shows": "Page two begins. وتستمر. " },
+        { "f": 60, "t": 2.0, "arrive": { "o": "Page two begins. ", "tr": "تبدأ الصفحة الثانية. " }, "shows": "تبدأ الصفحة الثانية. وتستمر. " }
+      ],
+      "queued": [ "It goes on. ", "Page two begins. " ]
     }
   ]
 }

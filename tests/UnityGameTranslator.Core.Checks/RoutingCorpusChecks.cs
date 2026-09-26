@@ -90,6 +90,10 @@ namespace UnityGameTranslator.Core.Checks
                     host.GameWrites(box, box.Shown + (string)step["append"]);
                 else if (step["tick"] != null)
                     router.ProcessStabilizedTypewriting();
+                else if (step["refresh"] != null)
+                    // A refresh sets again what the component holds (the scanner's sweep, an Apply
+                    // in the Fonts tab): our own output coming back through the setter.
+                    host.GameWrites(box, box.Shown);
                 else if (step["arrive"] is JObject arrival)
                     host.Arrive((string)arrival["o"], (string)arrival["tr"], boxes.Values);
 

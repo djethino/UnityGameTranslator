@@ -20,7 +20,7 @@ namespace UnityGameTranslator.Core
     /// travels to a model and comes back; the socle refuses a reply that broke it
     /// (Common.Placeholders), the manager scores models against the same rule, and a translation
     /// file on disk holds it. Changing that spelling is a migration. (A markup tag is not keyed:
-    /// it is lifted only when a line is sent, as &lt;color1&gt; — Common.Markup.)
+    /// it is lifted only when a line is sent, as [!t*N] — Common.Markup.)
     ///
     /// ⚠ **Two questions about letters live side by side, and they are not the same question.**
     /// <see cref="IsNumericOrSymbol"/> asks of a whole text "is there nothing to translate here",
@@ -181,7 +181,7 @@ namespace UnityGameTranslator.Core
             @"(?<!\[!v\*)(-?\d+(?:[.,]\d+)?%?)",
             RegexOptions.Compiled);
 
-        // Markup tags (<b>, <color=…>) and their <color1> placeholders live in the socle's Markup since
+        // Markup tags (<b>, <color=…>) and their [!t*N] placeholders live in the socle's Markup since
         // 2026-09-23: Backends moved there, and it is the one that lifts and restores them.
 
         /// <summary>

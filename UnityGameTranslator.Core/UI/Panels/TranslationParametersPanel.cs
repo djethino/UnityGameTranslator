@@ -957,10 +957,19 @@ namespace UnityGameTranslator.Core.UI.Panels
             // while one is on the way; this is the belt behind it.
             if (string.Equals(_retranslateAsked, key, StringComparison.Ordinal)) return;
 
-            if (!TranslatorCore.RemoveTranslationForRetranslate(key, storeResult: false))
+            // Said only when it is true, as the inspector does: any refusal used to read "switched
+            // off", which sent people to a setting that was already on.
+            if (TranslatorCore.Config == null || !TranslatorCore.Config.IsTranslationEnabled)
             {
                 _failStatus.Say("Translation is switched off — turn it on in Options first");
                 _failStatus.Tone = Tone.Warning;
+                return;
+            }
+
+            if (!TranslatorCore.RemoveTranslationForRetranslate(key, storeResult: false))
+            {
+                _failStatus.Say("Could not ask the AI — check the backend in Options");
+                _failStatus.Tone = Tone.Error;
                 return;
             }
 

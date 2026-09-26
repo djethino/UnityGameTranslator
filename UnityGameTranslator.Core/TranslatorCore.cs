@@ -4120,8 +4120,17 @@ namespace UnityGameTranslator.Core
             if (storeResult && key.Contains(PlaceholderPrefix))
                 BuildPatternEntries();
 
+            // An explicit request outranks the session's give-up list, and it has to be lifted
+            // BEFORE the door: the queue refuses a text on that list, so lifting it once the line
+            // was dequeued turned every such request away. Put back if the door refuses anyway —
+            // a request that never left must not reopen the line to every hover.
+            bool wasRefused = _queue.WasRefused(key);
+            _queue.ForgetRefused(key);
+
             if (QueueForTranslation(key, isOwnUI: request.IsOwnUI))
                 return true;
+
+            if (wasRefused) _queue.NoteRefused(key);
 
             // Turned away at the door: put the line back exactly as it was, say so, and let the
             // caller tell the human rather than leave them in front of a spinner.
@@ -4165,10 +4174,6 @@ namespace UnityGameTranslator.Core
                 FinishRetranslation(request, request.PreviousValue, RetranslateOutcome.Failed);
                 return;
             }
-
-            // An explicit request overrides the session's give-up list: that list exists so a line
-            // that failed validation is not hammered on every scan, and this is a human asking once.
-            _queue.ForgetRefused(normalizedKey);
 
             bool service = LineTranslation.IsTranslationService(Config.translation_backend);
             int rounds = Retranslation.Rounds(service, Config.AttemptsAllowed);

@@ -3081,7 +3081,11 @@ namespace UnityGameTranslator.Core
                         // Store original before applying translation (enables runtime toggle restoration)
                         StoreOriginalText(comp, originalText);
 
-                        TypeHelper.SetText(comp, translation);
+                        // ⚠ What the router says to write, not the bare translation: for a line
+                        // the game lays out itself it is the translation WRAPPED to the game's
+                        // width (TextRouter.Fit) — writing `translation` here put every such line
+                        // up on one line, out of its box (2026-09-26).
+                        TypeHelper.SetText(comp, lateText);
 
                         int id = TypeHelper.GetInstanceID(comp);
 
@@ -3099,7 +3103,7 @@ namespace UnityGameTranslator.Core
                             // went through the prefix, where the RTL pipeline may have composed
                             // it — registering the logical form would make the line-change check
                             // expire the watch on its first tick (pitfall n°2, 06/08 analysis).
-                            RegisterRenderWatch(comp, originalText, TypeHelper.GetText(comp) ?? translation);
+                            RegisterRenderWatch(comp, originalText, TypeHelper.GetText(comp) ?? lateText);
                         }
                         else
                         {
@@ -3110,8 +3114,8 @@ namespace UnityGameTranslator.Core
 
                         if (id != -1)
                         {
-                            TranslatorCore.UpdateSeenText(id, translation);
-                            processedTextHashes[id] = translation.GetHashCode();
+                            TranslatorCore.UpdateSeenText(id, lateText);
+                            processedTextHashes[id] = lateText.GetHashCode();
                         }
 
                         // Counted here and nowhere else: this is the point where a translated

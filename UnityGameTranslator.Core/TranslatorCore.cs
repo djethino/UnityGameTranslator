@@ -3689,6 +3689,12 @@ namespace UnityGameTranslator.Core
             }
         }
 
+        // Each pattern key's regex (null when the key holds no number), with its slot order —
+        // see BuildPatternEntries. Read and replaced under _patternRegexGate only.
+        private static Dictionary<string, KeyValuePair<Regex, List<int>>> _patternRegexes =
+            new Dictionary<string, KeyValuePair<Regex, List<int>>>();
+        private static readonly object _patternRegexGate = new object();
+
         public static void BuildPatternEntries()
         {
             // Build into a NEW list, then swap atomically.
@@ -3705,21 +3711,46 @@ namespace UnityGameTranslator.Core
             }
             catch { return; } // Collection changed during snapshot — next call will succeed
 
-            foreach (var kv in cacheSnapshot)
+            // 🔴 **The regexes are kept from one build to the next**, keyed by the pattern they
+            // match (the key alone decides the regex; the translation only fills it). A compiled
+            // regex pays its compilation the first time it RUNS — and that first run is the main
+            // thread's next miss. Rebuilding every one of them on each new pattern translation
+            // froze the game for about a second per answer, with 300 patterns (seen 2026-09-26).
+            // So an old regex is reused, and a new one is run once HERE, on whichever thread
+            // builds — the worker, in the case that matters — before the main thread can see it.
+            lock (_patternRegexGate)
             {
-                // Skip if key equals value (no translation)
-                if (kv.Key == kv.Value.Value) continue;
+                var kept = new Dictionary<string, KeyValuePair<Regex, List<int>>>();
 
-                var matchRegex = NumberPatterns.BuildPatternRegex(kv.Key, out var placeholderIndices, compiled: true);
-                if (matchRegex == null) continue;
-
-                newEntries.Add(new PatternEntry
+                foreach (var kv in cacheSnapshot)
                 {
-                    OriginalPattern = kv.Key,
-                    TranslatedPattern = kv.Value.Value,
-                    MatchRegex = matchRegex,
-                    PlaceholderIndices = placeholderIndices
-                });
+                    // Skip if key equals value (no translation)
+                    if (kv.Key == kv.Value.Value) continue;
+
+                    if (!kept.TryGetValue(kv.Key, out var built)
+                        && !_patternRegexes.TryGetValue(kv.Key, out built))
+                    {
+                        var regex = NumberPatterns.BuildPatternRegex(kv.Key, out var indices, compiled: true);
+                        built = new KeyValuePair<Regex, List<int>>(regex, indices);
+                        // Run on a text it MATCHES — the key with a number in each slot. A text
+                        // too short to match stops before the matching code, which would then
+                        // still be compiled on the main thread.
+                        regex?.IsMatch(NumberPatterns.PlaceholderIndexPattern.Replace(kv.Key, "0"));
+                    }
+                    kept[kv.Key] = built;
+                    if (built.Key == null) continue;
+
+                    newEntries.Add(new PatternEntry
+                    {
+                        OriginalPattern = kv.Key,
+                        TranslatedPattern = kv.Value.Value,
+                        MatchRegex = built.Key,
+                        PlaceholderIndices = built.Value
+                    });
+                }
+
+                // Only what the file still holds: a removed key takes its regex with it.
+                _patternRegexes = kept;
             }
 
             // Atomic swap — main thread sees either the old or the new list, never a half-built one

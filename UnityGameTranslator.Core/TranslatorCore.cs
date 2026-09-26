@@ -6088,6 +6088,13 @@ namespace UnityGameTranslator.Core
             // "already in the target language" and keep it out of the file for good.
             if (!isOwnUI && IsAlreadyTargetText(text)) return false;
 
+            // Given up this session: the worker would only skip it. Refused here, at the door, so
+            // a tooltip hovered again does not come back into the queue — and into the count the
+            // player watches — on every pass. What reopens it is a person asking for it again
+            // (ForgetRefused), never another hover.
+            if (_queue.WasRefused(TextGate.KeyShape(text, isOwnUI, GameVariables.Instance, Config.normalize_numbers, out _, out _)))
+                return false;
+
             _queue.Submit(text, component, isOwnUI, out bool isNew, out int queueSize);
 
             if (isNew && (DebugMode || Config.debug_ai))

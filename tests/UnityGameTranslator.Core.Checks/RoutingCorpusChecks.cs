@@ -107,6 +107,10 @@ namespace UnityGameTranslator.Core.Checks
                 long cid = step["c"] != null ? (long)step["c"] : 1;
                 var box = BoxOf(cid);
 
+                // What the component held before this step, when a recorded case says so: a
+                // game that empties a component leaves no other trace of it (TraceToCase).
+                if (step["held"] != null) box.Shown = (string)step["held"];
+
                 if (step["write"] != null)
                     host.GameWrites(box, (string)step["write"]);
                 else if (step["append"] != null)

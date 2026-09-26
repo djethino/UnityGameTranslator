@@ -45,6 +45,13 @@ namespace UnityGameTranslator.Core.Checks
             // `dotnet run -- replay <text-trace.jsonl> [max-diffs] [--frame N]` — a trace recorded
             // in a game, played through the router: where it answers differently from the
             // recording; `--frame N` prints what the router logs during that frame.
+            // `dotnet run -- tocase <text-trace.jsonl> <component> [first frame] [last frame]` —
+            // one component's recorded sequence written out as a routing case (TraceToCase).
+            if (args.Length >= 3 && args[0] == "tocase")
+                return TraceToCase.Run(args[1], long.Parse(args[2]),
+                    args.Length >= 4 ? int.Parse(args[3]) : int.MinValue,
+                    args.Length >= 5 ? int.Parse(args[4]) : int.MaxValue);
+
             if (args.Length >= 2 && args[0] == "replay")
             {
                 int frameAt = Array.IndexOf(args, "--frame");

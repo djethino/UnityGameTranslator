@@ -143,6 +143,15 @@
     -->
     <Compile Include="../../UnityGameTranslator.Core/Engine/TextGate.cs" />
     <!--
+      What happens to each text a game writes, IN SEQUENCE: reveals held until they settle, texts
+      built in parts, read-backs of our own output, late translations put back into a page. The
+      decisions every engine shares; a Unity or Godot adapter only answers ITextRouterHost. Linked
+      here first as the proof it carries no engine; the routing corpus replays through it
+      (analyse/banc-routage-texte.md, root).
+    -->
+    <Compile Include="../../UnityGameTranslator.Core/Engine/TextRouter*.cs" />
+    <Compile Include="../../UnityGameTranslator.Core/Engine/TextTrace.cs" />
+    <!--
       "Is this text one of OUR translations coming back?" — the anti-loop device every gate asks
       first. Too wide, it refuses genuine source text and the game stays untranslated in silence;
       too narrow, our own output is queued as a new source and published under a target-language

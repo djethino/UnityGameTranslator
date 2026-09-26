@@ -696,9 +696,6 @@ namespace UnityGameTranslator.Core
                    remoteUuid == FileUuid;
         }
 
-        /// <summary>How many times the cache-hit normalisation dump has been written this session.</summary>
-        private static int _dbgCacheHitNormLog = 0;
-
         private static float lastSaveTime = 0f;
         private static int translatedCount = 0;
         private static int aiTranslationCount = 0;
@@ -972,7 +969,7 @@ namespace UnityGameTranslator.Core
             TranslatorPatches.ClearFontSizeCache();
             // Clear last-translated cache so ForceRefreshAllText doesn't early-return
             // before reaching ApplyFontScale (the "already translated" check skips font scale)
-            TranslatorPatches.ClearLastTranslatedCache();
+            Router.ClearLastTranslated();
             SetMetadataDirty();
         }
 
@@ -1373,7 +1370,7 @@ namespace UnityGameTranslator.Core
                 TranslatorPatches.ClearFontSizeCache();
                 // Without this, the "already translated" check returns early and
                 // never reaches the font scale
-                TranslatorPatches.ClearLastTranslatedCache();
+                Router.ClearLastTranslated();
             }
 
             if (changed.Contains(SettingsSections.Images))
@@ -2033,7 +2030,7 @@ namespace UnityGameTranslator.Core
             // Clean dead refs immediately (don't wait for periodic cleanup)
             FontManager.CleanDeadComponentRefs();
             TranslatorPatches.CleanDeadRefs();
-            TranslatorPatches.ClearTypewritingState();
+            Router.ClearTypewritingState();
 
             if (DebugMode)
                 Adapter?.LogInfo($"Scene unloaded: {sceneName}");
@@ -5913,17 +5910,6 @@ namespace UnityGameTranslator.Core
         }
 
 
-        /// <summary>
-        /// Normalize text for cache lookup (line endings + number extraction).
-        /// Used by typewriting stabilizer to check if text is already cached.
-        /// </summary>
-        /// <summary>
-        /// Quick check if a text has a cached translation (without doing the full translation).
-        /// Used to decide whether to apply the clone font before translation.
-        /// </summary>
-        private static int _dbgTwCacheHit = 0;
-        private static int _dbgReverseMiss = 0;
-
 
         /// <summary>
         /// Is there a usable translation for this SOURCE text?
@@ -6265,7 +6251,7 @@ namespace UnityGameTranslator.Core
                 gateOpen: Config.IsTranslationEnabled || Config.capture_keys_only,
                 skipTypewriting: false, skipQueueing: false,
                 readback: _readback, stale: _stale, current: TranslationCache, normalizeNumbers: Config.normalize_numbers,
-                host: GateHost.Instance, component: null);
+                host: Router.Gate, component: null);
             switch (miss.Kind)
             {
                 case MissKind.AlreadyTarget:
@@ -6351,281 +6337,98 @@ namespace UnityGameTranslator.Core
             return trimmed != key && ModUiCache.ContainsKey(trimmed);
         }
 
+        /// <summary>
+        /// Translate with component tracking for async updates — the door every text of a
+        /// component goes through. The decisions are Engine/TextRouter's (engine-agnostic, replayed
+        /// by the routing corpus); what stays here is the log said once when translation is off.
+        /// </summary>
         public static string TranslateTextWithTracking(string text, object component, bool isOwnUI = false, bool skipTypewriting = false, bool skipQueueing = false)
         {
-            // Switched off, or nobody has agreed to any of this yet. This is THE bottleneck every
-            // translation path goes through — the Harmony patches included, which is what made a
-            // cache full of translations show up on screen while the wizard was still open.
-            if (!TranslationsActive)
+            if (!TranslationsActive && _enableTranslationsLogOnce)
             {
-                // Debug: log first time to confirm this check works
-                if (_enableTranslationsLogOnce)
-                {
-                    _enableTranslationsLogOnce = false;
-                    LogInfo(SetupCompleted
-                        ? "[TranslatorCore] enable_translations=false, skipping translation"
-                        : "[TranslatorCore] setup not completed yet, skipping translation until the wizard is done");
-                }
-                return text;
+                _enableTranslationsLogOnce = false;
+                LogInfo(SetupCompleted
+                    ? "[TranslatorCore] enable_translations=false, skipping translation"
+                    : "[TranslatorCore] setup not completed yet, skipping translation until the wizard is done");
             }
-
-            if (string.IsNullOrEmpty(text))
-                return text;
-
-            // Don't split multiline - treat as single unit for proper component tracking
-            // (IsNumericOrSymbol check is in TranslateSingleTextWithTracking — no need to call twice)
-            string result = TranslateSingleTextWithTracking(text, component, isOwnUI, skipTypewriting, skipQueueing);
-            if (result != text)
-            {
-                translatedCount++;
-                FontManager.EnsureCharsInCloneAtlas(result, component);
-
-                // Into the index of the side this text came from — see ReadbackIndex.
-                // Index straight away: the read-back happens within the same session, often within
-                // the same frame, so waiting for the next cache load would miss the whole point.
-                IndexTranslatedValue(text, result, isOwnUI);
-            }
-            return result;
-        }
-
-        private static string TranslateSingleTextWithTracking(string text, object component, bool isOwnUI = false, bool skipTypewriting = false, bool skipQueueing = false)
-        {
-            if (string.IsNullOrEmpty(text))
-                return text;
-
-            if (IsNumericOrSymbol(text))
-                return text;
-
-            // Read-back detection: if the game read translated text and appended
-            // untranslated content, reconstruct the source-language text.
-            if (component is Component rbComp)
-            {
-                int rbId = TypeHelper.GetInstanceID(rbComp);
-                string reconstructed = TranslatorPatches.DetectReadBack(rbId, text);
-                if (reconstructed != null)
-                    text = reconstructed;
-            }
-
-            // 🔴 Tell a reveal in flight what this component now shows, BEFORE any lookup can
-            // answer and return. Every exit below means "this text is known", and each one that
-            // forgot to say so left the reveal holding a fragment it then sent to the model — see
-            // TranslatorPatches.NoteTextSeen for what that cost, measured.
-            if (component is Component seenComp)
-                TranslatorPatches.NoteTextSeen(TypeHelper.GetInstanceID(seenComp), text);
-
-            // 🔴 A template the game expands in place is never written back, whatever the cache
-            // holds. This is what makes the rule deterministic — the withdrawal from the queue is
-            // only the best case — and what keeps a file polluted before the rule from breaking the
-            // game's own expansion. Nothing is deleted; the line simply stops reaching the screen.
-            //
-            // ⚠ Before every lookup, since it is a lookup ANSWERING that does the damage. The
-            // Count == 0 test inside costs nothing on the games that never do this.
-            if (IsExpandedInPlace(text))
-                return text;
-
-            // Fast path: check concat assembled cache (runtime only, not JSON)
-            // Catches full tooltip texts that were assembled from translated deltas.
-            string concatResult = TranslatorPatches.GetConcatCacheResult(text);
-            if (concatResult != null)
-            {
-                translatedCount++;
-                return concatResult;
-            }
-            // Also skip if the text is a known concat translation result (FR text)
-            if (TranslatorPatches.IsConcatTranslatedValue(text))
-            {
-                return text; // already translated, don't re-process
-            }
-
-            // 🔴 Which file this text is looked up in, decided once and used for every lookup
-            // below. The mod's own labels and the game's text never see each other's entries —
-            // that is the whole separation, and asking the same question three times is how a
-            // branch ends up asking a fourth way.
-            var store = isOwnUI ? ModUiCache : TranslationCache;
-
-            // 🔴 The ladder — exact, normalized, trimmed, pattern — lives in Engine/TextGate.cs,
-            // where its order is held by cases. What follows is what a verdict DOES on this host:
-            // the counters, the bounded debug lines, and the tracking a hit needs.
-            var look = TextGate.Lookup(text, isOwnUI, store, Config.normalize_numbers, GameVariables.Instance, TryPatternMatch);
-
-            if (look.Outcome == GateOutcome.Hit)
-            {
-                if (look.Stage != GateStage.Pattern) cacheHitCount++;
-                translatedCount++;
-
-                if (look.Stage == GateStage.Exact)
-                {
-                    // ⚠ The reveal was told at the top of this method, for every exit at once — this
-                    // used to be said HERE, on the exact-key hit alone, which is the defect.
-
-                    // The canary for the defect NoteTextSeen was written for: a text recognised on
-                    // a component whose reveal is still in flight. It is normal — recognition
-                    // arrives before the last character, since the numbers are lifted out — and it
-                    // is only harmless because the reveal was told at the top of this method.
-                    if (_dbgTwCacheHit < 20 && component is Component twComp)
-                    {
-                        int twId = TypeHelper.GetInstanceID(twComp);
-                        if (TranslatorPatches.IsInTypewritingState(twId))
-                        {
-                            _dbgTwCacheHit++;
-                            LogDebug($"[TW-CACHEHIT] comp={twId} text='{(text.Length > 40 ? text.Substring(0,40) : text)}' → known while a reveal is in flight");
-                        }
-                    }
-                    if (DebugMode && text.Length > 100)
-                    {
-                        int cId = (component is Component dc) ? TypeHelper.GetInstanceID(dc) : -1;
-                        LogDebug($"[CACHE-HIT-LONG] comp={cId}\n  key({text.Length}c)='{text}'\n  val({look.Value.Length}c)='{look.Value}'");
-                    }
-                }
-                else if (look.Stage == GateStage.Normalized)
-                {
-                    // 🔴 **Said a few times, then not again.** This dumps the whole text TWICE —
-                    // original and normalised, newlines and markup included — on every cache hit
-                    // over a hundred characters. On a game whose long tooltips are on screen
-                    // continuously that is 780 dumps in one session: a log nobody can read, in
-                    // which a real warning is invisible, written by the thing being diagnosed.
-                    //
-                    // ⚠ Bounded like [TW-TOUCH] beside it rather than removed: what it shows —
-                    // which text produced which key — is exactly what a normalisation defect looks
-                    // like, and it is worth seeing once.
-                    if (DebugMode && text.Length > 100 && _dbgCacheHitNormLog < 10)
-                    {
-                        _dbgCacheHitNormLog++;
-                        int cId = (component is Component dc3) ? TypeHelper.GetInstanceID(dc3) : -1;
-                        LogDebug($"[CACHE-HIT-NORM] comp={cId} orig({text.Length}c) norm→key({look.NormalizedText.Length}c)\n  orig='{text}'\n  norm='{look.NormalizedText}'");
-                    }
-                }
-
-                // Return it synchronously — this prevents the game from reading back translated
-                // text and appending to it. Store the original for this component (enables the
-                // runtime toggle restoration) and track the pair.
-                if (component != null)
-                {
-                    TranslatorScanner.StoreOriginalText(component, text);
-                    TranslatorPatches.TrackTranslation(TypeHelper.GetInstanceID(component), text, look.Value);
-                }
-                return look.Value;
-            }
-
-            if (look.Outcome == GateOutcome.Known)
-            {
-                // Nothing in it (a capture, or a key nobody filled in), S, or key == value:
-                // the source is what to show, and nothing is queued.
-                cacheHitCount++;
-                if (look.Stage == GateStage.Exact && DebugMode && text.Length > 100)
-                {
-                    int cId = (component is Component dc2) ? TypeHelper.GetInstanceID(dc2) : -1;
-                    LogDebug($"[CACHE-HIT-SAME] comp={cId} known as shown ({text.Length}c)='{text}'");
-                }
-                return text;
-            }
-
-            // 🔴 The miss path — reverse index, own UI, stale snapshot, visibility, reveal, concat,
-            // variables, queue — is TextGate.ResolveMiss, where its order is held by cases. What
-            // follows is what each verdict DOES on this host.
-            var miss = TextGate.ResolveMiss(text, isOwnUI, look.NormalizedText,
-                gateOpen: Config.IsTranslationEnabled || Config.capture_keys_only,
-                skipTypewriting: skipTypewriting, skipQueueing: skipQueueing,
-                readback: _readback, stale: _stale, current: TranslationCache, normalizeNumbers: Config.normalize_numbers,
-                host: GateHost.Instance, component: component);
-            switch (miss.Kind)
-            {
-                case MissKind.AlreadyTarget:
-                    skippedAlreadyTranslated++;
-                    // This component displays an ALREADY-translated string (e.g. a title's shadow/
-                    // duplicate layer copied from the main layer) and so never had its source stored —
-                    // without it, disabling translation can't revert it (issue #21). Back-fill the
-                    // original from the reverse cache so restore works. Guard on "no original yet" to
-                    // keep the O(cache) scan to once per such component; StoreOriginalText also no-ops
-                    // if an original is already tracked.
-                    if (component != null && TranslatorScanner.GetOriginalText(component) == null)
-                    {
-                        string src = GetSourceForTranslation(text, store);
-                        if (!string.IsNullOrEmpty(src) && src != text)
-                            TranslatorScanner.StoreOriginalText(component, src);
-                    }
-                    return text;
-
-                case MissKind.Refreshed:
-                    if (component != null)
-                    {
-                        TranslatorScanner.StoreOriginalText(component, miss.OriginalText);
-                        TranslatorPatches.TrackTranslation(TypeHelper.GetInstanceID(component), miss.OriginalText, miss.NewText);
-                    }
-                    translatedCount++;
-                    return miss.NewText;
-
-                case MissKind.Gone:
-                    // ⚠ The GAME's index: the stale snapshot is taken from the game's cache before a
-                    // reload, and own-UI text returns before ever reaching this point.
-                    _readback.MarkTarget(miss.TrimmedNormalized, ownUi: false);
-                    return text;
-
-                case MissKind.Retry:
-                    NoteReverseMiss(text, miss.TrimmedNormalized);
-                    return TranslateSingleTextWithTracking(text, component, isOwnUI, skipTypewriting, skipQueueing);
-
-                case MissKind.Queue:
-                    NoteReverseMiss(text, miss.TrimmedNormalized);
-                    QueueForTranslation(text, component, isOwnUI);
-                    return text;
-
-                default:
-                    // Closed, OwnUiUnknown, HeldHidden, HeldRevealing, NotQueued: the text as shown.
-                    return text;
-            }
+            return Router.Translate(text, component, isOwnUI, skipTypewriting, skipQueueing);
         }
 
         /// <summary>
-        /// DEBUG LOG: a text with Latin letters that reached the queue without the reverse index
-        /// recognising it — after every skip check, so only texts actually queued are named.
+        /// The routing of every text a component shows — lookup, reveals held until they settle,
+        /// texts built in parts, read-backs, late translations put back (Engine/TextRouter).
         /// </summary>
-        private static void NoteReverseMiss(string text, string trimmedNormalized)
-        {
-            if (_dbgReverseMiss < 20 && text.Length > 5)
-            {
-                bool hasLatin = false;
-                foreach (char c in text)
-                {
-                    if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'))
-                    { hasLatin = true; break; }
-                }
-                if (hasLatin)
-                {
-                    _dbgReverseMiss++;
-                    LogDebug($"[REVERSE-MISS] orig({text.Length}c)='{text}'\n  norm({trimmedNormalized.Length}c)='{trimmedNormalized}'");
-                }
-            }
-        }
+        internal static readonly TextRouter Router = new TextRouter(new RouterHost());
 
         /// <summary>
-        /// The three questions of the miss path only this host can answer — see
-        /// <see cref="ITextGateHost"/>. One instance for every call: the component travels as the
-        /// opaque object every caller already holds, so a miss allocates nothing here.
+        /// What the router asks of Unity and of this mod, answered from the same places the code
+        /// it came out of read them — see <see cref="ITextRouterHost"/>.
         /// </summary>
-        private sealed class GateHost : ITextGateHost
+        private sealed class RouterHost : ITextRouterHost
         {
-            public static readonly GateHost Instance = new GateHost();
+            public int Frame => Time.frameCount;
+            public float Now => Time.realtimeSinceStartup;
 
-            public bool IsHiddenWhileRevealing(object component)
+            public bool DebugMode => TranslatorCore.DebugMode;
+            public bool TypewritingDetection => TranslatorCore.TypewritingDetection;
+            public bool ConcatDetection => TranslatorCore.ConcatDetection;
+            public bool TranslationsActive => TranslatorCore.TranslationsActive;
+            public bool GateOpen => Config.IsTranslationEnabled || Config.capture_keys_only;
+            public bool NormalizeNumbers => Config.normalize_numbers;
+
+            public IDictionary<string, TranslationEntry> GameStore => TranslationCache;
+            public IDictionary<string, TranslationEntry> OwnUiStore => ModUiCache;
+            public ReadbackIndex Readback => _readback;
+            public StaleSnapshot Stale => _stale;
+            public IVariableSubstitution Variables => GameVariables.Instance;
+            public string MatchPattern(string text) => TryPatternMatch(text);
+            public bool RefreshVariables() => VariableManager.RefreshOnMiss();
+            public bool IsExpandedInPlace(string text) => TranslatorCore.IsExpandedInPlace(text);
+            public string SourceOf(string translation, bool ownUi) => GetSourceForTranslation(translation, ownUi ? ModUiCache : TranslationCache);
+            public void ForgetTemplate(string text) => ForgetTemplateText(text);
+
+            // Followed per component: what is a Component. A UI Toolkit element is routed under
+            // its own id by its caller, but was never followed through the lookup.
+            public long IdOf(object component) => component is Component comp ? TypeHelper.GetInstanceID(comp) : -1;
+
+            public bool IsHidden(object component)
             {
                 if (!(component is Component visComp)) return false;
                 try
                 {
-                    if (visComp.gameObject != null && !visComp.gameObject.activeInHierarchy)
-                        return TranslatorPatches.IsInTypewritingState(TypeHelper.GetInstanceID(visComp));
+                    return visComp.gameObject != null && !visComp.gameObject.activeInHierarchy;
                 }
-                catch { }
-                return false;
+                catch { return false; }
             }
 
-            public bool IsRevealInProgress(object component, string text)
+            public string GetText(object component) => TypeHelper.GetText(component);
+            public void Write(object target, string text) => TextTargets.Write(target, text);
+            public bool IsGone(object target) => target is UnityEngine.Object uobj && uobj == null;
+            public object FindTarget(long id) => TranslatorPatches.FindTarget(id);
+            public void StoreOriginal(object component, string original) => TranslatorScanner.StoreOriginalText(component, original);
+            public string GetOriginal(object component) => TranslatorScanner.GetOriginalText(component);
+            public void Showing(string text, object component) => FontManager.EnsureCharsInCloneAtlas(text, component);
+
+            public void Queue(string text, object component, bool ownUi) => QueueForTranslation(text, component, ownUi);
+            public void CountTranslated() => translatedCount++;
+            public void CountCacheHit() => cacheHitCount++;
+            public void CountAlreadyTranslated() => skippedAlreadyTranslated++;
+
+            public void Log(string message) => LogInfo(message);
+            void ITextRouterHost.LogWarning(string message) => TranslatorCore.LogWarning(message);
+            void ITextRouterHost.LogDebug(string message) => TranslatorCore.LogDebug(message);
+
+            public string Describe(object target)
             {
-                int compId = (component is Component comp) ? TypeHelper.GetInstanceID(comp) : -1;
-                return TranslatorPatches.IsTypewritingInProgress(compId, text, component);
+                try
+                {
+                    var probeComp = target as Component;
+                    return probeComp != null
+                        ? $"{probeComp.GetType().Name} '{probeComp.gameObject.name}'"
+                        : (target != null ? target.GetType().Name : "no target");
+                }
+                catch { return "?"; }
             }
-
-            public bool RefreshVariables() => VariableManager.RefreshOnMiss();
         }
 
         public static string TryPatternMatch(string text)

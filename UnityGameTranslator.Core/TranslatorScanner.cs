@@ -2951,7 +2951,7 @@ namespace UnityGameTranslator.Core
             // reading here in Update saw only TMP's un-modified base mesh.
 
             // Check for stabilized typewriting texts and trigger their translation
-            TranslatorPatches.ProcessStabilizedTypewriting();
+            TranslatorCore.Router.ProcessStabilizedTypewriting();
 
             // After API translations complete, refresh all text so static components pick up cached translations
             if (TranslatorCore.PendingVisualRefresh)
@@ -3130,8 +3130,8 @@ namespace UnityGameTranslator.Core
 
                             // For concat components: the delta doesn't match the full text.
                             // Re-assemble using stored deltas + current cache translations.
-                            bool concat = TranslatorPatches.HasShownParts(skipId, comp);
-                            string reassembled = concat ? TranslatorPatches.ReassembleConcat(skipId, comp) : null;
+                            bool concat = TranslatorCore.Router.HasShownParts(skipId, comp);
+                            string reassembled = concat ? TranslatorCore.Router.ReassembleConcat(skipId, comp) : null;
                             if (reassembled != null)
                             {
                                 reassembledNow = true;

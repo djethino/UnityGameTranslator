@@ -21,35 +21,37 @@ namespace UnityGameTranslator.Core.Checks
     /// arrives BEFORE the last character: the reveal went blind at that point and waited out its
     /// five hundred milliseconds on a fragment.
     ///
-    /// ⚠ Lexical, like <see cref="LiveCountChecks"/> and <see cref="ComparisonDoorChecks"/>: the
-    /// state machine is welded to a component and a clock. What is checkable without a game is that
-    /// the fact is still stated ONCE, ahead of every exit — which is exactly what was missing.
+    /// ⚠ Lexical, like <see cref="LiveCountChecks"/> and <see cref="ComparisonDoorChecks"/>: it was
+    /// written while the state machine was welded to a component and a clock. It now lives in
+    /// Engine/TextRouter (2026-09-26), where the routing corpus can replay it; what stays checked
+    /// here is that the fact is still stated ONCE, ahead of every exit — which is exactly what was missing.
     /// </summary>
     internal static class RevealDoorChecks
     {
         public static void Run(Action<bool, string, string> check)
         {
             string coreFile = Find("UnityGameTranslator.Core", "TranslatorCore.cs");
-            string patchFile = Find("UnityGameTranslator.Core", "TranslatorPatches.cs");
+            string lookupFile = Find("UnityGameTranslator.Core", "Engine", "TextRouter.Lookup.cs");
+            string revealFile = Find("UnityGameTranslator.Core", "Engine", "TextRouter.Reveal.cs");
 
-            check(coreFile != null && patchFile != null,
+            check(coreFile != null && lookupFile != null && revealFile != null,
                 "the lookup and the reveal are found",
                 "this check reads them; without them, it proves nothing");
-            if (coreFile == null || patchFile == null) return;
+            if (coreFile == null || lookupFile == null || revealFile == null) return;
 
-            string lookup = BodyOf(File.ReadAllText(coreFile),
-                "private static string TranslateSingleTextWithTracking(string text, object component");
+            string lookup = BodyOf(File.ReadAllText(lookupFile),
+                "private string TranslateSingle(string text, object component");
             check(lookup != null,
                 "and the lookup is still there under its own name",
                 "renamed, the check must say so rather than pass on an empty comparison");
             if (lookup == null) return;
 
-            int told = lookup.IndexOf("TranslatorPatches.NoteTextSeen(", StringComparison.Ordinal);
+            int told = lookup.IndexOf("NoteTextSeen(", StringComparison.Ordinal);
             check(told >= 0,
                 "the lookup tells the reveal what this component shows",
                 "🔴 the defect: every exit below means \"already known\", and a reveal told by none of them holds a fragment and sends it");
 
-            check(Occurrences(lookup, "TranslatorPatches.NoteTextSeen(") == 1,
+            check(Occurrences(lookup, "NoteTextSeen(") == 1,
                 "and says it exactly once",
                 "said per branch, the next branch added forgets — which is how one exit out of eleven ended up carrying the rule");
             if (told < 0) return;
@@ -61,7 +63,7 @@ namespace UnityGameTranslator.Core.Checks
                 "before the first question that can answer and return",
                 "told after a lookup, every text that lookup recognises still leaves the reveal holding what it had");
 
-            string note = BodyOf(File.ReadAllText(patchFile), "public static void NoteTextSeen(long compId, string currentText)");
+            string note = BodyOf(File.ReadAllText(revealFile), "public void NoteTextSeen(long compId, string currentText)");
             check(note != null,
                 "and the reveal still answers that call",
                 "a caller of a method that no longer holds anything would compile and say nothing");
@@ -80,8 +82,8 @@ namespace UnityGameTranslator.Core.Checks
                 "an identical text is not a reason to wait longer",
                 "🔴 restarting the wait on an unchanged text, from a place the sweep reaches several times a second, defers the line for as long as it is on screen — never translated, nothing said");
 
-            NothingIsSentBeforeItSettled(File.ReadAllText(patchFile), check);
-            ATemplateIsRefusedAtThreeMoments(File.ReadAllText(coreFile), check);
+            NothingIsSentBeforeItSettled(File.ReadAllText(revealFile), check);
+            ATemplateIsRefusedAtThreeMoments(File.ReadAllText(coreFile), File.ReadAllText(lookupFile), check);
         }
 
         /// <summary>
@@ -98,11 +100,11 @@ namespace UnityGameTranslator.Core.Checks
         /// stays in it — deleting somebody's translation on a local observation is refused here —
         /// but it stops reaching the screen, so the game can expand its own text again.
         /// </summary>
-        private static void ATemplateIsRefusedAtThreeMoments(string core, Action<bool, string, string> check)
+        private static void ATemplateIsRefusedAtThreeMoments(string core, string router, Action<bool, string, string> check)
         {
             string queueing = BodyOf(core, "public static bool QueueForTranslation(string text, object component = null, bool isOwnUI = false)");
             string storing = BodyOf(core, "public static void AddToCache(string original, string translated, string tag = \"A\")");
-            string lookup = BodyOf(core, "private static string TranslateSingleTextWithTracking(string text, object component");
+            string lookup = BodyOf(router, "private string TranslateSingle(string text, object component");
 
             check(queueing != null && storing != null && lookup != null,
                 "the three moments are found",
@@ -151,8 +153,8 @@ namespace UnityGameTranslator.Core.Checks
                 "a component out of sight still tells the reveal what it shows",
                 "🔴 turning back without a word freezes the state on a text the game has already replaced, and the stabiliser then sends THAT — a game filling its tooltips while hidden had its template sent while the next state sat on the same component");
 
-            string door = BodyOf(core, "public bool IsRevealInProgress(object component, string text)");
-            check(door != null && door.Contains("TranslatorPatches.IsTypewritingInProgress(", StringComparison.Ordinal),
+            string door = BodyOf(router, "public bool IsRevealInProgress(object component, string text)");
+            check(door != null && door.Contains("_router.IsTypewritingInProgress(", StringComparison.Ordinal),
                 "and through the same door as everywhere else",
                 "the host's answer IS the reveal's one door; a second way of telling it would be a second state to keep in step");
         }
@@ -167,15 +169,15 @@ namespace UnityGameTranslator.Core.Checks
         /// holding it — queued, translated, and stored as <c>*Surcadence* ({[!v*0]})…</c>. Written
         /// back, the game looks for <c>*Overclock*</c> and <c>{0}</c> and finds neither.
         /// </summary>
-        private static void NothingIsSentBeforeItSettled(string patches, Action<bool, string, string> check)
+        private static void NothingIsSentBeforeItSettled(string reveal, Action<bool, string, string> check)
         {
-            string method = BodyOf(patches, "public static bool IsTypewritingInProgress(long compId, string newText, object component = null)");
+            string method = BodyOf(reveal, "public bool IsTypewritingInProgress(long compId, string newText, object component = null)");
             check(method != null,
                 "the reveal's own decision is still there under its name",
                 "renamed, the check must say so rather than pass on an empty comparison");
             if (method == null) return;
 
-            check(method.Contains("bool settled = elapsed >= TYPEWRITING_STABILIZE_MS;", StringComparison.Ordinal),
+            check(method.Contains("bool settled = elapsed >= TypewritingStabilizeMs;", StringComparison.Ordinal),
                 "a replacement asks whether the text it replaces had settled",
                 "🔴 without it, a text replaced mid-wait is declared final by a branch while another is still deciding it is not");
 
@@ -185,7 +187,7 @@ namespace UnityGameTranslator.Core.Checks
                 "and only a settled one is sent",
                 "a text replaced within half a second of appearing was read by nobody, and is a template being expanded as often as not");
 
-            check(method.Contains("TYPEWRITING_STABILIZE_MS", StringComparison.Ordinal)
+            check(method.Contains("TypewritingStabilizeMs", StringComparison.Ordinal)
                   && !System.Text.RegularExpressions.Regex.IsMatch(method, @"elapsed\s*[<>]=?\s*\d"),
                 "the rule uses the stabiliser's own delay, never a number of its own",
                 "a second constant would be a second answer to one question, and the two would drift");

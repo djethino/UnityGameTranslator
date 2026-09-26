@@ -804,7 +804,7 @@ namespace UnityGameTranslator.Core
         private static void Forget(long id)
         {
             _byId.Remove(id);
-            TranslatorPatches.ForgetElementState(id);
+            TranslatorCore.Router.Forget(id);
 
             // ⚠ The exclusion and font-rule caches too: both are strong and keyed by id, so an
             // element recycled by a list would leave an entry behind on every scroll.

@@ -430,16 +430,17 @@ namespace UnityGameTranslator.Core
                 if (!sameFrame) return false;
                 string held = _host.GetText(comp);
                 if (held != null) held = _host.Readback.PresentedLogical(held) ?? held;
-                // ⚠ The records as well: on the first game this ran in, the component read back
-                // did not start the pass that visibly started from our translation, while the
-                // replay of the same writes found it — the two disagree somewhere nobody has
-                // seen yet. Said, bounded, until a trace carrying `held` shows where.
+                // ⚠ The records as well, and on the first game this ran in they are the ONLY
+                // witness: it empties the component before rebuilding it (read back: '', a write
+                // no setter passes on — an empty text is never routed). What it lays out is then
+                // the last whole written, our translation or its own text. Measured in a trace
+                // carrying `held`, 2026-09-26. Any OTHER disagreement is said, bounded.
                 string whole = IsLayoutPassStart(held, text) ? held
                              : IsLayoutPassStart(state.LastTranslated, text) ? state.LastTranslated
                              : IsLayoutPassStart(state.LastRaw, text) ? state.LastRaw
                              : null;
                 if (whole == null) return false;
-                if (whole != held && _layoutHeldSaid < 5)
+                if (whole != held && !string.IsNullOrEmpty(held) && _layoutHeldSaid < 5)
                 {
                     _layoutHeldSaid++;
                     _host.Log($"[LAYOUT-HELD] comp={compId} a layout pass starts from '{Clip(whole, 60)}' but the component reads back '{Clip(held, 60)}'");
@@ -451,11 +452,26 @@ namespace UnityGameTranslator.Core
                 _host.LayoutPassSeen(comp, whole);
             }
 
+            // The whole itself, written again as it was: not a step. The pass is over (a game
+            // that lays out every frame starts the next one from here) and this write is routed
+            // like any other — translated, or held until it can be. A text that fits on one line
+            // also ends this way: its last step IS the whole.
+            if (text == state.LayoutHeld)
+            {
+                state.LayoutWhole = null;
+                state.LayoutHeld = null;
+                // ⚠ Routed as the whole it is, not as the growth of the last step: left
+                // pointing at "It's messed ", "It's messed up!" read as a part appended.
+                state.LastRaw = text;
+                return false;
+            }
+
             string step = StripBreaks(text).TrimEnd();
             if (!state.LayoutWhole.StartsWith(step, StringComparison.Ordinal))
             {
                 // Not a step of it: the pass is over, and this text is routed as any other.
                 state.LayoutWhole = null;
+                state.LayoutHeld = null;
                 return false;
             }
 
@@ -463,21 +479,20 @@ namespace UnityGameTranslator.Core
             state.LastRaw = text;
             if (step.Length < state.LayoutWhole.Length) return true;
 
-            // The last step: the whole, laid out by the game.
-            // ⚠ Remembered only when the game changed it: a text that fits on one line comes out
-            // exactly as it went in, and remembering the game's own text as "laid out" would
-            // leave every later write of it untranslated.
+            // The whole, laid out by the game — not necessarily for the last time: reaching the
+            // full length is only the last word APPENDED; if it overflows, the game rewrites it
+            // with a break before that word, then trims the trailing space. So the pass stays
+            // open, and every full-length form is remembered: the one that stays on screen is
+            // whichever came last (2026-09-26, the break before the last word went to the model).
             if (state.LayoutOurs)
             {
                 state.LastTranslated = text;
                 _concatTranslatedValues.Add(text);
             }
-            else if (text != state.LayoutHeld)
+            else
             {
                 _layoutResults.Add(text);
             }
-            state.LayoutWhole = null;
-            state.LayoutHeld = null;
             if (_host.DebugMode)
                 _host.LogDebug($"[LAYOUT] comp={compId} the game laid out {(state.LayoutOurs ? "our translation" : "its own text")} — left as it wrote it: '{Clip(text, 60)}'");
             return true;

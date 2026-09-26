@@ -291,6 +291,29 @@
         { "f": 90, "t": 3.0, "tick": true }
       ],
       "queued": [ "Now all the fish are dead." ]
+    },
+    {
+      "id": "layout/the-last-word-broken-after-the-whole-length-is-reached",
+      "why": "🔴 as a game really lays out (recorded 2026-09-26): it empties the component, rebuilds it word by word, and only breaks the line AFTER appending the word that overflows — so the full length is reached before the last break and the final trim. Those last rewrites are the pass too: taken for a new line, the layout was held and sent to the model in place of the whole, and the whole was dropped",
+      "file": {},
+      "steps": [
+        { "f": 5, "t": 1.0, "write": "Now all the fish are dead.", "shows": "Now all the fish are dead." },
+        { "f": 5, "t": 1.0, "clear": true },
+        { "f": 5, "t": 1.0, "write": "Now ", "shows": "Now " },
+        { "f": 5, "t": 1.0, "write": "Now all the ", "shows": "Now all the " },
+        { "f": 5, "t": 1.0, "write": "Now all the fish are ", "shows": "Now all the fish are " },
+        { "f": 5, "t": 1.0, "write": "Now all the fish are dead. ", "shows": "Now all the fish are dead. " },
+        { "f": 5, "t": 1.0, "write": "Now all the fish are \r\ndead. ", "shows": "Now all the fish are \r\ndead. " },
+        { "f": 5, "t": 1.0, "write": "Now all the fish are \r\ndead.", "shows": "Now all the fish are \r\ndead." },
+        { "f": 60, "t": 2.0, "write": "Now all the fish are \r\ndead.", "shows": "Now all the fish are \r\ndead." },
+        { "f": 90, "t": 3.0, "tick": true },
+        { "f": 100, "t": 3.5, "write": "Now all the fish are dead.", "shows": "Now all the fish are dead." },
+        { "f": 100, "t": 3.5, "clear": true },
+        { "f": 100, "t": 3.5, "write": "Now ", "shows": "Now " },
+        { "f": 100, "t": 3.5, "write": "Now all the fish are \r\ndead.", "shows": "Now all the fish are \r\ndead." },
+        { "f": 200, "t": 5.0, "tick": true }
+      ],
+      "queued": [ "Now all the fish are dead." ]
     }
   ]
 }

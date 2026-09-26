@@ -89,6 +89,10 @@ namespace UnityGameTranslator.Core.Checks
                     // A refresh sets again what the component holds (the scanner's sweep, an Apply
                     // in the Fonts tab): our own output coming back through the setter.
                     host.GameWrites(box, box.Shown);
+                else if (step["clear"] != null)
+                    // The game empties the component: an empty text never reaches the router
+                    // (the setters let it through untouched), the component simply holds nothing.
+                    box.Shown = "";
                 else if (step["sweep"] != null)
                 {
                     // The scene sweep: reads the component back, asks the lookup (not the router),

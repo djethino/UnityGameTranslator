@@ -69,7 +69,14 @@ namespace UnityGameTranslator.Core.Checks
                 if (o["t"] != null) host.Now = (float)(double)o["t"];
 
                 // The stabiliser runs once a frame in the game.
-                if (f != lastFrame) { router.ProcessStabilizedTypewriting(); lastFrame = f; }
+                if (f != lastFrame)
+                {
+                    int before = host.Queued.Count;
+                    router.ProcessStabilizedTypewriting();
+                    for (int i = before; i < host.Queued.Count; i++)
+                        causes[host.Queued[i].Text] = $"f={f} the stabiliser sent what it had held";
+                    lastFrame = f;
+                }
 
                 switch (k)
                 {
@@ -83,13 +90,15 @@ namespace UnityGameTranslator.Core.Checks
                         // disagreement is counted — it is a place where the router's picture of
                         // the screen is wrong.
                         string held = (string)o["held"];
-                        if (o["held"] != null && held != box.Shown)
+                        // ⚠ A component the replay has not seen written yet holds whatever the game
+                        // put there before recording began: not a disagreement.
+                        if (o["held"] != null && held != box.Shown && !string.IsNullOrEmpty(box.Shown))
                         {
                             heldDiffs++;
                             if (heldDiffs <= 5)
                                 Console.WriteLine($"--- held #{heldDiffs} at f={f} comp={box.Id}: replay [{Clip(box.Shown)}] game [{Clip(held)}]");
-                            box.Shown = held;
                         }
+                        if (o["held"] != null) box.Shown = held;
                         int queuedBefore = host.Queued.Count;
                         string previous = box.Shown;
                         string replayed = host.GameWrites(box, (string)o["in"]);
@@ -127,10 +136,11 @@ namespace UnityGameTranslator.Core.Checks
             Console.WriteLine($"{host.Queued.Count} line(s) sent for translation, {words} of them words sent alone");
             int listed = 0;
             foreach (var q in host.Queued)
-                if (IsWordPart(q.Text) && listed++ < 60)
+                if ((IsWordPart(q.Text) || host.Queued.Count <= 30) && listed++ < 60)
                 {
-                    Console.WriteLine($"  sent alone: [{Clip(q.Text)}] comp={q.Box?.Id}");
+                    Console.WriteLine($"  {(IsWordPart(q.Text) ? "sent alone" : "sent")}: [{Clip(q.Text)}] comp={q.Box?.Id}");
                     if (causes.TryGetValue(q.Text, out string cause)) Console.WriteLine($"    {cause}");
+                    else Console.WriteLine("    (sent by the stabiliser, from a text held since)");
                 }
             Console.WriteLine($"{host.LayoutPasses.Count} layout pass(es) recognised");
             foreach (string whole in host.LayoutPasses.GetRange(0, Math.Min(5, host.LayoutPasses.Count)))

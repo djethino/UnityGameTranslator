@@ -340,6 +340,48 @@ namespace UnityGameTranslator.Core
         private static string Clip(string text, int max)
             => text == null || text.Length <= max ? text : text.Substring(0, max) + "...";
 
+        // === A TRANSLATION ARRIVING LATE ===
+
+        /// <summary>What becomes of a translation that comes back after its text was queued.</summary>
+        public enum LateOutcome
+        {
+            /// <summary>The component still shows the text it was asked for: write the translation.</summary>
+            Write,
+            /// <summary>It shows a page built from parts, one of which this was: write the page rebuilt.</summary>
+            Reassembled,
+            /// <summary>It shows something else now: leave it alone.</summary>
+            Skip,
+        }
+
+        /// <summary>
+        /// Decide what a late translation does to one component, from what that component shows
+        /// now. The engine does the writing (and whatever its renderer needs afterwards).
+        ///
+        /// ⚠ Never a write over a text the game has since replaced: only the exact text that was
+        /// queued, or a page still made of the parts it belongs to (<see cref="HasShownParts"/>).
+        /// </summary>
+        /// <param name="current">What the component shows at this instant.</param>
+        /// <param name="toWrite">The text to put on the component, or null on <see cref="LateOutcome.Skip"/>.</param>
+        public LateOutcome Late(long compId, object component, string current, string original, string translation, out string toWrite)
+        {
+            if (current == original)
+            {
+                toWrite = translation;
+                return LateOutcome.Write;
+            }
+
+            // For concat components: the delta doesn't match the full text.
+            // Re-assemble using stored deltas + current cache translations.
+            if (compId != -1 && HasShownParts(compId, component))
+            {
+                toWrite = ReassembleConcat(compId, component);
+                if (toWrite != null) return LateOutcome.Reassembled;
+            }
+
+            toWrite = null;
+            return LateOutcome.Skip;
+        }
+
         // === CONCAT CACHES AND REASSEMBLY ===
 
         /// <summary>

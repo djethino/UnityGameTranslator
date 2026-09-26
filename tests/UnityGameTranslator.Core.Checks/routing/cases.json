@@ -1,0 +1,159 @@
+{
+  "$comment": "Sequences of writes replayed through Engine/TextRouter (RoutingCorpusChecks). A step sets the frame `f` and the time `t` (seconds), then one of: `write` (the game sets the text), `append` (the game reads what the component holds — our output in its shown form — and writes it back with more), `tick` (the stabiliser runs), `arrive` (a translation comes back for `o`). `shows` is what a person reads on the component after the step (the logical text behind a presented form). `queued` is everything sent for translation, in order. `present: rtl` presents right-to-left text as the flagged branch of RtlPresenter does. `file` holds source → translation, numbers written as [!v*N] where the file would. See analyse/banc-routage-texte.md (root).",
+  "cases": [
+    {
+      "id": "lookup/a-known-line-is-shown-translated",
+      "why": "the ordinary case: nothing held, nothing queued",
+      "file": { "Hello": "Bonjour" },
+      "steps": [
+        { "f": 1, "t": 0.0, "write": "Hello", "shows": "Bonjour" }
+      ],
+      "queued": []
+    },
+    {
+      "id": "reveal/a-line-nobody-has-is-held-then-sent-once-it-stands-still",
+      "why": "a text may still be growing; it is sent only once nothing has moved for the stabiliser's delay",
+      "steps": [
+        { "f": 1, "t": 0.0, "write": "A line nobody has", "shows": "A line nobody has" },
+        { "f": 30, "t": 0.6, "tick": true }
+      ],
+      "queued": [ "A line nobody has" ]
+    },
+    {
+      "id": "reveal/a-line-replaced-before-it-settled-is-never-sent",
+      "why": "replaced within half a second, nobody read it — and a template expanded in place looks exactly like this",
+      "steps": [
+        { "f": 1, "t": 0.0, "write": "*Overclock* ({0})", "shows": "*Overclock* ({0})" },
+        { "f": 10, "t": 0.3, "write": "Something else entirely", "shows": "Something else entirely" },
+        { "f": 50, "t": 0.9, "tick": true }
+      ],
+      "queued": [ "Something else entirely" ]
+    },
+    {
+      "id": "reveal/letter-by-letter-a-known-line-costs-nothing",
+      "why": "no fragment of a reveal is ever sent: the finished line is known, and the reveal is told the moment it is recognised",
+      "file": { "Hello there": "Bonjour à tous" },
+      "steps": [
+        { "f": 1, "t": 0.00, "write": "Hel" },
+        { "f": 2, "t": 0.04, "write": "Hello" },
+        { "f": 3, "t": 0.08, "write": "Hello th" },
+        { "f": 4, "t": 0.12, "write": "Hello there", "shows": "Bonjour à tous" },
+        { "f": 60, "t": 1.0, "tick": true, "shows": "Bonjour à tous" }
+      ],
+      "queued": []
+    },
+    {
+      "id": "reveal/a-tag-walking-along-a-finished-line-is-one-line",
+      "why": "a reveal that moves a colour tag along a finished sentence says the same thing every frame: one request, not one per frame (one sentence once cost 93)",
+      "steps": [
+        { "f": 1, "t": 0.00, "write": "<color=#FFF>Hi</color> there friend" },
+        { "f": 2, "t": 0.04, "write": "Hi <color=#FFF>there</color> friend" },
+        { "f": 3, "t": 0.08, "write": "Hi there <color=#FFF>friend</color>" },
+        { "f": 60, "t": 1.0, "tick": true }
+      ],
+      "queued": [ "Hi there <color=#FFF>friend</color>" ]
+    },
+    {
+      "id": "reveal/cjk-letter-by-letter-a-known-line-costs-nothing",
+      "why": "no spaces to cut on: the same reveal rules hold for a language written without them",
+      "file": { "こんにちは、世界。": "Hello, world." },
+      "steps": [
+        { "f": 1, "t": 0.00, "write": "こ" },
+        { "f": 2, "t": 0.04, "write": "こんに" },
+        { "f": 3, "t": 0.08, "write": "こんにちは、" },
+        { "f": 4, "t": 0.12, "write": "こんにちは、世界。", "shows": "Hello, world." },
+        { "f": 60, "t": 1.0, "tick": true, "shows": "Hello, world." }
+      ],
+      "queued": []
+    },
+    {
+      "id": "concat/parts-written-in-one-frame-are-translated-part-by-part",
+      "why": "a tooltip built in parts: each part is a line of the file, the whole is not",
+      "file": { "Sword": "Épée", "Damage: 5": "Dégâts : [!v*0]" },
+      "steps": [
+        { "f": 5, "t": 0.1, "write": "Sword", "shows": "Épée" },
+        { "f": 5, "t": 0.1, "write": "Sword\nDamage: 5", "shows": "Épée\nDégâts : 5" }
+      ],
+      "queued": []
+    },
+    {
+      "id": "concat/an-unknown-part-is-sent-and-put-back-into-its-tooltip",
+      "why": "procedural objects: the part the file lacks is sent alone, and its answer goes back into the tooltip still on screen",
+      "file": { "Shield": "Bouclier" },
+      "steps": [
+        { "f": 7, "t": 0.1, "write": "Shield", "shows": "Bouclier" },
+        { "f": 7, "t": 0.1, "write": "Shield\nArmor: 3", "shows": "Bouclier\nArmor: 3" },
+        { "f": 40, "t": 0.8, "arrive": { "o": "Armor: 3", "tr": "Armure : [!v*0]" }, "shows": "Bouclier\nArmure : 3" }
+      ],
+      "queued": [ "Armor: 3" ]
+    },
+    {
+      "id": "readback/a-page-appended-to-our-translation",
+      "why": "a book written sentence by sentence onto the component: the whole page when the file has it, the new sentence alone otherwise, a late answer put back into the page",
+      "file": {
+        " Dear Reader,": " Cher lecteur,",
+        " Dear Reader,\n\nAllow me. ": " Cher lecteur,\n\nPermettez-moi. ",
+        "Though it is odd. ": "Même si c'est étrange. "
+      },
+      "steps": [
+        { "f": 1, "t": 0.0, "write": " " },
+        { "f": 1, "t": 0.0, "write": " Dear Reader,", "shows": " Cher lecteur," },
+        { "f": 60, "t": 1.0, "append": "\n\nAllow me. ", "shows": " Cher lecteur,\n\nPermettez-moi. " },
+        { "f": 120, "t": 2.0, "append": "Though it is odd. ", "shows": " Cher lecteur,\n\nPermettez-moi. Même si c'est étrange. " },
+        { "f": 180, "t": 3.0, "append": "Nobody knows yet. ", "shows": " Cher lecteur,\n\nPermettez-moi. Même si c'est étrange. Nobody knows yet. " },
+        { "f": 200, "t": 3.5, "arrive": { "o": "Nobody knows yet. ", "tr": "Personne ne le sait encore. " }, "shows": " Cher lecteur,\n\nPermettez-moi. Même si c'est étrange. Personne ne le sait encore. " }
+      ],
+      "queued": [ "Nobody knows yet. " ]
+    },
+    {
+      "id": "readback/a-page-appended-to-our-shaped-right-to-left-translation",
+      "why": "🔴 the game reads back what the component HOLDS — the shaped form, not the translation — and appends to it (2026-09-26: shaped Arabic plus the game's sentence, reading backwards)",
+      "present": "rtl",
+      "file": {
+        " Dear Reader,": " عزيزي القارئ،",
+        " Dear Reader,\n\nAllow me. ": " عزيزي القارئ،\n\nاسمح لي. ",
+        "Though it is odd. ": "مع أنه غريب. "
+      },
+      "steps": [
+        { "f": 1, "t": 0.0, "write": " " },
+        { "f": 1, "t": 0.0, "write": " Dear Reader,", "shows": " عزيزي القارئ،" },
+        { "f": 60, "t": 1.0, "append": "\n\nAllow me. ", "shows": " عزيزي القارئ،\n\nاسمح لي. " },
+        { "f": 120, "t": 2.0, "append": "Though it is odd. ", "shows": " عزيزي القارئ،\n\nاسمح لي. مع أنه غريب. " },
+        { "f": 180, "t": 3.0, "append": "Nobody knows yet. ", "shows": " عزيزي القارئ،\n\nاسمح لي. مع أنه غريب. Nobody knows yet. " },
+        { "f": 200, "t": 3.5, "arrive": { "o": "Nobody knows yet. ", "tr": "لا أحد يعرف بعد. " }, "shows": " عزيزي القارئ،\n\nاسمح لي. مع أنه غريب. لا أحد يعرف بعد. " }
+      ],
+      "queued": [ "Nobody knows yet. " ]
+    },
+    {
+      "id": "readback/a-late-answer-never-overwrites-a-page-the-game-has-replaced",
+      "why": "the page moved on before the answer came back: rebuilding the old one over the new would erase what the game shows",
+      "file": {
+        " Dear Reader,": " Cher lecteur,",
+        "Chapter 1": "Chapitre [!v*0]"
+      },
+      "steps": [
+        { "f": 1, "t": 0.0, "write": " " },
+        { "f": 1, "t": 0.0, "write": " Dear Reader,", "shows": " Cher lecteur," },
+        { "f": 60, "t": 1.0, "append": "Nobody knows yet. ", "shows": " Cher lecteur,Nobody knows yet. " },
+        { "f": 90, "t": 1.5, "write": "Chapter 1", "shows": "Chapitre 1" },
+        { "f": 200, "t": 3.5, "arrive": { "o": "Nobody knows yet. ", "tr": "Personne ne le sait encore. " }, "shows": "Chapitre 1" }
+      ],
+      "queued": [ "Nobody knows yet. " ]
+    },
+    {
+      "id": "readback/a-late-answer-never-overwrites-a-replaced-page-whose-parts-remain",
+      "why": "🔴 a page only APPENDED to keeps its parts when the game replaces it (nothing resets them there): the parts must belong to what is on screen before anything is rebuilt",
+      "file": {
+        " Dear Reader,": " Cher lecteur,",
+        "Chapter 1": "Chapitre [!v*0]"
+      },
+      "steps": [
+        { "f": 1, "t": 0.0, "write": " Dear Reader,", "shows": " Cher lecteur," },
+        { "f": 60, "t": 1.0, "append": "Nobody knows yet. ", "shows": " Cher lecteur,Nobody knows yet. " },
+        { "f": 90, "t": 1.5, "write": "Chapter 1", "shows": "Chapitre 1" },
+        { "f": 200, "t": 3.5, "arrive": { "o": "Nobody knows yet. ", "tr": "Personne ne le sait encore. " }, "shows": "Chapitre 1" }
+      ],
+      "queued": [ "Nobody knows yet. " ]
+    }
+  ]
+}

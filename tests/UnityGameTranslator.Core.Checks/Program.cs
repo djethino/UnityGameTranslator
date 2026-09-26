@@ -189,6 +189,7 @@ namespace UnityGameTranslator.Core.Checks
             Section("One round of the sweep", ScanRoundChecks.Run);
             Section("A typewriter reveal carried over to the translation", RevealScaleChecks.Run);
             Section("What a reveal in flight is told", RevealDoorChecks.Run);
+            Section("Texts a game writes, replayed in sequence (routing corpus)", RoutingCorpusChecks.Run);
         }
 
         /// <summary>How one step of a hierarchy path is named when the thing has no name.</summary>

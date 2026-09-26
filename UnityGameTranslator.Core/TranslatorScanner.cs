@@ -3071,7 +3071,12 @@ namespace UnityGameTranslator.Core
                     string expectedPreview = originalText.Length > 40 ? originalText.Substring(0, 40) + "..." : originalText;
                     string actualPreview = actualText.Length > 40 ? actualText.Substring(0, 40) + "..." : actualText;
 
-                    if (actualText == originalText)
+                    // Write, rebuild, or leave alone — decided by the router, from what the component
+                    // shows now (Engine/TextRouter.Late). What follows is what each answer takes here.
+                    int lateId = TypeHelper.GetInstanceID(comp);
+                    var late = TranslatorCore.Router.Late(lateId, comp, actualText, originalText, translation, out string lateText);
+
+                    if (late == TextRouter.LateOutcome.Write)
                     {
                         // Store original before applying translation (enables runtime toggle restoration)
                         StoreOriginalText(comp, originalText);
@@ -3121,30 +3126,25 @@ namespace UnityGameTranslator.Core
                     else
                     {
                         // Clear tracking so scanner retries this component on next cycle
-                        int skipId = TypeHelper.GetInstanceID(comp);
-                        bool reassembledNow = false;
+                        int skipId = lateId;
                         if (skipId != -1)
                         {
                             processedTextHashes.Remove(skipId);
                             TranslatorCore.ClearSeenText(skipId);
+                        }
 
-                            // For concat components: the delta doesn't match the full text.
-                            // Re-assemble using stored deltas + current cache translations.
-                            bool concat = TranslatorCore.Router.HasShownParts(skipId, comp);
-                            string reassembled = concat ? TranslatorCore.Router.ReassembleConcat(skipId, comp) : null;
-                            if (reassembled != null)
+                        // A page built from parts, rebuilt with this translation in it.
+                        if (late == TextRouter.LateOutcome.Reassembled)
+                        {
+                            try { TypeHelper.SetText(comp, lateText); }
+                            catch (Exception ex)
                             {
-                                reassembledNow = true;
-                                try { TypeHelper.SetText(comp, reassembled); }
-                                catch (Exception ex)
-                                {
-                                    TranslatorCore.LogWarning($"[Apply REASSEMBLE] comp={skipId} could not be written: {ex.GetType().Name}: {ex.Message}");
-                                }
+                                TranslatorCore.LogWarning($"[Apply REASSEMBLE] comp={skipId} could not be written: {ex.GetType().Name}: {ex.Message}");
                             }
-                            TranslatorCore.LogDebug($"[Apply REASSEMBLE] comp={skipId} concat={concat} reassembled={(reassembled == null ? "none" : $"{reassembled.Length}c '{(reassembled.Length > 40 ? reassembled.Substring(0, 40) + "..." : reassembled)}'")}");
+                            TranslatorCore.LogDebug($"[Apply REASSEMBLE] comp={skipId} {lateText.Length}c '{(lateText.Length > 40 ? lateText.Substring(0, 40) + "..." : lateText)}'");
                         }
                         TranslatorCore.LogDebug($"[Apply SKIP] comp={skipId} expected='{expectedPreview}' actual='{actualPreview}'");
-                        TextTrace.Apply(skipId, reassembledNow ? "reassemble" : "skip", TypeHelper.GetText(comp));
+                        TextTrace.Apply(skipId, late == TextRouter.LateOutcome.Reassembled ? "reassemble" : "skip", TypeHelper.GetText(comp));
                     }
                 }
                 catch { }

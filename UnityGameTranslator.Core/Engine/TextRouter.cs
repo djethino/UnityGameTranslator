@@ -222,6 +222,10 @@ namespace UnityGameTranslator.Core
         private readonly Dictionary<string, string> _concatAssembledCache = new Dictionary<string, string>();
         // Fast lookup for translated values (to skip target-language text that comes back)
         private readonly HashSet<string> _concatTranslatedValues = new HashSet<string>();
+        // The keys of _concatAssembledCache that are a page's SOURCE, in the game's own language —
+        // as opposed to our shown form with a part appended, which is a key too but never a text
+        // the game writes on its own. Only a source says what a redrawn page stands for.
+        private readonly HashSet<string> _assembledSources = new HashSet<string>();
 
         /// <summary>The record for this component, created on first need.</summary>
         private ComponentTextState StateFor(long compId)
@@ -252,6 +256,7 @@ namespace UnityGameTranslator.Core
             _typewritingPending.Clear();
             _concatAssembledCache.Clear();
             _concatTranslatedValues.Clear();
+            _assembledSources.Clear();
         }
 
         /// <summary>

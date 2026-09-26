@@ -34,6 +34,14 @@ namespace UnityGameTranslator.Core
                 // CN text matched → apply FR translation, skip all translate logic
                 textValue = concatCached;
                 concatCacheHit = true;
+
+                // 🔴 A page we assembled, written again whole in its source language: this
+                // component now shows it, and the next part the game appends builds on it. Left
+                // unrecorded, the append met a component still following an older text and went on
+                // top of the English — a page every piece of which was in the file stayed in
+                // English until the model answered (capture, 2026-09-26).
+                if (compId != -1 && _assembledSources.Contains(preTranslateText))
+                    FollowAssembledPage(compId, preTranslateText, concatCached);
             }
             else if (_concatTranslatedValues.Contains(textValue)
                      || (_host.Readback.PresentedLogical(textValue) is string shownLogical
@@ -194,6 +202,7 @@ namespace UnityGameTranslator.Core
                     // Cache the assembled result: raw source → assembled target (runtime only)
                     _concatAssembledCache[preTranslateText] = textValue;
                     _concatTranslatedValues.Add(textValue);
+                    if (whole != null) RememberAssembledSource(whole, textValue);
                     handledAsConcat = true;
 
                     if (_host.DebugMode)
@@ -286,6 +295,10 @@ namespace UnityGameTranslator.Core
                 // Also cache with the raw text as key (for scanner refresh lookups)
                 _concatAssembledCache[preTranslateText] = textValue;
                 _concatTranslatedValues.Add(textValue);
+                // ⚠ And under its SOURCE when known: the raw text here is our shown form plus the
+                // game's part, which the game never writes again — the page in its own language is
+                // what it writes when it redraws.
+                if (whole != null) RememberAssembledSource(whole, textValue);
                 handledAsConcat = true;
 
                 if (_host.DebugMode)
@@ -439,8 +452,7 @@ namespace UnityGameTranslator.Core
             string whole = Translate(rawKey, component, false, skipTypewriting: true, skipQueueing: true);
             if (whole != rawKey)
             {
-                _concatAssembledCache[rawKey] = whole;
-                _concatTranslatedValues.Add(whole);
+                RememberAssembledSource(rawKey, whole);
                 state.LastTranslated = whole;
                 return whole;
             }
@@ -466,8 +478,7 @@ namespace UnityGameTranslator.Core
             TrackTranslation(compId, rawKey, assembled);
 
             // Update caches
-            _concatAssembledCache[rawKey] = assembled;
-            _concatTranslatedValues.Add(assembled);
+            RememberAssembledSource(rawKey, assembled);
 
             return assembled;
         }
@@ -482,6 +493,36 @@ namespace UnityGameTranslator.Core
                 _concatAssembledCache.Remove(text);
                 _concatTranslatedValues.Remove(oldValue);
             }
+            _assembledSources.Remove(text);
+        }
+
+        /// <summary>
+        /// A page we assembled, remembered under its SOURCE: the text in the game's own language
+        /// that it stands for — what the game writes when it redraws the page whole.
+        /// </summary>
+        private void RememberAssembledSource(string source, string assembled)
+        {
+            if (string.IsNullOrEmpty(source) || string.IsNullOrEmpty(assembled) || source == assembled) return;
+            _concatAssembledCache[source] = assembled;
+            _concatTranslatedValues.Add(assembled);
+            _assembledSources.Add(source);
+        }
+
+        /// <summary>
+        /// The game wrote a page we assembled, whole, in its source language: the component now
+        /// shows the assembly, and is followed from it — the frame counted like any write (a part
+        /// appended in the same frame is an assembly in parts), the pair tracked so the next
+        /// append can find the page's source.
+        /// </summary>
+        private void FollowAssembledPage(long compId, string source, string assembled)
+        {
+            var state = StateFor(compId);
+            int frame = _host.Frame;
+            if (state.LastFrame == frame) state.FrameCallCount++;
+            else { state.LastFrame = frame; state.FrameCallCount = 1; }
+            state.LastRaw = source;
+            state.LastTranslated = assembled;
+            TrackTranslation(compId, source, assembled);
         }
 
         /// <summary>Check if a text is a known concat translated value.</summary>

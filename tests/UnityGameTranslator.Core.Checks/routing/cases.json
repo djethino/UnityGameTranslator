@@ -178,6 +178,24 @@
         { "f": 60, "t": 2.0, "arrive": { "o": "Page two begins. ", "tr": "تبدأ الصفحة الثانية. " }, "shows": "تبدأ الصفحة الثانية. وتستمر. " }
       ],
       "queued": [ "It goes on. ", "Page two begins. " ]
+    },
+    {
+      "id": "readback/a-page-we-assembled-redrawn-whole-in-its-source-language",
+      "why": "🔴 the game builds a page onto our shaped text, then redraws it whole in English and appends to THAT: every piece is in the file, so nothing may show in English or be sent (capture of a book, 2026-09-26: 5.5 s of English)",
+      "present": "rtl",
+      "file": {
+        "Title. Story. ": "عنوان. قصة. ",
+        "Nestled. ": "تقع. ",
+        "Far. ": "بعيداً. "
+      },
+      "steps": [
+        { "f": 10, "t": 1.0, "write": "Title. Story. ", "shows": "عنوان. قصة. " },
+        { "f": 10, "t": 1.0, "append": "Nestled. ", "shows": "عنوان. قصة. تقع. " },
+        { "f": 20, "t": 2.0, "write": "Title. Story. Nestled. ", "shows": "عنوان. قصة. تقع. " },
+        { "f": 20, "t": 2.0, "write": "Title. Story. Nestled. Far. ", "shows": "عنوان. قصة. تقع. بعيداً. " },
+        { "f": 90, "t": 3.0, "tick": true, "shows": "عنوان. قصة. تقع. بعيداً. " }
+      ],
+      "queued": []
     }
   ]
 }

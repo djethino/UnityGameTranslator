@@ -46,7 +46,15 @@ namespace UnityGameTranslator.Core
                 written.WriteFrame = _host.Frame;
                 if (FollowLayoutPass(written, comp, compId, textValue, sameFrame)) return RouteOutcome.Translated;
             }
-            if (_layoutResults.Contains(textValue)) return RouteOutcome.Translated;
+            if (_layoutResults.TryGetValue(textValue, out string laidOutSource))
+            {
+                // The game redraws its layout of a text: once that text has a translation, the
+                // translation goes up in its place, wrapped the way the game wraps (TextRouter.Fit)
+                // — otherwise every redraw would put the source back over it.
+                string wrapped = compId != -1 ? WrapTranslationOf(comp, compId, laidOutSource, null) : null;
+                if (wrapped != null) textValue = wrapped;
+                return RouteOutcome.Translated;
+            }
 
             // Check concat assembled cache: if this exact text was already assembled
             // by the concat system, apply the cached translation immediately.
@@ -491,8 +499,11 @@ namespace UnityGameTranslator.Core
             }
             else
             {
-                _layoutResults.Add(text);
+                _layoutResults[text] = state.LayoutHeld;
             }
+            // The game's own measure, read later from the LAST of these (TextRouter.Fit): an
+            // earlier one may still carry the word that overflows.
+            state.LastLayout = text;
             if (_host.DebugMode)
                 _host.LogDebug($"[LAYOUT] comp={compId} the game laid out {(state.LayoutOurs ? "our translation" : "its own text")} — left as it wrote it: '{Clip(text, 60)}'");
             return true;
@@ -546,6 +557,17 @@ namespace UnityGameTranslator.Core
             {
                 toWrite = translation;
                 return LateOutcome.Write;
+            }
+
+            // The component shows the game's own layout of that text: the translation goes up in
+            // its place, wrapped the way the game wraps (TextRouter.Fit). Decided with the user on
+            // 2026-09-26 — left alone, the line stayed in the source language for as long as it
+            // was on screen, since the game lays a line out only when it first shows it.
+            if (compId != -1 && current != null
+                && _layoutResults.TryGetValue(current, out string laidOutSource) && laidOutSource == original)
+            {
+                toWrite = WrapTranslationOf(component, compId, original, translation);
+                if (toWrite != null) return LateOutcome.Write;
             }
 
             // For concat components: the delta doesn't match the full text.

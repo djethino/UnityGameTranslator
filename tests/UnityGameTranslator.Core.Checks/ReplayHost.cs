@@ -98,6 +98,13 @@ namespace UnityGameTranslator.Core.Checks
         public readonly List<string> LayoutPasses = new List<string>();
         public void LayoutPassSeen(object component, string fullText) => LayoutPasses.Add(fullText);
 
+        /// <summary>
+        /// A monospaced component: a line is as wide as its characters. Enough for a case written
+        /// that way; a recorded game measures pixels, which a trace does not carry — there the
+        /// router finds the widths contradicting the game's layout and cuts nothing, as it must.
+        /// </summary>
+        public float? MeasureLine(object component, string line) => line.Length;
+
         /// <summary>An entry of the file, stored and indexed as a load does.</summary>
         public void Add(string source, string translation, string tag = "A")
         {

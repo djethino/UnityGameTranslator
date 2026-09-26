@@ -314,6 +314,29 @@
         { "f": 200, "t": 5.0, "tick": true }
       ],
       "queued": [ "Now all the fish are dead." ]
+    },
+    {
+      "id": "layout/a-late-translation-goes-up-wrapped-to-the-game-width",
+      "why": "🔴 decided with the user (2026-09-26): a translation arriving after the game laid out its source goes up in place of that layout, wrapped by the game's own rule (a break before the word that would overflow) at no more than the widest line the game kept — and the game's later redraws of its layout get the translation too. The component here is monospaced: a line is as wide as its characters",
+      "file": {},
+      "steps": [
+        { "f": 5, "t": 1.0, "write": "Now all the fish are dead.", "shows": "Now all the fish are dead." },
+        { "f": 5, "t": 1.0, "clear": true },
+        { "f": 5, "t": 1.0, "write": "Now ", "shows": "Now " },
+        { "f": 5, "t": 1.0, "write": "Now all ", "shows": "Now all " },
+        { "f": 5, "t": 1.0, "write": "Now all the ", "shows": "Now all the " },
+        { "f": 5, "t": 1.0, "write": "Now all the fish ", "shows": "Now all the fish " },
+        { "f": 5, "t": 1.0, "write": "Now all the \r\nfish ", "shows": "Now all the \r\nfish " },
+        { "f": 5, "t": 1.0, "write": "Now all the \r\nfish are ", "shows": "Now all the \r\nfish are " },
+        { "f": 5, "t": 1.0, "write": "Now all the \r\nfish are dead. ", "shows": "Now all the \r\nfish are dead. " },
+        { "f": 5, "t": 1.0, "write": "Now all the \r\nfish are \r\ndead. ", "shows": "Now all the \r\nfish are \r\ndead. " },
+        { "f": 5, "t": 1.0, "write": "Now all the \r\nfish are \r\ndead.", "shows": "Now all the \r\nfish are \r\ndead." },
+        { "f": 60, "t": 2.0, "tick": true },
+        { "f": 61, "t": 2.1, "arrive": { "o": "Now all the fish are dead.", "tr": "Tous les poissons sont morts." }, "shows": "Tous les \r\npoissons \r\nsont morts." },
+        { "f": 100, "t": 3.0, "write": "Now all the \r\nfish are \r\ndead.", "shows": "Tous les \r\npoissons \r\nsont morts." },
+        { "f": 101, "t": 3.1, "refresh": true, "shows": "Tous les \r\npoissons \r\nsont morts." }
+      ],
+      "queued": [ "Now all the fish are dead." ]
     }
   ]
 }

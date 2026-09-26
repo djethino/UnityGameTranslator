@@ -85,6 +85,14 @@ namespace UnityGameTranslator.Core
         /// per pass start; the host decides what to find out (which of the game's methods does it).
         /// </summary>
         void LayoutPassSeen(object component, string fullText);
+
+        /// <summary>
+        /// The width of one line of text as this component draws it, in whatever unit the engine
+        /// measures (only compared with other widths of the same component); null when the
+        /// engine cannot say. Read from the game's own layouts, then used to wrap a translation
+        /// that arrived after the game laid out its source (TextRouter.Fit).
+        /// </summary>
+        float? MeasureLine(object component, string line);
     }
 
     /// <summary>What the caller must do once the text has been routed.</summary>
@@ -209,6 +217,7 @@ namespace UnityGameTranslator.Core
             public int LayoutFrame = -1;    // the frame it runs in: a pass never spans two
             public bool LayoutOurs;         // laying out our translation, or the game's own text
             public int WriteFrame = -1;     // the frame of the last write, whatever became of it
+            public string LastLayout;       // the last text the game laid out here, as it left it
 
             // --- Typewriting ---
             public string TypewritingText;
@@ -243,8 +252,11 @@ namespace UnityGameTranslator.Core
         // The game's own texts as its layout pass left them (line breaks placed by the game): the
         // whole was held or sent as one line, and its redraws are left alone rather than sent again
         // as lines of their own. Keyed by text, like the two above: it outlives any one component.
-        private readonly HashSet<string> _layoutResults = new HashSet<string>();
+        // Each layout keyed to the whole it lays out, so a translation of that whole can take its
+        // place (TextRouter.Fit).
+        private readonly Dictionary<string, string> _layoutResults = new Dictionary<string, string>();
         private int _layoutHeldSaid;   // [LAYOUT-HELD] lines said this session (bounded)
+        private int _layoutFitSaid;    // [LAYOUT-FIT] lines said this session (bounded)
 
         /// <summary>The record for this component, created on first need.</summary>
         private ComponentTextState StateFor(long compId)

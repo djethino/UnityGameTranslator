@@ -54,7 +54,7 @@ namespace UnityGameTranslator.Core
             // the component back — and took it for a new line: it replaced the whole the reveal was
             // holding (dropped, never sent), then went to the model with the game's line breaks in
             // it, a key no later write of that line would ever match (2026-09-26).
-            if (_layoutResults.Contains(text))
+            if (_layoutResults.ContainsKey(text))
                 return text;
 
             long compId = component != null ? _host.IdOf(component) : -1;

@@ -6438,6 +6438,8 @@ namespace UnityGameTranslator.Core
                 TextTrace.Layout(IdOf(component), fullText, stack);
             }
 
+            public float? MeasureLine(object component, string line) => TextMeasure.Measure(component, line);
+
             public string Describe(object target)
             {
                 try

@@ -104,6 +104,14 @@ namespace UnityGameTranslator.Core.UI.Panels
         private readonly List<TextEditRowState> _pendingRetranslateRows = new List<TextEditRowState>();
 
         /// <summary>
+        /// The keys THIS panel asked about. The end of a retranslation is announced to everyone
+        /// who listens — the Failures tab asks too — so an answer with no row here is only "lost"
+        /// when this panel was the one waiting for it. Without this, every answer the Failures tab
+        /// received was logged as discarded.
+        /// </summary>
+        private readonly HashSet<string> _askedKeys = new HashSet<string>();
+
+        /// <summary>
         /// One editable line of the in-game text editor, whole. Its handlers, the answer that
         /// comes back from another thread seconds later, and the button/preview refresh all read
         /// from this — passing the pieces around one by one is how one of them gets forgotten.
@@ -944,10 +952,12 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (row == null) return;
             if (!_pendingRetranslateRows.Contains(row))
                 _pendingRetranslateRows.Add(row);
+            _askedKeys.Add(row.Key);
 
             if (!TranslatorCore.RemoveTranslationForRetranslate(row.Key, storeResult: false))
             {
                 _pendingRetranslateRows.Remove(row);
+                _askedKeys.Remove(row.Key);
                 _statusLabel.Say("Could not ask the AI — check the backend in Options");
                 _statusLabel.Tone = Tone.Error;
                 row.TagChip.Retag(TranslatorCore.GetTranslationTag(row.Key));
@@ -974,6 +984,9 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         private void ApplyRetranslateResult(string key, string value, RetranslateOutcome outcome)
         {
+            // Somebody else's request: not this panel's to report.
+            if (!_askedKeys.Remove(key)) return;
+
             var rows = _pendingRetranslateRows.FindAll(r => r.Key == key);
             if (rows.Count == 0)
             {

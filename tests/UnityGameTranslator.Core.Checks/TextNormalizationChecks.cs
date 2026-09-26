@@ -132,10 +132,13 @@ namespace UnityGameTranslator.Core.Checks
         // stays here is where the two kinds of slot meet — numbers are still this file's.
         private static void TagAndNumberSlots(Action<bool, string, string> check)
         {
-            // ⚠ Two families of slot, two spellings. They travel together and must not collide.
-            string both = UnityGameTranslator.Common.Markup.Extract("<b>3</b>", out var t2);
-            both = TextNormalization.ExtractNumbersToPlaceholders(both, out var n2);
-            check(both == "[!t*0][!v*0][!t*1]" && t2.Count == 2 && n2.Count == 1,
+            // ⚠ Two families of slot, two spellings, in the order a line goes through them: the
+            // numbers when it is keyed, the tags only when it is sent (Backends.Prepare). Tag
+            // placeholders carry a digit (<b1>), so the other order would lift it as a number —
+            // it is never taken, and this is the order that holds.
+            string keyed = TextNormalization.ExtractNumbersToPlaceholders("<b>3</b>", out var n2);
+            string both = UnityGameTranslator.Common.Markup.Extract(keyed, out var t2);
+            check(both == "<b1>[!v*0]</b1>" && t2.Count == 2 && n2.Count == 1,
                 "a number inside a tag gets its own kind of slot",
                 "one spelling for both would make the two restorations fight over the same index");
         }

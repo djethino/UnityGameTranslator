@@ -145,9 +145,10 @@ namespace UnityGameTranslator.Core.Checks
             string tokenised = "When loaded with [*White*] Energy, add {0} Strength.";
             string halfDone = "When loaded with [*White*] Energy, add 2 Strength.";
             string finished = "When loaded with [<color=#FFFFFF>White</color><sprite name=w>] Energy, add <color=#F4FF58>2</color> Strength.";
-            // What the worker stores under, once numbers and tags are lifted into our placeholders.
+            // What the worker stores under, once numbers are lifted into our placeholders. Tags
+            // stay as the game wrote them in a key: they are lifted only when a line is sent.
             string asStored = "When loaded with [*White*] Energy, add [!v*0] Strength.";
-            string finishedAsStored = "When loaded with [[!t*0]White[!t*1][!t*2]] Energy, add [!t*3][!v*0][!t*4] Strength.";
+            string finishedAsStored = "When loaded with [<color=#FFFFFF>White</color><sprite name=w>] Energy, add <color=#F4FF58>[!v*0]</color> Strength.";
 
             string skeleton = TextRelations.ExpansionSkeleton(tokenised);
             check(skeleton.Length > 0, "a skeleton is something", "an empty one would match every text there is");

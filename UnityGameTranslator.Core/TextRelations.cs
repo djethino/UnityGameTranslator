@@ -293,7 +293,7 @@ namespace UnityGameTranslator.Core
             return n;
         }
 
-        /// <summary>Remove `[!v*N]` and `[!t*N]` — ours, standing exactly where a number or a tag was.</summary>
+        /// <summary>Remove `[!v*N]` — ours, standing exactly where a number was. (Tags are not slots in a key: they stay as the game wrote them.)</summary>
         private static string DropOwnPlaceholders(string text)
         {
             if (text.IndexOf("[!", StringComparison.Ordinal) < 0) return text;
@@ -303,7 +303,7 @@ namespace UnityGameTranslator.Core
             while (i < text.Length)
             {
                 if (i + 4 < text.Length && text[i] == '[' && text[i + 1] == '!'
-                    && (text[i + 2] == 'v' || text[i + 2] == 't') && text[i + 3] == '*')
+                    && text[i + 2] == 'v' && text[i + 3] == '*')
                 {
                     int close = text.IndexOf(']', i + 4);
                     if (close > 0) { i = close + 1; continue; }

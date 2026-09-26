@@ -16,10 +16,11 @@ namespace UnityGameTranslator.Core
     /// game engine into a console app — so the day somebody adds a `using UnityEngine` here the
     /// checks project stops compiling. That is the alarm, not an accident.
     ///
-    /// ⚠ **The placeholder spellings are a contract, not a detail.** `[!v*N]` for a number and
-    /// `[!t*N]` for a markup tag travel to a model and come back; the socle refuses a reply that
-    /// broke them (Common.Placeholders), the manager scores models against the same rule, and a
-    /// translation file on disk holds them. Changing a spelling is a migration.
+    /// ⚠ **The placeholder spellings are a contract, not a detail.** `[!v*N]` for a number
+    /// travels to a model and comes back; the socle refuses a reply that broke it
+    /// (Common.Placeholders), the manager scores models against the same rule, and a translation
+    /// file on disk holds it. Changing that spelling is a migration. (A markup tag is not keyed:
+    /// it is lifted only when a line is sent, as &lt;color1&gt; — Common.Markup.)
     ///
     /// ⚠ **Two questions about letters live side by side, and they are not the same question.**
     /// <see cref="IsNumericOrSymbol"/> asks of a whole text "is there nothing to translate here",
@@ -76,7 +77,7 @@ namespace UnityGameTranslator.Core
                     }
                 }
 
-                // Our own placeholders ([!v*0], [!t*1], [!STR*2]) and any literal number the game
+                // Our own placeholders ([!v*0], [!STR*2]) and any literal number the game
                 // re-injected in their place — one and the same slot, so one and the same token.
                 if (c == '[' && i + 2 < text.Length && text[i + 1] == '!')
                 {
@@ -180,7 +181,7 @@ namespace UnityGameTranslator.Core
             @"(?<!\[!v\*)(-?\d+(?:[.,]\d+)?%?)",
             RegexOptions.Compiled);
 
-        // Markup tags (<b>, <color=…>) and their [!t*N] slots live in the socle's Markup since
+        // Markup tags (<b>, <color=…>) and their <color1> placeholders live in the socle's Markup since
         // 2026-09-23: Backends moved there, and it is the one that lifts and restores them.
 
         /// <summary>
@@ -295,7 +296,8 @@ namespace UnityGameTranslator.Core
         internal static bool IsInsidePlaceholder(string text, int index)
         {
             // Look backwards for "[!v*" or "[!STR*" patterns
-            // Protects numbers inside [!v*0], [!STR*0], [!t*0] from being extracted
+            // Protects numbers inside [!v*0], [!STR*0] from being extracted — the only slots a
+            // number extraction ever meets (tags are lifted later, when a line is sent)
             for (int i = index - 1; i >= Math.Max(0, index - 8); i--)
             {
                 // Check for [!v* (4 chars)
@@ -310,15 +312,6 @@ namespace UnityGameTranslator.Core
                 // Check for [!STR* (6 chars)
                 if (i >= 5 && text[i] == '*' && text[i - 1] == 'R' && text[i - 2] == 'T' && text[i - 3] == 'S'
                     && text[i - 4] == '!' && text[i - 5] == '[')
-                {
-                    for (int j = index; j < Math.Min(text.Length, index + 4); j++)
-                    {
-                        if (text[j] == ']') return true;
-                        if (!char.IsDigit(text[j])) break;
-                    }
-                }
-                // Check for [!t* (4 chars)
-                if (i >= 3 && text[i] == '*' && text[i - 1] == 't' && text[i - 2] == '!' && text[i - 3] == '[')
                 {
                     for (int j = index; j < Math.Min(text.Length, index + 4); j++)
                     {

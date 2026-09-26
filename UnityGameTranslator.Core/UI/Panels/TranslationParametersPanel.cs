@@ -736,7 +736,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         }
 
         /// <summary>
-        /// A proposal as the model gave it is in wire form — [!nl] for a line break, [!t*N] for a
+        /// A proposal as the model gave it is in wire form — [!nl] for a line break, <color1> for a
         /// tag — and read that way it is a wall. Restored the way a valid answer would have been
         /// (Backends.Restore), it reads as text: the breaks are breaks, the tags are tags, and
         /// what the model dropped is simply missing. The same text goes into the field on Use, so

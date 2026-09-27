@@ -94,21 +94,48 @@ namespace UnityGameTranslator.Core
         internal static void Frame(float dt)
         {
             if (!TranslatorCore.DebugMode) return;
-            if (dt > _frameMax) _frameMax = dt;
+            if (dt > _frameMax)
+            {
+                _frameMax = dt;
+                _worstFrameModTicks = _frameModTicks;
+            }
             if (dt > 0.0333f) _framesOver33++;
             else if (dt > 0.0167f) _framesOver16++;
+
+            // A frame's calls all end within it: whatever depth is left is a Start with no Stop
+            // (an early return), which must not stop the next frame from counting.
+            _frameModTicks = 0;
+            _depth = 0;
+        }
+
+        // 🔴 **The mod's own share of a slow frame.** Every slot says its longest single call, and
+        // none says how much of the worst FRAME was ours: a 130 ms frame could be one 12 ms call and
+        // 118 ms of the game, or a thousand small calls of ours — the one question that decides
+        // whether there is anything to fix. Timed calls nest (a lookup inside a scan, a presenting
+        // inside a setter), so only the outermost one of a nest is added.
+        private static int _depth;
+        private static long _frameModTicks, _worstFrameModTicks;
+
+        private static void Leave(long spent)
+        {
+            if (--_depth > 0) return;
+            _depth = 0;
+            _frameModTicks += spent;
         }
 
         /// <summary>Timestamp to hand back to <see cref="Stop"/>, or 0 when profiling is off.</summary>
         internal static long Start()
         {
-            return TranslatorCore.DebugMode ? Stopwatch.GetTimestamp() : 0L;
+            if (!TranslatorCore.DebugMode) return 0L;
+            _depth++;
+            return Stopwatch.GetTimestamp();
         }
 
         internal static void Stop(int slot, long start)
         {
             if (start == 0L) return;
             long spent = Stopwatch.GetTimestamp() - start;
+            Leave(spent);
             _ticks[slot] += spent;
             _calls[slot]++;
             if (spent > _max[slot]) _max[slot] = spent;
@@ -140,6 +167,7 @@ namespace UnityGameTranslator.Core
         {
             if (start == 0L) return;
             long spent = Stopwatch.GetTimestamp() - start;
+            Leave(spent);
             _ticks[FindAll] += spent;
             _calls[FindAll]++;
             if (spent <= _max[FindAll]) return;
@@ -160,6 +188,7 @@ namespace UnityGameTranslator.Core
         {
             if (start == 0L) return;
             long spent = Stopwatch.GetTimestamp() - start;
+            Leave(spent);
             _ticks[ScanProcess] += spent;
             _calls[ScanProcess]++;
             if (spent <= _max[ScanProcess]) return;
@@ -197,8 +226,9 @@ namespace UnityGameTranslator.Core
             int gcNow = System.GC.CollectionCount(0);
             int gcDelta = _gcAtLastReport < 0 ? 0 : gcNow - _gcAtLastReport;
             _gcAtLastReport = gcNow;
-            string frames = $"frames: max {_frameMax * 1000:F1}ms, >33ms: {_framesOver33}, 16-33ms: {_framesOver16}, GC gen0: {gcDelta}";
-            _frameMax = 0f; _framesOver16 = 0; _framesOver33 = 0;
+            string frames = $"frames: max {_frameMax * 1000:F1}ms (timed mod work in it {_worstFrameModTicks * 1000.0 / Stopwatch.Frequency:F1}ms), "
+                            + $">33ms: {_framesOver33}, 16-33ms: {_framesOver16}, GC gen0: {gcDelta}";
+            _frameMax = 0f; _framesOver16 = 0; _framesOver33 = 0; _worstFrameModTicks = 0;
 
             if (sb.Length == 0) { TranslatorCore.LogDebug($"[PASS-PERF] over {window:F1}s | {frames}"); return; }
             TranslatorCore.LogDebug($"[PASS-PERF] over {window:F1}s | {frames} | {sb}");

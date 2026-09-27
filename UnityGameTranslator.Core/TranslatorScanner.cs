@@ -851,26 +851,15 @@ namespace UnityGameTranslator.Core
             // Extract class name for IL2CPP prefix search
             string className = fullName.Contains(".") ? fullName.Substring(fullName.LastIndexOf('.') + 1) : fullName;
 
-            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
-            {
-                // Assembly.GetType(name) answers null for a name it does not hold, but throws when
-                // the assembly needs a file this game does not have — which no condition can tell
-                // beforehand. That assembly is then skipped, and said.
-                try
-                {
-                    var type = asm.GetType(fullName);
-                    if (type != null) return type;
+            var exact = AssemblyTypes.Find(fullName);
+            if (exact != null) return exact;
 
-                    // On IL2CPP, types may have Il2Cpp prefix on namespace
-                    // e.g., TMPro.TextMeshProUGUI -> Il2CppTMPro.TextMeshProUGUI
-                    if (fullName.Contains("."))
-                    {
-                        string il2cppName = "Il2Cpp" + fullName;
-                        type = asm.GetType(il2cppName);
-                        if (type != null) return type;
-                    }
-                }
-                catch (Exception ex) { Faults.Say("Scanner.FindType", ex, $"{asm.GetName().Name} skipped while looking for {fullName}"); }
+            // On IL2CPP, types may have Il2Cpp prefix on namespace
+            // e.g., TMPro.TextMeshProUGUI -> Il2CppTMPro.TextMeshProUGUI
+            if (fullName.Contains("."))
+            {
+                var prefixed = AssemblyTypes.Find("Il2Cpp" + fullName);
+                if (prefixed != null) return prefixed;
             }
 
             // Last resort: scan all types by class name (handles any namespace prefix)

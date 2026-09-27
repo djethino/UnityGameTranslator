@@ -506,7 +506,9 @@ namespace UnityGameTranslator.Core
                     __0 = replacement;
                 }
             }
-            catch { }
+            // Inside the game's own setter: an exception escaping here would break it. The
+            // sprite then goes through unreplaced, and it is said.
+            catch (Exception ex) { Faults.Say("Patches.Image_SetSprite_Prefix", ex); }
         }
 
         /// <summary>
@@ -522,7 +524,7 @@ namespace UnityGameTranslator.Core
                 var replacement = ImageReplacer.GetReplacement(name);
                 if (replacement != null && replacement.texture != null) __0 = replacement.texture;
             }
-            catch { }
+            catch (Exception ex) { Faults.Say("Patches.RawImage_SetTexture_Prefix", ex); }
         }
 
         /// <summary>
@@ -538,39 +540,14 @@ namespace UnityGameTranslator.Core
                 var replacement = ImageReplacer.GetReplacement(name);
                 if (replacement != null) __0 = replacement;
             }
-            catch { }
+            catch (Exception ex) { Faults.Say("Patches.SpriteRenderer_SetSprite_Prefix", ex); }
         }
 
         #endregion
 
-        private static Type FindStringTableEntryType()
-        {
-            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
-            {
-                try
-                {
-                    var type = asm.GetType("UnityEngine.Localization.Tables.StringTableEntry");
-                    if (type != null) return type;
-                }
-                catch { }
-            }
-            return null;
-        }
+        private static Type FindStringTableEntryType() => AssemblyTypes.Find("UnityEngine.Localization.Tables.StringTableEntry");
 
-        private static Type FindTk2dTextMeshType()
-        {
-            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
-            {
-                try
-                {
-                    // Try common tk2d namespaces
-                    var type = asm.GetType("tk2dTextMesh");
-                    if (type != null) return type;
-                }
-                catch { }
-            }
-            return null;
-        }
+        private static Type FindTk2dTextMeshType() => AssemblyTypes.Find("tk2dTextMesh");
 
         #region Generic Text Type Detection
 
@@ -621,131 +598,132 @@ namespace UnityGameTranslator.Core
 
             foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
             {
-                try
+                string asmName = asm.GetName().Name;
+                // Skip Unity/System/Harmony/modloader assemblies
+                if (asmName.StartsWith("Unity", StringComparison.OrdinalIgnoreCase) && !asmName.Contains("NGUI"))
+                    continue;
+                if (asmName.StartsWith("System") || asmName.StartsWith("mscorlib") ||
+                    asmName.StartsWith("Mono.") || asmName.StartsWith("0Harmony") ||
+                    asmName.StartsWith("HarmonyLib") || asmName.StartsWith("MelonLoader") ||
+                    asmName.StartsWith("BepInEx") || asmName.StartsWith("UniverseLib") ||
+                    asmName.StartsWith("UnityGameTranslator") || asmName.StartsWith("Newtonsoft") ||
+                    asmName.StartsWith("Il2CppInterop") || asmName.StartsWith("Il2CppSystem"))
+                    continue;
+
+                // The types that load: GetTypes() refuses a whole assembly for one type it cannot
+                // load, and that refusal used to throw every type of it away without a word.
+                foreach (var type in AssemblyTypes.Of(asm))
                 {
-                    string asmName = asm.GetName().Name;
-                    // Skip Unity/System/Harmony/modloader assemblies
-                    if (asmName.StartsWith("Unity", StringComparison.OrdinalIgnoreCase) && !asmName.Contains("NGUI"))
-                        continue;
-                    if (asmName.StartsWith("System") || asmName.StartsWith("mscorlib") ||
-                        asmName.StartsWith("Mono.") || asmName.StartsWith("0Harmony") ||
-                        asmName.StartsWith("HarmonyLib") || asmName.StartsWith("MelonLoader") ||
-                        asmName.StartsWith("BepInEx") || asmName.StartsWith("UniverseLib") ||
-                        asmName.StartsWith("UnityGameTranslator") || asmName.StartsWith("Newtonsoft") ||
-                        asmName.StartsWith("Il2CppInterop") || asmName.StartsWith("Il2CppSystem"))
-                        continue;
-
-                    foreach (var type in asm.GetTypes())
+                    try
                     {
-                        try
+                        // Must be a class, not abstract, not generic
+                        if (!type.IsClass || type.IsAbstract || type.IsGenericType) continue;
+
+                        // Skip already handled types
+                        string typeName = type.Name;
+                        // Strip Il2Cpp prefix for name matching
+                        string cleanName = typeName.StartsWith("Il2Cpp") ? typeName.Substring(6) : typeName;
+                        if (GenericExcludedTypes.Contains(cleanName)) continue;
+                        if (handledTypes.Contains(type)) continue;
+
+                        // Skip middleware namespaces (strip interop prefix for matching)
+                        string ns = type.Namespace ?? "";
+                        if (ns.StartsWith("Il2Cpp")) ns = ns.Substring(6);
+                        bool inExcludedNamespace = false;
+                        foreach (var excludedNs in GenericExcludedNamespaces)
                         {
-                            // Must be a class, not abstract, not generic
-                            if (!type.IsClass || type.IsAbstract || type.IsGenericType) continue;
-
-                            // Skip already handled types
-                            string typeName = type.Name;
-                            // Strip Il2Cpp prefix for name matching
-                            string cleanName = typeName.StartsWith("Il2Cpp") ? typeName.Substring(6) : typeName;
-                            if (GenericExcludedTypes.Contains(cleanName)) continue;
-                            if (handledTypes.Contains(type)) continue;
-
-                            // Skip middleware namespaces (strip interop prefix for matching)
-                            string ns = type.Namespace ?? "";
-                            if (ns.StartsWith("Il2Cpp")) ns = ns.Substring(6);
-                            bool inExcludedNamespace = false;
-                            foreach (var excludedNs in GenericExcludedNamespaces)
+                            if (ns == excludedNs || ns.StartsWith(excludedNs + "."))
                             {
-                                if (ns == excludedNs || ns.StartsWith(excludedNs + "."))
-                                {
-                                    inExcludedNamespace = true;
-                                    break;
-                                }
+                                inExcludedNamespace = true;
+                                break;
                             }
-                            if (inExcludedNamespace) continue;
-
-                            // Check if it inherits from MonoBehaviour (Component chain)
-                            if (!typeof(Component).IsAssignableFrom(type) && !InheritsFromComponent(type))
-                                continue;
-
-                            // Must have a 'text' property with string get + set
-                            var textProp = type.GetProperty("text", pubInst);
-                            if (textProp == null || !textProp.CanRead || !textProp.CanWrite) continue;
-                            if (textProp.PropertyType != typeof(string)) continue;
-                            if (textProp.SetMethod == null) continue;
-
-                            // Check: known framework OR heuristic name match
-                            string framework = null;
-                            if (KnownTextTypes.TryGetValue(cleanName, out framework))
-                            {
-                                // Explicit match — always include
-                            }
-                            else
-                            {
-                                // Heuristic: class name must suggest it's a text component
-                                bool nameMatch = false;
-                                foreach (var hint in TextClassHints)
-                                {
-                                    if (cleanName.IndexOf(hint, StringComparison.OrdinalIgnoreCase) >= 0)
-                                    {
-                                        nameMatch = true;
-                                        break;
-                                    }
-                                }
-                                if (!nameMatch) continue;
-                                framework = "Custom";
-                            }
-
-                            // Detect font properties
-                            PropertyInfo fontProp = null;
-                            foreach (var fpName in FontPropertyNames)
-                            {
-                                var fp = type.GetProperty(fpName, pubInst);
-                                if (fp != null && fp.CanRead)
-                                {
-                                    // Accept Font, Object, or any type with a .name property
-                                    fontProp = fp;
-                                    break;
-                                }
-                            }
-
-                            // Detect fontSize property
-                            PropertyInfo fontSizeProp = null;
-                            foreach (var fsName in FontSizePropertyNames)
-                            {
-                                var fs = type.GetProperty(fsName, pubInst);
-                                if (fs != null && fs.CanRead && fs.CanWrite &&
-                                    (fs.PropertyType == typeof(float) || fs.PropertyType == typeof(int) || fs.PropertyType == typeof(System.Single)))
-                                {
-                                    fontSizeProp = fs;
-                                    break;
-                                }
-                            }
-
-                            // Detect color property
-                            PropertyInfo colorProp = type.GetProperty("color", pubInst);
-
-                            var info = new RegisteredTextType
-                            {
-                                Name = cleanName,
-                                Category = framework,
-                                ComponentType = type,
-                                TextProp = textProp,
-                                FontProp = fontProp,
-                                FontSizeProp = fontSizeProp,
-                                ColorProp = colorProp,
-                                FontTypeName = framework == "NGUI" ? "NGUI" : $"Custom ({cleanName})",
-                                NeedsForceMeshUpdate = false,
-                                NeedsSetAllDirty = false
-                            };
-
-                            results.Add(info);
-                            TranslatorCore.LogDebug($"[Patches] Detected generic text type: {type.FullName} ({framework})" +
-                                $" font={fontProp?.Name ?? "none"}, fontSize={fontSizeProp?.Name ?? "none"}");
                         }
-                        catch { }
+                        if (inExcludedNamespace) continue;
+
+                        // Check if it inherits from MonoBehaviour (Component chain)
+                        if (!typeof(Component).IsAssignableFrom(type) && !InheritsFromComponent(type))
+                            continue;
+
+                        // Must have a 'text' property with string get + set
+                        var textProp = type.GetProperty("text", pubInst);
+                        if (textProp == null || !textProp.CanRead || !textProp.CanWrite) continue;
+                        if (textProp.PropertyType != typeof(string)) continue;
+                        if (textProp.SetMethod == null) continue;
+
+                        // Check: known framework OR heuristic name match
+                        string framework = null;
+                        if (KnownTextTypes.TryGetValue(cleanName, out framework))
+                        {
+                            // Explicit match — always include
+                        }
+                        else
+                        {
+                            // Heuristic: class name must suggest it's a text component
+                            bool nameMatch = false;
+                            foreach (var hint in TextClassHints)
+                            {
+                                if (cleanName.IndexOf(hint, StringComparison.OrdinalIgnoreCase) >= 0)
+                                {
+                                    nameMatch = true;
+                                    break;
+                                }
+                            }
+                            if (!nameMatch) continue;
+                            framework = "Custom";
+                        }
+
+                        // Detect font properties
+                        PropertyInfo fontProp = null;
+                        foreach (var fpName in FontPropertyNames)
+                        {
+                            var fp = type.GetProperty(fpName, pubInst);
+                            if (fp != null && fp.CanRead)
+                            {
+                                // Accept Font, Object, or any type with a .name property
+                                fontProp = fp;
+                                break;
+                            }
+                        }
+
+                        // Detect fontSize property
+                        PropertyInfo fontSizeProp = null;
+                        foreach (var fsName in FontSizePropertyNames)
+                        {
+                            var fs = type.GetProperty(fsName, pubInst);
+                            if (fs != null && fs.CanRead && fs.CanWrite &&
+                                (fs.PropertyType == typeof(float) || fs.PropertyType == typeof(int) || fs.PropertyType == typeof(System.Single)))
+                            {
+                                fontSizeProp = fs;
+                                break;
+                            }
+                        }
+
+                        // Detect color property
+                        PropertyInfo colorProp = type.GetProperty("color", pubInst);
+
+                        var info = new RegisteredTextType
+                        {
+                            Name = cleanName,
+                            Category = framework,
+                            ComponentType = type,
+                            TextProp = textProp,
+                            FontProp = fontProp,
+                            FontSizeProp = fontSizeProp,
+                            ColorProp = colorProp,
+                            FontTypeName = framework == "NGUI" ? "NGUI" : $"Custom ({cleanName})",
+                            NeedsForceMeshUpdate = false,
+                            NeedsSetAllDirty = false
+                        };
+
+                        results.Add(info);
+                        TranslatorCore.LogDebug($"[Patches] Detected generic text type: {type.FullName} ({framework})" +
+                            $" font={fontProp?.Name ?? "none"}, fontSize={fontSizeProp?.Name ?? "none"}");
                     }
+                    // One type of the game read by reflection: a property whose type needs a file
+                    // this game lacks, or one hiding an inherited property of the same name, makes
+                    // it throw. That type is not taken as a text component, and it is said.
+                    catch (Exception ex) { Faults.Say("Patches.DetectGenericTextTypes", ex, type.FullName); }
                 }
-                catch { }
             }
 
             _genericTextTypes.AddRange(results);
@@ -879,7 +857,9 @@ namespace UnityGameTranslator.Core
                                 return;
                         }
                     }
-                    catch { }
+                    // The game component's own font getter: its code, which may throw. The text is
+                    // then routed without its font, and it is said.
+                    catch (Exception ex) { Faults.Say("Patches.GenericText_SetText font", ex, typeInfo.Name); }
                 }
 
                 // The same routing the TMP/UI.Text/TextMesh setter gets — input mirrors,
@@ -916,7 +896,9 @@ namespace UnityGameTranslator.Core
                 }
 
             }
-            catch { }
+            // Inside the game's own setter: an exception escaping here would break it. The text
+            // then goes through as the game wrote it, and it is said.
+            catch (Exception ex) { Faults.Say("Patches.GenericText_SetText", ex, __instance?.GetType().Name); }
         }
 
         /// <summary>
@@ -954,12 +936,13 @@ namespace UnityGameTranslator.Core
                                 return;
                         }
                     }
-                    catch { }
+                    catch (Exception ex) { Faults.Say("Patches.GenericText_GetText font", ex, typeInfo.Name); }
                 }
 
                 __result = TranslatorCore.TranslateTextWithTracking(__result, component, isOwnUI);
             }
-            catch { }
+            // Inside the game's own getter: the text is returned as it is, and it is said.
+            catch (Exception ex) { Faults.Say("Patches.GenericText_GetText", ex, __instance?.GetType().Name); }
         }
 
         /// <summary>
@@ -1016,7 +999,9 @@ namespace UnityGameTranslator.Core
                     else if (val is int i) originalSize = i;
                     else return;
                 }
-                catch { return; }
+                // The game component's own fontSize getter: its code, which may throw. Not scaled,
+                // and said.
+                catch (Exception ex) { Faults.Say("Patches.ApplyGenericFontScale read", ex, typeInfo.Name); return; }
                 if (originalSize <= 0) return;
                 _originalFontSizes[instanceId] = originalSize;
             }
@@ -1030,7 +1015,7 @@ namespace UnityGameTranslator.Core
                     if (Math.Abs(currentSize - originalSize) > 0.1f)
                         SetGenericFontSize(typeInfo, instance, originalSize);
                 }
-                catch { }
+                catch (Exception ex) { Faults.Say("Patches.ApplyGenericFontScale restore", ex, typeInfo.Name); }
                 return;
             }
 
@@ -1041,7 +1026,7 @@ namespace UnityGameTranslator.Core
                 if (Math.Abs(currentSize - scaledSize) > 0.1f)
                     SetGenericFontSize(typeInfo, instance, scaledSize);
             }
-            catch { }
+            catch (Exception ex) { Faults.Say("Patches.ApplyGenericFontScale", ex, typeInfo.Name); }
         }
 
         private static void SetGenericFontSize(RegisteredTextType typeInfo, object instance, float size)
@@ -1072,109 +1057,114 @@ namespace UnityGameTranslator.Core
 
             foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
             {
-                try
+                string asmName = asm.GetName().Name;
+                // Skip system assemblies
+                if (asmName.StartsWith("System") || asmName.StartsWith("mscorlib"))
+                    continue;
+
+                // The types that load (see AssemblyTypes: GetTypes refuses a whole assembly for one).
+                foreach (var type in AssemblyTypes.Of(asm))
                 {
-                    string asmName = asm.GetName().Name;
-                    // Skip system assemblies
-                    if (asmName.StartsWith("System") || asmName.StartsWith("mscorlib"))
-                        continue;
-
-                    foreach (var type in asm.GetTypes())
+                    try
                     {
-                        try
+                        // Skip if it's the standard TMPro type we already patch
+                        if (type == standardTmpType || type.IsSubclassOf(standardTmpType))
+                            continue;
+
+                        string typeName = type.Name;
+                        string typeNamespace = type.Namespace ?? "";
+
+                        // Check if this is a TMP-like type
+                        bool isTmpType = false;
+                        foreach (var name in tmpTypeNames)
                         {
-                            // Skip if it's the standard TMPro type we already patch
-                            if (type == standardTmpType || type.IsSubclassOf(standardTmpType))
-                                continue;
-
-                            string typeName = type.Name;
-                            string typeNamespace = type.Namespace ?? "";
-
-                            // Check if this is a TMP-like type
-                            bool isTmpType = false;
-                            foreach (var name in tmpTypeNames)
+                            if (typeName == name || typeName.EndsWith(name))
                             {
-                                if (typeName == name || typeName.EndsWith(name))
+                                isTmpType = true;
+                                break;
+                            }
+                        }
+
+                        if (!isTmpType) continue;
+
+                        // Check if it's in an alternate namespace (not standard TMPro)
+                        bool isAltNamespace = typeNamespace != "TMPro";
+                        if (!isAltNamespace)
+                        {
+                            foreach (var ns in altNamespaces)
+                            {
+                                if (typeNamespace.Contains(ns))
                                 {
-                                    isTmpType = true;
+                                    isAltNamespace = true;
                                     break;
                                 }
                             }
-
-                            if (!isTmpType) continue;
-
-                            // Check if it's in an alternate namespace (not standard TMPro)
-                            bool isAltNamespace = typeNamespace != "TMPro";
-                            if (!isAltNamespace)
-                            {
-                                foreach (var ns in altNamespaces)
-                                {
-                                    if (typeNamespace.Contains(ns))
-                                    {
-                                        isAltNamespace = true;
-                                        break;
-                                    }
-                                }
-                            }
-
-                            if (!isAltNamespace) continue;
-
-                            // Must have a "text" property with setter
-                            var textProp = type.GetProperty("text", BindingFlags.Public | BindingFlags.Instance);
-                            if (textProp?.SetMethod == null) continue;
-
-                            // The "text" property MUST return string. Some custom game scripts reuse the
-                            // name "text" with a non-string return type (e.g. a TMP_Text reference instead),
-                            // which would cause Harmony to fail patching get_text with a string __result.
-                            if (textProp.PropertyType != typeof(string)) continue;
-
-                            // Must inherit from Component (be a Unity component)
-                            if (!typeof(Component).IsAssignableFrom(type)) continue;
-
-                            results.Add(type);
                         }
-                        catch { }
+
+                        if (!isAltNamespace) continue;
+
+                        // Must have a "text" property with setter
+                        var textProp = type.GetProperty("text", BindingFlags.Public | BindingFlags.Instance);
+                        if (textProp?.SetMethod == null) continue;
+
+                        // The "text" property MUST return string. Some custom game scripts reuse the
+                        // name "text" with a non-string return type (e.g. a TMP_Text reference instead),
+                        // which would cause Harmony to fail patching get_text with a string __result.
+                        if (textProp.PropertyType != typeof(string)) continue;
+
+                        // Must inherit from Component (be a Unity component)
+                        if (!typeof(Component).IsAssignableFrom(type)) continue;
+
+                        results.Add(type);
                     }
+                    // One type read by reflection (its text property, its base chain): one that
+                    // throws is not taken as an alternate TMP, and it is said.
+                    catch (Exception ex) { Faults.Say("Patches.FindAlternateTMPTypes", ex, type.FullName); }
                 }
-                catch { }
             }
 
             return results;
         }
 
         /// <summary>
-        /// Patches an alternate TMP type's text property setter and getter.
+        /// One Harmony patch applied — true when it took. A refusal (a method the runtime cannot
+        /// patch, a stripped body) leaves that method unpatched, which means text the mod will
+        /// never see: said, rather than the silent `catch { }` each call site used to carry.
+        /// </summary>
+        private static bool Patch(Action<MethodInfo, MethodInfo, MethodInfo> patcher, MethodInfo target, MethodInfo prefix, MethodInfo postfix)
+        {
+            try
+            {
+                patcher(target, prefix, postfix);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Faults.Say("Patches.Patch", ex, $"{target.DeclaringType?.FullName}.{target.Name} left unpatched");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Patches an alternate TMP type's text setter and its SetText(string) methods.
         /// Uses reflection-based patch method since we can't use generic TMP_Text.
         /// </summary>
         private static int PatchAlternateTMPType(Type altTmpType, Action<MethodInfo, MethodInfo, MethodInfo> patcher)
         {
             int count = 0;
             var prefix = typeof(TranslatorPatches).GetMethod(nameof(AlternateTMP_SetText_Prefix), BindingFlags.Static | BindingFlags.Public);
-            var getterPostfix = typeof(TranslatorPatches).GetMethod(nameof(AlternateTMP_GetText_Postfix), BindingFlags.Static | BindingFlags.Public);
 
             var textProp = altTmpType.GetProperty("text", BindingFlags.Public | BindingFlags.Instance);
 
             // Patch the text property setter
             if (textProp?.SetMethod != null)
             {
-                try
-                {
-                    patcher(textProp.SetMethod, prefix, null);
-                    count++;
-                }
-                catch { }
+                if (Patch(patcher, textProp.SetMethod, prefix, null)) count++;
             }
 
-            // Patch the text property getter (for pre-loaded/deserialized text and late font initialization)
-            if (textProp?.GetMethod != null)
-            {
-                try
-                {
-                    patcher(textProp.GetMethod, null, getterPostfix);
-                    count++;
-                }
-                catch { }
-            }
+            // ⚠ The getter is not patched. Its postfix had been emptied — font replacement moved to
+            // the setter, translation never belonged there (it would translate our own output
+            // again) — and an empty postfix still cost a call on every read of the text.
 
             // Also patch SetText(string) methods if present
             var methods = altTmpType.GetMethods(BindingFlags.Public | BindingFlags.Instance);
@@ -1183,29 +1173,12 @@ namespace UnityGameTranslator.Core
                 if (method.Name == "SetText" && method.GetParameters().Length > 0
                     && method.GetParameters()[0].ParameterType == typeof(string))
                 {
-                    try
-                    {
-                        patcher(method, prefix, null);
-                        count++;
-                    }
-                    catch { }
+                    if (Patch(patcher, method, prefix, null)) count++;
                 }
             }
 
-            // NOTE: Font setter patch disabled - causes issues with text becoming empty
-            // TODO: Investigate why and fix
-            // Patch the font property setter (for late font initialization)
-            // var fontPostfix = typeof(TranslatorPatches).GetMethod(nameof(AlternateTMP_SetFont_Postfix), BindingFlags.Static | BindingFlags.Public);
-            // var fontProp = altTmpType.GetProperty("font", BindingFlags.Public | BindingFlags.Instance);
-            // if (fontProp?.SetMethod != null)
-            // {
-            //     try
-            //     {
-            //         patcher(fontProp.SetMethod, null, fontPostfix);
-            //         count++;
-            //     }
-            //     catch { }
-            // }
+            // ⚠ The font setter is deliberately NOT patched: doing so emptied the text (TODO.md,
+            // "TMP alternatif : patch du setter de police").
 
             if (count > 0)
             {
@@ -1226,35 +1199,20 @@ namespace UnityGameTranslator.Core
             // Patch the text property setter
             if (textProp?.SetMethod != null)
             {
-                try
-                {
-                    patcher(textProp.SetMethod, prefix, null);
-                    count++;
-                }
-                catch { }
+                if (Patch(patcher, textProp.SetMethod, prefix, null)) count++;
             }
 
             // Patch the text property getter (for pre-loaded/deserialized text)
             if (textProp?.GetMethod != null)
             {
-                try
-                {
-                    patcher(textProp.GetMethod, null, getterPostfix);
-                    count++;
-                }
-                catch { }
+                if (Patch(patcher, textProp.GetMethod, null, getterPostfix)) count++;
             }
 
             // Also patch FormattedText getter (used for display)
             var formattedTextProp = tk2dTextMeshType.GetProperty("FormattedText", BindingFlags.Public | BindingFlags.Instance);
             if (formattedTextProp?.GetMethod != null)
             {
-                try
-                {
-                    patcher(formattedTextProp.GetMethod, null, getterPostfix);
-                    count++;
-                }
-                catch { }
+                if (Patch(patcher, formattedTextProp.GetMethod, null, getterPostfix)) count++;
             }
 
             if (count > 0)
@@ -1292,28 +1250,26 @@ namespace UnityGameTranslator.Core
 
             foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
             {
-                try
-                {
-                    string asmName = asm.GetName().Name;
-                    // Skip system/Unity core assemblies but NOT game assemblies
-                    if (asmName.StartsWith("System") || asmName.StartsWith("mscorlib") ||
-                        asmName == "UnityEngine" || asmName == "UnityEngine.CoreModule")
-                        continue;
+                string asmName = asm.GetName().Name;
+                // Skip system/Unity core assemblies but NOT game assemblies
+                if (asmName.StartsWith("System") || asmName.StartsWith("mscorlib") ||
+                    asmName == "UnityEngine" || asmName == "UnityEngine.CoreModule")
+                    continue;
 
-                    foreach (var type in asm.GetTypes())
+                // The types that load (AssemblyTypes: GetTypes refuses a whole assembly for one).
+                foreach (var type in AssemblyTypes.Of(asm))
+                {
+                    try
                     {
-                        try
+                        if (IsLocalizationBridgeComponent(type) && !foundTypeNames.Contains(type.FullName))
                         {
-                            if (IsLocalizationBridgeComponent(type) && !foundTypeNames.Contains(type.FullName))
-                            {
-                                results.Add(type);
-                                foundTypeNames.Add(type.FullName);
-                            }
+                            results.Add(type);
+                            foundTypeNames.Add(type.FullName);
                         }
-                        catch { }
                     }
+                    // One type read by reflection: one that throws is left out, and said.
+                    catch (Exception ex) { Faults.Say("Patches.FindLocalizationBridgeComponents", ex, type.FullName); }
                 }
-                catch { }
             }
 
             return results;
@@ -1411,12 +1367,7 @@ namespace UnityGameTranslator.Core
                 if (method.GetParameters().Length > 2)
                     continue;
 
-                try
-                {
-                    patcher(method, null, postfix);
-                    count++;
-                }
-                catch { }
+                if (Patch(patcher, method, null, postfix)) count++;
             }
 
             if (count > 0)
@@ -1551,20 +1502,19 @@ namespace UnityGameTranslator.Core
         /// </summary>
         private static TextComponentInfo TryGetTk2dTextMeshInfo(GameObject go)
         {
-            try
+            // Destroyed: GetComponents would throw. Recognised, not caught.
+            if (go == null) return null;
+
+            var components = go.GetComponents<Component>();
+            foreach (var comp in components)
             {
-                var components = go.GetComponents<Component>();
-                foreach (var comp in components)
+                if (comp == null) continue;
+                var type = comp.GetType();
+                if (type.Name == "tk2dTextMesh")
                 {
-                    if (comp == null) continue;
-                    var type = comp.GetType();
-                    if (type.Name == "tk2dTextMesh")
-                    {
-                        return CreateTk2dTextComponentInfo(comp, type);
-                    }
+                    return CreateTk2dTextComponentInfo(comp, type);
                 }
             }
-            catch { }
             return null;
         }
 
@@ -1610,28 +1560,26 @@ namespace UnityGameTranslator.Core
 
             foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
             {
-                try
-                {
-                    // Skip system/Unity assemblies for performance
-                    string asmName = asm.GetName().Name;
-                    if (asmName.StartsWith("System") || asmName.StartsWith("mscorlib") ||
-                        asmName.StartsWith("Unity.") || asmName.StartsWith("UnityEngine."))
-                        continue;
+                // Skip system/Unity assemblies for performance
+                string asmName = asm.GetName().Name;
+                if (asmName.StartsWith("System") || asmName.StartsWith("mscorlib") ||
+                    asmName.StartsWith("Unity.") || asmName.StartsWith("UnityEngine."))
+                    continue;
 
-                    foreach (var type in asm.GetTypes())
+                // The types that load (AssemblyTypes: GetTypes refuses a whole assembly for one).
+                foreach (var type in AssemblyTypes.Of(asm))
+                {
+                    try
                     {
-                        try
+                        if (IsLocalizationStringType(type) && !foundTypeNames.Contains(type.FullName))
                         {
-                            if (IsLocalizationStringType(type) && !foundTypeNames.Contains(type.FullName))
-                            {
-                                results.Add(type);
-                                foundTypeNames.Add(type.FullName);
-                            }
+                            results.Add(type);
+                            foundTypeNames.Add(type.FullName);
                         }
-                        catch { } // Skip types that fail to load
                     }
+                    // One type read by reflection: one that throws is left out, and said.
+                    catch (Exception ex) { Faults.Say("Patches.FindCustomLocalizationTypes", ex, type.FullName); }
                 }
-                catch { } // Skip assemblies that fail to enumerate
             }
 
             return results;
@@ -1718,12 +1666,7 @@ namespace UnityGameTranslator.Core
             {
                 if (method.Name == "ToString" && method.ReturnType == typeof(string))
                 {
-                    try
-                    {
-                        patcher(method, null, postfix);
-                        count++;
-                    }
-                    catch { }
+                    if (Patch(patcher, method, null, postfix)) count++;
                 }
             }
 
@@ -1733,12 +1676,7 @@ namespace UnityGameTranslator.Core
             {
                 if (method.Name == "op_Implicit" && method.ReturnType == typeof(string))
                 {
-                    try
-                    {
-                        patcher(method, null, postfix);
-                        count++;
-                    }
-                    catch { }
+                    if (Patch(patcher, method, null, postfix)) count++;
                 }
             }
 
@@ -1760,35 +1698,20 @@ namespace UnityGameTranslator.Core
             {
                 if (method.Name == "GetLocalizedString" && method.ReturnType == typeof(string))
                 {
-                    try
-                    {
-                        patcher(method, null, postfix);
-                        count++;
-                    }
-                    catch { }
+                    if (Patch(patcher, method, null, postfix)) count++;
                 }
             }
 
             var valueProp = stringTableEntryType.GetProperty("Value", BindingFlags.Public | BindingFlags.Instance);
             if (valueProp?.GetMethod != null)
             {
-                try
-                {
-                    patcher(valueProp.GetMethod, null, postfix);
-                    count++;
-                }
-                catch { }
+                if (Patch(patcher, valueProp.GetMethod, null, postfix)) count++;
             }
 
             var localizedValueProp = stringTableEntryType.GetProperty("LocalizedValue", BindingFlags.Public | BindingFlags.Instance);
             if (localizedValueProp?.GetMethod != null)
             {
-                try
-                {
-                    patcher(localizedValueProp.GetMethod, null, postfix);
-                    count++;
-                }
-                catch { }
+                if (Patch(patcher, localizedValueProp.GetMethod, null, postfix)) count++;
             }
 
             return count;
@@ -1959,18 +1882,12 @@ namespace UnityGameTranslator.Core
                     }
                 }
             }
-            catch { }
+            // Asked from inside the game's text setters: the event system and the focused field
+            // are read through the game's objects. A failure reads as "nothing being typed", and
+            // is said.
+            catch (Exception ex) { Faults.Say("Patches.GetFocusedInputText", ex); }
 
             return _focusedInputTextThisFrame;
-        }
-
-
-        /// <summary>
-        /// Getter postfix stub — kept for the Harmony patches already applied.
-        /// </summary>
-        public static void Text_GetText_Postfix(object __instance, ref string __result)
-        {
-            // No-op: getter returns the actual property value.
         }
 
         /// <summary>
@@ -2054,7 +1971,8 @@ namespace UnityGameTranslator.Core
 
             foreach (var kvp in refs)
             {
-                if (kvp.Value == null) continue;
+                // Destroyed since the patch saw it: the reference outlives the object.
+                if (kvp.Value == null || (kvp.Value is UnityEngine.Object gone && gone == null)) continue;
                 try
                 {
                     // fontSize path — needs the tracked true original to avoid reading a
@@ -2090,7 +2008,9 @@ namespace UnityGameTranslator.Core
                         ApplyTMPAutoSizeScale(kvp.Value, kvp.Key, scale);
                     }
                 }
-                catch { }
+                // The game's own component, resized through its setters: one that fails keeps
+                // its size, the others are re-fitted, and it is said.
+                catch (Exception ex) { Faults.Say("Patches.ReapplyAllFontSizes", ex, kvp.Value.GetType().Name); }
             }
 
             TranslatorCore.LogDebug($"[Patches] ReapplyAllFontSizes: re-applied {count} components");
@@ -2110,7 +2030,8 @@ namespace UnityGameTranslator.Core
             var refs = new List<KeyValuePair<int, object>>(PatchedComponentRefs);
             foreach (var kvp in refs)
             {
-                if (kvp.Value == null) continue;
+                // Destroyed since the patch saw it: the reference outlives the object.
+                if (kvp.Value == null || (kvp.Value is UnityEngine.Object gone && gone == null)) continue;
                 try
                 {
                     if (!_fontNameCache.TryGetValue(kvp.Key, out string cachedFontName) ||
@@ -2124,7 +2045,9 @@ namespace UnityGameTranslator.Core
                     float scale = FontManager.GetFontScale(settingsName, kvp.Key);
                     ApplyTMPAutoSizeScale(kvp.Value, kvp.Key, scale);
                 }
-                catch { }
+                // The game's own component, resized through its setters: one that fails keeps
+                // its size, the others are re-fitted, and it is said.
+                catch (Exception ex) { Faults.Say("Patches.ApplyAutoSizeScaleForFont", ex, kvp.Value.GetType().Name); }
             }
         }
 
@@ -2145,7 +2068,8 @@ namespace UnityGameTranslator.Core
             var refs = new List<KeyValuePair<int, object>>(PatchedComponentRefs);
             foreach (var kvp in refs)
             {
-                if (kvp.Value == null) continue;
+                // Destroyed since the patch saw it: the reference outlives the object.
+                if (kvp.Value == null || (kvp.Value is UnityEngine.Object gone && gone == null)) continue;
                 try
                 {
                     if (!_fontNameCache.TryGetValue(kvp.Key, out string cachedFontName) ||
@@ -2171,7 +2095,9 @@ namespace UnityGameTranslator.Core
                     string relaid = TranslatorCore.Router.Relayout(kvp.Value, kvp.Key, TypeHelper.GetText(kvp.Value));
                     if (relaid != null) TypeHelper.SetText(kvp.Value, relaid);
                 }
-                catch { }
+                // The game's own component, resized through its setters: one that fails keeps
+                // its size, the others are re-fitted, and it is said.
+                catch (Exception ex) { Faults.Say("Patches.ReapplyScaleToAllComponents", ex, kvp.Value.GetType().Name); }
             }
         }
 
@@ -2240,7 +2166,9 @@ namespace UnityGameTranslator.Core
                         TryApplyAlternateTMPReplacementFont(component, fontName);
                         appliedCount++;
                     }
-                    catch { }
+                    // One game component, its font read and replaced through reflection: one that
+                    // fails keeps its font, the others are replaced, and it is said.
+                    catch (Exception ex) { Faults.Say("Patches.ScanAndApplyFontReplacements", ex, component.GetType().Name); }
                 }
 
                 if (appliedCount > 0)
@@ -2287,7 +2215,8 @@ namespace UnityGameTranslator.Core
                 // WARNING: This bypasses font-based enable/disable!
                 __result = TranslatorCore.TranslateText(__result);
             }
-            catch { }
+            // Inside the game's own ToString: the text is returned as it is, and it is said.
+            catch (Exception ex) { Faults.Say("Patches.CustomLocalization_ToString_Postfix", ex); }
         }
 
         #region OnEnable Hook
@@ -2440,21 +2369,19 @@ namespace UnityGameTranslator.Core
 
                     // Force complete mesh regeneration — SetFont alone doesn't rebuild
                     // the vertex mesh on IL2CPP. We need to trigger the full dirty chain.
-                    try
-                    {
-                        var compType = __instance.GetType();
-                        var setVertsDirty = compType.GetMethod("SetVerticesDirty", BindingFlags.Public | BindingFlags.Instance);
-                        var setLayoutDirty = compType.GetMethod("SetLayoutDirty", BindingFlags.Public | BindingFlags.Instance);
-                        var setMatDirty = compType.GetMethod("SetMaterialDirty", BindingFlags.Public | BindingFlags.Instance);
-                        setVertsDirty?.Invoke(__instance, null);
-                        setLayoutDirty?.Invoke(__instance, null);
-                        setMatDirty?.Invoke(__instance, null);
-                    }
-                    catch { }
+                    var compType = __instance.GetType();
+                    var setVertsDirty = compType.GetMethod("SetVerticesDirty", BindingFlags.Public | BindingFlags.Instance);
+                    var setLayoutDirty = compType.GetMethod("SetLayoutDirty", BindingFlags.Public | BindingFlags.Instance);
+                    var setMatDirty = compType.GetMethod("SetMaterialDirty", BindingFlags.Public | BindingFlags.Instance);
+                    setVertsDirty?.Invoke(__instance, null);
+                    setLayoutDirty?.Invoke(__instance, null);
+                    setMatDirty?.Invoke(__instance, null);
                 }
 
             }
-            catch { }
+            // Inside the game's own OnEnable, for every graphic it enables: an exception escaping
+            // here would break it. The component keeps the font it had, and it is said.
+            catch (Exception ex) { Faults.Say("Patches.Graphic_OnEnable_Postfix", ex, __instance?.GetType().Name); }
         }
 
         #endregion
@@ -2566,16 +2493,6 @@ namespace UnityGameTranslator.Core
         private static readonly Dictionary<int, float> _originalAutoSizeMin = new Dictionary<int, float>();
 
         /// <summary>
-        /// TMP counterpart of ApplyBestFitScale: on components with enableAutoSizing,
-        /// the game recomputes fontSize to fit the container, erasing any direct
-        /// fontSize scaling. Multiplying fontSizeMax/fontSizeMin by the user's per-font
-        /// scale keeps the game's responsive fit while moving its ceiling/floor — the
-        /// only lever that visibly changes auto-sized text (issue #21: text clamped at
-        /// fontSizeMax rendered smaller than the original font's design scale).
-        /// No-ops on non-TMP components (no enableAutoSizing property) and on
-        /// components with auto-sizing off.
-        /// </summary>
-        /// <summary>
         /// True when the component is a TMP text with enableAutoSizing on. Used to skip the direct
         /// fontSize set (the auto-sizer owns fontSize; setting it re-inflates then re-fits — issue #21).
         /// Returns false for non-TMP components (no enableAutoSizing property).
@@ -2587,9 +2504,21 @@ namespace UnityGameTranslator.Core
                 var autoProp = instance.GetType().GetProperty("enableAutoSizing", BindingFlags.Public | BindingFlags.Instance);
                 return autoProp != null && (bool)autoProp.GetValue(instance, null);
             }
-            catch { return false; }
+            // The game component's own getter: its code, which may throw. Read as "not auto-sized"
+            // — the direct size is then set — and said.
+            catch (Exception ex) { Faults.Say("Patches.IsTMPAutoSizingEnabled", ex, instance.GetType().Name); return false; }
         }
 
+        /// <summary>
+        /// TMP counterpart of ApplyBestFitScale: on components with enableAutoSizing,
+        /// the game recomputes fontSize to fit the container, erasing any direct
+        /// fontSize scaling. Multiplying fontSizeMax/fontSizeMin by the user's per-font
+        /// scale keeps the game's responsive fit while moving its ceiling/floor — the
+        /// only lever that visibly changes auto-sized text (issue #21: text clamped at
+        /// fontSizeMax rendered smaller than the original font's design scale).
+        /// No-ops on non-TMP components (no enableAutoSizing property) and on
+        /// components with auto-sizing off.
+        /// </summary>
         private static void ApplyTMPAutoSizeScale(object instance, int instanceId, float scale)
         {
             if (IsOwnUIText(instance)) return;
@@ -2694,7 +2623,9 @@ namespace UnityGameTranslator.Core
                 if (currentMax != targetMax)
                     maxSizeProp.SetValue(instance, targetMax, null);
             }
-            catch { }
+            // The game component's best-fit properties, read and written through its own code: a
+            // failure leaves its ceiling as it is, and is said.
+            catch (Exception ex) { Faults.Say("Patches.ApplyBestFitScale", ex, instance.GetType().Name); }
         }
 
         /// <summary>
@@ -3188,7 +3119,7 @@ namespace UnityGameTranslator.Core
                 if (string.IsNullOrEmpty(written)) return;
                 NoteSetterFired(__instance, written, "TMP-other");
             }
-            catch { }
+            catch (Exception ex) { Faults.Say("Patches.TMPText_OtherWrite_Probe", ex); }
         }
 
         /// <summary>
@@ -3418,7 +3349,7 @@ namespace UnityGameTranslator.Core
                 // Apply scale to the incoming value
                 value = value * scale;
             }
-            catch { }
+            catch (Exception ex) { Faults.Say("Patches.TMPText_SetFontSize_Prefix", ex); }
         }
 
         /// <summary>
@@ -3444,7 +3375,7 @@ namespace UnityGameTranslator.Core
                 _originalFontSizes[instanceId] = value;
                 value = (int)(value * scale);
             }
-            catch { }
+            catch (Exception ex) { Faults.Say("Patches.UIText_SetFontSize_Prefix", ex); }
         }
 
         public static void UIText_SetText_Prefix(object __instance, ref string value)
@@ -3519,7 +3450,7 @@ namespace UnityGameTranslator.Core
                     }
                 }
             }
-            catch { }
+            catch (Exception ex) { Faults.Say("Patches.TryGetTk2dFontName", ex); }
 
             return null;
         }
@@ -3556,7 +3487,7 @@ namespace UnityGameTranslator.Core
                     }
                 }
             }
-            catch { }
+            catch (Exception ex) { Faults.Say("Patches.TryGetAlternateTMPFontName", ex); }
 
             return null;
         }
@@ -3826,7 +3757,7 @@ namespace UnityGameTranslator.Core
                         }
                     }
                 }
-                catch { }
+                catch (Exception ex) { Faults.Say("Patches.TryApplyAlternateTMPReplacementFont material", ex, instance.GetType().Name); }
 
                 // Add original game font as FALLBACK on the replacement
                 // (so missing chars in replacement fall back to original)
@@ -3843,7 +3774,7 @@ namespace UnityGameTranslator.Core
                         null, Type.EmptyTypes, null);
                     forceMeshUpdate?.Invoke(instance, null);
                 }
-                catch { }
+                catch (Exception ex) { Faults.Say("Patches.TryApplyAlternateTMPReplacementFont mesh", ex, instance.GetType().Name); }
             }
             catch (Exception ex)
             {
@@ -3974,9 +3905,10 @@ namespace UnityGameTranslator.Core
                         forceMeshUpdate.Invoke(instance, null);
                         meshUpdateCalled = true;
                     }
-                    catch (Exception)
+                    catch (Exception ex)
                     {
-                        // Expected for components not fully initialized yet
+                        // Expected for components not fully initialized yet: a retry follows.
+                        TranslatorCore.LogDebug($"[AlternateTMP] ForceMeshUpdate() refused ({ex.GetType().Name}: {ex.Message}), retry {retryCount}");
                     }
                 }
 
@@ -3991,9 +3923,10 @@ namespace UnityGameTranslator.Core
                             forceMeshUpdate.Invoke(instance, new object[] { true });
                             meshUpdateCalled = true;
                         }
-                        catch (Exception)
+                        catch (Exception ex)
                         {
-                            // Expected for components not fully initialized yet
+                            // Expected for components not fully initialized yet: a retry follows.
+                            TranslatorCore.LogDebug($"[AlternateTMP] ForceMeshUpdate(true) refused ({ex.GetType().Name}: {ex.Message}), retry {retryCount}");
                         }
                     }
                 }
@@ -4021,7 +3954,7 @@ namespace UnityGameTranslator.Core
             {
                 UniverseLib.RuntimeHelper.StartCoroutine(DelayedMeshUpdateCoroutine(instance, type, retryCount));
             }
-            catch { }
+            catch (Exception ex) { Faults.Say("Patches.ScheduleDelayedMeshUpdate", ex); }
         }
 
         private static System.Collections.IEnumerator DelayedMeshUpdateCoroutine(object instance, Type type, int retryCount)
@@ -4056,7 +3989,7 @@ namespace UnityGameTranslator.Core
                     }
                 }
             }
-            catch { }
+            catch (Exception ex) { Faults.Say("Patches.SearchAlternateTMPFonts", ex); }
         }
 
         /// <summary>
@@ -4175,65 +4108,6 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// Postfix for alternate TMP text getter.
-        /// Only applies font replacement when text is read (handles late font initialization).
-        /// NOTE: Does NOT translate - translation happens in setter prefix only.
-        /// Translating here would cause re-translation of already-translated text.
-        /// </summary>
-        public static void AlternateTMP_GetText_Postfix(object __instance, ref string __result)
-        {
-            // PERF: Getter postfix kept minimal — no font replacement here.
-            // Font replacement is handled by the setter prefix (AlternateTMP_SetText_Prefix).
-            // Getters fire very frequently (layout, localization systems reading values)
-            // and the previous font replacement + reflection calls here were a major perf drain.
-            // Translation also doesn't happen here (would re-translate already-translated text).
-        }
-
-        // Track instances currently being processed to avoid recursion.
-        // Scoped: added on entry and removed in the finally of AlternateTMP_SetFont_Postfix, so an
-        // exception cannot leave an id behind. Nothing to clean elsewhere.
-        private static HashSet<int> _fontSetInProgress = new HashSet<int>();
-
-        /// <summary>
-        /// Postfix for alternate TMP font setter.
-        /// Applies font replacement when a font is assigned (handles late font initialization).
-        /// </summary>
-        public static void AlternateTMP_SetFont_Postfix(object __instance)
-        {
-            if (__instance == null) return;
-
-            // Avoid recursion when we set the replacement font
-            int instanceId = __instance.GetHashCode();
-            if (_fontSetInProgress.Contains(instanceId)) return;
-
-            try
-            {
-                _fontSetInProgress.Add(instanceId);
-
-                var component = __instance as Component;
-                if (component == null) return;
-
-                // Skip if part of our own UI
-                if (TranslatorCore.ShouldSkipTranslation(component)) return;
-
-                // Get the font that was just set
-                string fontName = TryGetAlternateTMPFontName(__instance);
-                if (!string.IsNullOrEmpty(fontName))
-                {
-                    FontManager.RegisterFontByName(fontName, "TMP (alt)");
-
-                    // Try to apply replacement font
-                    TryApplyAlternateTMPReplacementFont(__instance, fontName);
-                }
-            }
-            catch { }
-            finally
-            {
-                _fontSetInProgress.Remove(instanceId);
-            }
-        }
-
-        /// <summary>
         /// Prefix for tk2dTextMesh.text setter (2D Toolkit).
         /// Uses object type since tk2dTextMesh is not available at compile time.
         /// </summary>
@@ -4289,7 +4163,7 @@ namespace UnityGameTranslator.Core
                 TextShaping.RtlPresenter.Present(__instance, TypeHelper.GetInstanceID(__instance), ref value,
                                                  fontName, tk2dOverride);
             }
-            catch { }
+            catch (Exception ex) { Faults.Say("Patches.Tk2dTextMesh_SetText", ex); }
         }
 
         /// <summary>
@@ -4322,7 +4196,7 @@ namespace UnityGameTranslator.Core
                 bool isOwnUI = TranslatorCore.IsOwnUITranslatable(component);
                 __result = TranslatorCore.TranslateTextWithTracking(__result, component, isOwnUI);
             }
-            catch { }
+            catch (Exception ex) { Faults.Say("Patches.Tk2dTextMesh_GetText_Postfix", ex); }
         }
 
         #endregion

@@ -243,14 +243,19 @@ namespace UnityGameTranslator.Core
 
                 if (sentToken && (unauthorized || forbidden))
                 {
-                    string error = null, reason = null;
-                    try
+                    // The body read over the network (which can fail, and is said), then read as JSON
+                    // when it is JSON (ParseJsonOrNull). A field that is not a string is read as
+                    // absent rather than cast: the status code alone then decides.
+                    string text;
+                    try { text = await response.Content.ReadAsStringAsync(); }
+                    catch (Exception ex)
                     {
-                        var body = ParseJsonSafe(await response.Content.ReadAsStringAsync());
-                        error = body?["error"]?.Value<string>();
-                        reason = body?["reason"]?.Value<string>() ?? body?["message"]?.Value<string>();
+                        text = null;
+                        TranslatorCore.LogDebug($"[API] {(int)response.StatusCode} body unreadable: {Connectivity.ForLog(ex)}");
                     }
-                    catch { /* body not JSON: fall back to the status code alone */ }
+                    var body = ParseJsonOrNull(text);
+                    string error = (body?["error"] as JValue)?.Value as string;
+                    string reason = (body?["reason"] as JValue)?.Value as string ?? (body?["message"] as JValue)?.Value as string;
 
                     // 401 always means the credential itself was refused (revoked token, or one
                     // deleted along with a ban). 403 does NOT: it also covers ordinary refusals
@@ -429,8 +434,12 @@ namespace UnityGameTranslator.Core
         private static JObject ParseJsonOrNull(string body)
         {
             if (string.IsNullOrWhiteSpace(body)) return null;
+            // Recognised, not caught: a body that does not open an object is not JSON (a proxy's
+            // HTML page, a plain-text refusal) — the ordinary case, and not a fault.
+            if (!body.TrimStart().StartsWith("{", StringComparison.Ordinal)) return null;
             try { return ParseJsonSafe(body); }
-            catch { return null; }
+            // One that looks like JSON and is not, or nests past the limit: said.
+            catch (JsonReaderException ex) { Faults.Say("ApiClient.ParseJsonOrNull", ex, "a response body that opens like JSON and is not"); return null; }
         }
 
         /// <summary>The seconds a 429 asks us to wait, or 0 when it did not say.</summary>
@@ -1330,8 +1339,10 @@ namespace UnityGameTranslator.Core
                 var response = await client.GetAsync($"{DefaultBaseUrl}/games?limit=1");
                 return response.IsSuccessStatusCode;
             }
-            catch
+            // The server not answering IS the answer to this test — said with its reason.
+            catch (Exception ex)
             {
+                TranslatorCore.LogWarning($"[API] Connection test failed: {Connectivity.ForLog(ex)}");
                 return false;
             }
         }
@@ -1755,9 +1766,9 @@ namespace UnityGameTranslator.Core
                 string raw = System.IO.File.ReadAllText(TranslatorCore.CachePath);
                 JObject contentObj;
                 try { contentObj = JObject.Parse(raw); }
-                catch
+                catch (JsonReaderException ex)
                 {
-                    return new EditSessionInitResult { Success = false, Error = "Local translation file is not valid JSON" };
+                    return new EditSessionInitResult { Success = false, Error = $"Local translation file is not valid JSON ({ex.Message})" };
                 }
 
                 var payload = new JObject
@@ -1821,9 +1832,9 @@ namespace UnityGameTranslator.Core
                 string raw = System.IO.File.ReadAllText(TranslatorCore.CachePath);
                 JObject contentObj;
                 try { contentObj = JObject.Parse(raw); }
-                catch
+                catch (JsonReaderException ex)
                 {
-                    return new EditSessionUpdateResult { Success = false, Error = "Local translation file is not valid JSON" };
+                    return new EditSessionUpdateResult { Success = false, Error = $"Local translation file is not valid JSON ({ex.Message})" };
                 }
 
                 var payload = new JObject
@@ -1863,8 +1874,11 @@ namespace UnityGameTranslator.Core
                     new StringContent("{}", Encoding.UTF8, "application/json"));
                 return response.StatusCode != System.Net.HttpStatusCode.NotFound;
             }
-            catch
+            // A keepalive that did not get through says nothing about the session: it is kept, and
+            // the next one asks again — with the reason in the log.
+            catch (Exception ex)
             {
+                TranslatorCore.LogDebug($"[EditSession] keepalive not delivered: {Connectivity.ForLog(ex)}");
                 return true;
             }
         }

@@ -1093,42 +1093,23 @@ namespace UnityGameTranslator.Core.UI
         private static Type FindUIType(string fullName)
         {
             // Direct lookup first
-            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
-            {
-                try
-                {
-                    var type = asm.GetType(fullName);
-                    if (type != null) return type;
-                }
-                catch { }
-            }
+            var exact = AssemblyTypes.Find(fullName);
+            if (exact != null) return exact;
 
             // IL2CPP: try with Il2Cpp prefix on the namespace
             // e.g., "UnityEngine.UI.GraphicRaycaster" → "Il2CppUnityEngine.UI.GraphicRaycaster"
-            string il2cppName = "Il2Cpp" + fullName;
-            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
-            {
-                try
-                {
-                    var type = asm.GetType(il2cppName);
-                    if (type != null) return type;
-                }
-                catch { }
-            }
+            var prefixed = AssemblyTypes.Find("Il2Cpp" + fullName);
+            if (prefixed != null) return prefixed;
 
-            // Last resort: search by simple name
+            // Last resort: search by simple name, over the types that load (see AssemblyTypes)
             string simpleName = fullName.Substring(fullName.LastIndexOf('.') + 1);
             foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
             {
-                try
+                foreach (var type in AssemblyTypes.Of(asm))
                 {
-                    foreach (var type in asm.GetTypes())
-                    {
-                        if (type.Name == simpleName && type.FullName.Contains(simpleName))
-                            return type;
-                    }
+                    if (type.Name == simpleName && type.FullName.Contains(simpleName))
+                        return type;
                 }
-                catch { }
             }
 
             return null;
@@ -1325,7 +1306,7 @@ namespace UnityGameTranslator.Core.UI
                             return go;
                         }
                     }
-                    catch { }
+                    catch (Exception ex) { Faults.Say("InspectorPicker.RaycastWorldSpaceCanvases", ex); }
                 }
             }
             catch (Exception ex)
@@ -1442,7 +1423,7 @@ namespace UnityGameTranslator.Core.UI
                         canvas = rect.GetComponentInParent<Canvas>();
                         if (canvas != null) canvas = canvas.rootCanvas;
                     }
-                    catch { }
+                    catch (Exception ex) { Faults.Say("InspectorPicker.PickTextByRectangle", ex); }
 
                     Rect local = rect.rect;
                     Vector3 w0 = rect.TransformPoint(new Vector3(local.xMin, local.yMin, 0));
@@ -1563,12 +1544,13 @@ namespace UnityGameTranslator.Core.UI
             if (!_graphicDepthResolved)
             {
                 _graphicDepthResolved = true;
-                try { _graphicDepthProp = _graphicType?.GetProperty("depth", BindingFlags.Public | BindingFlags.Instance); }
-                catch { }
+                // Members: no AmbiguousMatchException to catch on a type re-declaring it.
+                _graphicDepthProp = Members.Property(_graphicType, "depth", BindingFlags.Public | BindingFlags.Instance);
             }
             if (_graphicDepthProp == null || _graphicType == null || !_graphicType.IsInstanceOfType(comp)) return 0;
+            // The engine's own getter, reached by reflection: said.
             try { return (int)_graphicDepthProp.GetValue(comp, null); }
-            catch { return 0; }
+            catch (Exception ex) { Faults.Say("InspectorPicker.GraphicDepth", ex); return 0; }
         }
 
         /// <summary>
@@ -1740,30 +1722,6 @@ namespace UnityGameTranslator.Core.UI
             {
                 TranslatorCore.LogDebug($"[Inspector] RaycastViaCamera error: {ex.Message}");
                 return null;
-            }
-        }
-
-        /// <summary>
-        /// Check if an object is a Graphic component (IL2CPP-safe).
-        /// </summary>
-        private static bool IsGraphic(Component component)
-        {
-            if (component == null || _graphicType == null) return false;
-            try
-            {
-                return _graphicType.IsInstanceOfType(component);
-            }
-            catch
-            {
-                // Fallback: name-based check for IL2CPP proxy types
-                var type = component.GetType();
-                while (type != null)
-                {
-                    string name = type.Name;
-                    if (name == "Graphic" || name == "Il2CppGraphic") return true;
-                    type = type.BaseType;
-                }
-                return false;
             }
         }
 
@@ -2165,7 +2123,7 @@ namespace UnityGameTranslator.Core.UI
                     rootCanvas = rect.GetComponentInParent<Canvas>();
                     if (rootCanvas != null) rootCanvas = rootCanvas.rootCanvas;
                 }
-                catch { }
+                catch (Exception ex) { Faults.Say("InspectorPicker.GetScreenBounds", ex); }
 
                 // ⚠ No canvas at all is a rectangle IN THE WORLD — a 3D TextMeshPro — and was read
                 // as pixels like an Overlay one, which drew its marker a few pixels wide in a corner.

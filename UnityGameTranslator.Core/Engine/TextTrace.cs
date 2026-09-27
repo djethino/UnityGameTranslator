@@ -155,16 +155,20 @@ namespace UnityGameTranslator.Core
         /// <param name="held">The font the component carries as the size is put — the size is chosen
         /// for <paramref name="font"/>'s replacement, and a text sized before that font reaches it
         /// shows the replacement's size in the game's own font.</param>
+        /// <param name="path">The component's place in the hierarchy, on first sight — what matches a
+        /// copy to the template it was made from.</param>
         public static void Size(long comp, string type, string name, string what, string font, string held, float scale,
-                                float original, bool firstSight, float before, float after)
+                                float original, bool firstSight, float before, float after, string path = null)
         {
             if (!On) return;
-            Emit(new JObject
+            var line = new JObject
             {
                 ["k"] = "size", ["c"] = comp, ["type"] = type, ["name"] = name, ["what"] = what,
                 ["font"] = font, ["held"] = held, ["scale"] = Math.Round(scale, 4), ["orig"] = original,
                 ["first"] = firstSight, ["from"] = before, ["to"] = after,
-            });
+            };
+            if (path != null) line["path"] = path;
+            Emit(line);
         }
 
         /// <summary>

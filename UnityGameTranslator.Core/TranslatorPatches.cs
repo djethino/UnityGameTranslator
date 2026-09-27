@@ -1004,9 +1004,13 @@ namespace UnityGameTranslator.Core
                                       float original, bool firstSight, float before, float after)
         {
             if (!TextTrace.On) return;
-            string name = instance is Component c && c != null ? c.gameObject.name : "";
+            var comp = instance as Component;
+            string name = comp != null ? comp.gameObject.name : "";
             string held = TypeHelper.GetFont(instance) is UnityEngine.Object f && f != null ? f.name : null;
-            TextTrace.Size(id, instance.GetType().Name, name, what, font, held, scale, original, firstSight, before, after);
+            // Where it sits, on first sight only: what tells a copy from its template is sharing
+            // their place in the hierarchy, which the name alone ("Text") cannot.
+            string path = firstSight && comp != null ? TranslatorCore.GetGameObjectPath(comp.gameObject) : null;
+            TextTrace.Size(id, instance.GetType().Name, name, what, font, held, scale, original, firstSight, before, after, path);
         }
 
         private static void ApplyGenericFontScale(object instance, RegisteredTextType typeInfo, string fontName)

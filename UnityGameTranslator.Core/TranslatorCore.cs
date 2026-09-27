@@ -115,7 +115,8 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static Dictionary<string, TranslationEntry> ModUiCache { get; private set; } = new Dictionary<string, TranslationEntry>();
 
-        public static List<PatternEntry> PatternEntries { get; private set; } = new List<PatternEntry>();
+        /// <summary>The game's lines with number slots, as patterns (Engine/PatternIndex).</summary>
+        internal static readonly PatternIndex Patterns = new PatternIndex();
         public static string CachePath { get; private set; }
 
         /// <summary>Beside <see cref="CachePath"/>, in the same folder, for the same game.</summary>
@@ -819,9 +820,6 @@ namespace UnityGameTranslator.Core
         /// <inheritdoc cref="ReadbackIndex.IsReadback"/>
         public static bool IsReadbackOfOwnTranslation(string text, bool ownUi = false)
             => _readback.IsReadback(text, ownUi);
-
-        // Pattern match failure cache (texts that don't match any pattern)
-        private static HashSet<string> patternMatchFailures = new HashSet<string>();
 
         // Texts whose translation failed placeholder validation after all retries.
 
@@ -1840,14 +1838,6 @@ namespace UnityGameTranslator.Core
         // the tests measure has to be what a game enforces, down to the sentence sent back on the
         // second attempt.
 
-        public class PatternEntry
-        {
-            public string OriginalPattern;
-            public string TranslatedPattern;
-            public Regex MatchRegex;
-            public List<int> PlaceholderIndices;
-        }
-
         // Managed id of the Unity main thread, captured in Initialize (which the
         // mod loaders always call on it). Unity APIs are main-thread only; on
         // IL2CPP an off-thread call dies with a native, uncatchable
@@ -1975,7 +1965,7 @@ namespace UnityGameTranslator.Core
             string srcLang = Config.GetSourceLanguage() ?? "auto-detect";
             string tgtLang = Config.GetTargetLanguage();
             Adapter.LogInfo($"Translation: {srcLang} -> {tgtLang}");
-            Adapter.LogInfo($"Cache entries: {TranslationCache.Count}, Pattern entries: {PatternEntries.Count}");
+            Adapter.LogInfo($"Cache entries: {TranslationCache.Count}, Pattern entries: {Patterns.Count}");
         }
 
         /// <summary>
@@ -3689,75 +3679,21 @@ namespace UnityGameTranslator.Core
             }
         }
 
-        // Each pattern key's regex (null when the key holds no number), with its slot order —
-        // see BuildPatternEntries. Read and replaced under _patternRegexGate only.
-        private static Dictionary<string, KeyValuePair<Regex, List<int>>> _patternRegexes =
-            new Dictionary<string, KeyValuePair<Regex, List<int>>>();
-        private static readonly object _patternRegexGate = new object();
-
+        /// <summary>
+        /// The patterns again, from the game's lines as they stand: after every change to them
+        /// (a load, a new pattern translation, an edit). See PatternIndex.Rebuild.
+        ///
+        /// ⚠ The lines are copied under the cache's lock: the worker writes to them, and a copy
+        /// taken while it does used to throw and be swallowed, leaving the patterns as they were.
+        /// </summary>
         public static void BuildPatternEntries()
         {
-            // Build into a NEW list, then swap atomically.
-            // TryPatternMatch iterates PatternEntries on the main thread while
-            // this can be called from the worker thread (via AddToCache).
-            var newEntries = new List<PatternEntry>();
-
-            // Snapshot to avoid "Collection was modified" if AddToCache runs concurrently
-            KeyValuePair<string, TranslationEntry>[] cacheSnapshot;
-            try
-            {
-                var list = new List<KeyValuePair<string, TranslationEntry>>(TranslationCache);
-                cacheSnapshot = list.ToArray();
-            }
-            catch { return; } // Collection changed during snapshot — next call will succeed
-
-            // 🔴 **The regexes are kept from one build to the next**, keyed by the pattern they
-            // match (the key alone decides the regex; the translation only fills it). A compiled
-            // regex pays its compilation the first time it RUNS — and that first run is the main
-            // thread's next miss. Rebuilding every one of them on each new pattern translation
-            // froze the game for about a second per answer, with 300 patterns (seen 2026-09-26).
-            // So an old regex is reused, and a new one is run once HERE, on whichever thread
-            // builds — the worker, in the case that matters — before the main thread can see it.
-            lock (_patternRegexGate)
-            {
-                var kept = new Dictionary<string, KeyValuePair<Regex, List<int>>>();
-
-                foreach (var kv in cacheSnapshot)
-                {
-                    // Skip if key equals value (no translation)
-                    if (kv.Key == kv.Value.Value) continue;
-
-                    if (!kept.TryGetValue(kv.Key, out var built)
-                        && !_patternRegexes.TryGetValue(kv.Key, out built))
-                    {
-                        var regex = NumberPatterns.BuildPatternRegex(kv.Key, out var indices, compiled: true);
-                        built = new KeyValuePair<Regex, List<int>>(regex, indices);
-                        // Run on a text it MATCHES — the key with a number in each slot. A text
-                        // too short to match stops before the matching code, which would then
-                        // still be compiled on the main thread.
-                        regex?.IsMatch(NumberPatterns.PlaceholderIndexPattern.Replace(kv.Key, "0"));
-                    }
-                    kept[kv.Key] = built;
-                    if (built.Key == null) continue;
-
-                    newEntries.Add(new PatternEntry
-                    {
-                        OriginalPattern = kv.Key,
-                        TranslatedPattern = kv.Value.Value,
-                        MatchRegex = built.Key,
-                        PlaceholderIndices = built.Value
-                    });
-                }
-
-                // Only what the file still holds: a removed key takes its regex with it.
-                _patternRegexes = kept;
-            }
-
-            // Atomic swap — main thread sees either the old or the new list, never a half-built one
-            PatternEntries = newEntries;
+            KeyValuePair<string, TranslationEntry>[] lines;
+            lock (lockObj) { lines = TranslationCache.ToArray(); }
+            Patterns.Rebuild(lines);
 
             if (DebugMode)
-                Adapter?.LogInfo($"Built {PatternEntries.Count} pattern entries");
+                Adapter?.LogInfo($"Built {Patterns.Count} pattern entries");
         }
 
 
@@ -3842,25 +3778,12 @@ namespace UnityGameTranslator.Core
 
             // Translated value whose placeholders were reordered by the translation:
             // match the displayed text against each pattern's translated form
-            var patterns = PatternEntries;
-            if (patterns != null)
+            if (Patterns.MatchTranslated(trimmed, out string patternKey, result.CapturedNumbers))
             {
-                foreach (var pe in patterns)
-                {
-                    var reverseRegex = NumberPatterns.BuildPatternRegex(pe.TranslatedPattern, out var groupPlaceholders);
-                    if (reverseRegex == null) continue;
-                    var m = reverseRegex.Match(trimmed);
-                    if (!m.Success) continue;
-
-                    result.CapturedNumbers.Clear();
-                    for (int g = 0; g < groupPlaceholders.Count; g++)
-                        result.CapturedNumbers[groupPlaceholders[g]] = m.Groups[g + 1].Value;
-
-                    result.Key = pe.OriginalPattern;
-                    TranslationCache.TryGetValue(pe.OriginalPattern, out var patternEntry);
-                    result.Entry = patternEntry;
-                    return result;
-                }
+                result.Key = patternKey;
+                TranslationCache.TryGetValue(patternKey, out var patternEntry);
+                result.Entry = patternEntry;
+                return result;
             }
 
             // Unknown text: the normalized form is the key a future entry must use
@@ -6421,42 +6344,7 @@ namespace UnityGameTranslator.Core
             }
         }
 
-        public static string TryPatternMatch(string text)
-        {
-            // Quick skip if we already know this text doesn't match any pattern
-            if (patternMatchFailures.Contains(text))
-                return null;
-
-            foreach (var entry in PatternEntries)
-            {
-                try
-                {
-                    var match = entry.MatchRegex.Match(text);
-                    if (match.Success)
-                    {
-                        var capturedValues = new List<string>();
-                        for (int i = 1; i < match.Groups.Count; i++)
-                        {
-                            capturedValues.Add(match.Groups[i].Value);
-                        }
-
-                        string result = entry.TranslatedPattern;
-                        for (int i = 0; i < entry.PlaceholderIndices.Count && i < capturedValues.Count; i++)
-                        {
-                            int placeholderIndex = entry.PlaceholderIndices[i];
-                            result = result.Replace($"{PlaceholderPrefix}{placeholderIndex}{PlaceholderSuffix}", capturedValues[i]);
-                        }
-
-                        return result;
-                    }
-                }
-                catch { }
-            }
-
-            // Cache this failure to avoid re-checking all patterns next time
-            patternMatchFailures.Add(text);
-            return null;
-        }
+        public static string TryPatternMatch(string text) => Patterns.Match(text);
 
 
         public static void ClearLastSeenText()
@@ -6480,8 +6368,8 @@ namespace UnityGameTranslator.Core
             // Clear scanner processed cache
             TranslatorScanner.ClearProcessedCache();
 
-            // Clear pattern match failure cache (in case patterns changed)
-            patternMatchFailures.Clear();
+            // Every text that matched no pattern is asked again (the settings may change what it is).
+            Patterns.ForgetMisses();
 
             // Give validation-failed texts another chance (model/language may have changed) —
             // except the ones kept on file: those cost minutes each at every launch, and are

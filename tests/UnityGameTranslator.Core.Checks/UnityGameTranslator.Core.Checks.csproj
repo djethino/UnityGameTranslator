@@ -157,6 +157,10 @@
     -->
     <Compile Include="../../UnityGameTranslator.Core/Engine/TextAdmission.cs" />
     <!--
+      The game's lines with number slots, as the pattern rung of the lookup answers them.
+    -->
+    <Compile Include="../../UnityGameTranslator.Core/Engine/PatternIndex.cs" />
+    <!--
       "Is this text one of OUR translations coming back?" — the anti-loop device every gate asks
       first. Too wide, it refuses genuine source text and the game stays untranslated in silence;
       too narrow, our own output is queued as a new source and published under a target-language

@@ -977,6 +977,39 @@
         {"f": 90, "t": 3.0, "c": 2, "write": "*Activate* ({0}): Add {1} *Power*.", "shows": "*Activate* ({0}): Add {1} *Power*."}
       ],
       "queued": ["<color=#FFB95D>Activate</color> (<color=#F4FF58>2</color>): Add <color=#F4FF58>3</color> <color=#E72F4D>Power</color>."]
+    },
+    {
+      "id": "pattern/a-number-in-a-known-sentence-is-filled",
+      "why": "numbers left in the text (normalize_numbers off): 'Gold: 12' is answered by the game's line 'Gold: [!v*0]', its number put in the translation's slot — nothing is sent",
+      "normalizeNumbers": false,
+      "file": {"Gold: [!v*0]": "Or : [!v*0]"},
+      "steps": [
+        {"f": 5, "t": 1.0, "write": "Gold: 12", "shows": "Or : 12"}
+      ],
+      "queued": []
+    },
+    {
+      "id": "pattern/a-slot-moved-by-the-translation-gets-its-own-number",
+      "why": "a translation is free to reorder the slots: each number goes to the slot it came from, not to the next free one",
+      "normalizeNumbers": false,
+      "file": {"[!v*0] of [!v*1] done": "[!v*1] au total, [!v*0] faits"},
+      "steps": [
+        {"f": 5, "t": 1.0, "write": "3 of 8 done", "shows": "8 au total, 3 faits"}
+      ],
+      "queued": []
+    },
+    {
+      "id": "pattern/a-text-met-before-its-pattern-is-answered-once-it-arrives",
+      "why": "a text that matched no pattern is not asked again while the patterns stay the same — but a new pattern is the event that can make it match: kept as a miss, it went on missing its pattern and was sent to the model on its own",
+      "normalizeNumbers": false,
+      "file": {"Lives: [!v*0]": "Vies : [!v*0]"},
+      "steps": [
+        {"f": 5, "t": 1.0, "c": 1, "write": "Gold: 12", "shows": "Gold: 12"},
+        {"f": 30, "t": 1.8, "tick": true},
+        {"f": 40, "t": 2.0, "arrive": {"o": "Gold: [!v*0]", "tr": "Or : [!v*0]"}},
+        {"f": 50, "t": 2.5, "c": 2, "write": "Gold: 12", "shows": "Or : 12"}
+      ],
+      "queued": ["Gold: 12"]
     }
   ]
 }

@@ -112,6 +112,8 @@ namespace UnityGameTranslator.Core.Checks
             var host = new ReplayHost { RightToLeft = (string)c["present"] == "rtl" };
             // `debugFrame`: prints the router's log for that frame — for reading a case, never left in one.
             if (c["debugFrame"] != null) host.DebugFrame = (int)c["debugFrame"];
+            // `normalizeNumbers: false`: numbers stay in the text, and the pattern rung answers them.
+            if (c["normalizeNumbers"] != null) host.NormalizeNumbers = (bool)c["normalizeNumbers"];
             var router = new TextRouter(host);
             host.Router = router;
 

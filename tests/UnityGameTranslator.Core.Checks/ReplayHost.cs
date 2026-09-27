@@ -48,14 +48,17 @@ namespace UnityGameTranslator.Core.Checks
         public bool ConcatDetection => true;
         public bool TranslationsActive => true;
         public bool GateOpen => true;
-        public bool NormalizeNumbers => true;
+        /// <summary>The <c>normalize_numbers</c> setting (on by default, as in the mod); a case may turn it off.</summary>
+        public bool NormalizeNumbers { get; set; } = true;
 
         public IDictionary<string, TranslationEntry> GameStore => _store;
         public IDictionary<string, TranslationEntry> OwnUiStore => _ownUi;
         public ReadbackIndex Readback => _readback;
         public StaleSnapshot Stale => _stale;
         public IVariableSubstitution Variables => null;
-        public string MatchPattern(string text) => null;
+        /// <summary>The game's lines with number slots, through the index the mod uses.</summary>
+        private readonly PatternIndex _patterns = new PatternIndex();
+        public string MatchPattern(string text) => _patterns.Match(text);
         public bool RefreshVariables() => false;
 
         /// <summary>Templates proved, in the order the router proved them.</summary>
@@ -146,14 +149,17 @@ namespace UnityGameTranslator.Core.Checks
         {
             string key = Router.NormalizeForCacheLookup(source);
             _store[key] = TranslationEntry.FromValue(translation, tag);
-            _readback.Index(key, translation, ownUi: false, normalizeNumbers: true);
+            _readback.Index(key, translation, ownUi: false, normalizeNumbers: NormalizeNumbers);
+            // As AddToCache: a line with number slots changes the patterns.
+            if (key.Contains(TextNormalization.PlaceholderPrefix)) _patterns.Rebuild(_store);
         }
 
         /// <summary>An entry exactly as a loaded file keyed it.</summary>
         public void AddEntry(string key, TranslationEntry entry)
         {
             _store[key] = entry;
-            _readback.Index(key, entry.Value, ownUi: false, normalizeNumbers: true);
+            _readback.Index(key, entry.Value, ownUi: false, normalizeNumbers: NormalizeNumbers);
+            if (key.Contains(TextNormalization.PlaceholderPrefix)) _patterns.Rebuild(_store);
         }
 
         /// <summary>

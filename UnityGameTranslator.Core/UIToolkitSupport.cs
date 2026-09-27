@@ -368,7 +368,11 @@ namespace UnityGameTranslator.Core
                 // first cycle. If the patch cannot be applied, the lookup stays, per cycle.
                 try
                 {
-                    var onEnable = UIDocumentType.GetMethod("OnEnable", BindingFlags.NonPublic | BindingFlags.Instance);
+                    // ⚠ Both visibilities: private on Mono, but the IL2CPP proxies are generated
+                    // public — looked up as NonPublic only, it was not found there, said nothing,
+                    // and left a ~20 ms lookup on every cycle of a game with no UI Toolkit at all.
+                    var onEnable = UIDocumentType.GetMethod("OnEnable",
+                        BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance, null, Type.EmptyTypes, null);
                     if (onEnable != null)
                     {
                         var postfix = typeof(UIToolkitSupport).GetMethod(
@@ -376,6 +380,10 @@ namespace UnityGameTranslator.Core
                         patcher(onEnable, null, postfix);
                         _documentsFromEvents = true;
                         TranslatorCore.LogInfo("[UIToolkit] Patched UIDocument.OnEnable — documents are discovered on arrival, not by lookup");
+                    }
+                    else
+                    {
+                        TranslatorCore.LogWarning("[UIToolkit] UIDocument.OnEnable not found on this runtime — documents will be looked up every cycle");
                     }
                 }
                 catch (Exception ex)

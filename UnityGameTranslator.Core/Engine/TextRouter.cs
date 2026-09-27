@@ -233,6 +233,11 @@ namespace UnityGameTranslator.Core
             public bool ShownIsOurs;        // a translation (else the game's own text)
             public bool LayoutReachedFull;  // the pass in flight has reached the whole length
             public int LayoutSteps;         // steps of the pass in flight
+            public int LayoutOffset;        // where the line being built starts in LayoutWhole
+            public string LayoutLastStep;   // the step before, breaks set aside
+            public List<int> LayoutStarts = new List<int>();  // where each line began (TextRouter.Spread)
+            public SpreadLayout SpreadOf;   // the spread layout this component shows a line of
+            public int SpreadIndex = -1;    // ...which line
             public bool AssemblyMissing;    // the assembly shown still has a part waiting for an answer
 
             // --- Typewriting ---
@@ -306,6 +311,7 @@ namespace UnityGameTranslator.Core
             _concatTranslatedValues.Clear();
             _assembledSources.Clear();
             _layoutResults.Clear();
+            _spreadLines.Clear();
         }
 
         /// <summary>

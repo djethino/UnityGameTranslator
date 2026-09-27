@@ -57,6 +57,17 @@ namespace UnityGameTranslator.Core
             if (_layoutResults.ContainsKey(text))
                 return text;
 
+            // A line of a text the game laid out on another component (TextRouter.Spread): its
+            // line of the translation when there is one, never sent on its own. ⚠ By the same
+            // rule as the setter: a component the pass gave that line to, or the measuring one —
+            // the same words met anywhere else are a text of their own.
+            if (IsSpreadLine(text) && component != null)
+            {
+                long lineId = _host.IdOf(component);
+                string shown = text;
+                if (lineId != -1 && FollowSpreadLine(component, lineId, ref shown)) return shown;
+            }
+
             long compId = component != null ? _host.IdOf(component) : -1;
 
             // Read-back detection: if the game read translated text and appended

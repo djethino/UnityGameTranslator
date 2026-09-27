@@ -46,6 +46,8 @@ namespace UnityGameTranslator.Core
                 writtenThisFrame = written.WriteFrame == _host.Frame;
                 written.WriteFrame = _host.Frame;
                 if (FollowLayoutPass(written, comp, compId, textValue, writtenThisFrame)) return RouteOutcome.Translated;
+                // A line of a text the game laid out on another component (TextRouter.Spread).
+                if (FollowSpreadLine(comp, compId, ref textValue)) return RouteOutcome.Translated;
             }
             if (_layoutResults.TryGetValue(textValue, out string laidOutSource))
             {
@@ -508,6 +510,10 @@ namespace UnityGameTranslator.Core
                 state.LayoutFrame = frame;
                 state.LayoutReachedFull = false;
                 state.LayoutSteps = 0;
+                state.LayoutOffset = 0;
+                state.LayoutLastStep = null;
+                state.LayoutStarts.Clear();
+                state.LayoutStarts.Add(0);
                 state.LayoutOurs = whole == state.LastTranslated || _concatTranslatedValues.Contains(whole);
                 _host.LayoutPassSeen(comp, whole);
             }
@@ -533,7 +539,10 @@ namespace UnityGameTranslator.Core
             }
 
             string step = StripBreaks(text).TrimEnd();
-            if (!state.LayoutWhole.StartsWith(step, StringComparison.Ordinal))
+            // A step is the text from where the line being built begins — or, when the game puts
+            // each line on a component of its own, a new line started at the word the one before
+            // pushed out (TextRouter.Spread).
+            if (!ContinuesLayout(state, step))
             {
                 // Not a step of it: the pass is over, and this text is routed as any other.
                 state.LayoutWhole = null;
@@ -544,7 +553,17 @@ namespace UnityGameTranslator.Core
             state.FrameCallCount++;
             state.LayoutSteps++;
             state.LastRaw = text;
-            if (step.Length < state.LayoutWhole.Length) return true;
+            state.LayoutLastStep = step;
+            if (state.LayoutOffset + step.Length < state.LayoutWhole.Length) return true;
+
+            // The end reached on a line that is not the first: the lines were cut for other
+            // components, and this one only measured them.
+            if (state.LayoutOffset > 0)
+            {
+                if (!state.LayoutReachedFull) NoteSpread(state, comp, compId);
+                state.LayoutReachedFull = true;
+                return true;
+            }
 
             // The whole, laid out by the game — not necessarily for the last time: reaching the
             // full length is only the last word APPENDED; if it overflows, the game rewrites it
@@ -613,6 +632,11 @@ namespace UnityGameTranslator.Core
         /// <param name="toWrite">The text to put on the component, or null on <see cref="LateOutcome.Skip"/>.</param>
         public LateOutcome Late(long compId, object component, string current, string original, string translation, out string toWrite)
         {
+            // A line component of a spread layout: its line of the translation, not the whole
+            // (TextRouter.Spread). Written like a rebuilt page — the original it keeps is its line.
+            if (compId != -1 && LateSpread(compId, component, current, original, translation, out toWrite))
+                return toWrite != null ? LateOutcome.Reassembled : LateOutcome.Skip;
+
             // 🔴 This component is one the game lays out itself, and that text is the one it laid
             // out last: the translation goes up wrapped the way the game wraps (TextRouter.Fit),
             // whether the component shows the game's layout or the whole again. Decided with the

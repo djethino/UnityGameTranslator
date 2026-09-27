@@ -129,6 +129,27 @@ namespace UnityGameTranslator.Core
         /// </summary>
         private static object _worstProcessed;
 
+        // The slowest engine lookup of the window: who asked, for what, and how much came back.
+        // A lookup is atomic — no frame budget can split it — so the only cures are asking for less
+        // or asking less often, and both start from knowing which caller it is.
+        private static string _worstFindBy, _worstFindType;
+        private static int _worstFindCount;
+
+        /// <summary>Stop the <see cref="FindAll"/> slot, remembering the slowest lookup's caller.</summary>
+        internal static void StopFind(long start, string by, System.Type type, int found)
+        {
+            if (start == 0L) return;
+            long spent = Stopwatch.GetTimestamp() - start;
+            _ticks[FindAll] += spent;
+            _calls[FindAll]++;
+            if (spent <= _max[FindAll]) return;
+
+            _max[FindAll] = spent;
+            _worstFindBy = by;
+            _worstFindType = type?.Name;
+            _worstFindCount = found;
+        }
+
         /// <summary>
         /// Stop the per-component slot, remembering what the worst call was about.
         ///
@@ -183,6 +204,11 @@ namespace UnityGameTranslator.Core
             TranslatorCore.LogDebug($"[PASS-PERF] over {window:F1}s | {frames} | {sb}");
 
             SayWhatTheWorstWasAbout();
+            if (_worstFindBy != null)
+            {
+                TranslatorCore.LogDebug($"[PASS-PERF] the slowest lookup was {_worstFindType} for {_worstFindBy} ({_worstFindCount} found)");
+                _worstFindBy = null;
+            }
         }
 
         /// <summary>

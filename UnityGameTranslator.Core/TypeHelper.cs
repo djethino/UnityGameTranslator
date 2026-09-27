@@ -1493,12 +1493,14 @@ namespace UnityGameTranslator.Core
         /// On IL2CPP, uses Il2CppType.Of&lt;T&gt;() + Resources.FindObjectsOfTypeAll(Il2CppType)
         /// which is the correct pattern per MelonLoader documentation.
         /// </summary>
-        public static UnityEngine.Object[] FindAllObjectsOfType(Type type)
+        /// <param name="by">Filled in by the compiler: which code asked, for the perf report.</param>
+        public static UnityEngine.Object[] FindAllObjectsOfType(Type type, [CallerMemberName] string by = null)
         {
             if (type == null) return new UnityEngine.Object[0];
             long t = Perf.Start();
-            try { return FindAllObjectsOfTypeUntimed(type); }
-            finally { Perf.Stop(Perf.FindAll, t); }
+            UnityEngine.Object[] found = null;
+            try { return found = FindAllObjectsOfTypeUntimed(type); }
+            finally { Perf.StopFind(t, by, type, found?.Length ?? 0); }
         }
 
         private static UnityEngine.Object[] FindAllObjectsOfTypeUntimed(Type type)

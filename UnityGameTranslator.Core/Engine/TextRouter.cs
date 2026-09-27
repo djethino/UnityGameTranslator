@@ -257,6 +257,11 @@ namespace UnityGameTranslator.Core
             public bool TypewritingGrew;    // the held text grew (or its markup walked) — a reveal, not a text written whole
             public string HeldAsHead;       // held, not sent: this place resumed a reveal from it before (TextRouter.Heads)
             public string ResumedFrom;      // handed over, then grown from once: growing again proves it a head
+            // --- Additions held until the component stops (TextRouter.Route, SettleAppend) ---
+            public string AppendBaseShown;       // what the component showed when additions began — the form it holds
+            public string AppendBaseTranslated;  // ...as our translation (logical form)
+            public string AppendBaseSource;      // ...and the source it translates; null when unknown
+            public bool AppendAtHead;            // the additions come before it (an event log adding at its head)
         }
 
         private readonly Dictionary<long, ComponentTextState> _componentState =

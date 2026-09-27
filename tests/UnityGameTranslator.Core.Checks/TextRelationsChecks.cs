@@ -16,7 +16,6 @@ namespace UnityGameTranslator.Core.Checks
         public static void Run(Action<bool, string, string> check)
         {
             Growth(check);
-            TypewriterSteps(check);
             ConcatDeltas(check);
             SameSentenceDressedDifferently(check);
         }
@@ -227,22 +226,6 @@ namespace UnityGameTranslator.Core.Checks
                   "and so is a zero-width joiner");
         }
 
-        /// <summary>Growth by a few characters: a reveal, not an assembly.</summary>
-        private static void TypewriterSteps(Action<bool, string, string> check)
-        {
-            Typewriter(check, "Hell", "Hello", true, "one character at a time");
-            Typewriter(check, "He", "Hello", true, "three characters is still a reveal");
-            Typewriter(check, "H", "Hello", false, "four is too many to be one keystroke");
-            Typewriter(check, "Hello", "Hello", false, "not moving is not revealing");
-            Typewriter(check, "Hello", "Hell", false, "shrinking is not revealing");
-            Typewriter(check, "Hello", "Hey", false, "a different text is not revealing");
-
-            // Guards the constant against being widened by accident: at four, this must be false.
-            check(TextRelations.TypewriterMaxCharsPerStep == 3,
-                  "TypewriterMaxCharsPerStep == 3",
-                  "the step size the concat unflag was written against");
-        }
-
         /// <summary>Growth that carries content: an assembly, not a stray line break.</summary>
         private static void ConcatDeltas(Action<bool, string, string> check)
         {
@@ -264,13 +247,6 @@ namespace UnityGameTranslator.Core.Checks
         {
             bool actual = TextRelations.Grows(previous, current);
             check(actual == expected, $"Grows({Show(previous)}, {Show(current)}) -> {actual}", why);
-        }
-
-        private static void Typewriter(Action<bool, string, string> check, string previous, string current,
-                                       bool expected, string why)
-        {
-            bool actual = TextRelations.LooksLikeTypewriterGrowth(previous, current);
-            check(actual == expected, $"Typewriter({Show(previous)}, {Show(current)}) -> {actual}", why);
         }
 
         private static void Concat(Action<bool, string, string> check, string previous, string current,

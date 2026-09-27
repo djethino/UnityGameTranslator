@@ -376,6 +376,10 @@ namespace UnityGameTranslator.Core
                 // that merely ends on a span was never given one, and goes on to the queue.
                 _host.LogDebug($"[TW-FINALIZE] comp={compId} a known sentence uncovered by markup — shown, not sent: '{Head40(text)}'");
             }
+            else if (SettleAppend(compId, text, stillShown))
+            {
+                // What the game added after our text, sent alone now it has stopped (SettleAppend).
+            }
             else if (headHere)
             {
                 var state = PeekState(compId);
@@ -479,6 +483,8 @@ namespace UnityGameTranslator.Core
             state.TypewritingQueued = false;
             state.HeldAsHead = null;
             state.ResumedFrom = null;
+            state.AppendBaseShown = state.AppendBaseTranslated = state.AppendBaseSource = null;
+            state.AppendAtHead = false;
         }
 
         /// <summary>

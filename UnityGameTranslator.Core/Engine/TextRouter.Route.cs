@@ -141,14 +141,17 @@ namespace UnityGameTranslator.Core
                     state.LastFrame = currentFrame;
                     state.FrameCallCount = 1;
 
-                    // Detect TW pattern on a concat-flagged component:
-                    // single set_text per frame with text growing by 1-3 chars = typewriting.
-                    // Unflag concat and let TW handle it.
+                    // A concat-flagged component growing again in a frame of its own: parts built in
+                    // one frame are an assembly, growth frame after frame is a reveal — the FRAME
+                    // tells them apart. It used to also ask for a growth of at most three
+                    // characters, a guess at a game's speed: a reveal of a clause at a time (eight
+                    // characters, measured 2026-09-27) or a tag counted in the length stayed in
+                    // concat and was sent piece by piece. What was added is held and settled whole.
                     if (state.Mode == TextMode.Concat)
                     {
                         string prevRaw2 = state.LastRaw;
                         if (!string.IsNullOrEmpty(prevRaw2)
-                            && TextRelations.LooksLikeTypewriterGrowth(prevRaw2, textValue))
+                            && TextRelations.Grows(prevRaw2, textValue))
                         {
                             LeaveConcat(state);
                             _host.LogDebug($"[CONCAT-UNFLAG] comp={compId} reverted to TW (grew by {textValue.Length - prevRaw2.Length} chars in separate frame)");
@@ -307,8 +310,10 @@ namespace UnityGameTranslator.Core
                 bool missing = false;
                 if (whole != null && wholeTranslated != whole)
                 {
-                    // A hit: tracked inside, so the next append starts from this page.
+                    // A hit: tracked inside, so the next append starts from this page. Nothing is
+                    // left to settle.
                     textValue = wholeTranslated;
+                    state.AppendBaseShown = state.AppendBaseTranslated = state.AppendBaseSource = null;
                 }
                 else
                 {
@@ -317,12 +322,44 @@ namespace UnityGameTranslator.Core
                     // stayed in the source language on a translated page for good, since nothing
                     // would ever ask for it. With an unknown source the part may be a fragment of
                     // something else, so it is still only looked up.
-                    // 🔴 A few characters more, in a frame of their own, is a REVEAL going on after
-                    // our text, not a part: sent, every state it passed through went to the model
-                    // ("e", "ig", "ht 4"). Nothing is sent; the reveal holds the text, and once it
-                    // has settled what is still unknown in it goes, line by line (TextRouter.Lines).
-                    bool revealing = !writtenThisFrame && TextRelations.LooksLikeTypewriterGrowth(appendedTo, textValue);
-                    if (revealing && !isOwnUI) IsTypewritingInProgress(compId, preTranslateText, comp);
+                    // 🔴 **Appended in a frame of its own, it is HELD — whatever its size.** It may be
+                    // a reveal going on after our text (sent at each state, "e", "ig", "ht 4" went
+                    // to the model) or a sentence the game added whole; only what follows tells, and
+                    // both end the same way: what was added since our text, sent alone once the
+                    // component stops (SettleAppend). This used to be decided on the size of the
+                    // write — at most three characters for a reveal — which a clause revealed at
+                    // once (eight characters, measured) or a tag counted in the length broke.
+                    // Appended in the SAME frame, it is a part of an assembly and goes at once.
+                    // What is known is shown now either way.
+                    bool revealing = !writtenThisFrame && !isOwnUI;
+                    if (revealing)
+                    {
+                        // A component flagged as an assembly (its first parts came in one frame)
+                        // now growing frame after frame: the frame decides, as it does above — it
+                        // leaves concat, or the reveal refuses to follow it and the addition is
+                        // never held, never settled, never sent (a book whose opening came in one
+                        // frame and its sentences one by one after).
+                        if (state.Mode == TextMode.Concat) LeaveConcat(state);
+
+                        // ⚠ The reveal FIRST: telling it may settle the addition before this one
+                        // (the game replaced it by this text), which sends it and clears its base.
+                        // A base set before that was cleared with it, and this addition had none.
+                        IsTypewritingInProgress(compId, preTranslateText, comp);
+
+                        // The text the additions grow from, kept until they are settled: every
+                        // write of a reveal appends to the one before, and what goes out is all
+                        // of it, not the last step. ⚠ Only a text entirely translated is a base:
+                        // one still holding a part of the game's own (a line of ours with the
+                        // game's first letter after it) would cut the addition in the middle of
+                        // a word — that text is left to the finalisation by lines.
+                        bool baseStillOurs = state.AppendBaseShown != null && appendedTo.StartsWith(state.AppendBaseShown, StringComparison.Ordinal);
+                        if (!baseStillOurs && !state.AssemblyMissing)
+                        {
+                            state.AppendBaseShown = appendedTo;
+                            state.AppendBaseTranslated = lastTranslatedTarget;
+                            state.AppendBaseSource = priorSource;
+                        }
+                    }
                     bool deltaMissing = false;
                     string transCore = string.IsNullOrEmpty(dCore) ? "" : KeepBreaks(dCore, TranslateUnit(dCore, comp, isOwnUI, skipQueueing: whole == null || revealing, out deltaMissing));
                     string translatedDelta = leadNL + transCore + trailNL;

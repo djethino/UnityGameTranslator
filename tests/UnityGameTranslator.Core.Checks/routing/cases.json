@@ -293,7 +293,8 @@
         { "f": 60, "t": 1.0, "append": "\n\nAllow me. ", "shows": " Cher lecteur,\n\nPermettez-moi. " },
         { "f": 120, "t": 2.0, "append": "Though it is odd. ", "shows": " Cher lecteur,\n\nPermettez-moi. Même si c'est étrange. " },
         { "f": 180, "t": 3.0, "append": "Nobody knows yet. ", "shows": " Cher lecteur,\n\nPermettez-moi. Même si c'est étrange. Nobody knows yet. " },
-        { "f": 200, "t": 3.5, "arrive": { "o": "Nobody knows yet. ", "tr": "Personne ne le sait encore. " }, "shows": " Cher lecteur,\n\nPermettez-moi. Même si c'est étrange. Personne ne le sait encore. " }
+        { "f": 215, "t": 3.6, "tick": true },
+        { "f": 230, "t": 3.8, "arrive": { "o": "Nobody knows yet. ", "tr": "Personne ne le sait encore. " }, "shows": " Cher lecteur,\n\nPermettez-moi. Même si c'est étrange. Personne ne le sait encore. " }
       ],
       "queued": [ "Nobody knows yet. " ]
     },
@@ -312,9 +313,24 @@
         { "f": 60, "t": 1.0, "append": "\n\nAllow me. ", "shows": " عزيزي القارئ،\n\nاسمح لي. " },
         { "f": 120, "t": 2.0, "append": "Though it is odd. ", "shows": " عزيزي القارئ،\n\nاسمح لي. مع أنه غريب. " },
         { "f": 180, "t": 3.0, "append": "Nobody knows yet. ", "shows": " عزيزي القارئ،\n\nاسمح لي. مع أنه غريب. Nobody knows yet. " },
-        { "f": 200, "t": 3.5, "arrive": { "o": "Nobody knows yet. ", "tr": "لا أحد يعرف بعد. " }, "shows": " عزيزي القارئ،\n\nاسمح لي. مع أنه غريب. لا أحد يعرف بعد. " }
+        { "f": 215, "t": 3.6, "tick": true },
+        { "f": 230, "t": 3.8, "arrive": { "o": "Nobody knows yet. ", "tr": "لا أحد يعرف بعد. " }, "shows": " عزيزي القارئ،\n\nاسمح لي. مع أنه غريب. لا أحد يعرف بعد. " }
       ],
       "queued": [ "Nobody knows yet. " ]
+    },
+    {
+      "id": "readback/a-clause-revealed-at-once-after-our-text-is-sent-whole-once-it-stops",
+      "why": "🔴 measured in a game (2026-09-27): a reveal after our translation that uncovers a clause at a time — seven, four, eight characters per write. Told apart from a part by its SIZE (three characters at most), each step went out as a part of its own. Held whatever its size, what was added since our text goes out once, whole, when the component stops",
+      "file": {"泰山之巅，风起云涌。": "Au sommet du mont Tai, le vent se lève."},
+      "steps": [
+        {"f": 1, "t": 0.0, "write": "泰山之巅，风起云涌。", "shows": "Au sommet du mont Tai, le vent se lève."},
+        {"f": 120, "t": 2.0, "append": "\n天下英雄豪杰，", "shows": "Au sommet du mont Tai, le vent se lève.\n天下英雄豪杰，"},
+        {"f": 122, "t": 2.04, "append": "武林高手", "shows": "Au sommet du mont Tai, le vent se lève.\n天下英雄豪杰，武林高手"},
+        {"f": 124, "t": 2.08, "append": "，一时尽汇于此。", "shows": "Au sommet du mont Tai, le vent se lève.\n天下英雄豪杰，武林高手，一时尽汇于此。"},
+        {"f": 180, "t": 3.0, "tick": true},
+        {"f": 190, "t": 3.2, "arrive": {"o": "天下英雄豪杰，武林高手，一时尽汇于此。", "tr": "Tous les héros du monde martial s'y rassemblent."}, "shows": "Au sommet du mont Tai, le vent se lève.\nTous les héros du monde martial s'y rassemblent."}
+      ],
+      "queued": ["天下英雄豪杰，武林高手，一时尽汇于此。"]
     },
     {
       "id": "readback/a-late-answer-never-overwrites-a-page-the-game-has-replaced",
@@ -328,6 +344,7 @@
         { "f": 1, "t": 0.0, "write": " Dear Reader,", "shows": " Cher lecteur," },
         { "f": 60, "t": 1.0, "append": "Nobody knows yet. ", "shows": " Cher lecteur,Nobody knows yet. " },
         { "f": 90, "t": 1.5, "write": "Chapter 1", "shows": "Chapitre 1" },
+        { "f": 100, "t": 1.6, "tick": true },
         { "f": 200, "t": 3.5, "arrive": { "o": "Nobody knows yet. ", "tr": "Personne ne le sait encore. " }, "shows": "Chapitre 1" }
       ],
       "queued": [ "Nobody knows yet. " ]
@@ -343,6 +360,7 @@
         { "f": 1, "t": 0.0, "write": " Dear Reader,", "shows": " Cher lecteur," },
         { "f": 60, "t": 1.0, "append": "Nobody knows yet. ", "shows": " Cher lecteur,Nobody knows yet. " },
         { "f": 90, "t": 1.5, "write": "Chapter 1", "shows": "Chapitre 1" },
+        { "f": 100, "t": 1.6, "tick": true },
         { "f": 200, "t": 3.5, "arrive": { "o": "Nobody knows yet. ", "tr": "Personne ne le sait encore. " }, "shows": "Chapitre 1" }
       ],
       "queued": [ "Nobody knows yet. " ]
@@ -557,10 +575,54 @@
       "steps": [
         { "f": 5, "t": 1.0, "write": "[1] The harvest is in.", "shows": "[1] La récolte est rentrée." },
         { "f": 90, "t": 3.0, "write": "[2] A stranger arrived.\n[1] The harvest is in.", "shows": "[2] A stranger arrived.\n[1] La récolte est rentrée." },
-        { "f": 91, "t": 3.1, "arrive": { "o": "[2] A stranger arrived.", "tr": "[2] Un inconnu est arrivé." }, "shows": "[2] Un inconnu est arrivé.\n[1] La récolte est rentrée." },
+        { "f": 110, "t": 3.6, "tick": true },
+        { "f": 111, "t": 3.7, "arrive": { "o": "[2] A stranger arrived.", "tr": "[2] Un inconnu est arrivé." }, "shows": "[2] Un inconnu est arrivé.\n[1] La récolte est rentrée." },
         { "f": 120, "t": 4.0, "tick": true }
       ],
       "queued": [ "[2] A stranger arrived." ]
+    },
+    {
+      "id": "lines/a-line-revealed-below-a-known-one-goes-out-once-finished",
+      "why": "a line the game reveals below a line already translated, one, two, five, seven characters at a time: a block of lines whatever its size, HELD until the component stops, then sent once, whole — never 'T', 'The', 'The guar'. Sent at the write, each state of the line went to the model",
+      "file": {"The gates are closed.": "Les portes sont fermées."},
+      "steps": [
+        {"f": 5, "t": 1.0, "write": "The gates are closed.", "shows": "Les portes sont fermées."},
+        {"f": 60, "t": 2.0, "write": "The gates are closed.\nT"},
+        {"f": 61, "t": 2.04, "write": "The gates are closed.\nThe"},
+        {"f": 62, "t": 2.08, "write": "The gates are closed.\nThe guar"},
+        {"f": 63, "t": 2.12, "write": "The gates are closed.\nThe guards are"},
+        {"f": 64, "t": 2.16, "write": "The gates are closed.\nThe guards are asleep."},
+        {"f": 120, "t": 3.0, "tick": true}
+      ],
+      "queued": ["The guards are asleep."]
+    },
+    {
+      "id": "lines/a-sentence-revealed-over-two-lines-goes-out-as-one-block",
+      "why": "🔴 measured in a game (2026-09-27): a sentence the game broke over two lines, revealed letter by letter. The second line is not a block added to a finished text — the first one was still being revealed, never sent, never known. Taken for a block, the first line was left out and the second went alone; the reveal holds the whole and sends it as one",
+      "file": {},
+      "steps": [
+        {"f": 1, "t": 0.0, "write": "Ti"},
+        {"f": 2, "t": 0.04, "write": "Times are"},
+        {"f": 3, "t": 0.08, "write": "Times are dark, the "},
+        {"f": 4, "t": 0.12, "write": "Times are dark, the emperor weak,"},
+        {"f": 5, "t": 0.16, "write": "Times are dark, the emperor weak,\nn"},
+        {"f": 6, "t": 0.2, "write": "Times are dark, the emperor weak,\nnow"},
+        {"f": 7, "t": 0.24, "write": "Times are dark, the emperor weak,\nnow is the h"},
+        {"f": 8, "t": 0.28, "write": "Times are dark, the emperor weak,\nnow is the hour to crown my brother."},
+        {"f": 90, "t": 1.5, "tick": true}
+      ],
+      "queued": ["Times are dark, the emperor weak,\nnow is the hour to crown my brother."]
+    },
+    {
+      "id": "lines/a-line-added-to-a-known-text-shows-the-whole-when-the-file-has-it",
+      "why": "measured in a game (2026-09-27): a tooltip of two known lines given a third one the file holds as part of the whole: the whole is looked up first and shown at once, and nothing is sent — kept as parts, the third line stayed in the source language for half a second and was asked for although the file had it",
+      "file": {"Special character\nCannot be recruited": "Personnage spécial\nRecrutement impossible", "Special character\nCannot be recruited\nNo intimacy": "Personnage spécial\nRecrutement impossible\nIntimité impossible"},
+      "steps": [
+        {"f": 5, "t": 1.0, "write": "Special character\nCannot be recruited", "shows": "Personnage spécial\nRecrutement impossible"},
+        {"f": 60, "t": 2.0, "write": "Special character\nCannot be recruited\nNo intimacy", "shows": "Personnage spécial\nRecrutement impossible\nIntimité impossible"},
+        {"f": 120, "t": 3.0, "tick": true, "shows": "Personnage spécial\nRecrutement impossible\nIntimité impossible"}
+      ],
+      "queued": []
     },
     {
       "id": "lines/a-line-added-to-a-text-not-yet-translated-is-sent-alone",
@@ -570,8 +632,9 @@
         { "f": 5, "t": 1.0, "write": "The gates are closed.", "shows": "The gates are closed." },
         { "f": 60, "t": 2.0, "tick": true },
         { "f": 90, "t": 3.0, "write": "The gates are closed.\nThe guards are asleep.", "shows": "The gates are closed.\nThe guards are asleep." },
-        { "f": 91, "t": 3.1, "arrive": { "o": "The guards are asleep.", "tr": "Les gardes dorment." }, "shows": "The gates are closed.\nLes gardes dorment." },
-        { "f": 92, "t": 3.2, "arrive": { "o": "The gates are closed.", "tr": "Les portes sont fermées." }, "shows": "Les portes sont fermées.\nLes gardes dorment." },
+        { "f": 110, "t": 3.6, "tick": true },
+        { "f": 111, "t": 3.7, "arrive": { "o": "The guards are asleep.", "tr": "Les gardes dorment." }, "shows": "The gates are closed.\nLes gardes dorment." },
+        { "f": 112, "t": 3.8, "arrive": { "o": "The gates are closed.", "tr": "Les portes sont fermées." }, "shows": "Les portes sont fermées.\nLes gardes dorment." },
         { "f": 150, "t": 5.0, "tick": true }
       ],
       "queued": [ "The gates are closed.", "The guards are asleep." ]

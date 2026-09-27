@@ -252,9 +252,22 @@ namespace UnityGameTranslator.Core
         {
             kept = keptTranslation = added = null;
             atHead = false;
+
+            // 🔴 **A block is added to a FINISHED text.** While the text before it is still being
+            // revealed — held, never settled, and not an addition already being followed — what
+            // comes next is the reveal going on, onto a new line: a sentence the game broke over
+            // two lines, revealed letter by letter. Taken for a block added, the first line (never
+            // sent, never known) was left out and the second went alone (measured 2026-09-27, a
+            // dialogue of two lines). The reveal holds the whole and sends it as one block. This
+            // used to be told by the size of the write, which a line starting with two characters
+            // passed by accident.
+            if (state.Mode == TextMode.Typewriter && !state.TypewritingQueued && state.AppendBaseShown == null)
+                return false;
             // ⚠ Even while a reveal holds the text: entries arriving faster than it settles
             // (several events at a change of month) kept the whole log held, then sent it whole.
-            // A reveal grows by a few characters (TryGrowth refuses that), never by whole lines.
+            // A block of lines is recognised whatever its size — a line being revealed letter by
+            // letter is one too, and is held with the rest until the component stops
+            // (AssembleGrowth, SettleAppend), so it never goes out one state at a time.
 
             // What the component showed before: the game's own text (with its translation when
             // the pair is known), or our translation, read back and added to.
@@ -280,7 +293,6 @@ namespace UnityGameTranslator.Core
             added = null;
             atHead = false;
             if (string.IsNullOrEmpty(before) || now == null || now.Length <= before.Length) return false;
-            if (TextRelations.LooksLikeTypewriterGrowth(before, now)) return false;
 
             if (now.EndsWith(before, StringComparison.Ordinal))
             {
@@ -327,20 +339,66 @@ namespace UnityGameTranslator.Core
         /// <summary>
         /// The text of a component that grew by a block of lines: what was there keeps its
         /// translation (or is looked up, never sent again — it already was), the block is
-        /// translated as one unit and sent when unknown. Both are this component's parts, so an
-        /// answer arriving later is put back into the whole (ReassembleConcat).
+        /// translated as one unit. Both are this component's parts, so an answer arriving later is
+        /// put back into the whole (ReassembleConcat).
+        ///
+        /// 🔴 **The block is HELD, not sent at the write.** It arrived in a frame of its own, so it
+        /// may still be growing — a line revealed letter by letter, entries of a log arriving over
+        /// several frames — and whether it is finished only what follows can tell. What is known
+        /// shows now; when the component stops, what was added since the text that was there goes
+        /// out as one block (SettleAppend). This used to be told by the size of the write: a growth
+        /// of three characters or less was not a block, and anything bigger went out at once.
         /// </summary>
         private string AssembleGrowth(ComponentTextState state, object comp, long compId, bool isOwnUI,
                                       string source, string kept, string keptTranslation, string added, bool atHead)
         {
+            // The whole first, as for an addition after our text: a file holding the grown text as
+            // one entry answers it now — kept as parts, the added line stayed in the source
+            // language until the component stopped, and was asked for although the file had it.
+            string wholeDone = Translate(source, comp, isOwnUI, skipTypewriting: true, skipQueueing: true);
+            if (wholeDone != source)
+            {
+                ForgetTypewriting(state);
+                _typewritingPending.Remove(compId);
+                state.Deltas = null;
+                state.AssemblyMissing = false;
+                state.LastTranslated = wholeDone;
+                return wholeDone;
+            }
+
             bool keptMissing = false, addedMissing = false;
             string keptDone = keptTranslation ?? TranslateUnit(kept, comp, isOwnUI, skipQueueing: true, out keptMissing);
             SplitNewlines(added, out string lead, out string core, out string trail);
-            string addedDone = lead + (string.IsNullOrEmpty(core) ? "" : KeepBreaks(core, TranslateUnit(core, comp, isOwnUI, skipQueueing: false, out addedMissing))) + trail;
+            bool hold = !isOwnUI;
+            string addedDone = lead + (string.IsNullOrEmpty(core) ? "" : KeepBreaks(core, TranslateUnit(core, comp, isOwnUI, skipQueueing: hold, out addedMissing))) + trail;
             string assembled = atHead ? addedDone + keptDone : keptDone + addedDone;
 
-            ForgetTypewriting(state);
-            _typewritingPending.Remove(compId);
+            if (hold)
+            {
+                // Where the kept text came from: the game's own text is its own source; our
+                // translation read back has the source of the tracked pair, when that pair is it.
+                string keptSource = kept == state.LastRaw ? kept
+                    : state.ReadBackTranslated != null && state.ReadBackTranslated == kept ? state.ReadBackSource : null;
+
+                // The reveal first — it may settle the block before this one, which clears its
+                // base (TextRouter.Route explains the order).
+                IsTypewritingInProgress(compId, source, comp);
+                bool baseStillThere = state.AppendBaseShown != null && state.AppendAtHead == atHead
+                    && (atHead ? kept.EndsWith(state.AppendBaseShown, StringComparison.Ordinal)
+                               : kept.StartsWith(state.AppendBaseShown, StringComparison.Ordinal));
+                if (!baseStillThere)
+                {
+                    state.AppendBaseShown = kept;
+                    state.AppendBaseTranslated = keptDone;
+                    state.AppendBaseSource = keptSource;
+                    state.AppendAtHead = atHead;
+                }
+            }
+            else
+            {
+                ForgetTypewriting(state);
+                _typewritingPending.Remove(compId);
+            }
             state.Deltas = atHead ? new List<string> { added, kept } : new List<string> { kept, added };
             state.AssemblyMissing = keptMissing || addedMissing;
             state.LastTranslated = assembled;

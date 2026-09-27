@@ -53,25 +53,6 @@ namespace UnityGameTranslator.Core
                    && current.StartsWith(previous, StringComparison.Ordinal);
         }
 
-        /// <summary>Most characters a single typewriter step is assumed to reveal.</summary>
-        public const int TypewriterMaxCharsPerStep = 3;
-
-        /// <summary>
-        /// Growth that looks like a **typewriter reveal**: a handful of characters at a time.
-        /// Used to take a component back OUT of concat mode when the game turns out to be
-        /// revealing rather than assembling.
-        ///
-        /// ⚠ The tests are ordered length → step size → prefix, which is the order the call site
-        /// used. Calling <see cref="Grows"/> first would scan the whole prefix before finding out
-        /// the step was too big — same answer, needless work on long texts.
-        /// </summary>
-        public static bool LooksLikeTypewriterGrowth(string previous, string current)
-        {
-            return current.Length > previous.Length
-                   && current.Length - previous.Length <= TypewriterMaxCharsPerStep
-                   && current.StartsWith(previous, StringComparison.Ordinal);
-        }
-
         /// <summary>
         /// Growth that looks like **procedural assembly**: the appended part carries something
         /// other than layout whitespace.

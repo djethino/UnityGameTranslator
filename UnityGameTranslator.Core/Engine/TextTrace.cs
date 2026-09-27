@@ -143,6 +143,25 @@ namespace UnityGameTranslator.Core
             Emit(new JObject { ["k"] = "reveal", ["c"] = comp, ["v"] = value, ["scaled"] = scaled });
         }
 
+        /// <summary>
+        /// A size the mod put on a component — its font size, or the bounds its game sizes it
+        /// within (TMP auto-size, uGUI best fit). <paramref name="original"/> is what the mod took
+        /// for the component's own size, and <paramref name="firstSight"/> says it was read off the
+        /// component just now: a size the mod had already scaled, read back as an original, is the
+        /// defect a trace of this has to show (a game cloning a template the mod had sized).
+        /// </summary>
+        public static void Size(long comp, string type, string name, string what, string font, float scale,
+                                float original, bool firstSight, float before, float after)
+        {
+            if (!On) return;
+            Emit(new JObject
+            {
+                ["k"] = "size", ["c"] = comp, ["type"] = type, ["name"] = name, ["what"] = what,
+                ["font"] = font, ["scale"] = Math.Round(scale, 4), ["orig"] = original,
+                ["first"] = firstSight, ["from"] = before, ["to"] = after,
+            });
+        }
+
         private static void Emit(JObject line)
         {
             lock (_gate)

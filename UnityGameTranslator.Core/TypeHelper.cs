@@ -400,18 +400,7 @@ namespace UnityGameTranslator.Core
 
             try
             {
-                var type = component.GetType();
-                PropertyInfo prop = null;
-
-                if (TMP_TextType != null && TMP_TextType.IsAssignableFrom(type))
-                    prop = TMP_FontSizeProp;
-                else if (UI_TextType != null && UI_TextType.IsAssignableFrom(type))
-                    prop = UI_FontSizeProp;
-
-                // Fallback: look up on actual type
-                if (prop == null)
-                    prop = type.GetProperty("fontSize", BindingFlags.Public | BindingFlags.Instance);
-
+                var prop = FontSizePropOf(component.GetType());
                 if (prop != null)
                 {
                     var val = prop.GetValue(component, null);
@@ -474,6 +463,31 @@ namespace UnityGameTranslator.Core
         /// <summary>
         /// Set fontSize on a text component (TMP_Text or UI.Text).
         /// </summary>
+        // The fontSize property of a text type: TMP's (float), uGUI's (int), or whatever the type
+        // itself calls fontSize.
+        private static PropertyInfo FontSizePropOf(Type type)
+        {
+            if (TMP_TextType != null && TMP_TextType.IsAssignableFrom(type)) return TMP_FontSizeProp ?? type.GetProperty("fontSize", BindingFlags.Public | BindingFlags.Instance);
+            if (UI_TextType != null && UI_TextType.IsAssignableFrom(type)) return UI_FontSizeProp ?? type.GetProperty("fontSize", BindingFlags.Public | BindingFlags.Instance);
+            return type.GetProperty("fontSize", BindingFlags.Public | BindingFlags.Instance);
+        }
+
+        /// <summary>
+        /// The size a component will actually hold once <paramref name="size"/> is written to it:
+        /// rounded when its fontSize is a whole number (uGUI Text).
+        ///
+        /// 🔴 Compare against THIS, never the raw scaled size. A scaled 14.3 written to uGUI Text
+        /// is held as 14, and 14 always differs from 14.3: the size was rewritten on every pass,
+        /// forever, each write dirtying the text's layout (measured: tens of thousands of writes in
+        /// a few minutes of one game).
+        /// </summary>
+        public static float HeldFontSize(object component, float size)
+        {
+            if (component == null) return size;
+            var prop = FontSizePropOf(component.GetType());
+            return prop != null && prop.PropertyType == typeof(int) ? (float)Math.Round(size) : size;
+        }
+
         public static void SetFontSize(object component, float size)
         {
             if (component == null) return;
@@ -485,18 +499,7 @@ namespace UnityGameTranslator.Core
 
             try
             {
-                var type = component.GetType();
-                PropertyInfo prop = null;
-
-                if (TMP_TextType != null && TMP_TextType.IsAssignableFrom(type))
-                    prop = TMP_FontSizeProp;
-                else if (UI_TextType != null && UI_TextType.IsAssignableFrom(type))
-                    prop = UI_FontSizeProp;
-
-                // Fallback
-                if (prop == null)
-                    prop = type.GetProperty("fontSize", BindingFlags.Public | BindingFlags.Instance);
-
+                var prop = FontSizePropOf(component.GetType());
                 if (prop != null && prop.CanWrite)
                 {
                     // Set with the correct type (float for TMP, int for UI.Text)
@@ -1499,7 +1502,7 @@ namespace UnityGameTranslator.Core
                     {
                         var result = _il2cppResourcesFindAllMethod.Invoke(null, new[] { il2cppType });
                         if (result is UnityEngine.Object[] array)
-                            return array;
+                            return OnlyInScene(type, array);
 
                         // IL2CPP may return Il2CppReferenceArray — convert
                         if (result is System.Collections.IEnumerable enumerable)
@@ -1510,7 +1513,7 @@ namespace UnityGameTranslator.Core
                                 if (item is UnityEngine.Object uobj)
                                     list.Add(uobj);
                             }
-                            return list.ToArray();
+                            return OnlyInScene(type, list.ToArray());
                         }
                     }
                 }
@@ -1536,6 +1539,109 @@ namespace UnityGameTranslator.Core
             // because the method doesn't exist and JIT resolves references before try/catch
             return FindAllObjectsOfTypeMono(type);
         }
+
+        // Instance id → whether that object lives in a loaded scene. An object never changes side:
+        // an asset stays an asset, and instantiating one makes a new object with a new id. Emptied
+        // when a scene unloads (ForgetSceneMembership) so it does not grow with every scene.
+        private static readonly Dictionary<int, bool> _inScene = new Dictionary<int, bool>();
+        private static bool _sceneMembershipRefused;
+
+        /// <summary>
+        /// What a scene lookup must answer: the objects of the loaded scenes, never the prefabs and
+        /// other assets that <c>Resources.FindObjectsOfTypeAll</c> returns beside them.
+        ///
+        /// 🔴 **Why.** The IL2CPP route (and the last Mono fallback) of <see cref="FindAllObjectsOfType"/>
+        /// is <c>FindObjectsOfTypeAll</c>, so it handed the scanner a game's PREFABS as if they were on
+        /// screen. The mod then scaled a template's font size; every copy the game made of it afterwards
+        /// started from the scaled size, which the mod read as the copy's own and scaled again. Text
+        /// shrank on the second load of a save, stayed small until the game restarted, and only the
+        /// texts built from templates were affected. The Mono route never saw a prefab: this puts both
+        /// runtimes back on one answer.
+        ///
+        /// ⚠ Components and GameObjects only — an asset type (a font, a sprite) is what an asset scan
+        /// is FOR, and passes untouched.
+        /// </summary>
+        public static UnityEngine.Object[] OnlyInScene(Type type, UnityEngine.Object[] found)
+        {
+            if (found == null || found.Length == 0 || _sceneMembershipRefused) return found;
+            if (!typeof(Component).IsAssignableFrom(type) && type != typeof(GameObject)) return found;
+
+            // Nothing is allocated when every object is in a scene — the usual answer.
+            List<UnityEngine.Object> kept = null;
+            for (int i = 0; i < found.Length; i++)
+            {
+                var obj = found[i];
+                bool inScene = obj != null && InScene(obj);
+                if (_sceneMembershipRefused) return found;
+
+                if (inScene)
+                {
+                    kept?.Add(obj);
+                }
+                else if (kept == null)
+                {
+                    kept = new List<UnityEngine.Object>(found.Length);
+                    for (int j = 0; j < i; j++) kept.Add(found[j]);
+                }
+            }
+            return kept == null ? found : kept.ToArray();
+        }
+
+        /// <summary>
+        /// Whether a text component is one the game shows — in a loaded scene — rather than a prefab
+        /// or other asset. What is not a Unity object (a component of another engine's UI) is shown.
+        /// The size code asks it: a setter the game calls on a TEMPLATE reaches the patches too, and a
+        /// template's size must stay the game's, since every copy starts from it (see OnlyInScene).
+        /// </summary>
+        public static bool IsInScene(object instance)
+        {
+            if (!(instance is UnityEngine.Object obj)) return true;
+            return obj == null || InScene(obj) || _sceneMembershipRefused;
+        }
+
+        // The verdict for one live object, read once per object. The engine may not expose a
+        // GameObject's scene on this runtime: said once, and every object is then treated as shown —
+        // what lookups answered before this filter existed.
+        private static bool InScene(UnityEngine.Object obj)
+        {
+            if (_sceneMembershipRefused) return true;
+            int id = obj.GetInstanceID();
+            if (_inScene.TryGetValue(id, out bool inScene)) return inScene;
+            try { inScene = ReadInScene(obj); }
+            catch (Exception ex)
+            {
+                _sceneMembershipRefused = true;
+                Faults.Say("TypeHelper.InScene", ex, "scene membership cannot be read here: prefabs are treated as shown");
+                return true;
+            }
+            _inScene[id] = inScene;
+            return inScene;
+        }
+
+        /// <summary>
+        /// Whether that object sits in a loaded scene — including the DontDestroyOnLoad one. A prefab
+        /// or any other asset belongs to none: its scene handle is 0.
+        ///
+        /// ⚠ A method of its own, guarded by its caller: IL2CPP resolves a member the game lacks when
+        /// it compiles the method that NAMES it, so a guard written inside would never run.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static bool ReadInScene(UnityEngine.Object obj)
+        {
+            var go = obj as GameObject;
+            if (go == null)
+            {
+                // An IL2CPP array element is wrapped as UnityEngine.Object: C# casts do not see the
+                // component it is, TryCast does.
+                var comp = obj as Component ?? Il2CppCast(obj, typeof(Component)) as Component;
+                if (comp == null) return true; // not a component after all: nothing to decide, kept
+                go = comp.gameObject;
+            }
+            return go != null && go.scene.handle != 0;
+        }
+
+        /// <summary>Forgets which objects were seen in a scene — called when a scene unloads.</summary>
+        public static void ForgetSceneMembership() => _inScene.Clear();
 
         /// <summary>
         /// Find all loaded objects of an ASSET type (ScriptableObject-derived, e.g.
@@ -1686,7 +1792,7 @@ namespace UnityGameTranslator.Core
                 if (method != null)
                 {
                     var result = method.Invoke(null, new object[] { type }) as UnityEngine.Object[];
-                    if (result != null) return result;
+                    if (result != null) return OnlyInScene(type, result);
                 }
             }
             catch (Exception ex) { Faults.Say("TypeHelper.FindAllObjectsOfTypeMono Resources.FindObjectsOfTypeAll", ex, type.Name); }

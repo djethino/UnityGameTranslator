@@ -2103,6 +2103,7 @@ namespace UnityGameTranslator.Core
             FontManager.CleanDeadComponentRefs();
             TranslatorPatches.CleanDeadRefs();
             Router.ClearTypewritingState();
+            TypeHelper.ForgetSceneMembership();
 
             if (DebugMode)
                 Adapter?.LogInfo($"Scene unloaded: {sceneName}");

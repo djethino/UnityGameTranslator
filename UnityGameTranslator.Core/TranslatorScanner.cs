@@ -3376,6 +3376,8 @@ namespace UnityGameTranslator.Core
             var result = resourcesFindAllMethod.Invoke(null, new[] { il2cppType });
             if (result == null) return null;
 
+            // FindObjectsOfTypeAll also returns the game's prefabs: only what a scene holds is kept
+            // (TypeHelper.OnlyInScene says why).
             var asArray = result as UnityEngine.Object[];
             if (asArray == null)
             {
@@ -3388,12 +3390,12 @@ namespace UnityGameTranslator.Core
                         if (item is UnityEngine.Object uobj)
                             list.Add(uobj);
                     }
-                    return list.ToArray();
+                    return TypeHelper.OnlyInScene(typeof(Component), list.ToArray());
                 }
                 return null;
             }
 
-            return asArray;
+            return TypeHelper.OnlyInScene(typeof(Component), asArray);
         }
 
         #endregion

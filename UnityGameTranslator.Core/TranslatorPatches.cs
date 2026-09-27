@@ -997,6 +997,8 @@ namespace UnityGameTranslator.Core
         {
             if (IsOwnUIText(instance)) return;
             if (typeInfo.FontSizeProp == null || string.IsNullOrEmpty(fontName)) return;
+            // A template's size stays the game's: every copy starts from it (TypeHelper.OnlyInScene).
+            if (!TypeHelper.IsInScene(instance)) return;
 
             int instanceId = TypeHelper.GetInstanceID(instance);
             float scale = FontManager.GetFontScale(fontName, instanceId);
@@ -1037,7 +1039,11 @@ namespace UnityGameTranslator.Core
                 return;
             }
 
-            float scaledSize = originalSize * scale;
+            // What the component will hold: rounded for a whole-number size, or the comparison below
+            // never settles and the size is rewritten on every pass (TypeHelper.HeldFontSize).
+            float scaledSize = typeInfo.FontSizeProp.PropertyType == typeof(int)
+                ? (float)Math.Round(originalSize * scale)
+                : originalSize * scale;
             try
             {
                 float currentSize = Convert.ToSingle(typeInfo.FontSizeProp.GetValue(instance, null));
@@ -2445,6 +2451,8 @@ namespace UnityGameTranslator.Core
         {
             if (IsOwnUIText(instance)) return;
             if (instance == null || string.IsNullOrEmpty(fontName)) return;
+            // A template's size stays the game's: every copy starts from it (TypeHelper.OnlyInScene).
+            if (!TypeHelper.IsInScene(instance)) return;
 
             int instanceId = TypeHelper.GetInstanceID(instance);
             float scale = FontManager.GetFontScale(fontName, instanceId);
@@ -2483,7 +2491,8 @@ namespace UnityGameTranslator.Core
             // Apply font size bump for runtime font changes.
             // Bumping fontSize by ±1 creates new atlas cache entries → forces re-rasterization
             // with updated fontNames. 1px difference during runtime testing, resets on restart.
-            float targetSize = (originalSize + bump) * scale;
+            // What the component will hold — rounded for a whole-number size (TypeHelper.HeldFontSize).
+            float targetSize = TypeHelper.HeldFontSize(instance, (originalSize + bump) * scale);
 
             float currentSize = TypeHelper.GetFontSize(instance);
 

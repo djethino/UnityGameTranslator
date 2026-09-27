@@ -42,15 +42,28 @@ namespace UnityGameTranslator.Core
             return null;
         }
 
+        // The types of each assembly read so far. A loaded assembly's types never change, and the
+        // scans ask again and again: an assembly with a type that cannot load threw a
+        // ReflectionTypeLoadException at every scan (measured: over a hundred in one session of a
+        // game), each said again as a new fault. Read once, said once.
+        private static readonly Dictionary<Assembly, Type[]> _read = new Dictionary<Assembly, Type[]>();
+        private static readonly object _readLock = new object();
+
         public static Type[] Of(Assembly assembly)
         {
             // Made at run time (Harmony's patch stubs, emitted helpers): never a game's types, and
             // a runtime may refuse to list them at all.
             if (assembly.IsDynamic) return Type.EmptyTypes;
 
+            lock (_readLock)
+            {
+                if (_read.TryGetValue(assembly, out var known)) return known;
+            }
+
+            Type[] types;
             try
             {
-                return assembly.GetTypes();
+                types = assembly.GetTypes();
             }
             catch (ReflectionTypeLoadException ex)
             {
@@ -59,10 +72,13 @@ namespace UnityGameTranslator.Core
                     if (type != null) loaded.Add(type);
 
                 Exception first = ex.LoaderExceptions != null && ex.LoaderExceptions.Length > 0 ? ex.LoaderExceptions[0] : ex;
-                Faults.Say("AssemblyTypes.Of partial load", first,
-                    $"{assembly.GetName().Name}: {ex.Types.Length - loaded.Count} type(s) could not load, the other {loaded.Count} are read");
-                return loaded.ToArray();
+                Faults.Say("AssemblyTypes.Of partial load (" + assembly.GetName().Name + ")", first,
+                    $"{ex.Types.Length - loaded.Count} type(s) could not load, the other {loaded.Count} are read");
+                types = loaded.ToArray();
             }
+
+            lock (_readLock) { _read[assembly] = types; }
+            return types;
         }
     }
 }

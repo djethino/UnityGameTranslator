@@ -4535,61 +4535,12 @@ namespace UnityGameTranslator.Core
                                 font.name = fontName;
                                 TranslatorCore.LogDebug($"[FontManager] Created Font via Internal_CreateFontFromPath: {Sanitize.Path(fontPath)}");
 
-                                // Try to make the font dynamic by setting internal properties
-                                // and calling RequestCharactersInTexture
-                                try
-                                {
-                                    // Set m_FontSize (internal field) to enable dynamic rasterization
-                                    var fontSizeProp = fontType.GetProperty("fontSize", BindingFlags.Public | BindingFlags.Instance);
-                                    if (fontSizeProp != null && fontSizeProp.CanWrite)
-                                        fontSizeProp.SetValue(font, 32, null);
-
-                                    // Dump all writable properties to understand what we can set
-                                    var allProps = fontType.GetProperties(BindingFlags.Public | BindingFlags.Instance);
-                                    var propInfo = new List<string>();
-                                    foreach (var p in allProps)
-                                    {
-                                        try
-                                        {
-                                            var val = p.GetValue(font, null);
-                                            propInfo.Add($"{p.Name}={val}({(p.CanWrite ? "rw" : "ro")})");
-                                        }
-                                        catch (Exception ex) { propInfo.Add($"{p.Name}=(err: {ex.GetType().Name})"); }
-                                    }
-                                    TranslatorCore.LogDebug($"[FontManager] Font props: {string.Join(", ", propInfo)}");
-
-                                    // Try RequestCharactersInTexture
-                                    string testChars = "ABCabc";
-                                    var requestMethod = fontType.GetMethod("RequestCharactersInTexture",
-                                        BindingFlags.Public | BindingFlags.Instance);
-                                    if (requestMethod != null)
-                                    {
-                                        var reqParams = requestMethod.GetParameters();
-                                        TranslatorCore.LogDebug($"[FontManager] RequestCharactersInTexture params: {string.Join(", ", reqParams.Select(p => p.ParameterType.Name))}");
-
-                                        if (reqParams.Length == 3)
-                                            requestMethod.Invoke(font, new object[] { testChars, 32, FontStyle.Normal });
-                                        else if (reqParams.Length == 2)
-                                            requestMethod.Invoke(font, new object[] { testChars, 32 });
-                                        else if (reqParams.Length == 1)
-                                            requestMethod.Invoke(font, new object[] { testChars });
-
-                                        TranslatorCore.LogDebug($"[FontManager] After request: dynamic={font.dynamic}");
-
-                                        // Check GetCharacterInfo for 'A'
-                                        var getCharMethod = fontType.GetMethod("GetCharacterInfo",
-                                            BindingFlags.Public | BindingFlags.Instance);
-                                        if (getCharMethod != null)
-                                        {
-                                            TranslatorCore.LogDebug($"[FontManager] GetCharacterInfo params: {string.Join(", ", getCharMethod.GetParameters().Select(p => p.ParameterType.Name + " " + p.Name))}");
-                                        }
-                                    }
-                                }
-                                catch (Exception reqEx)
-                                {
-                                    TranslatorCore.LogDebug($"[FontManager] Font setup failed (trying fallback): {reqEx.InnerException?.Message ?? reqEx.Message}");
-                                }
-
+                                // ⚠ A probe stood here — set fontSize, dump every property, call
+                                // RequestCharactersInTexture("ABCabc") "to make the font dynamic" — and never
+                                // ran: that method has three overloads, so GetMethod by name threw an
+                                // ambiguous match every time, on every game, and fontSize is read-only.
+                                // Removed on 2026-09-27 when the silent catches stopped hiding it; the font
+                                // has always worked without it (CreateFontAsset is what follows).
                                 return font;
                             }
                         }

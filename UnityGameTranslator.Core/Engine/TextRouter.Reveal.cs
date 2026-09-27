@@ -297,15 +297,21 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// The text held was written whole — it never grew nor had its markup walk — and reads as
-        /// a finished text: longer than one step of a reveal, and not a template waiting for its
-        /// values (a `{0}` the game has not filled in yet is never a line anybody reads).
+        /// The text held was written whole — it never grew nor had its markup walk — and is not a
+        /// template waiting for its values (a `{0}` the game has not filled in yet is never a line
+        /// anybody reads).
+        ///
+        /// ⚠ **Whatever its length.** It also had to be longer than one step of a reveal (three
+        /// characters), and that guarded nothing: this branch only meets a text replaced by one
+        /// that does NOT go on from it, which is never a reveal going on. Replayed on every capture
+        /// of the bench (2026-09-27), the length decided one text in 8 473 — `生命` ("Life"), a
+        /// characteristic's label swept past, dropped for being two characters long.
         /// </summary>
         private static bool WrittenWhole(ComponentTextState state)
         {
             string text = state.TypewritingText;
             return !state.TypewritingGrew
-                   && text != null && text.Length > TextRelations.TypewriterMaxCharsPerStep
+                   && !string.IsNullOrEmpty(text)
                    && !TemplateSlot.IsMatch(text);
         }
 

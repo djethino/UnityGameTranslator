@@ -42,6 +42,17 @@
       "queued": [ "Strength: +1 damage per point", "Agility: +1 dodge per point", "Wisdom: +1 focus per point" ]
     },
     {
+      "id": "reveal/a-short-label-swept-past-is-still-sent",
+      "why": "🔴 replayed from a game (2026-09-27): a characteristic's label of two characters, 生命, written whole and replaced by the next one 0.3 s later as the pointer moved on. A text written whole is sent whatever its length — the length rule dropped it for being as short as a step of a reveal, which a text replaced by one that does not go on from it never is",
+      "file": {},
+      "steps": [
+        {"f": 1, "t": 0.0, "write": "生命", "shows": "生命"},
+        {"f": 20, "t": 0.3, "write": "内力", "shows": "内力"},
+        {"f": 90, "t": 1.5, "tick": true}
+      ],
+      "queued": ["生命", "内力"]
+    },
+    {
       "id": "reveal/a-tooltip-that-is-the-first-lines-of-a-known-one-is-sent",
       "why": "🔴 seen in a game (2026-09-26): a level-one talent tooltip is, numbers lifted out, the first lines of the next level's tooltip already in the file. Held as 'the head of a longer known line', it was never sent. Written whole and ending where the known one goes on to a new line, it is a text of its own",
       "file": { "Blade +10\nCost: 8\n\nReplaces:\nKnife": "Lame +10\nCoût : 8\n\nRemplace :\nCouteau" },

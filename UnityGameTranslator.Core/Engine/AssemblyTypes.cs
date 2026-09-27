@@ -22,10 +22,13 @@ namespace UnityGameTranslator.Core
         /// assembly needs a file this game does not have — which no condition can tell beforehand.
         /// That assembly is then skipped, and said.
         /// </summary>
-        public static Type Find(string fullName)
+        /// <param name="skip">An assembly never to answer from — the mod's own, for a caller reading
+        /// the GAME's values (the mod holds things in memory the game does not).</param>
+        public static Type Find(string fullName, Assembly skip = null)
         {
             foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
             {
+                if (assembly == skip) continue;
                 try
                 {
                     var type = assembly.GetType(fullName);

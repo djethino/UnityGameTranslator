@@ -308,11 +308,10 @@ namespace UnityGameTranslator.Core
 
                 Type actualType;
                 try { actualType = obj.GetActualType(); }
-                catch { actualType = rootType; }
+                catch (Exception ex) { Faults.Say("VariableManager.ResolveViaUnityInstance actual type", ex); actualType = rootType; }
 
                 object current;
-                try { current = TypeHelper.Il2CppCast(obj, actualType) ?? obj; }
-                catch { current = obj; }
+                current = TypeHelper.Il2CppCast(obj, actualType) ?? obj;   // says its own failures
 
                 for (int i = 0; i < parts.Length; i++)
                 {
@@ -323,8 +322,9 @@ namespace UnityGameTranslator.Core
                 if (current is string str) return str;
                 return current.ToString();
             }
-            catch
+            catch (Exception ex)
             {
+                Faults.Say("VariableManager.ResolveViaUnityInstance", ex);
                 return null;
             }
         }
@@ -350,8 +350,9 @@ namespace UnityGameTranslator.Core
                 if (current is string str) return str;
                 return current.ToString();
             }
-            catch
+            catch (Exception ex)
             {
+                Faults.Say("VariableManager.ResolveViaStaticRoot", ex);
                 return null;
             }
         }
@@ -368,7 +369,7 @@ namespace UnityGameTranslator.Core
 
             Type type;
             try { type = instance.GetActualType(); }
-            catch { type = instance.GetType(); }
+            catch (Exception ex) { Faults.Say("VariableManager.GetMemberValue actual type", ex); type = instance.GetType(); }
 
             var prop = FindProperty(type, memberName, BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly)
                 ?? FindProperty(type, memberName, BindingFlags.Public | BindingFlags.Instance)
@@ -376,7 +377,7 @@ namespace UnityGameTranslator.Core
             if (prop != null && prop.CanRead)
             {
                 try { return prop.GetValue(instance, null); }
-                catch { return null; }
+                catch (Exception ex) { Faults.Say("VariableManager.GetMemberValue property", ex); return null; }
             }
 
             var fieldFlags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
@@ -384,30 +385,18 @@ namespace UnityGameTranslator.Core
             if (field != null)
             {
                 try { return field.GetValue(instance); }
-                catch { return null; }
+                catch (Exception ex) { Faults.Say("VariableManager.GetMemberValue field", ex); return null; }
             }
 
             return null;
         }
 
-        /// <summary>GetProperty guarded against AmbiguousMatchException (properties re-declared with "new").</summary>
+        /// <summary>
+        /// A property re-declared with "new" makes GetProperty throw AmbiguousMatchException:
+        /// Engine/Members walks the properties instead, and answers the most derived one.
+        /// </summary>
         private static PropertyInfo FindProperty(Type type, string name, BindingFlags flags)
-        {
-            try
-            {
-                return type.GetProperty(name, flags);
-            }
-            catch
-            {
-                try
-                {
-                    foreach (var p in type.GetProperties(flags))
-                        if (p.Name == name) return p;
-                }
-                catch { }
-                return null;
-            }
-        }
+            => Members.Property(type, name, flags);
 
         /// <summary>
         /// Read a static member by name on a type or any of its base classes.
@@ -429,7 +418,9 @@ namespace UnityGameTranslator.Core
                     var prop = FindProperty(t, memberName, flags);
                     if (prop != null && prop.CanRead) return prop.GetValue(null, null);
                 }
-                catch { }
+                // A static of the game read through its own code (a static constructor, a getter):
+                // one that throws is left unread, and it is said.
+                catch (Exception ex) { Faults.Say("VariableManager.GetStaticMemberValue", ex, $"{t.Name}.{memberName}"); }
             }
 
             return null;
@@ -446,47 +437,26 @@ namespace UnityGameTranslator.Core
 
         private static Type FindType(string className)
         {
-            // Try direct lookup first (fast, no GetTypes iteration)
-            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
-            {
-                if (asm == ModAssembly) continue;
-
-                try
-                {
-                    var type = asm.GetType(className);
-                    if (type != null) return type;
-                }
-                catch { }
-            }
+            // Direct lookup first (fast, no GetTypes iteration), never in the mod's own assembly.
+            var direct = AssemblyTypes.Find(className, ModAssembly);
+            if (direct != null) return direct;
 
             // IL2CPP: try with Il2Cpp prefix
             string il2cppName = "Il2Cpp" + className;
-            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
-            {
-                if (asm == ModAssembly) continue;
-
-                try
-                {
-                    var type = asm.GetType(il2cppName);
-                    if (type != null) return type;
-                }
-                catch { }
-            }
+            var prefixed = AssemblyTypes.Find(il2cppName, ModAssembly);
+            if (prefixed != null) return prefixed;
 
             // Last resort: name-only search (slower but handles partial names)
             foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
             {
                 if (asm == ModAssembly) continue;
 
-                try
+                // The types that load (AssemblyTypes: GetTypes refuses a whole assembly for one).
+                foreach (var type in AssemblyTypes.Of(asm))
                 {
-                    foreach (var type in asm.GetTypes())
-                    {
-                        if (type.Name == className || type.Name == il2cppName)
-                            return type;
-                    }
+                    if (type.Name == className || type.Name == il2cppName)
+                        return type;
                 }
-                catch { }
             }
 
             return null;
@@ -740,27 +710,19 @@ namespace UnityGameTranslator.Core
             done?.Invoke(results);
         }
 
-        /// <summary>An assembly the scan has no business reading. Swallows its own failure, as before.</summary>
+        /// <summary>An assembly the scan has no business reading. Nothing here throws.</summary>
         private static bool SkippedAssembly(Assembly asm, string[] skipPrefixes)
         {
-            try
-            {
-                string asmName = asm.GetName().Name;
-                foreach (var prefix in skipPrefixes)
-                    if (asmName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
-                        return true;
-                TranslatorCore.LogDebug($"[VariableManager] Scanning assembly: {asmName}");
-                return false;
-            }
-            catch { return true; }
+            string asmName = asm.GetName().Name;
+            foreach (var prefix in skipPrefixes)
+                if (asmName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            TranslatorCore.LogDebug($"[VariableManager] Scanning assembly: {asmName}");
+            return false;
         }
 
-        /// <summary>The types of an assembly, or none when it refuses to say.</summary>
-        private static Type[] TypesOf(Assembly asm)
-        {
-            try { return asm.GetTypes(); }
-            catch { return Type.EmptyTypes; }
-        }
+        /// <summary>The types of an assembly that load (see AssemblyTypes: never the whole assembly lost for one).</summary>
+        private static Type[] TypesOf(Assembly asm) => AssemblyTypes.Of(asm);
 
         /// <summary>One type's statics and, when it can have one, its singleton.</summary>
         private static void ScanOneType(Type type, string searchValue,
@@ -773,7 +735,7 @@ namespace UnityGameTranslator.Core
                 if (!(type.IsAbstract && type.IsSealed))
                     ScanTypeSingleton(type, searchValue, results, seen);
             }
-            catch { }
+            catch (Exception ex) { Faults.Say("VariableManager.ScanOneType", ex); }
         }
 
         private static void ScanTypeStaticFields(Type type, string searchValue, List<VariableCandidate> results, HashSet<string> seen)
@@ -793,7 +755,7 @@ namespace UnityGameTranslator.Core
                         if (rank > 0)
                             AddCandidate(results, seen, type.Name, field.Name, strVal, true, rank);
                     }
-                    catch { }
+                    catch (Exception ex) { Faults.Say("VariableManager.ScanTypeStaticFields static field", ex); }
                 }
 
                 foreach (var prop in type.GetProperties(flags))
@@ -815,10 +777,10 @@ namespace UnityGameTranslator.Core
                         if (rank > 0)
                             AddCandidate(results, seen, type.Name, prop.Name, strVal, true, rank);
                     }
-                    catch { }
+                    catch (Exception ex) { Faults.Say("VariableManager.ScanTypeStaticFields static property", ex); }
                 }
             }
-            catch { }
+            catch (Exception ex) { Faults.Say("VariableManager.ScanTypeStaticFields", ex); }
         }
 
         private static void ScanTypeSingleton(Type type, string searchValue, List<VariableCandidate> results, HashSet<string> seen)
@@ -886,7 +848,7 @@ namespace UnityGameTranslator.Core
                             }
                         }
                     }
-                    catch { }
+                    catch (Exception ex) { Faults.Say("VariableManager.GetSingletonInstanceForScan", ex); }
                 }
             }
 
@@ -932,7 +894,7 @@ namespace UnityGameTranslator.Core
                     }
                 }
             }
-            catch { }
+            catch (Exception ex) { Faults.Say("VariableManager.IsIl2CppProxyType", ex); }
 
             _proxyTypeCache[type] = isProxy;
             return isProxy;
@@ -955,7 +917,7 @@ namespace UnityGameTranslator.Core
 
             Type actualType;
             try { actualType = instance.GetActualType(); }
-            catch { actualType = instance.GetType(); }
+            catch (Exception ex) { Faults.Say("VariableManager.ScanObjectRecursive actual type", ex); actualType = instance.GetType(); }
 
             var flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly;
 
@@ -964,7 +926,9 @@ namespace UnityGameTranslator.Core
                 bool proxyLevel = IsIl2CppProxyType(t);
 
                 FieldInfo[] fields;
-                try { fields = t.GetFields(flags); } catch { fields = null; }
+                try { fields = t.GetFields(flags); }
+                // A field whose type needs a file this game lacks makes the whole list throw: said.
+                catch (Exception ex) { Faults.Say("VariableManager.ScanObjectRecursive fields", ex, t.Name); fields = null; }
                 if (fields != null)
                 {
                     foreach (var field in fields)
@@ -976,12 +940,13 @@ namespace UnityGameTranslator.Core
                             HandleScannedMember(val, field.FieldType, rootClassName, parentPath, field.Name,
                                 searchValue, results, seen, depth, visited);
                         }
-                        catch { }
+                        catch (Exception ex) { Faults.Say("VariableManager.ScanObjectRecursive field", ex); }
                     }
                 }
 
                 PropertyInfo[] props;
-                try { props = t.GetProperties(flags); } catch { props = null; }
+                try { props = t.GetProperties(flags); }
+                catch (Exception ex) { Faults.Say("VariableManager.ScanObjectRecursive properties", ex, t.Name); props = null; }
                 if (props != null)
                 {
                     foreach (var prop in props)
@@ -1003,7 +968,7 @@ namespace UnityGameTranslator.Core
                             HandleScannedMember(val, prop.PropertyType, rootClassName, parentPath, prop.Name,
                                 searchValue, results, seen, depth, visited);
                         }
-                        catch { }
+                        catch (Exception ex) { Faults.Say("VariableManager.ScanObjectRecursive property", ex); }
                     }
                 }
             }
@@ -1069,7 +1034,7 @@ namespace UnityGameTranslator.Core
         {
             Type type;
             try { type = value.GetActualType(); }
-            catch { type = value.GetType(); }
+            catch (Exception ex) { Faults.Say("VariableManager.CanRecurseInto actual type", ex); type = value.GetType(); }
 
             if (type.IsPrimitive || type.IsEnum || type.IsValueType) return false;
             if (type == typeof(string)) return false;
@@ -1214,7 +1179,7 @@ namespace UnityGameTranslator.Core
 
                 Type actualType;
                 try { actualType = obj.GetActualType(); }
-                catch { return false; }
+                catch (Exception ex) { Faults.Say("VariableManager.ScanOneInstance actual type", ex); return false; }
 
                 string asmName = actualType.Assembly.GetName().Name;
                 foreach (var prefix in skipPrefixes)
@@ -1222,14 +1187,13 @@ namespace UnityGameTranslator.Core
                         return false;
 
                 object typed;
-                try { typed = TypeHelper.Il2CppCast(obj, actualType) ?? obj; }
-                catch { typed = obj; }
+                typed = TypeHelper.Il2CppCast(obj, actualType) ?? obj;   // says its own failures
 
                 var visited = new HashSet<object>(ReferenceComparer.Comparer);
                 ScanObjectRecursive(typed, actualType.Name, "", searchValue, results, seen, 0, visited);
                 return true;
             }
-            catch { return false; }
+            catch (Exception ex) { Faults.Say("VariableManager.ScanOneInstance", ex); return false; }
         }
 
         #endregion

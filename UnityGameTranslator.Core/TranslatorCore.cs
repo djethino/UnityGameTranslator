@@ -1970,6 +1970,14 @@ namespace UnityGameTranslator.Core
             if (!Directory.Exists(ModFolder))
                 Directory.CreateDirectory(ModFolder);
 
+            // Where fonts, pictures and packs go — made here so a player told "put it in packs/" finds
+            // the folder (AssetPacks.PreparedFolders). ⚠ Never a reason to stop: the game goes on.
+            foreach (var prepared in UnityGameTranslator.Common.AssetPacks.PreparedFolders)
+            {
+                try { Directory.CreateDirectory(Path.Combine(ModFolder, prepared)); }
+                catch (Exception e) { Adapter?.LogWarning($"[Assets] Could not create {prepared}/: {e.Message}"); }
+            }
+
             CachePath = Path.Combine(ModFolder, "translations.json");
             ModUiCachePath = Path.Combine(ModFolder, ModUi.FileName);
             ConfigPath = Path.Combine(ModFolder, "config.json");

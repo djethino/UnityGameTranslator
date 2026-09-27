@@ -1859,6 +1859,8 @@ namespace UnityGameTranslator.Core
             _mainThreadId = Thread.CurrentThread.ManagedThreadId;
             Instance = new TranslatorCore();
             Adapter = adapter;
+            // Every failure caught at a boundary is said in this log (Engine/Faults).
+            Faults.AttachSink(line => adapter.LogWarning(line));
 
             // The adapter is what names the loader, so the User-Agent can only be complete from
             // here — see ApiClient.RefreshUserAgent. Done before anything can make a call.

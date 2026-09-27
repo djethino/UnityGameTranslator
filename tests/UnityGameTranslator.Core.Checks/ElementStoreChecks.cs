@@ -7,13 +7,13 @@ using UnityGameTranslator.Core;
 namespace UnityGameTranslator.Core.Checks
 {
     /// <summary>
-    /// The heads of resumed reveals beside the translation, across a launch (Engine/HeadStore,
-    /// TextRouter.Heads): proved in one session, written the moment they are, read back by the next
+    /// The heads of resumed reveals beside the translation, across a launch (Engine/ElementStore,
+    /// section `heads`; TextRouter.Heads): proved in one session, written the moment they are, read back by the next
     /// one — which then holds the text on that component without paying a request to learn it
     /// again. Replayed on a real folder with two routers, one per launch: the moment a file exists
     /// or does not is the whole point.
     /// </summary>
-    internal static class HeadStoreChecks
+    internal static class ElementStoreChecks
     {
         private const string Head = "The river runs red tonight, and";
         private const string Whole = "The river runs red tonight, and nobody knows why.";
@@ -25,16 +25,16 @@ namespace UnityGameTranslator.Core.Checks
             try
             {
                 string translation = Path.Combine(folder, "translations.json");
-                var store = new HeadStore(translation);
-                check(store.Path == translation + ".heads", "the file sits beside the translation, by its name", "a companion the uninstall sweep and the eye both find");
-                check(store.Load().Count == 0, "no file reads as nothing", "a first launch knows no head");
+                var store = new ElementStore(translation);
+                check(store.Path == translation + ".elements", "the file sits beside the translation, by its name", "a companion the uninstall sweep and the eye both find");
+                check(store.LoadHeads().Count == 0, "no file reads as nothing", "a first launch knows no head");
 
                 // ── First launch: the recording resumes, the head is proved and written ──
                 var first = Launch(store);
                 Play(first.Host, first.Box, 0f);
                 check(first.Host.Withdrawn.SequenceEqual(new[] { Head }), "the first launch proves the head",
                       "sent once, taken back when the reveal goes on — the one request a finding costs");
-                check(File.Exists(store.Path) && store.Load().Count == 1,
+                check(File.Exists(store.Path) && new ElementStore(translation).LoadHeads().Count == 1,
                       "and it is written the moment it is proved",
                       "a game closed right after would otherwise pay the same request at the next launch");
 
@@ -64,10 +64,20 @@ namespace UnityGameTranslator.Core.Checks
                       "a finding the component contradicts is dropped from the file",
                       "a game updated since, or a sibling at the same place: corrected after one showing, and not read back at the next launch");
 
+                // ── A section this build does not own is written back as it was read ──
+                File.WriteAllText(store.Path, "{\"habits\": {\"x\": 1}, \"heads\": [{\"place\": \"box1\", \"text\": \"T\"}]}");
+                var mixed = new ElementStore(translation);
+                bool readBoth = mixed.LoadHeads().Count == 1;
+                mixed.SaveHeads(new List<KeyValuePair<string, string>>());
+                string kept = File.Exists(store.Path) ? File.ReadAllText(store.Path) : "";
+                check(readBoth && kept.Contains("\"habits\"") && !kept.Contains("\"heads\""),
+                      "a section this build does not know is kept, the heads alone are removed",
+                      "one file for every kind of finding: a newer build's section must survive an older one writing its own");
+
                 // ── A file that is not what this writes ──
-                File.WriteAllText(store.Path, "{\"lines\": []}");
+                File.WriteAllText(store.Path, "{\"heads\": {}}");
                 bool threw = false;
-                try { store.Load(); } catch (InvalidDataException) { threw = true; }
+                try { store.LoadHeads(); } catch (InvalidDataException) { threw = true; }
                 check(threw, "a file that is not what this writes is refused, not half read",
                       "the caller says so and goes on without it; each finding then costs one request again");
             }
@@ -78,14 +88,14 @@ namespace UnityGameTranslator.Core.Checks
         }
 
         /// <summary>One launch: a router over the file, loading what it holds and writing every change.</summary>
-        private static (ReplayHost Host, TextRouter Router, ReplayBox Box) Launch(HeadStore store)
+        private static (ReplayHost Host, TextRouter Router, ReplayBox Box) Launch(ElementStore store)
         {
             var host = new ReplayHost();
             var router = new TextRouter(host);
             host.Router = router;
             host.Add(Whole, "La rivière est rouge ce soir, et personne ne sait pourquoi.");
-            router.LoadHeads(store.Load());
-            router.HeadsChanged += () => store.Save(router.HeadsSnapshot());
+            router.LoadHeads(store.LoadHeads());
+            router.HeadsChanged += () => store.SaveHeads(router.HeadsSnapshot());
             return (host, router, new ReplayBox { Id = 1 });
         }
 

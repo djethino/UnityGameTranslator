@@ -758,8 +758,8 @@ namespace UnityGameTranslator.Core
             catch (Exception e) { Adapter?.LogWarning($"[Failures] Could not write {_failureStore?.Path}: {e.Message}"); }
         }
 
-        /// <summary>The heads of resumed reveals beside the translation (HeadStore); rebuilt at every load.</summary>
-        private static HeadStore _headStore;
+        /// <summary>What was learnt about the game's elements, beside the translation (ElementStore); rebuilt at every load.</summary>
+        private static ElementStore _elementStore;
 
         /// <summary>
         /// Where this game resumed a reveal from a text already sent, read back at every load
@@ -769,10 +769,10 @@ namespace UnityGameTranslator.Core
         private static void LoadHeads()
         {
             Router.HeadsChanged -= SaveHeads;
-            _headStore = new HeadStore(CachePath);
+            _elementStore = new ElementStore(CachePath);
             try
             {
-                var heads = _headStore.Load();
+                var heads = _elementStore.LoadHeads();
                 Router.LoadHeads(heads);
                 if (heads.Count > 0)
                     Adapter?.LogInfo($"[Heads] {heads.Count} component(s) known to resume a reveal part-way");
@@ -781,7 +781,7 @@ namespace UnityGameTranslator.Core
             {
                 // Not the translation: said, and gone on without — each finding costs one request
                 // to make again.
-                Adapter?.LogWarning($"[Heads] Could not read {_headStore.Path}: {e.Message}");
+                Adapter?.LogWarning($"[Heads] Could not read {_elementStore.Path}: {e.Message}");
                 Router.LoadHeads(null);
             }
             Router.HeadsChanged += SaveHeads;
@@ -790,8 +790,8 @@ namespace UnityGameTranslator.Core
         /// <summary>The findings to their file, on every change.</summary>
         private static void SaveHeads()
         {
-            try { _headStore?.Save(Router.HeadsSnapshot()); }
-            catch (Exception e) { Adapter?.LogWarning($"[Heads] Could not write {_headStore?.Path}: {e.Message}"); }
+            try { _elementStore?.SaveHeads(Router.HeadsSnapshot()); }
+            catch (Exception e) { Adapter?.LogWarning($"[Heads] Could not write {_elementStore?.Path}: {e.Message}"); }
         }
 
         // ⚠ What lockObj still guards: the translation caches, the capture-order counter and the

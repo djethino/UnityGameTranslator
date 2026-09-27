@@ -47,7 +47,7 @@ namespace UnityGameTranslator.Core
 
         /// <summary>
         /// A finding was made or dropped. The host keeps them beside the translation
-        /// (translations.json.heads, Engine/HeadStore), so the next launch does not pay a request to
+        /// (translations.json.elements, section `heads`, Engine/ElementStore), so the next launch does not pay a request to
         /// learn them again. Raised on the thread that routes, outside the lock.
         /// </summary>
         public event Action HeadsChanged;

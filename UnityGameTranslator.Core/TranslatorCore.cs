@@ -4595,6 +4595,15 @@ namespace UnityGameTranslator.Core
         /// <summary>Said once, and again only after an answer has come back.</summary>
         private static volatile bool _backendSilent;
 
+        // What the server answered on this thread's last chat request, when it answered with an
+        // error (the status and its message); null when it translated, or never answered.
+        [ThreadStatic] private static string _lastServerError;
+
+        // How many chat requests the server has answered successfully this session, and, per line
+        // it answered with an error, that count when it did (NoteServerError).
+        private static int _serverAnswers;
+        private static readonly ConcurrentDictionary<string, int> _serverErrorAt = new ConcurrentDictionary<string, int>();
+
         /// <summary>
         /// Why the translation server cannot be reached, or <see cref="ConnectionProblem.None"/>:
         /// the request never left the machine (a firewall, no network, a refused port).
@@ -5437,9 +5446,14 @@ namespace UnityGameTranslator.Core
                         Adapter?.LogWarning($"[AI] Placeholder validation failed after {answer.Requests} attempts, left untranslated: {excerpt}...");
                         return null;
 
+                    case LineOutcome.NoAnswer:
+                        // The request failed (said by SendChatRequest; a rate limit is re-queued by
+                        // the worker). When the server did answer — with an error — see NoteServerError.
+                        NoteServerError(textWithPlaceholders);
+                        return null;
+
                     default:
-                        // Nothing to send, or the request itself failed (said by SendChatRequest; a
-                        // rate limit is re-queued by the worker).
+                        // Nothing to send.
                         return null;
                 }
             }
@@ -5486,6 +5500,8 @@ namespace UnityGameTranslator.Core
                 ["stream"] = false
             };
 
+            _lastServerError = null;
+
             // One attempt per thing we can still give up on, plus the successful one
             for (int attempt = 0; attempt < Negotiation.MaxAttempts; attempt++)
             {
@@ -5524,6 +5540,7 @@ namespace UnityGameTranslator.Core
                 if (response.IsSuccessStatusCode)
                 {
                     NoteModelUsed();
+                    Interlocked.Increment(ref _serverAnswers);
                     string responseJson = response.Content.ReadAsStringAsync().Result;
                     var responseObj = ApiClient.ParseJsonSafe(responseJson);
                     return responseObj["choices"]?[0]?["message"]?["content"]?.ToString()?.Trim();
@@ -5539,6 +5556,7 @@ namespace UnityGameTranslator.Core
                 if (!Negotiation.IsAboutOurRequest(statusCode))
                 {
                     if (statusCode == 429) _apiRateLimited = true;
+                    else _lastServerError = ServerErrorText(statusCode, errorBody);
                     Adapter?.LogWarning($"[AI] HTTP {statusCode} {response.StatusCode}: {errorBody}");
                     return null;
                 }
@@ -5551,11 +5569,68 @@ namespace UnityGameTranslator.Core
                     continue;
                 }
 
+                _lastServerError = ServerErrorText(statusCode, errorBody);
                 Adapter?.LogWarning($"[AI] HTTP {statusCode} {response.StatusCode}: {errorBody}");
                 return null;
             }
 
             return null;
+        }
+
+        /// <summary>
+        /// "HTTP 500: prediction aborted, token repeat limit reached" — the server's own message when
+        /// its body carries one in the OpenAI shape, else the body itself.
+        /// </summary>
+        private static string ServerErrorText(int statusCode, string body)
+        {
+            string message = body?.Trim() ?? "";
+            if (message.StartsWith("{"))
+            {
+                var parsed = ApiClient.ParseJsonSafe(message);
+                var error = parsed?["error"];
+                string said = error?.Type == JTokenType.Object ? error["message"]?.ToString() : error?.ToString();
+                if (!string.IsNullOrEmpty(said)) message = said;
+            }
+            return string.IsNullOrEmpty(message) ? $"HTTP {statusCode}" : $"HTTP {statusCode}: {message}";
+        }
+
+        /// <summary>
+        /// A line the server answered with an error rather than a translation — the model looping
+        /// on a repetitive text until the server cuts it off, for instance.
+        ///
+        /// 🔴 **It used to be read as "no answer"** — the case meant for a server that is off or too
+        /// slow, where a line is not to blame and is asked again when it next appears. Nothing was
+        /// kept, so a line the model cannot handle was sent again at every appearance, for ever,
+        /// with its notification and its seconds of work.
+        ///
+        /// ⚠ **The line is blamed on evidence, not on a count.** A broken server answers EVERY line
+        /// with an error, and filing them all as failures would bury the tab. So a line goes to
+        /// Failures when it has failed this way before this session AND the same server translated
+        /// something else in between: then the server works, and this text is what it cannot do.
+        /// Until then it is asked again at its next appearance, as before. Once filed, it is kept
+        /// across launches like any failure, and only Retranslate (AI) on the tab asks it again.
+        /// </summary>
+        private static void NoteServerError(string key)
+        {
+            string error = _lastServerError;
+            if (error == null || string.IsNullOrEmpty(key)) return;
+
+            int answers = Volatile.Read(ref _serverAnswers);
+            if (!_serverErrorAt.TryGetValue(key, out int before) || answers <= before)
+            {
+                _serverErrorAt[key] = answers;
+                return;
+            }
+
+            _serverErrorAt.TryRemove(key, out _);
+            _queue.NoteRefused(key);
+            Failures.Note(new FailedLine
+            {
+                Key = key,
+                Source = key,
+                Attempts = { new FailedAttempt { Value = "", Errors = { error } } },
+            });
+            Adapter?.LogWarning($"[AI] The server answered this line with an error twice while translating others, left untranslated: {key.Substring(0, Math.Min(60, key.Length))}...");
         }
 
         /// <summary>

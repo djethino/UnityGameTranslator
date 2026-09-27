@@ -872,7 +872,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                 _attemptIndexLabel.Show($"{_attemptAt + 1}/{count}");
                 _prevAttemptBtn.Enabled = _attemptAt > 0;
                 _nextAttemptBtn.Enabled = _attemptAt < count - 1;
-                _useAttemptBtn.Enabled = true;
+                // A server error leaves an attempt with its reason and no text: nothing to use.
+                _useAttemptBtn.Enabled = !string.IsNullOrEmpty(attempt.Value);
             }
             _attemptList.ToTop();
             ShareFailures();

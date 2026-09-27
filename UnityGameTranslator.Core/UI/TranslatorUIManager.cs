@@ -574,6 +574,12 @@ namespace UnityGameTranslator.Core.UI
                 TranslatorCore.LogError($"[UIManager] Failed to start main tick coroutine: {e.GetType().Name}: {e.Message}");
             }
 
+            // 🔴 Before the panels: building them already asks the site (the library, the state of
+            // this translation). Restored after them, those first calls went out without the
+            // token — a 401 on the library, and a state asked for anonymously, which left the
+            // corner waiting to know who "you" were until the next scheduled check, an hour later.
+            RestoreAccount();
+
             CreatePanels();
 
             // Before the panels would need it and once for the process: a retranslation the
@@ -1845,28 +1851,32 @@ namespace UnityGameTranslator.Core.UI
                 RestoreOwnUIWalk(node.GetChild(i), ref restored);
         }
 
+        /// <summary>
+        /// The saved account's token onto the client — before anything asks the site.
+        ///
+        /// ⚠ No declaration here, on purpose. The game and machine headers travel only with a
+        /// token (SetAuthToken → DeclareGame) and on the link request itself, which builds its
+        /// own — an anonymous call has nothing to declare to anybody. See ApiClient.DeclareGame.
+        /// </summary>
+        private static void RestoreAccount()
+        {
+            if (string.IsNullOrEmpty(TranslatorCore.Config.api_token)) return;
+
+            ApiClient.SetAuthToken(TranslatorCore.Config.api_token);
+            TranslatorCore.LogInfo($"[UIManager] Restored API token for user: {Sanitize.UserName(TranslatorCore.Config.api_user ?? "unknown")}");
+
+            // Which line this access is on the account's "Linked devices" page. Fired and
+            // forgotten: the label shows it when the answer lands, and shows nothing until
+            // then — nothing here waits on the site to finish starting up.
+            _ = ApiClient.RefreshAccessCodeAsync();
+        }
+
         private static void InitializeUIState()
         {
             TranslatorCore.LogInfo($"[UIManager] InitializeUIState, first_run_completed={TranslatorCore.Config.first_run_completed}");
 
             // Interface font + mod-UI translation are applied lazily on first show
             // (BootstrapInterfaceFontOnce): at this point custom fonts and the worker aren't ready yet.
-
-            // ⚠ No declaration here, on purpose. The game and machine headers travel only with a
-            // token (SetAuthToken → DeclareGame) and on the link request itself, which builds its
-            // own — an anonymous call has nothing to declare to anybody. See ApiClient.DeclareGame.
-
-            // Restore API token if saved
-            if (!string.IsNullOrEmpty(TranslatorCore.Config.api_token))
-            {
-                ApiClient.SetAuthToken(TranslatorCore.Config.api_token);
-                TranslatorCore.LogInfo($"[UIManager] Restored API token for user: {Sanitize.UserName(TranslatorCore.Config.api_user ?? "unknown")}");
-
-                // Which line this access is on the account's "Linked devices" page. Fired and
-                // forgotten: the label shows it when the answer lands, and shows nothing until
-                // then — nothing here waits on the site to finish starting up.
-                _ = ApiClient.RefreshAccessCodeAsync();
-            }
 
             if (!TranslatorCore.Config.first_run_completed)
             {
@@ -2015,6 +2025,16 @@ namespace UnityGameTranslator.Core.UI
         private static float _nextSyncCheckTime;
         private static float _syncCheckIntervalSeconds;
         private static bool _syncCheckInFlight;
+
+        // An account check asked for while the one out was the ANONYMOUS check. Dropped, it left
+        // the state as an anonymous caller is told it — nothing about who "you" are to this
+        // lineage — until the next scheduled check, up to hours later. Lowered only by the account
+        // check it stands for being sent, or by there being no account left to ask as
+        // (SendOwedAccountCheck).
+        private static bool _accountCheckOwed;
+
+        // The call out is the anonymous check (CheckPublicUpdateNow), not an account one.
+        private static bool _publicCheckOut;
 
         /// <summary>
         /// The rhythm the player asked for, kept apart from the one the timer is currently using.
@@ -2208,6 +2228,7 @@ namespace UnityGameTranslator.Core.UI
             if (!TranslatorCore.SourceSiteId.HasValue) return;
 
             _syncCheckInFlight = true;
+            _publicCheckOut = true;
             int siteId = TranslatorCore.SourceSiteId.Value;
 
             try
@@ -2237,6 +2258,14 @@ namespace UnityGameTranslator.Core.UI
                 RunOnMainThread(() =>
                 {
                     _syncCheckInFlight = false;
+                    _publicCheckOut = false;
+                    // Whatever this answer says, an account check that arrived meanwhile goes now.
+                    try { ApplyPublicCheck(); }
+                    finally { SendOwedAccountCheck(); }
+                });
+
+                void ApplyPublicCheck()
+                {
                     // ⚠ NotModified is a success: a 304 is the server answering "nothing moved",
                     // which is exactly what asking cheaply is for. Only Success says whether the
                     // question reached it at all.
@@ -2313,7 +2342,7 @@ namespace UnityGameTranslator.Core.UI
                     }
 
                     MainPanel?.RefreshUI();
-                });
+                }
             }
             catch (Exception e)
             {
@@ -2321,10 +2350,23 @@ namespace UnityGameTranslator.Core.UI
                 RunOnMainThread(() =>
                 {
                     _syncCheckInFlight = false;
+                    _publicCheckOut = false;
                     TranslatorCore.LogWarning($"[Sync] Public update check failed: {errorMsg}");
                     SyncCheckFailed();
+                    SendOwedAccountCheck();
                 });
             }
+        }
+
+        /// <summary>
+        /// The account check that arrived while the anonymous one was out, sent now that it is back
+        /// — and only if there is still an account to ask as.
+        /// </summary>
+        private static void SendOwedAccountCheck()
+        {
+            if (!_accountCheckOwed) return;
+            _accountCheckOwed = false;
+            if (CanWatchSync(logReason: false)) CheckSyncStateNow();
         }
 
         /// <summary>
@@ -2541,7 +2583,6 @@ namespace UnityGameTranslator.Core.UI
         public static void EnsureServerStateKnown()
         {
             if (TranslatorCore.ServerState != null && TranslatorCore.ServerState.Checked) return;
-            if (_syncCheckInFlight) return;
 
             // ⚠ **Falls through to the public check, exactly as StartSyncWatch does.** This used to
             // stop at CanWatchSync, which is false without an account — so a panel opened by
@@ -2690,7 +2731,14 @@ namespace UnityGameTranslator.Core.UI
         /// </summary>
         private static async void CheckSyncStateNow()
         {
-            if (_syncCheckInFlight) return;
+            if (_syncCheckInFlight)
+            {
+                // An account check already out answers this one. The anonymous check does not:
+                // this one is owed, and sent when that comes back — dropped, it cost an hour of a
+                // corner that could not say who "you" were.
+                if (_publicCheckOut) _accountCheckOwed = true;
+                return;
+            }
             _syncCheckInFlight = true;
 
             try
@@ -2732,13 +2780,13 @@ namespace UnityGameTranslator.Core.UI
         /// hashes, so an unchanged lineage costs a query and no reading at all.
         ///
         /// Silent when there is nothing to ask about — no account, offline, or no translation of
-        /// one's own — and never while a call is already out.
+        /// one's own. A call already out does not swallow it: it is owed and sent after.
         /// </summary>
         public static void RefreshLineageNow()
         {
             if (!CanWatchSync(logReason: false)) return;
-            if (_syncCheckInFlight) return;
 
+            // Not dropped when a call is out: CheckSyncStateNow owes it instead (_accountCheckOwed).
             CheckSyncStateNow();
         }
 

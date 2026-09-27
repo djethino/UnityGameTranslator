@@ -68,16 +68,19 @@ namespace UnityGameTranslator.Core
 
         /// <summary>
         /// What these files would do to this game — reads them, writes nothing. Safe off the main
-        /// thread: it reads files and the mod's settings, and creates nothing in Unity.
+        /// thread, given a <paramref name="side"/> taken on it: this reads files only.
         /// </summary>
-        public static AssetPlan Plan(IReadOnlyList<string> paths)
+        public static AssetPlan Plan(IReadOnlyList<string> paths, GameAssetSide side)
         {
             var dropped = paths.Select(path => new DroppedFile(Path.GetFileName(path), () => File.OpenRead(path))).ToList();
-            return AssetPlanner.Plan(Side(), dropped, ParseManifest);
+            return AssetPlanner.Plan(side, dropped, ParseManifest);
         }
 
-        /// <summary>The game as the mod holds it, in the socle's terms.</summary>
-        private static GameAssetSide Side()
+        /// <summary>
+        /// The game as the mod holds it, in the socle's terms — ⚠ taken on the MAIN thread: it copies
+        /// the image settings, which the inspector edits there, before any reading goes elsewhere.
+        /// </summary>
+        public static GameAssetSide Side()
         {
             var folder = TranslatorCore.ModFolder;
             var game = TranslatorCore.CurrentGame;
@@ -130,6 +133,8 @@ namespace UnityGameTranslator.Core
             }
             catch (Exception e) when (e is Newtonsoft.Json.JsonException || e is FormatException || e is InvalidCastException)
             {
+                // Said to the log, and to the screen by the planner: "its manifest cannot be read".
+                Faults.Say("AssetPackService.ParseManifest", e);
                 return null;
             }
         }
@@ -245,6 +250,7 @@ namespace UnityGameTranslator.Core
             catch (Exception e) when (e is IOException || e is UnauthorizedAccessException || e is ArgumentException)
             {
                 // A drive that cannot be measured is not refused: the write itself will say if it fails.
+                Faults.Say("AssetPackService.FreeSpace", e);
                 return null;
             }
         }

@@ -17,7 +17,7 @@ namespace UnityGameTranslator.Core.UI.Panels
     /// the Stacks/Labels/Buttons/Fields/CheckBoxes/Sliders/ScrollList/Callout factories — it
     /// names nothing of Unity or UniverseLib. See the migration report for what moved and why.
     /// </summary>
-    public class TranslationParametersPanel : TranslatorPanelBase
+    public partial class TranslationParametersPanel : TranslatorPanelBase
     {
         /// <summary>The screen as a document — common/spec/screens/tools.json — read once; the base's constructor reads the sizes below through it.</summary>
         private static readonly ScreenDocument Doc = ScreenDocument.FromEmbedded("tools");
@@ -195,6 +195,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _browserEditorStatus = _screen.Label("BrowserEditorStatus");
             _typewritingDetectionToggle = _screen.Toggle("TypewritingToggle");
             _concatDetectionToggle = _screen.Toggle("ConcatToggle");
+            FetchPackPieces();   // the Asset Packs card, under Detection — TranslationParametersPanel.Packs.cs
 
             // Exclusions
             _manualPatternInput = _screen.Field("PatternInput");
@@ -295,6 +296,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _scanValueInput.Submitted(_ => OnScanClicked());
             _findByValueInput.Submitted(_ => OnFindByValueClicked());
             _fontOverrideFindInput.Submitted(_ => OnFindForFontOverride());
+            _packPathInput.Submitted(_ => OnAddPackPathClicked());
 
             // Font sharpness = max SDF atlas dimension. Higher = crisper when the translation
             // scales text up, at a VRAM cost. LAYOUT-NEUTRAL (text size unchanged). Options are
@@ -318,6 +320,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _enableImageReplacementToggle.IsOn = TranslatorCore.Config.enable_image_replacement;
 
             RefreshBrowserEditorUI();
+            RefreshPacksFolder();
             RefreshFontOverridesList();
             RefreshImageReplacementsList();
             RefreshVariablesList();
@@ -344,6 +347,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                 case "browserEditor": return OnBrowserEditorClicked;
                 case "typewritingChanged":
                 case "concatChanged": return UpdateApplyButtonText;
+                case "addPackPath": return OnAddPackPathClicked;
+                case "clearPacks": return ForgetPacks;
                 case "startInspector": return OnStartInspectorClicked;
                 case "addPattern": return OnAddManualPatternClicked;
                 case "findByValue": return OnFindByValueClicked;
@@ -2520,6 +2525,11 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         private void LoadCurrentState()
         {
+            // A pack added and not applied does not survive the window closing — like every other
+            // answer here. The packs folder is read again: a file may have been dropped in meanwhile.
+            ForgetPacks();
+            RefreshPacksFolder();
+
             // Debug toggles
             if (_enableFontReplacementToggle != null)
                 _enableFontReplacementToggle.IsOn = TranslatorCore.Config.enable_font_replacement;
@@ -2714,6 +2724,10 @@ namespace UnityGameTranslator.Core.UI.Panels
                         TranslatorCore.LogWarning($"[TranslationParametersPanel] Font sharpness rebuild failed: {ex.Message}");
                     }
                 }
+
+                // Asset packs: their image settings must be in memory before the translation is saved
+                // just below, so they land in the file with the rest.
+                ApplyPacks();
 
                 TranslatorCore.SaveConfig();
 

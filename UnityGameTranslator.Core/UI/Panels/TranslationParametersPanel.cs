@@ -349,6 +349,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                 case "concatChanged": return UpdateApplyButtonText;
                 case "addPackPath": return OnAddPackPathClicked;
                 case "clearPacks": return ForgetPacks;
+                case "openPacksFolder": return OnOpenPacksFolderClicked;
+                case "refreshPacks": return RefreshPacksFolder;
                 case "startInspector": return OnStartInspectorClicked;
                 case "addPattern": return OnAddManualPatternClicked;
                 case "findByValue": return OnFindByValueClicked;

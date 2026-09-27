@@ -88,6 +88,16 @@ namespace UnityGameTranslator.Core.UI.Panels
             _packsFolderList.Filled();
         }
 
+        /// <summary>
+        /// Opens the packs folder in the system's file browser. Packs dropped there while the game
+        /// runs appear with Refresh (a file browser sends the game no signal).
+        /// </summary>
+        private void OnOpenPacksFolderClicked()
+        {
+            if (!TranslatorCore.OpenFolderSafe(AssetPackService.PacksFolder))
+                Report("Could not open the packs folder: " + AssetPackService.PacksFolder, Tone.Warning);
+        }
+
         private void OnAddPackPathClicked()
         {
             var path = (_packPathInput.Text ?? "").Trim().Trim('"');

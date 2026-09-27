@@ -2365,6 +2365,41 @@ namespace UnityGameTranslator.Core
             }
         }
 
+        /// <summary>
+        /// Shows a folder in the system's file browser. Returns false when it could not.
+        /// </summary>
+        /// <remarks>
+        /// 🔴 Same contract as <see cref="LaunchSafe"/>: only a folder the mod itself owns (under
+        /// <see cref="ModFolder"/>) is ever opened — never a path from the network or from config.json.
+        /// A folder is handed to the system as a file:// address, which opens it and runs nothing.
+        /// </remarks>
+        public static bool OpenFolderSafe(string folder)
+        {
+            if (string.IsNullOrEmpty(folder) || string.IsNullOrEmpty(ModFolder)) return false;
+
+            var full = System.IO.Path.GetFullPath(folder);
+            var root = System.IO.Path.GetFullPath(ModFolder).TrimEnd(System.IO.Path.DirectorySeparatorChar, System.IO.Path.AltDirectorySeparatorChar)
+                       + System.IO.Path.DirectorySeparatorChar;
+            if (!full.StartsWith(root, StringComparison.OrdinalIgnoreCase))
+            {
+                LogWarning($"[Security] Blocked opening a folder outside the mod folder: {System.IO.Path.GetFileName(full)}");
+                return false;
+            }
+
+            try
+            {
+                System.IO.Directory.CreateDirectory(full);   // prepared at start, but a player may have removed it
+                UnityEngine.Application.OpenURL(new Uri(full).AbsoluteUri);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                // The boundary with the operating system; logged, and the caller says it on screen.
+                LogWarning($"[Assets] Could not open {System.IO.Path.GetFileName(full)}/: {ex.Message}");
+                return false;
+            }
+        }
+
         #endregion
 
         #region Config persistence

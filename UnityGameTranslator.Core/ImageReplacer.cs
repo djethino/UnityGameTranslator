@@ -102,7 +102,7 @@ namespace UnityGameTranslator.Core
             if (_initialized) return;
             _initialized = true;
 
-            _imagesFolder = Path.Combine(modFolder, "images");
+            _imagesFolder = Path.Combine(modFolder, UnityGameTranslator.Common.AssetPacks.ImagesFolder);
             _replacements = new Dictionary<string, ImageReplacement>(StringComparer.OrdinalIgnoreCase);
             _loadedSprites = new Dictionary<string, Sprite>(StringComparer.OrdinalIgnoreCase);
             _createdTextures = new List<Texture2D>();

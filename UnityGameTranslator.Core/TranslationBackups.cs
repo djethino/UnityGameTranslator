@@ -529,18 +529,13 @@ namespace UnityGameTranslator.Core
 
             try
             {
-                var folder = Path.Combine(TranslatorCore.ModFolder, "fonts");
+                var folder = Path.Combine(TranslatorCore.ModFolder, AssetPacks.FontsFolder);
                 if (!Directory.Exists(folder)) return names;
 
+                // Which files are font sources is the socle's answer, shared with the Manager.
                 foreach (var file in Directory.GetFiles(folder))
                 {
-                    var extension = Path.GetExtension(file);
-                    if (string.Equals(extension, ".ttf", StringComparison.OrdinalIgnoreCase)
-                        || string.Equals(extension, ".otf", StringComparison.OrdinalIgnoreCase)
-                        || string.Equals(extension, ".ttc", StringComparison.OrdinalIgnoreCase))
-                    {
-                        names.Add(Path.GetFileName(file));
-                    }
+                    if (AssetPacks.IsFontFile(file)) names.Add(Path.GetFileName(file));
                 }
             }
             catch (Exception e)

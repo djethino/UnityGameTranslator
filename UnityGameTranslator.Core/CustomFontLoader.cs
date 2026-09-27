@@ -459,7 +459,7 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static void Initialize(string pluginFolder)
         {
-            var fontsFolder = Path.Combine(pluginFolder, "fonts");
+            var fontsFolder = Path.Combine(pluginFolder, UnityGameTranslator.Common.AssetPacks.FontsFolder);
             _cacheFolderPath = fontsFolder;
             int loadedCount = 0;
 
@@ -549,10 +549,11 @@ namespace UnityGameTranslator.Core
             }
 
             // Scan for TTF/OTF files — register only, rasterize on demand
-            foreach (var ext in new[] { "*.ttf", "*.otf" })
+            // ⚠ The socle's list: what the Manager accepts into this folder is what is read here.
+            foreach (var extension in UnityGameTranslator.Common.AssetPacks.FontExtensions)
             {
                 string[] fontFiles;
-                try { fontFiles = Directory.GetFiles(fontsFolder, ext); }
+                try { fontFiles = Directory.GetFiles(fontsFolder, "*" + extension); }
                 catch (Exception ex) { Faults.Say("CustomFontLoader.Initialize", ex); continue; }
 
                 foreach (var fontPath in fontFiles)

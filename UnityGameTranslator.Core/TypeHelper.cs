@@ -1493,6 +1493,20 @@ namespace UnityGameTranslator.Core
         /// On IL2CPP, uses Il2CppType.Of&lt;T&gt;() + Resources.FindObjectsOfTypeAll(Il2CppType)
         /// which is the correct pattern per MelonLoader documentation.
         /// </summary>
+        /// <summary>
+        /// Whether <see cref="FindAllObjectsOfType"/> asks the ENGINE for every instance of this type
+        /// — subclasses and inactive objects included — so that an empty answer means there is none.
+        /// True on Mono (FindObjectsOfType/ByType) and on IL2CPP through Il2CppType; false on IL2CPP
+        /// once that route has refused the type, where the lookup falls back on calls the runtime may
+        /// not carry.
+        /// </summary>
+        public static bool AsksEngineForAll(Type type)
+        {
+            if (TranslatorCore.Adapter?.IsIL2CPP != true) return true;
+            return _il2cppHelpersInitialized && _il2cppTypeOfMethod != null && _il2cppResourcesFindAllMethod != null
+                   && !_il2cppLookupRefused.Contains(type);
+        }
+
         /// <param name="by">Filled in by the compiler: which code asked, for the perf report.</param>
         public static UnityEngine.Object[] FindAllObjectsOfType(Type type, [CallerMemberName] string by = null)
         {

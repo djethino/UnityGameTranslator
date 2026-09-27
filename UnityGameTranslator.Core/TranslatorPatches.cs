@@ -29,6 +29,10 @@ namespace UnityGameTranslator.Core
         internal int BatchIndex;
         internal bool LoggedOnce;
 
+        // The engine itself was asked for every instance of this type, this refresh, and said
+        // none — the answer the component filter cannot improve on (TranslatorScanner, Phase 2).
+        internal bool EngineSaidNone;
+
         // IL2CPP specific cache (managed by scanner)
         internal object IL2CPPType;                          // Cached Il2CppType.Of<T>() result
         internal MethodInfo TryCastMethod;                   // Cached TryCast<T> generic method

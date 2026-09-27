@@ -649,16 +649,19 @@ namespace UnityGameTranslator.Core
 
                 if (type.CachedComponents == null || type.CachedComponents.Length == 0)
                 {
-                    // 🔴 An EMPTY answer from the engine's own lookup on Mono IS the answer:
-                    // FindObjectsOfType/ByType return every instance, subclasses and inactive
-                    // objects included. The MonoBehaviourFilter exists for IL2CPP, where proxy
-                    // types can escape that lookup. Sending a Mono-empty type through it meant,
-                    // on a UI Toolkit game with no TMP or UI.Text at all, snapshotting EVERY
-                    // component of a whole city and name-walking each of them for types that
-                    // are not there — every detection cycle, without end. Measured: 2 s of every
-                    // 5, 40 % of a core, for nothing (Timberborn, PASS-PERF/SCAN-PERF).
-                    bool emptyIsFinal = TranslatorCore.Adapter?.IsIL2CPP != true
-                                        && type.TypeHelperState == StrategyState.Empty;
+                    // 🔴 An EMPTY answer from the engine's own lookup IS the answer: on Mono,
+                    // FindObjectsOfType/ByType, and on IL2CPP, Resources.FindObjectsOfTypeAll on
+                    // the type itself, return every instance — subclasses and inactive objects
+                    // included. The MonoBehaviourFilter is for a type the engine could NOT be
+                    // asked about. Sending an empty type through it meant snapshotting EVERY
+                    // component of the game and name-walking each one for a type that is not
+                    // there — every detection cycle, without end. Measured twice: 2 s of every 5
+                    // on a Mono UI Toolkit game (Timberborn, fixed for Mono only), then 40 ms per
+                    // cycle and up to 340 ms on an IL2CPP game with no TMP (160 000 components),
+                    // where the filter had never found anything in any log of the test games.
+                    // ⚠ Final for this refresh only: the direct lookup is asked again next cycle,
+                    // so a component of this type appearing later is found as before.
+                    bool emptyIsFinal = type.EngineSaidNone;
                     if (emptyIsFinal)
                     {
                         // A real empty list, not null: consumers that share this cache (the
@@ -892,7 +895,9 @@ namespace UnityGameTranslator.Core
             if (result != null && result.Length > 0)
                 return result;
 
-            // Fallback to MonoBehaviourFilter for this single type
+            // Fallback to MonoBehaviourFilter for this single type — not when the engine itself
+            // already said there is none (same rule as the incremental refresh, Phase 2).
+            if (type.EngineSaidNone) return null;
             if (type.MonoBehaviourFilterState != StrategyState.Failed)
             {
                 var seenIds = new HashSet<int>();
@@ -926,6 +931,8 @@ namespace UnityGameTranslator.Core
 
         private static UnityEngine.Object[] RefreshTypeCacheDirect(RegisteredTextType type)
         {
+            type.EngineSaidNone = false;
+
             // FAST PATH: known-working strategy → direct assignment, zero allocations
             if (type.TypeHelperState == StrategyState.Works)
             {
@@ -977,6 +984,8 @@ namespace UnityGameTranslator.Core
                             type.IL2CPPNativeState = StrategyState.Works;
                             return found;
                         }
+                        // Resources.FindObjectsOfTypeAll on the type itself: the engine's whole answer.
+                        type.EngineSaidNone = true;
                     }
                     type.IL2CPPNativeState = StrategyState.Empty;
                 }
@@ -1003,6 +1012,7 @@ namespace UnityGameTranslator.Core
                         type.TypeHelperState = StrategyState.Works;
                         return found;
                     }
+                    if (TypeHelper.AsksEngineForAll(type.ComponentType)) type.EngineSaidNone = true;
                     type.TypeHelperState = StrategyState.Empty;
                 }
                 catch (Exception ex)

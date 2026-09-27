@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 
 namespace UnityGameTranslator.Core
@@ -41,7 +42,45 @@ namespace UnityGameTranslator.Core
         private readonly HashSet<string> _headAnswersRefused = new HashSet<string>();
         private readonly object _headsLock = new object();
 
-        private static string HeadKey(string place, string key) => place + "\u0001" + key;
+        private const char HeadSeparator = '\u0001';
+        private static string HeadKey(string place, string key) => place + HeadSeparator + key;
+
+        /// <summary>
+        /// A finding was made or dropped. The host keeps them beside the translation
+        /// (translations.json.heads, Engine/HeadStore), so the next launch does not pay a request to
+        /// learn them again. Raised on the thread that routes, outside the lock.
+        /// </summary>
+        public event Action HeadsChanged;
+
+        /// <summary>Every finding, as (place, normalised text), in a stable order: what the host writes.</summary>
+        public List<KeyValuePair<string, string>> HeadsSnapshot()
+        {
+            var all = new List<KeyValuePair<string, string>>();
+            lock (_headsLock)
+            {
+                foreach (var head in _heads)
+                {
+                    int cut = head.IndexOf(HeadSeparator);
+                    all.Add(new KeyValuePair<string, string>(head.Substring(0, cut), head.Substring(cut + 1)));
+                }
+            }
+            all.Sort((a, b) => string.CompareOrdinal(a.Key + HeadSeparator + a.Value, b.Key + HeadSeparator + b.Value));
+            return all;
+        }
+
+        /// <summary>The findings read back at a load, in place of whatever was held. Raises nothing.</summary>
+        public void LoadHeads(IEnumerable<KeyValuePair<string, string>> heads)
+        {
+            lock (_headsLock)
+            {
+                _heads.Clear();
+                _headAnswersRefused.Clear();
+                if (heads == null) return;
+                foreach (var head in heads)
+                    if (!string.IsNullOrEmpty(head.Key) && !string.IsNullOrEmpty(head.Value))
+                        _heads.Add(HeadKey(head.Key, head.Value));
+            }
+        }
 
         /// <summary>The place this component sits in, or null when nothing can be said about it.</summary>
         private string PlaceOfId(long compId)
@@ -85,14 +124,16 @@ namespace UnityGameTranslator.Core
         {
             string key = NormalizeForCacheLookup(text);
             string place = PlaceOfId(compId);
+            bool added = false;
             if (place != null)
-                lock (_headsLock) { _heads.Add(HeadKey(place, key)); }
+                lock (_headsLock) { added = _heads.Add(HeadKey(place, key)); }
 
             bool waiting = _host.Withdraw(text, Admission.Head);
             if (!waiting && !_host.GameStore.ContainsKey(key))
                 lock (_headsLock) { _headAnswersRefused.Add(key); }
 
             _host.Log($"[TW-HEAD] comp={compId} went on revealing from a text already sent — {(waiting ? "taken out of the queue" : "its answer will not be stored")}; held on this component from now on: '{Head40(text)}'");
+            if (added) HeadsChanged?.Invoke();
         }
 
         /// <summary>
@@ -116,7 +157,9 @@ namespace UnityGameTranslator.Core
             string place = PlaceOfId(compId);
             if (place == null) return;
             string key = NormalizeForCacheLookup(text);
-            lock (_headsLock) { _heads.Remove(HeadKey(place, key)); }
+            bool removed;
+            lock (_headsLock) { removed = _heads.Remove(HeadKey(place, key)); }
+            if (removed) HeadsChanged?.Invoke();
         }
     }
 }

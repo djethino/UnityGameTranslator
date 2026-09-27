@@ -758,6 +758,42 @@ namespace UnityGameTranslator.Core
             catch (Exception e) { Adapter?.LogWarning($"[Failures] Could not write {_failureStore?.Path}: {e.Message}"); }
         }
 
+        /// <summary>The heads of resumed reveals beside the translation (HeadStore); rebuilt at every load.</summary>
+        private static HeadStore _headStore;
+
+        /// <summary>
+        /// Where this game resumed a reveal from a text already sent, read back at every load
+        /// (TextRouter.Heads) — so a finding paid for once is not paid again at the next launch.
+        /// Local only; a finding that no longer holds corrects itself the next time it is shown.
+        /// </summary>
+        private static void LoadHeads()
+        {
+            Router.HeadsChanged -= SaveHeads;
+            _headStore = new HeadStore(CachePath);
+            try
+            {
+                var heads = _headStore.Load();
+                Router.LoadHeads(heads);
+                if (heads.Count > 0)
+                    Adapter?.LogInfo($"[Heads] {heads.Count} component(s) known to resume a reveal part-way");
+            }
+            catch (Exception e)
+            {
+                // Not the translation: said, and gone on without — each finding costs one request
+                // to make again.
+                Adapter?.LogWarning($"[Heads] Could not read {_headStore.Path}: {e.Message}");
+                Router.LoadHeads(null);
+            }
+            Router.HeadsChanged += SaveHeads;
+        }
+
+        /// <summary>The findings to their file, on every change.</summary>
+        private static void SaveHeads()
+        {
+            try { _headStore?.Save(Router.HeadsSnapshot()); }
+            catch (Exception e) { Adapter?.LogWarning($"[Heads] Could not write {_headStore?.Path}: {e.Message}"); }
+        }
+
         // ⚠ What lockObj still guards: the translation caches, the capture-order counter and the
         // retranslation requests. The queue is no longer among them.
         private static object lockObj = new object();
@@ -2722,6 +2758,7 @@ namespace UnityGameTranslator.Core
                 Adapter.LogInfo($"No cache file found, starting fresh with UUID: {FileUuid}");
                 SaveCache(); // Save immediately to persist UUID
                 LoadFailures();
+                LoadHeads();
                 return;
             }
 
@@ -2832,6 +2869,9 @@ namespace UnityGameTranslator.Core
                 // The lines the AI gave up on, beside the file: reconciled against what was just
                 // read, and kept off the queue.
                 LoadFailures();
+
+                // Where this game resumes a reveal part-way, beside the file (TextRouter.Heads).
+                LoadHeads();
 
                 // ── The interface lines this file was still carrying ──────────────────
                 // The rule is ModUiMigration.Decide — pure, and checked there rather than here.

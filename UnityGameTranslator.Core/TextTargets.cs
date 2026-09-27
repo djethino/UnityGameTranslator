@@ -70,7 +70,8 @@ namespace UnityGameTranslator.Core
                 if (owner is Component) TypeHelper.SetText(owner, text);
                 else UIToolkitSupport.WriteRouted(owner, text);
             }
-            catch { }
+            // The game's own setter, and whatever it runs: said, the element keeps its text.
+            catch (Exception ex) { Faults.Say("TextTargets.Write", ex); }
         }
 
         /// <summary>
@@ -185,7 +186,9 @@ namespace UnityGameTranslator.Core
                     Text = text,
                 });
             }
-            catch { }
+            // A game object read through the engine (its text, its path): one that refuses is left
+            // out of the list, and it is said.
+            catch (Exception ex) { Faults.Say("TextTargets.Consider", ex, engine); }
         }
     }
 }

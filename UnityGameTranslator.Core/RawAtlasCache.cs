@@ -137,7 +137,9 @@ namespace UnityGameTranslator.Core
 
         public static void TryDelete(string path)
         {
-            try { if (File.Exists(path)) File.Delete(path); } catch { }
+            // A file another process holds, or a folder we may not write: said.
+            try { if (File.Exists(path)) File.Delete(path); }
+            catch (Exception ex) { Faults.Say("RawAtlasCache.TryDelete", ex, Sanitize.Path(path)); }
         }
 
         private static void WriteInt32(Stream s, int value)

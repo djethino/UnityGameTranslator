@@ -70,8 +70,11 @@ namespace UnityGameTranslator.Core.Rasterizer
 
                 return outline;
             }
-            catch
+            // A charstring from a font file this code did not write: a malformed one leaves this
+            // glyph blank, and it is said.
+            catch (Exception ex)
             {
+                Faults.Say("CffParser.ParseGlyph", ex, $"glyph {glyphIndex}");
                 return new GlyphOutline { Contours = new GlyphContour[0], IsEmpty = true };
             }
         }

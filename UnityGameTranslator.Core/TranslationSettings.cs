@@ -197,10 +197,11 @@ namespace UnityGameTranslator.Core
             {
                 return FromFile(JObject.Parse(json ?? string.Empty));
             }
-            catch (Exception)
+            catch (Exception ex)
             {
-                // A file we cannot read carries no settings we can honour;
-                // callers treat this as "nothing to offer", never as an error
+                // A file we cannot read carries no settings we can honour: callers treat this as
+                // "nothing to offer" — and it is said, since a file that should carry some did not.
+                Faults.Say("TranslationSettings.FromJsonText", ex);
                 return Empty();
             }
         }

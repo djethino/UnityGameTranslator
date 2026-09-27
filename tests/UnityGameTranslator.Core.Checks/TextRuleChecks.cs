@@ -16,26 +16,28 @@ namespace UnityGameTranslator.Core.Checks
     {
         public static void Run(Action<bool, string, string> check)
         {
-            var greeting = TextRule.Compile("bonjour");
+            var greeting = TextRule.Compile("bonjour", out _);
             check(greeting != null, "a plain pattern compiles", "the ordinary case");
             check(TextRule.Match(greeting, "Bonjour le monde") == TextRule.Outcome.Matched,
                   "matches without regard to case", "the option every rule has always had");
             check(TextRule.Match(greeting, "Salut") == TextRule.Outcome.NotMatched,
                   "and says so when it does not match", "a no is a no, not a timeout");
 
-            var anchored = TextRule.Compile("^\\d+ / \\d+$");
+            var anchored = TextRule.Compile("^\\d+ / \\d+$", out _);
             check(TextRule.Match(anchored, "12 / 40") == TextRule.Outcome.Matched,
                   "anchors and classes work as in any regex", "nothing about the grammar changed");
 
-            check(TextRule.Compile("(") == null, "an unbalanced pattern is refused, not thrown",
+            check(TextRule.Compile("(", out string refusal) == null, "an unbalanced pattern is refused, not thrown",
                   "the caller decides what to say about it");
-            check(TextRule.Compile("") == null, "an empty pattern is nothing to match", "");
+            check(!string.IsNullOrEmpty(refusal), "and the refusal says what is wrong with it",
+                  "the rule's author is told what is wrong, not only that it failed");
+            check(TextRule.Compile("", out _) == null, "an empty pattern is nothing to match", "");
             check(TextRule.Match(null, "text") == TextRule.Outcome.NotMatched,
                   "a refused pattern matches nothing", "and costs nothing");
 
             // 🔴 The catastrophic case: (a+)+$ against a text it cannot match backtracks
             // exponentially — forty characters would take longer than a game session.
-            var bomb = TextRule.Compile("(a+)+$");
+            var bomb = TextRule.Compile("(a+)+$", out _);
             string text = new string('a', 40) + "b";
             var clock = Stopwatch.StartNew();
             var outcome = TextRule.Match(bomb, text);

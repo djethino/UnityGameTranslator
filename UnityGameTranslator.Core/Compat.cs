@@ -70,16 +70,19 @@ namespace UnityGameTranslator.Core
             {
                 return new Texture2D(width, height, format, mipmap);
             }
-            catch (MissingMethodException)
+            catch (MissingMethodException ex)
             {
+                // A stripped game without the 4-arg constructor: said once, and the 2-arg one
+                // (used by the engine itself, so more universally preserved) takes over.
+                Faults.Say("Compat.MakeTexture2D", ex, "4-arg constructor missing, using the 2-arg one");
                 try
                 {
-                    // 2-arg ctor is more universally preserved (used by the engine itself)
                     return new Texture2D(width, height);
                 }
-                catch
+                catch (Exception inner)
                 {
-                    // Last resort: tiny placeholder, caller will see a blank texture
+                    // Last resort: tiny placeholder, caller will see a blank texture — said.
+                    Faults.Say("Compat.MakeTexture2D 2-arg", inner, "using a 2x2 placeholder");
                     return new Texture2D(2, 2);
                 }
             }

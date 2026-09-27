@@ -89,8 +89,10 @@ namespace UnityGameTranslator.Core.UI.Components
                 if (e.Target == null) { _entries.RemoveAt(i); continue; }
 
                 PendingState state;
+                // A panel's own question about one of its values: one that throws is a bug in that
+                // panel, said, and its mark is left off.
                 try { state = e.State(); }
-                catch { state = PendingState.None; }
+                catch (Exception ex) { Faults.Say("PendingMarks.Refresh", ex); state = PendingState.None; }
                 if (state != PendingState.None) pending++;
                 if (state == e.Shown) continue;
                 e.Shown = state;

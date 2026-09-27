@@ -34,6 +34,9 @@ namespace UnityGameTranslator.Core.Checks
         // What makes a catch NOT silent: it says something, or it lets the failure go on.
         private static readonly Regex Speaks = new Regex(@"\bLog\w*\s*\(|\bFaults\.|\bthrow\b|\bSay\w*\s*\(", RegexOptions.Compiled);
         private static readonly Regex CaughtName = new Regex(@"catch\s*\(\s*[\w.]+\s+(\w+)\s*\)", RegexOptions.Compiled);
+        private static readonly Regex CaughtType = new Regex(@"catch\s*\(\s*([\w.]+)", RegexOptions.Compiled);
+        // A body that does nothing but name an outcome: `return SseStopReason.Closed;`.
+        private static readonly Regex NamesOutcome = new Regex(@"^\{\s*return\s+\w+\.\w+\s*;\s*\}$", RegexOptions.Compiled);
 
         /// <summary>How many catches in this source neither say anything nor rethrow.</summary>
         internal static int CountSilent(string source) => SilentLines(source).Count;
@@ -61,6 +64,16 @@ namespace UnityGameTranslator.Core.Checks
                 if (end < 0) continue;
                 string body = code.Substring(open, end - open + 1);
                 if (Speaks.IsMatch(body)) continue;
+                // Recognised, not swallowed — the two shapes where the catch IS the condition:
+                // ① a filter on this code's own cancellation (`when (ct.IsCancellationRequested)`):
+                //   the stop it asked for, and any other cancellation goes on past it;
+                // ② one precise type turned into a named outcome the caller acts on and reports
+                //   (`catch (RegexMatchTimeoutException) { return Outcome.TimedOut; }`). A plain
+                //   Exception never qualifies: it names nothing.
+                if (m.Groups[2].Success && m.Groups[2].Value.Contains("IsCancellationRequested")) continue;
+                var type = CaughtType.Match(m.Value);
+                if (type.Success && type.Groups[1].Value != "Exception" && type.Groups[1].Value != "System.Exception"
+                    && NamesOutcome.IsMatch(body)) continue;
                 // It carries the exception somewhere (a diagnostic line it returns, a field a
                 // report reads): not mute either.
                 var named = CaughtName.Match(m.Value);
@@ -110,6 +123,13 @@ namespace UnityGameTranslator.Core.Checks
                 "an interpolated string that carries it counts as carrying it");
             Counts("// catch { }\nvar s = \"catch { }\";", 0, "a catch in a comment or a string is not code");
             Counts("try { A(); } catch { if (x) { y = 1; } }", 1, "nested braces are read to the catch's own end");
+            Counts("try { A(); } catch (OperationCanceledException) when (ct.IsCancellationRequested) { return; }", 0,
+                "a filter on its own cancellation recognises the case");
+            Counts("try { A(); } catch (OperationCanceledException) when (other) { return; }", 1, "any other filter does not");
+            Counts("try { A(); } catch (RegexMatchTimeoutException) { return Outcome.TimedOut; }", 0,
+                "one precise type turned into a named outcome is recognised");
+            Counts("try { A(); } catch (Exception) { return Outcome.Failed; }", 1, "but a plain Exception names nothing");
+            Counts("try { A(); } catch (IOException) { return null; }", 1, "and a precise type dropped to null is still silent");
 
             string core = FindDir("UnityGameTranslator.Core");
             string baselineFile = FindFile("tests", "UnityGameTranslator.Core.Checks", "silent-catches.json");

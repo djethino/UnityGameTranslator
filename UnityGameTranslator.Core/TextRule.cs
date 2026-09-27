@@ -40,15 +40,19 @@ namespace UnityGameTranslator.Core
         /// The pattern compiled with the same options the rule has always used, or null when it is
         /// not a valid pattern.
         /// </summary>
-        public static Regex Compile(string pattern)
+        public static Regex Compile(string pattern, out string error)
         {
+            error = null;
             if (string.IsNullOrEmpty(pattern)) return null;
+            // .NET has no TryParse for a pattern: the refusal is the only way to know, and what it
+            // says (which bracket, which quantifier) goes to the author of the rule.
             try
             {
                 return new Regex(pattern, RegexOptions.IgnoreCase, Budget);
             }
-            catch (ArgumentException)
+            catch (ArgumentException ex)
             {
+                error = ex.Message;
                 return null;
             }
         }

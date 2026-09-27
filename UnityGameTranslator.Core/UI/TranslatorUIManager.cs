@@ -1649,7 +1649,7 @@ namespace UnityGameTranslator.Core.UI
                 if (!string.IsNullOrEmpty(text.text))
                 {
                     try { font.RequestCharactersInTexture(text.text, text.fontSize, text.fontStyle); }
-                    catch { }
+                    catch (Exception ex) { Faults.Say("TranslatorUIManager.SwapModUIFont", ex, font.name); }
                 }
                 text.SetAllDirty();
                 if (text.gameObject.activeInHierarchy)
@@ -1726,7 +1726,7 @@ namespace UnityGameTranslator.Core.UI
                 if (!string.IsNullOrEmpty(text.text))
                 {
                     try { text.font.RequestCharactersInTexture(text.text, text.fontSize, text.fontStyle); }
-                    catch { }
+                    catch (Exception ex) { Faults.Say("TranslatorUIManager.RerenderModUIWalk", ex); }
                 }
                 text.SetAllDirty();
                 // Toggle enabled only on the initial pass (rebind); the per-frame tick must not toggle
@@ -3054,8 +3054,9 @@ namespace UnityGameTranslator.Core.UI
         private static JObject ParseOrNull(string jsonData)
         {
             if (string.IsNullOrWhiteSpace(jsonData)) return null;
+            // An event whose data is not the JSON the relay sends: said, and read as nothing said.
             try { return ApiClient.ParseJsonSafe(jsonData); }
-            catch { return null; }
+            catch (Exception ex) { Faults.Say("TranslatorUIManager.ParseOrNull", ex); return null; }
         }
 
         /// <summary>
@@ -3987,8 +3988,9 @@ namespace UnityGameTranslator.Core.UI
                     }
                 });
             }
-            catch
+            catch (Exception ex)
             {
+                Faults.Say("TranslatorUIManager.EditSessionKeepalive", ex);
                 RunOnMainThread(() => { _keepaliveInFlight = false; });
             }
         }
@@ -4094,8 +4096,10 @@ namespace UnityGameTranslator.Core.UI
                     return BitConverter.ToString(sha.ComputeHash(bytes)).Replace("-", "").ToLowerInvariant();
                 }
             }
-            catch
+            // The file held by another program for a moment: no hash this time, and it is said.
+            catch (Exception ex)
             {
+                Faults.Say("TranslatorUIManager.ComputeLocalFileHash", ex);
                 return null;
             }
         }

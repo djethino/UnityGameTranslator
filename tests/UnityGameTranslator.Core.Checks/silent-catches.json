@@ -1,25 +1,4 @@
 {
   "about": "Silent catches left in UnityGameTranslator.Core, per file (SilentCatchChecks): a catch that neither says anything nor rethrows. A ratchet: never above, lowered in the same commit as each fix (dotnet run -- silent-baseline). The goal is an empty list. Inventory: analyse/catch-silencieux.md (root, out of git).",
-  "files": {
-    "Compat.cs": 2,
-    "Engine/ConfigEffects.cs": 1,
-    "Engine/NumberPatterns.cs": 1,
-    "Engine/SseStream.cs": 2,
-    "ModUiStore.cs": 1,
-    "Rasterizer/CffParser.cs": 1,
-    "RawAtlasCache.cs": 1,
-    "SseClient.cs": 5,
-    "TextRule.cs": 2,
-    "TextTargets.cs": 2,
-    "TextureUtils.cs": 1,
-    "TranslationBackups.cs": 3,
-    "TranslationSettings.cs": 1,
-    "UI/Components/HotkeyCapture.cs": 1,
-    "UI/Components/PendingMarks.cs": 1,
-    "UI/EngineHostAdapter.cs": 3,
-    "UI/Panels/InspectorPanel.cs": 2,
-    "UI/Panels/UploadSetupPanel.cs": 1,
-    "UI/TranslatorUIManager.cs": 5,
-    "UI/UIHelpers.cs": 1
-  }
+  "files": {}
 }

@@ -162,11 +162,9 @@ namespace UnityGameTranslator.Core
             }
         }
 
-        private static object Read(object holder, PropertyInfo property)
-        {
-            try { return property.GetValue(holder, null); }
-            catch (Exception) { return null; }
-        }
+        // The mod's own settings classes, plain properties: a getter that throws here is a bug in
+        // them, and it goes on up rather than reading as "no value".
+        private static object Read(object holder, PropertyInfo property) => property.GetValue(holder, null);
 
         /// <summary>
         /// One value as text. A list is joined rather than compared by reference: two lists holding

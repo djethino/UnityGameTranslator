@@ -314,15 +314,14 @@ namespace UnityGameTranslator.Core
         private static long? ReadIndex(JToken token)
         {
             if (token == null || token.Type != JTokenType.Integer) return null;
-            try
-            {
-                long value = token.Value<long>();
-                return value >= 1 ? value : (long?)null;
-            }
-            catch
-            {
-                return null;
-            }
+            // Held as a long (read from text) or an int (built in memory); beyond a long it is a
+            // BigInteger, which no index can be — recognised rather than caught.
+            object raw = (token as JValue)?.Value;
+            long value;
+            if (raw is long asLong) value = asLong;
+            else if (raw is int asInt) value = asInt;
+            else return null;
+            return value >= 1 ? value : (long?)null;
         }
     }
 }

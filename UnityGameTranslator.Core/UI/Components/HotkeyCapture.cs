@@ -185,7 +185,13 @@ namespace UnityGameTranslator.Core.UI.Components
                 {
                     keyPressed = UniverseLib.Input.InputManager.GetKeyDown(key);
                 }
-                catch { }
+                // The game's input system refusing the question: said, and this frame's scan
+                // stops there — the same refusal would come back for every key after it.
+                catch (Exception ex)
+                {
+                    Faults.Say("HotkeyCapture.GetKeyDown", ex, key.ToString());
+                    break;
+                }
 
                 if (keyPressed)
                 {

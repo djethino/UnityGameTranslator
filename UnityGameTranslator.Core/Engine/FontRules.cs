@@ -204,11 +204,11 @@ namespace UnityGameTranslator.Core
                     if (!rule.TextRegexCompiled)
                     {
                         rule.TextRegexCompiled = true;
-                        rule.TextRegex = TextRule.Compile(pattern.Substring(1, pattern.Length - 2));
+                        rule.TextRegex = TextRule.Compile(pattern.Substring(1, pattern.Length - 2), out string patternError);
                         if (rule.TextRegex == null)
                         {
                             rule.SwitchedOffThisSession = true;
-                            Warn?.Invoke($"[FontOverride] Rule \"{match}\" is not a valid pattern; ignored. Check it in the Fonts tab.");
+                            Warn?.Invoke($"[FontOverride] Rule \"{match}\" is not a valid pattern ({patternError}); ignored. Check it in the Fonts tab.");
                         }
                     }
                     if (rule.TextRegex == null) return false;

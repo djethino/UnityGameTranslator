@@ -707,7 +707,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                     results.Add((target.Owner, translation, resolution.Key, tag, compPath,
                                  resolution.CapturedNumbers));
                 }
-                catch { }
+                // One text that cannot be resolved stays off the list; the others still show — said.
+                catch (Exception ex) { Faults.Say("InspectorPanel.FindTextComponentsAtPath", ex, target.Engine); }
             }
         }
 
@@ -815,16 +816,12 @@ namespace UnityGameTranslator.Core.UI.Panels
 
                 TranslatorCore.SetTranslationFromEditor(capturedKey, newValue, tag);
 
-                // Apply immediately to the component, with the live numbers re-injected
-                try
-                {
-                    // ⚠ TextTargets, not TypeHelper: the latter is the uGUI answer and does nothing
-                    // for a UI Toolkit element — the edit would be written to the file and never
-                    // appear, which reads as the save having failed.
-                    TextTargets.Write(capturedComponent,
-                        TextNormalization.RestoreNumbersFromPlaceholders(newValue, capturedNumbers));
-                }
-                catch { }
+                // Apply immediately to the component, with the live numbers re-injected.
+                // ⚠ TextTargets, not TypeHelper: the latter is the uGUI answer and does nothing
+                // for a UI Toolkit element — the edit would be written to the file and never
+                // appear, which reads as the save having failed. It says its own failures.
+                TextTargets.Write(capturedComponent,
+                    TextNormalization.RestoreNumbersFromPlaceholders(newValue, capturedNumbers));
 
                 _statusLabel.Say(tag == "A" ? "AI translation applied" : "Saved!");
                 _statusLabel.Tone = Tone.Success;

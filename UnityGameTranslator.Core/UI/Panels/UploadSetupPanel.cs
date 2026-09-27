@@ -360,9 +360,10 @@ namespace UnityGameTranslator.Core.UI.Panels
                     UpdateValidation();
                 });
             }
-            catch
+            catch (Exception ex)
             {
-                // Network error — fall back to local detection
+                // Network error — fall back to local detection, and say why
+                TranslatorCore.LogWarning($"[UploadSetup] Game lookup on the site failed, using local detection: {ex.Message}");
                 TranslatorUIManager.RunOnMainThread(() =>
                 {
                     SelectGame(detectedGame);

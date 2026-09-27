@@ -47,12 +47,14 @@ namespace UnityGameTranslator.Core
             var matches = PlaceholderIndexPattern.Matches(patternText);
             if (matches.Count == 0) return null;
 
-            try
+            // Nothing below throws: the escaped text plus our own groups is always a valid pattern,
+            // and an index too long for an int is recognised rather than caught.
             {
                 string pattern = Regex.Escape(patternText);
                 foreach (Match match in matches)
                 {
-                    placeholderIndices.Add(int.Parse(match.Groups[1].Value));
+                    if (!int.TryParse(match.Groups[1].Value, out int index)) return null;
+                    placeholderIndices.Add(index);
                     string placeholder = Regex.Escape(match.Value);
                     // Replace one occurrence at a time so capture group order
                     // follows appearance order even with duplicated indices
@@ -63,7 +65,6 @@ namespace UnityGameTranslator.Core
                 }
                 return new Regex("^" + pattern + "$", compiled ? RegexOptions.Compiled : RegexOptions.None);
             }
-            catch { return null; }
         }
 
         /// <summary>

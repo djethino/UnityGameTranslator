@@ -43,19 +43,9 @@ namespace UnityGameTranslator.Core.UI
             // If not found, scan loaded assemblies (assembly name may differ)
             if (delegateSupportType == null)
             {
-                foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
-                {
-                    try
-                    {
-                        delegateSupportType = asm.GetType("Il2CppInterop.Runtime.DelegateSupport");
-                        if (delegateSupportType != null)
-                        {
-                            TranslatorCore.LogInfo($"[UIHelpers] Found DelegateSupport in assembly: {asm.GetName().Name}");
-                            break;
-                        }
-                    }
-                    catch { /* Skip assemblies that throw on GetType */ }
-                }
+                delegateSupportType = AssemblyTypes.Find("Il2CppInterop.Runtime.DelegateSupport");
+                if (delegateSupportType != null)
+                    TranslatorCore.LogInfo($"[UIHelpers] Found DelegateSupport in assembly: {delegateSupportType.Assembly.GetName().Name}");
             }
 
             if (delegateSupportType != null)

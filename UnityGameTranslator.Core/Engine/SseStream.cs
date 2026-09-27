@@ -179,8 +179,11 @@ namespace UnityGameTranslator.Core
                 {
                     return SseStopReason.Cancelled;
                 }
-                catch (IOException)
+                catch (IOException ex)
                 {
+                    // The client reconnects on Closed without a word of its own: this is the only
+                    // trace of a connection that dropped under us.
+                    Warning?.Invoke($"[SSE] Connection lost, will retry: {ex.Message}");
                     return SseStopReason.Closed;
                 }
 

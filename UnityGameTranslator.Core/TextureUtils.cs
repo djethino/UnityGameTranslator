@@ -398,7 +398,8 @@ namespace UnityGameTranslator.Core
                         method.Invoke(texture, new object[] { data });
                         return true;
                     }
-                    catch { continue; }
+                    // The engine refusing the plain overload: said, and the next one is tried.
+                    catch (Exception ex) { Faults.Say("TextureUtils.LoadRawTextureDataSafe byte[]", ex); continue; }
                 }
 
                 // IL2CPP array conversion

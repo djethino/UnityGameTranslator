@@ -182,8 +182,10 @@ namespace UnityGameTranslator.Core
 
                 return count;
             }
-            catch
+            // A backup file somebody edited or a copy cut short: its row shows 0 lines, and it is said.
+            catch (Exception ex)
             {
+                Faults.Say("TranslationBackups.CountLines", ex, Path.GetFileName(path));
                 return 0;
             }
         }
@@ -194,8 +196,9 @@ namespace UnityGameTranslator.Core
             {
                 return JObject.Parse(File.ReadAllText(path))["_uuid"]?.Value<string>();
             }
-            catch
+            catch (Exception ex)
             {
+                Faults.Say("TranslationBackups.UuidIn", ex, Path.GetFileName(path));
                 return null;
             }
         }
@@ -592,9 +595,11 @@ namespace UnityGameTranslator.Core
             var lines = 0;
             var byHand = 0;
 
-            try
+            // A copy taken under the lock: the worker may be adding a line while this counts, and
+            // walking the map itself then throws — which the catch that stood here answered with
+            // a silent 0.
             {
-                foreach (var entry in TranslatorCore.TranslationCache)
+                foreach (var entry in TranslatorCore.TranslationLines())
                 {
                     lines++;
 
@@ -605,10 +610,6 @@ namespace UnityGameTranslator.Core
                     // whole purpose is telling one backup from another.
                     if (Merge.IsByHand(entry.Value?.Tag, entry.Value?.Value)) byHand++;
                 }
-            }
-            catch
-            {
-                // Counting is a nicety on a row; it must never cost the copy itself.
             }
 
             return new KeyValuePair<int, int>(lines, byHand);

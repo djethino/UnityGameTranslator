@@ -274,6 +274,7 @@
          pipeline) are not here: the pipeline logs through TranslatorCore. -->
     <Compile Include="../../UnityGameTranslator.Core/Rasterizer/TtfParser.cs" />
     <Compile Include="../../UnityGameTranslator.Core/Rasterizer/CffParser.cs" />
+    <Compile Include="../../UnityGameTranslator.Core/Engine/Faults.cs" />
     <Compile Include="../../UnityGameTranslator.Core/Rasterizer/GlyphData.cs" />
     <Compile Include="../../UnityGameTranslator.Core/Rasterizer/OpenTypeLayout.cs" />
     <!-- The Unicode conformance suite, gzipped (15 MB of text otherwise) — data from the

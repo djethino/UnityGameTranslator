@@ -25,9 +25,14 @@ namespace UnityGameTranslator.Core.UI
         {
             // Streams first (background tasks holding HTTP connections), then the live edit
             // session server-side — bounded wait, and before the engine disposes its client.
-            try { TranslatorUIManager.StopSyncWatch(); } catch { }
-            try { TranslatorUIManager.StopMergeCompletionListener(); } catch { }
-            try { TranslatorUIManager.EndEditSessionOnShutdown(); } catch { }
+            // Each step on its own, so one that fails does not keep the next from running — and each
+            // failure said.
+            try { TranslatorUIManager.StopSyncWatch(); }
+            catch (Exception ex) { Faults.Say("EngineHostAdapter.ShuttingDown sync watch", ex); }
+            try { TranslatorUIManager.StopMergeCompletionListener(); }
+            catch (Exception ex) { Faults.Say("EngineHostAdapter.ShuttingDown merge listener", ex); }
+            try { TranslatorUIManager.EndEditSessionOnShutdown(); }
+            catch (Exception ex) { Faults.Say("EngineHostAdapter.ShuttingDown edit session", ex); }
         }
     }
 }

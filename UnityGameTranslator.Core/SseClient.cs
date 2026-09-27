@@ -144,8 +144,11 @@ namespace UnityGameTranslator.Core
         {
             if (_cts != null)
             {
-                try { _cts.Cancel(); } catch { }
-                try { _cts.Dispose(); } catch { }
+                // Cancel runs the callbacks registered on the token, and one of them may throw: said.
+                // Dispose does not throw, and the token is dropped just below so it is never reused.
+                try { _cts.Cancel(); }
+                catch (Exception ex) { Faults.Say("SseClient.Disconnect", ex); }
+                _cts.Dispose();
                 _cts = null;
             }
             SetState(SseConnectionState.Disconnected);
@@ -202,7 +205,8 @@ namespace UnityGameTranslator.Core
                             if (statusCode == 401 || statusCode == 403 || statusCode == 404)
                             {
                                 var body = "";
-                                try { body = await response.Content.ReadAsStringAsync(); } catch { }
+                                try { body = await response.Content.ReadAsStringAsync(); }
+                                catch (Exception ex) { body = $"(body unreadable: {ex.Message})"; }
                                 OnError?.Invoke($"HTTP {statusCode}: {body}");
                                 return;
                             }
@@ -276,7 +280,7 @@ namespace UnityGameTranslator.Core
                 {
                     await Task.Delay(_reconnectDelayMs, ct);
                 }
-                catch (OperationCanceledException)
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
                 {
                     return;
                 }

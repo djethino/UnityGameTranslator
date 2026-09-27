@@ -64,12 +64,20 @@ namespace UnityGameTranslator.Core
             // here would cancel a finalisation that has already been decided.
             if (state.TypewritingQueued) return;
 
-            if (!TextRelations.Grows(state.TypewritingText, currentText)) return;
+            // 🔴 **Growing, or the same content with its markup moved.** A reveal by markup never
+            // grows — its tag walks — and a frame recognised as a known sentence (TextRouter.Dressed)
+            // returns before the reveal sees it: told only of growth, the reveal kept an earlier
+            // frame and sent it when the walk ended (measured: `power<color…>.</color>`, a fragment,
+            // at every showing of a known sentence).
+            bool grows = TextRelations.Grows(state.TypewritingText, currentText);
+            bool redressed = !grows && state.TypewritingText != currentText
+                             && TextRelations.SameContent(state.TypewritingText, currentText);
+            if (!grows && !redressed) return;
 
             // The per-character trace of a reveal, which used to come from [TW-CHECK]: a text that
             // grows is now held here, so IsTypewritingInProgress sees it unchanged and says nothing.
             if (_host.DebugMode)
-                _host.LogDebug($"[TW-GROW] comp={compId} {state.TypewritingText.Length}c → {currentText.Length}c '{Head(currentText)}'");
+                _host.LogDebug($"[TW-GROW] comp={compId} {state.TypewritingText.Length}c → {currentText.Length}c{(redressed ? " (markup moved)" : "")} '{Head(currentText)}'");
 
             HoldTypewriting(state, compId, currentText, _host.Now, grew: true);
         }
@@ -353,6 +361,14 @@ namespace UnityGameTranslator.Core
                 // Text is already in target language (reverse cache hit) — skip
                 if (_host.DebugMode)
                     _host.LogDebug($"[TW-FINALIZE] SKIP already translated: '{Head40(text)}'");
+            }
+            else if (PeekState(compId)?.ReadBackSource == text && KnownUnderSpan(text, false, _host.GameStore) != null)
+            {
+                // The last frame of a reveal by markup whose sentence is known: the component was
+                // given its translation, uncovered, for this very frame (TextRouter.Dressed) —
+                // ReadBackSource says so, it is what that answer recorded. Nothing to send. A text
+                // that merely ends on a span was never given one, and goes on to the queue.
+                _host.LogDebug($"[TW-FINALIZE] comp={compId} a known sentence uncovered by markup — shown, not sent: '{Head40(text)}'");
             }
             else if (headHere)
             {

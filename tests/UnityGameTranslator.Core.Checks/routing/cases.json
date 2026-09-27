@@ -177,6 +177,53 @@
       "queued": []
     },
     {
+      "id": "reveal/a-known-sentence-uncovered-by-markup-shows-its-translation-uncovered",
+      "why": "🔴 seen in a game (2026-09-27): a finished sentence the file knows, uncovered by moving a transparent tag along it — every frame missed, the player read the source being uncovered, and a fragment was sent at each showing. Each frame now shows the translation with the game's own tag after the same share of visible characters: 1 of 10 is 2 of 20, 3 of 10 is 6",
+      "file": {"Stand back": "Reculez un peu, vite"},
+      "steps": [
+        {"f": 1, "t": 0.0, "write": "Stand back", "shows": "Reculez un peu, vite"},
+        {"f": 3, "t": 0.03, "write": "S<color=#00000000>tand back</color>", "shows": "Re<color=#00000000>culez un peu, vite</color>"},
+        {"f": 5, "t": 0.06, "write": "Sta<color=#00000000>nd back</color>", "shows": "Recule<color=#00000000>z un peu, vite</color>"},
+        {"f": 7, "t": 0.09, "write": "Stand back<color=#00000000></color>", "shows": "Reculez un peu, vite<color=#00000000></color>"},
+        {"f": 80, "t": 1.2, "tick": true, "shows": "Reculez un peu, vite<color=#00000000></color>"}
+      ],
+      "queued": []
+    },
+    {
+      "id": "reveal/the-frame-a-reveal-ends-on-is-the-same-sentence-as-the-bare-one",
+      "why": "the file may hold the sentence as the frame a reveal ends on (the sentence and an empty tag), which is what gets stored when it is first met: the frames before it are that sentence too, and the last one is its key",
+      "file": {"Stand back<color=#00000000></color>": "Reculez un peu, vite<color=#00000000></color>"},
+      "steps": [
+        {"f": 1, "t": 0.0, "write": "<color=#00000000>Stand back</color>", "shows": "<color=#00000000>Stand back</color>"},
+        {"f": 3, "t": 0.03, "write": "S<color=#00000000>tand back</color>", "shows": "Re<color=#00000000>culez un peu, vite</color>"},
+        {"f": 5, "t": 0.06, "write": "Sta<color=#00000000>nd back</color>", "shows": "Recule<color=#00000000>z un peu, vite</color>"},
+        {"f": 7, "t": 0.09, "write": "Stand back<color=#00000000></color>", "shows": "Reculez un peu, vite<color=#00000000></color>"},
+        {"f": 80, "t": 1.2, "tick": true, "shows": "Reculez un peu, vite<color=#00000000></color>"}
+      ],
+      "queued": []
+    },
+    {
+      "id": "reveal/a-known-sentence-paused-mid-reveal-is-not-sent",
+      "why": "a reveal by markup that starts hidden, then stops half-way for longer than the stabiliser's wait: the frame it holds is the known sentence, already shown uncovered — finalising it sends nothing",
+      "file": {"Stand back": "Reculez un peu, vite"},
+      "steps": [
+        {"f": 1, "t": 0.0, "write": "<color=#00000000>Stand back</color>", "shows": "<color=#00000000>Stand back</color>"},
+        {"f": 3, "t": 0.03, "write": "Sta<color=#00000000>nd back</color>", "shows": "Recule<color=#00000000>z un peu, vite</color>"},
+        {"f": 80, "t": 1.2, "tick": true, "shows": "Recule<color=#00000000>z un peu, vite</color>"}
+      ],
+      "queued": []
+    },
+    {
+      "id": "reveal/a-text-that-only-ends-on-a-span-is-a-text-of-its-own",
+      "why": "a text whose last word is coloured, written once and never moved, is a text: even with its words known bare, it is sent as it is — only markup seen MOVING on a component is a reveal",
+      "file": {"Stand back": "Reculez un peu, vite"},
+      "steps": [
+        {"f": 1, "t": 0.0, "write": "Stand <color=red>back</color>", "shows": "Stand <color=red>back</color>"},
+        {"f": 80, "t": 1.2, "tick": true}
+      ],
+      "queued": ["Stand <color=red>back</color>"]
+    },
+    {
       "id": "reveal/a-tag-walking-along-a-finished-line-is-one-line",
       "why": "a reveal that moves a colour tag along a finished sentence says the same thing every frame: one request, not one per frame (one sentence once cost 93)",
       "steps": [

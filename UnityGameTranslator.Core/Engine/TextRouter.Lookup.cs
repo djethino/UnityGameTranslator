@@ -79,6 +79,9 @@ namespace UnityGameTranslator.Core
                     text = reconstructed;
             }
 
+            // Asked before the reveal below is told: telling it moves its held text onto this one.
+            bool markupMoved = compId != -1 && MarkupMovedHere(compId, text);
+
             // 🔴 Tell a reveal in flight what this component now shows, BEFORE any lookup can
             // answer and return. Every exit below means "this text is known", and each one that
             // forgot to say so left the reveal holding a fragment it then sent to the model — see
@@ -180,6 +183,23 @@ namespace UnityGameTranslator.Core
                 if (look.Stage == GateStage.Exact && _host.DebugMode && text.Length > 100)
                     _host.LogDebug($"[CACHE-HIT-SAME] comp={compId} known as shown ({text.Length}c)='{text}'");
                 return text;
+            }
+
+            // A known sentence uncovered by markup this component is seen moving: its translation,
+            // uncovered as far (TextRouter.Dressed). Never sent — the reveal was told above.
+            if (markupMoved)
+            {
+                string uncovered = KnownUnderSpan(text, isOwnUI, store);
+                if (uncovered != null)
+                {
+                    _host.CountTranslated();
+                    if (component != null)
+                    {
+                        _host.StoreOriginal(component, text);
+                        TrackTranslation(compId, text, uncovered);
+                    }
+                    return uncovered;
+                }
             }
 
             // 🔴 The miss path — reverse index, own UI, stale snapshot, visibility, reveal, concat,

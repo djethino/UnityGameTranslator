@@ -1928,7 +1928,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 {
                     options.Add("--- Game Fonts ---");
                     foreach (var af in altFonts)
-                        options.Add("[Game] " + af);
+                        options.Add(AssetPacks.GameFontPrefix + af);
                 }
 
                 if (_systemFonts != null && _systemFonts.Length > 0)
@@ -1945,12 +1945,12 @@ namespace UnityGameTranslator.Core.UI.Panels
                 {
                     options.Add("--- Game Fonts ---");
                     foreach (var gf in gameFonts)
-                        options.Add("[Game] " + gf);
+                        options.Add(AssetPacks.GameFontPrefix + gf);
                     // Known from the translation but not in memory right now — see
                     // FontManager.GetKnownUnloadedFontNames. Without them, a font used as a
                     // fallback in a past session could not be picked again.
                     foreach (var kf in knownFonts)
-                        options.Add("[Game] " + kf + FontManager.UnloadedMarker);
+                        options.Add(AssetPacks.GameFontPrefix + kf + FontManager.UnloadedMarker);
                 }
 
                 if (_systemFonts != null && _systemFonts.Length > 0)
@@ -1968,9 +1968,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                 {
                     options.Add("--- Game Fonts ---");
                     foreach (var gf in gameUnityFonts)
-                        options.Add("[Game] " + gf);
+                        options.Add(AssetPacks.GameFontPrefix + gf);
                     foreach (var kf in knownFonts)
-                        options.Add("[Game] " + kf + FontManager.UnloadedMarker);
+                        options.Add(AssetPacks.GameFontPrefix + kf + FontManager.UnloadedMarker);
                 }
                 availableFonts = _systemFonts;
             }
@@ -1989,7 +1989,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 if (options.Count > 1)
                     options.Add("--- Custom Fonts ---");
                 foreach (var customFont in customFonts)
-                    options.Add("[Custom] " + customFont);
+                    options.Add(AssetPacks.CustomFontPrefix + customFont);
             }
 
             var dropdown = row.Dropdown("Fallback");
@@ -2013,7 +2013,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             {
                 string match = FindOption(options, fontInfo.FallbackFont)
                     // Migration: old JSON might have a game font name without [Game] prefix
-                    ?? FindOption(options, "[Game] " + fontInfo.FallbackFont);
+                    ?? FindOption(options, AssetPacks.GameFontPrefix + fontInfo.FallbackFont);
 
                 if (match == null)
                 {

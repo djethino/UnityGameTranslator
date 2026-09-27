@@ -5521,16 +5521,16 @@ namespace UnityGameTranslator.Core
         public static string StripFontPrefix(string fontName)
         {
             if (string.IsNullOrEmpty(fontName)) return fontName;
-            if (fontName.StartsWith("[Custom] ", StringComparison.Ordinal))
-                return fontName.Substring(9);
-            if (fontName.StartsWith("[Game] ", StringComparison.Ordinal))
-                return fontName.Substring(7);
+            if (fontName.StartsWith(UnityGameTranslator.Common.AssetPacks.CustomFontPrefix, StringComparison.Ordinal))
+                return fontName.Substring(UnityGameTranslator.Common.AssetPacks.CustomFontPrefix.Length);
+            if (fontName.StartsWith(UnityGameTranslator.Common.AssetPacks.GameFontPrefix, StringComparison.Ordinal))
+                return fontName.Substring(UnityGameTranslator.Common.AssetPacks.GameFontPrefix.Length);
             return fontName;
         }
 
         public static bool IsGameFontRef(string fontName)
         {
-            return !string.IsNullOrEmpty(fontName) && fontName.StartsWith("[Game] ", StringComparison.Ordinal);
+            return !string.IsNullOrEmpty(fontName) && fontName.StartsWith(UnityGameTranslator.Common.AssetPacks.GameFontPrefix, StringComparison.Ordinal);
         }
 
         /// <summary>Suffix marking a font the translation knows but the game has not loaded yet.</summary>
@@ -5644,8 +5644,8 @@ namespace UnityGameTranslator.Core
         {
             // Ordinal: these decide a category from an exact marker; see StripFontPrefix.
             if (string.IsNullOrEmpty(fontEntry) || fontEntry.StartsWith("(", StringComparison.Ordinal)) return null;
-            if (fontEntry.StartsWith("[Game] ", StringComparison.Ordinal)) return "Game";
-            if (fontEntry.StartsWith("[Custom] ", StringComparison.Ordinal)) return "Custom";
+            if (fontEntry.StartsWith(UnityGameTranslator.Common.AssetPacks.GameFontPrefix, StringComparison.Ordinal)) return "Game";
+            if (fontEntry.StartsWith(UnityGameTranslator.Common.AssetPacks.CustomFontPrefix, StringComparison.Ordinal)) return "Custom";
             return "System";
         }
 
@@ -5663,7 +5663,7 @@ namespace UnityGameTranslator.Core
             if (string.IsNullOrEmpty(fontName))
                 return false;
 
-            if (fontName.StartsWith("[Custom] ", StringComparison.Ordinal))
+            if (fontName.StartsWith(UnityGameTranslator.Common.AssetPacks.CustomFontPrefix, StringComparison.Ordinal))
                 return true;
 
             var customFonts = CustomFontLoader.CustomFonts;

@@ -29,7 +29,7 @@ namespace UnityGameTranslator.Core
             if (FontManager.IsGameFontRef(fontRef))
                 return FontManager.IsGameFont(name);
 
-            if (fontRef.StartsWith("[Custom] ", StringComparison.Ordinal))
+            if (fontRef.StartsWith(UnityGameTranslator.Common.AssetPacks.CustomFontPrefix, StringComparison.Ordinal))
                 return Array.Exists(CustomFontLoader.GetCustomFontNames(),
                     f => string.Equals(f, name, StringComparison.OrdinalIgnoreCase));
 

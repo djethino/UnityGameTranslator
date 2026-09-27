@@ -626,7 +626,8 @@ namespace UnityGameTranslator.Core
             // Build candidate filenames from the display name
             // "Adobe Devanagari Italic" → try: "Adobe Devanagari Italic", "AdobeDevanagari-Italic",
             //   "AdobeDevanagariItalic", "AdobeDevanagari-Italic", etc.
-            var candidates = BuildFilenameCandidates(fontName);
+            // ⚠ The socle's rules, shared with the Manager's export — which must pick this same file.
+            var candidates = UnityGameTranslator.Common.SystemFontNames.Candidates(fontName);
 
             foreach (var dir in dirs)
             {
@@ -643,13 +644,13 @@ namespace UnityGameTranslator.Core
                 // 2. Fuzzy match: scan all font files and compare normalized names
                 try
                 {
-                    string normalizedSearch = NormalizeFontName(fontName);
+                    string normalizedSearch = UnityGameTranslator.Common.SystemFontNames.Normalize(fontName);
                     foreach (var ext in new[] { "*.ttf", "*.otf" })
                     {
                         foreach (var file in Directory.GetFiles(dir, ext, SearchOption.AllDirectories))
                         {
                             string fileName = Path.GetFileNameWithoutExtension(file);
-                            if (string.Equals(NormalizeFontName(fileName), normalizedSearch,
+                            if (string.Equals(UnityGameTranslator.Common.SystemFontNames.Normalize(fileName), normalizedSearch,
                                 StringComparison.OrdinalIgnoreCase))
                                 return file;
                         }
@@ -659,66 +660,6 @@ namespace UnityGameTranslator.Core
             }
 
             return null;
-        }
-
-        /// <summary>
-        /// Build candidate filenames from a font display name.
-        /// </summary>
-        private static string[] BuildFilenameCandidates(string displayName)
-        {
-            var candidates = new List<string>();
-            candidates.Add(displayName); // exact
-
-            // Split into name + style parts
-            // "Adobe Devanagari Bold Italic" → family="Adobe Devanagari", style="Bold Italic"
-            string[] styleSuffixes = { "Bold Italic", "Bold", "Italic", "Regular", "Light", "Medium",
-                "SemiBold", "ExtraBold", "Thin", "Black", "Condensed" };
-
-            string family = displayName;
-            string style = "";
-            foreach (var suffix in styleSuffixes)
-            {
-                if (displayName.EndsWith(" " + suffix, StringComparison.OrdinalIgnoreCase))
-                {
-                    family = displayName.Substring(0, displayName.Length - suffix.Length - 1);
-                    style = suffix;
-                    break;
-                }
-            }
-
-            string familyNoSpaces = family.Replace(" ", "");
-            string styleNoSpaces = style.Replace(" ", "");
-
-            // "AdobeDevanagari-Italic"
-            if (!string.IsNullOrEmpty(style))
-            {
-                candidates.Add(familyNoSpaces + "-" + styleNoSpaces);
-                candidates.Add(familyNoSpaces + style);
-                candidates.Add(familyNoSpaces + "-" + style);
-            }
-            // "AdobeDevanagari-Regular" (when no style suffix detected)
-            candidates.Add(familyNoSpaces + "-Regular");
-            candidates.Add(familyNoSpaces);
-            candidates.Add(displayName.Replace(" ", ""));
-
-            return candidates.ToArray();
-        }
-
-        /// <summary>
-        /// Normalize a font name for fuzzy comparison: lowercase, strip spaces/hyphens/underscores.
-        /// "Adobe Devanagari Italic" and "AdobeDevanagari-Italic" both become "adobedevanagariitalic".
-        /// </summary>
-        private static string NormalizeFontName(string name)
-        {
-            if (string.IsNullOrEmpty(name)) return "";
-            var sb = new System.Text.StringBuilder(name.Length);
-            for (int i = 0; i < name.Length; i++)
-            {
-                char c = name[i];
-                if (c != ' ' && c != '-' && c != '_')
-                    sb.Append(char.ToLowerInvariant(c));
-            }
-            return sb.ToString();
         }
 
         /// <summary>

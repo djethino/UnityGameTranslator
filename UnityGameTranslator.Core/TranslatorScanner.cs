@@ -531,7 +531,6 @@ namespace UnityGameTranslator.Core
         ///          shared across all types that still need it. Avoids N expensive calls.
         /// </summary>
         private static int _lastTotalComponentCount = 0;
-        private static float _lastForceRefreshTime = 0f;
         // Last periodic direct font-application pass (see ApplyReplacementsToScene)
         private static float _lastDirectFontApply = 0f;
 
@@ -1926,9 +1925,11 @@ namespace UnityGameTranslator.Core
         // skipped like anywhere else; a component born meanwhile is not in it — and does not need
         // to be, since it goes through the setter with the new settings already in force.
         //
-        // ⚠ **Only user-initiated acts spread.** The periodic paths keep the immediate pass: they
-        // read the count back to tell "it ran and found nothing" from "it never ran" (issue #21),
-        // and they are cheap now that they only rebuild what changed.
+        // ⚠ **The automatic redraws spread too** (translations landed, a font created) — they
+        // were kept immediate as "cheap", and cost 5.8 s in one frame on a large game. What they
+        // needed from the immediate pass, the count ("it ran and found nothing" against "it never
+        // ran", issue #21), is the number of components the spread snapshots. Only the redraw
+        // after a scene load stays immediate, from the render callback, behind the loading.
 
         private struct SpreadItem
         {
@@ -1962,8 +1963,9 @@ namespace UnityGameTranslator.Core
         /// names) and images; on, the images are put back too (fonts come back with the texts).
         /// Done at the END of the spread, so it lands with the last texts instead of ahead of them.
         /// </param>
-        public static void SpreadRefreshAllText(bool reapplyAllScales = false, bool glyphsChanged = true,
-                                                bool translationsSwitched = false)
+        /// <returns>How many components the spread will walk: 0 is "no component known yet".</returns>
+        public static int SpreadRefreshAllText(bool reapplyAllScales = false, bool glyphsChanged = true,
+                                               bool translationsSwitched = false)
         {
             var pass = new SpreadPass
             {
@@ -1997,6 +1999,7 @@ namespace UnityGameTranslator.Core
                 TranslatorCore.LogDebug("[SPREAD-REFRESH] a new one replaces the pass still running");
 
             _spread = pass;
+            return pass.Cached.Count + pass.PatchRefs.Count;
         }
 
         /// <summary>
@@ -2976,53 +2979,37 @@ namespace UnityGameTranslator.Core
             // Check for stabilized typewriting texts and trigger their translation
             TranslatorCore.Router.ProcessStabilizedTypewriting();
 
-            // After API translations complete, refresh all text so static components pick up cached translations
-            if (TranslatorCore.PendingVisualRefresh)
-            {
-                float now2 = Time.realtimeSinceStartup;
-                if (now2 - _lastForceRefreshTime > 1f)
-                {
-                    // 🔴 **Consumed only once the work is done** (2026-09-18). The flag was
-                    // cleared before the rate limit was even consulted, so a translation landing
-                    // less than a second after the previous pass had its request DROPPED, not
-                    // deferred: the static components showing that text stayed in the source
-                    // language until some later translation happened to sweep them. The font
-                    // request ten lines below had it right all along — it rearms itself when it
-                    // is refused, "don't lose the request".
-                    //
-                    // ⚠ That is the whole discipline of a coalescing flag: any number of events
-                    // raise it, one cycle acts on it, and nothing clears it but the act itself.
-                    TranslatorCore.PendingVisualRefresh = false;
-                    _lastForceRefreshTime = now2;
+            // 🔴 **The two automatic redraws go through the spread, never one frame** (2026-09-27).
+            // They were immediate on the belief that they were cheap once they only rebuilt what
+            // changed; measured on a large IL2CPP game, translations landing after a shop list
+            // opened cost 5.8 s in ONE frame (9 335 components), and the game went down right
+            // after. Same walk, same budget as everything else in the tick.
+            //
+            // ⚠ **A request waits for the spread under way, it never restarts it.** A new spread
+            // replaces the running one from its start: with translations landing every half
+            // second, the components at the end of the walk would never be reached. So while one
+            // runs, the flags stay up — the discipline of a coalescing flag: any number of events
+            // raise it, one cycle acts on it, nothing clears it but the act itself. That is also
+            // what the old once-a-second limit was standing in for, with a clock.
 
-                    // Translations landed: the strings may have changed, the glyphs did not.
-                    ForceRefreshAllText(glyphsChanged: false);
-                }
+            // After a font was created or new chars were added to a clone atlas: every component
+            // re-rendered with the replacement / updated glyphs. First, being the larger redraw.
+            if (_spread == null && FontManager.ConsumePendingRefresh())
+            {
+                // Too early: no component known yet (scene still loading — issue #21: the single
+                // post-creation refresh fired at the splash screen with 0 components, and
+                // serialized/I2-localized texts never fire set_text, so the menu never got the
+                // font). Kept alive so the pass reruns once components exist.
+                if (SpreadRefreshAllText() == 0)
+                    FontManager.RearmPendingRefresh();
             }
 
-            // After a font was created or new chars were added to a clone atlas, force all
-            // components to re-render so they pick up the replacement / updated glyphs.
-            // Debounced to max once per second.
-            if (FontManager.ConsumePendingRefresh())
+            // After API translations complete: static components pick up cached translations.
+            // The strings may have changed, the glyphs did not.
+            if (_spread == null && TranslatorCore.PendingVisualRefresh)
             {
-                float now = Time.realtimeSinceStartup;
-                if (now - _lastForceRefreshTime > 1f)
-                {
-                    _lastForceRefreshTime = now;
-                    int touched = ForceRefreshAllText();
-                    // Too early: no component known yet (scene still loading — issue #21:
-                    // the single post-creation refresh fired at the splash screen with 0
-                    // components, and serialized/I2-localized texts never fire set_text,
-                    // so the menu never got the font). Keep the request alive so the pass
-                    // reruns once components exist.
-                    if (touched == 0)
-                        FontManager.RearmPendingRefresh();
-                }
-                else
-                {
-                    // Debounced this cycle — don't lose the request
-                    FontManager.RearmPendingRefresh();
-                }
+                TranslatorCore.PendingVisualRefresh = false;
+                SpreadRefreshAllText(glyphsChanged: false);
             }
 
             // Direct font-application pass (no text re-set): reaches components whose

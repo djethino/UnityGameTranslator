@@ -2941,9 +2941,12 @@ namespace UnityGameTranslator.Core
                         fontName = (fontObj is UnityEngine.Object uobj) ? uobj.name : null;
 
                     // If the component already has a clone font (inherited from template/pool),
-                    // resolve back to the ORIGINAL font name so tracking stays correct
+                    // resolve back to the ORIGINAL font name so tracking stays correct. A TMP text
+                    // never carries a Font — its font asset is another kind — and asking cost a
+                    // runtime cast per TMP text.
                     Font f = fontObj as Font;
-                    if (f == null) f = TypeHelper.Il2CppCast(fontObj, typeof(Font)) as Font;
+                    if (f == null && fontObj != null && componentType != "TMP")
+                        f = TypeHelper.Il2CppCast(fontObj, typeof(Font)) as Font;
                     if (f != null)
                     {
                         string resolvedOriginal = FontManager.GetOriginalForClone(f);

@@ -1459,10 +1459,15 @@ namespace UnityGameTranslator.Core
                     else
                         result = typedMethod.Invoke(obj, null);
 
-                    if (result != null) return result;
+                    // 🔴 **Null from TryCast IS the answer: the object is not of that type.** Going
+                    // on to Cast<T> below asked the same question of a method that answers it by
+                    // throwing — measured on an IL2CPP game, 11 748 exceptions in a few minutes,
+                    // one per TMP text asked whether its TMP font was a UI.Text font. Returned as
+                    // it came, which every caller reads as "not that type".
+                    return result ?? obj;
                 }
-                // TryCast answers null for an object of another type; it throws only when the
-                // runtime refuses the call. Said, and the instance Cast below is tried.
+                // TryCast throws only when the runtime refuses the call. Said, and the instance
+                // Cast below is tried.
                 catch (Exception ex) { Faults.Say("TypeHelper.Il2CppCast TryCast", ex, targetType.Name); }
             }
 

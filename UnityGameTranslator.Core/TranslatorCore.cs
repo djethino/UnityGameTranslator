@@ -1607,6 +1607,27 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// A place as a person reads it: the last steps of the path without their indices, and the
+        /// component's type — `Panel/Recorder/Text (TextMeshProUGUI)`. Only what is shown; the place
+        /// itself is what is kept and matched.
+        /// </summary>
+        public static string DescribeComponentPlace(string place)
+        {
+            if (string.IsNullOrEmpty(place)) return "";
+            int hash = place.LastIndexOf('#');
+            string path = hash >= 0 ? place.Substring(0, hash) : place;
+            string type = hash >= 0 ? place.Substring(hash + 1) : null;
+            var steps = path.Split('/');
+            var shown = new List<string>();
+            for (int i = Math.Max(0, steps.Length - 3); i < steps.Length; i++)
+            {
+                int bracket = steps[i].LastIndexOf('[');
+                shown.Add(bracket > 0 ? steps[i].Substring(0, bracket) : steps[i]);
+            }
+            return string.Join("/", shown) + (type != null ? $" ({type})" : "");
+        }
+
+        /// <summary>
         /// Check if a component is excluded by user-defined patterns.
         /// Uses caching for performance.
         /// </summary>

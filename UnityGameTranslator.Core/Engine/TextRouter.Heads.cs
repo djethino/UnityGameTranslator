@@ -107,6 +107,19 @@ namespace UnityGameTranslator.Core
             lock (_headsLock) { return _headAnswersRefused.Contains(key); }
         }
 
+        /// <summary>
+        /// A person removes a finding (Translation Tools, Failures): the text is sent again from
+        /// that place the next time it settles there. The one door besides the component's own
+        /// contradiction; raises <see cref="HeadsChanged"/> so the file follows.
+        /// </summary>
+        public void ForgetHead(string place, string key)
+        {
+            if (string.IsNullOrEmpty(place) || string.IsNullOrEmpty(key)) return;
+            bool removed;
+            lock (_headsLock) { removed = _heads.Remove(HeadKey(place, key)); }
+            if (removed) HeadsChanged?.Invoke();
+        }
+
         /// <summary>The fragment's answer came and was refused: nothing more to wait for.</summary>
         public void ForgetWithdrawnHead(string key)
         {

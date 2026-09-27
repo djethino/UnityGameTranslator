@@ -90,6 +90,12 @@ namespace UnityGameTranslator.Core.UI.Panels
         // Failures — the lines the AI gave up on this session, settled one by one
         private ScrollList _failuresList, _attemptList;
         private Host _failureEditor, _failExcludeRow;
+        // Held texts (TextRouter.Heads): the elements that show the start of a longer line.
+        private Host _heldSection;
+        private ScrollList _heldList;
+        private int _heldCount;
+        // Findings the person removed, written on Apply — as "place \u0001 key".
+        private readonly HashSet<string> _pendingHeadForgets = new HashSet<string>();
         private LabelHandle _failElementLabel, _attemptIndexLabel, _failErrorsLabel, _failInputCheck, _failStatus;
         private ButtonHandle _prevAttemptBtn, _nextAttemptBtn, _useAttemptBtn, _failSaveBtn, _failRetranslateBtn;
         private Collapsible _gameText;                 // the line as the game shows it, foldable for room
@@ -216,6 +222,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             _useAttemptBtn = _screen.Button("UseAttemptBtn");
             _failInput = _screen.Field("FailInput");
             _failStatus = _screen.Label("FailStatus");
+            _heldSection = _screen.Host("HeldSection");
+            _heldList = _screen.List("HeldScroll");
 
             // 🔴 Everything below USES a handle fetched above — nothing may be moved over the
             // fetches. Twice a line was inserted a few lines too high: a null reference in this
@@ -236,6 +244,9 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Panels are built once for the life of the process, so this needs no matching
             // removal — the same reasoning, and the same static event, as the inspector's.
             TranslatorCore.OnRetranslateFinished += OnRetranslateFinished;
+            // Made or dropped by the router, which routes on the main thread.
+            TranslatorCore.Router.HeadsChanged += RefreshHeldList;
+            RefreshHeldList();
             RefreshFailuresList();
 
             // Fonts — global
@@ -658,6 +669,49 @@ namespace UnityGameTranslator.Core.UI.Panels
         }
 
         /// <summary>
+        /// The texts held where the game shows the start of a longer line (TextRouter.Heads), each
+        /// with the element it is held on. Shown only when there is one: a section with nothing to
+        /// act on is not drawn. A removal waits for Apply, like an exclusion's.
+        /// </summary>
+        private void RefreshHeldList()
+        {
+            if (_heldList == null) return;
+            _heldList.Clear();
+            Pending.ClearGroup("heads");
+            var heads = TranslatorCore.Router.HeadsSnapshot();
+            _heldCount = heads.Count;
+            _heldSection.Visible = heads.Count > 0;
+
+            foreach (var head in heads)
+            {
+                string place = head.Key, key = head.Value;
+                string id = place + "\u0001" + key;
+                bool removed = _pendingHeadForgets.Contains(id);
+                var row = _screen.Instantiate("HeldRow", _heldList.Rows, act =>
+                {
+                    switch (act)
+                    {
+                        case "undo": return () => { _pendingHeadForgets.Remove(id); RefreshHeldList(); UpdateApplyButtonText(); };
+                        case "delete": return () => { _pendingHeadForgets.Add(id); RefreshHeldList(); UpdateApplyButtonText(); };
+                        default: return null;
+                    }
+                });
+                row.Say("text", OneLine(key, 80));
+                row.Say("element", TranslatorCore.DescribeComponentPlace(place));
+                row.Label("Text").Tone = removed ? Tone.Muted : Tone.Plain;
+                Pending.TrackState(row.Root, () => removed ? PendingState.Removed : PendingState.None, "heads");
+                row.Label("RemovedLabel").Visible = removed;
+                row.Button("UndoBtn").Visible = removed;
+                row.Button("DeleteBtn").Visible = !removed;
+            }
+            _heldList.Filled();
+
+            RegisterFailureShares();
+            ShareFailures();
+            ShareFailuresSoon();
+        }
+
+        /// <summary>
         /// The scroll areas of this tab, registered afresh: the list of lines always, the game
         /// text and the proposal while a line is open. A rebuilt list is not the same list.
         /// </summary>
@@ -671,6 +725,9 @@ namespace UnityGameTranslator.Core.UI.Panels
             _failShares.CapAtContent = _failure != null;
             int lines = TranslatorCore.Failures.Count;
             _failShares.Add(_failuresList, () => Math.Max(1, lines), UIStyles.RowHeightNormal + 4, 8);
+            int held = _heldCount;
+            if (held > 0)
+                _failShares.Add(_heldList, () => held, UIStyles.RowHeightNormal + 4, 8);
             if (_failure == null) return;
             // A folded block holds nothing to divide: its list is left out until it opens again.
             if (_gameText.Expanded)
@@ -2505,6 +2562,10 @@ namespace UnityGameTranslator.Core.UI.Panels
                 _initialExclusions.Add(pattern);
             }
 
+            // A removal not applied does not survive the window closing.
+            _pendingHeadForgets.Clear();
+            RefreshHeldList();
+
             // Capture initial font overrides for change tracking
             InitPendingFontOverrides();
             try { RefreshFontOverridesList(); }
@@ -2583,6 +2644,15 @@ namespace UnityGameTranslator.Core.UI.Panels
                 foreach (var pattern in _pendingExclusionRemoves)
                 {
                     TranslatorCore.RemoveExclusion(pattern);
+                }
+
+                // Held texts the person removed: sent again from their element next time.
+                var forgets = new List<string>(_pendingHeadForgets);
+                _pendingHeadForgets.Clear();
+                foreach (var id in forgets)
+                {
+                    int cut = id.IndexOf('\u0001');
+                    TranslatorCore.Router.ForgetHead(id.Substring(0, cut), id.Substring(cut + 1));
                 }
 
                 // Apply font overrides

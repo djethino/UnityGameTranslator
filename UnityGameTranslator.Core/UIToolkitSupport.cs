@@ -258,9 +258,12 @@ namespace UnityGameTranslator.Core
 
                 CanSetFont = canRead && canWrite;
             }
-            catch
+            // UI Toolkit's font members, found by reflection on the engine this game ships: a
+            // refusal leaves fonts unreplaceable in UI Toolkit, and it is said.
+            catch (Exception ex)
             {
                 CanSetFont = false;
+                Faults.Say("UIToolkit.ResolveFontMembers", ex, "UI Toolkit fonts cannot be replaced");
             }
         }
 
@@ -278,19 +281,16 @@ namespace UnityGameTranslator.Core
 
             foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
             {
-                try
+                // The types that load (AssemblyTypes: GetTypes refuses a whole assembly for one).
+                foreach (var type in AssemblyTypes.Of(asm))
                 {
-                    foreach (var type in asm.GetTypes())
+                    if (type.Name == "FontAsset"
+                        && type.Namespace != null
+                        && type.Namespace.IndexOf("TextCore", StringComparison.Ordinal) >= 0)
                     {
-                        if (type.Name == "FontAsset"
-                            && type.Namespace != null
-                            && type.Namespace.IndexOf("TextCore", StringComparison.Ordinal) >= 0)
-                        {
-                            return type;
-                        }
+                        return type;
                     }
                 }
-                catch { }
             }
 
             return null;
@@ -298,20 +298,7 @@ namespace UnityGameTranslator.Core
 
         private static Type FindTypeAnywhere(string fullName)
         {
-            var direct = Type.GetType(fullName, false);
-            if (direct != null) return direct;
-
-            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
-            {
-                try
-                {
-                    var found = asm.GetType(fullName, false);
-                    if (found != null) return found;
-                }
-                catch { }
-            }
-
-            return null;
+            return Type.GetType(fullName, false) ?? AssemblyTypes.Find(fullName);
         }
 
         /// <summary>
@@ -327,31 +314,21 @@ namespace UnityGameTranslator.Core
 
             string simpleName = fullName.Substring(fullName.LastIndexOf('.') + 1);
 
-            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
-            {
-                try
-                {
-                    var found = asm.GetType(fullName, false);
-                    if (found != null) return found;
-                }
-                catch { }
-            }
+            var exact = AssemblyTypes.Find(fullName);
+            if (exact != null) return exact;
 
             foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
             {
-                try
+                // The types that load (AssemblyTypes: GetTypes refuses a whole assembly for one).
+                foreach (var type in AssemblyTypes.Of(asm))
                 {
-                    foreach (var type in asm.GetTypes())
+                    if (type.Name == simpleName
+                        && type.Namespace != null
+                        && type.Namespace.EndsWith("UIElements", StringComparison.Ordinal))
                     {
-                        if (type.Name == simpleName
-                            && type.Namespace != null
-                            && type.Namespace.EndsWith("UIElements", StringComparison.Ordinal))
-                        {
-                            return type;
-                        }
+                        return type;
                     }
                 }
-                catch { }
             }
 
             return null;
@@ -460,7 +437,7 @@ namespace UnityGameTranslator.Core
             {
                 parts.Insert(0, SegmentFor(current));
                 try { current = _parentProp.GetValue(current, null); }
-                catch { break; }
+                catch (Exception ex) { Faults.Say("UIToolkit.PathOf", ex); break; }
             }
 
             return string.Join("/", parts.ToArray());
@@ -478,7 +455,7 @@ namespace UnityGameTranslator.Core
                                           FirstClass(element),
                                           element.GetType().Name);
             }
-            catch { return "?"; }
+            catch (Exception ex) { Faults.Say("UIToolkit.SegmentFor", ex); return "?"; }
         }
 
         /// <summary>
@@ -502,7 +479,7 @@ namespace UnityGameTranslator.Core
                     if (entry is string css && css.Length > 0) return css;
                 }
             }
-            catch { }
+            catch (Exception ex) { Faults.Say("UIToolkit.FirstClass", ex); }
 
             return null;
         }
@@ -564,7 +541,7 @@ namespace UnityGameTranslator.Core
                     if ((_nameProp.GetValue(current, null) as string) == TextInputName) return true;
                     current = _parentProp.GetValue(current, null);
                 }
-                catch { return false; }
+                catch (Exception ex) { Faults.Say("UIToolkit.IsInsideTextInput", ex); return false; }
             }
             return false;
         }
@@ -599,7 +576,7 @@ namespace UnityGameTranslator.Core
                 object focused = controller == null ? null : _focusedElementProp.GetValue(controller, null);
                 if (focused != null) _focusedText = ReadAnyText(focused);
             }
-            catch { return null; }
+            catch (Exception ex) { Faults.Say("UIToolkit.FocusedText", ex); return null; }
 
             if (!string.IsNullOrEmpty(_focusedText))
             {
@@ -627,7 +604,7 @@ namespace UnityGameTranslator.Core
                 if (val != null && val.PropertyType == typeof(string))
                     return val.GetValue(element, null) as string;
             }
-            catch { }
+            catch (Exception ex) { Faults.Say("UIToolkit.ReadAnyText", ex); }
             return null;
         }
 
@@ -711,7 +688,7 @@ namespace UnityGameTranslator.Core
                     _written.Add(__instance, value);
                 }
             }
-            catch { }
+            catch (Exception ex) { Faults.Say("UIToolkit.TextElement_SetText_Prefix", ex); }
             }
             finally { Perf.Stop(Perf.UitkSetter, tSet); }
         }
@@ -864,7 +841,7 @@ namespace UnityGameTranslator.Core
                               && _resolvedBackgroundProp != null
                               && (_backgroundFromSprite != null || _backgroundFromTexture != null);
             }
-            catch { CanSetImage = false; }
+            catch (Exception ex) { Faults.Say("UIToolkit.ResolveImageMembers", ex); CanSetImage = false; }
         }
 
         /// <summary>What the game had as this element's picture, so it can be put back.</summary>
@@ -909,7 +886,7 @@ namespace UnityGameTranslator.Core
 
                 WriteBackground(element, BuildBackground(replacement));
             }
-            catch { }
+            catch (Exception ex) { Faults.Say("UIToolkit.HandleImage", ex); }
         }
 
         /// <summary>The name of whatever a background is made of, or null.</summary>
@@ -927,7 +904,7 @@ namespace UnityGameTranslator.Core
                     && texture != null)
                     return texture.name;
             }
-            catch { }
+            catch (Exception ex) { Faults.Say("UIToolkit.NameOfBackground", ex); }
 
             return null;
         }
@@ -949,7 +926,7 @@ namespace UnityGameTranslator.Core
                 if (_backgroundFromTexture != null && sprite.texture != null)
                     return _backgroundFromTexture.Invoke(null, new object[] { sprite.texture });
             }
-            catch { }
+            catch (Exception ex) { Faults.Say("UIToolkit.BuildBackground", ex); }
 
             return null;
         }
@@ -964,7 +941,7 @@ namespace UnityGameTranslator.Core
                 var style = _styleProp.GetValue(element, null);
                 if (style != null) _styleBackgroundProp.SetValue(style, styleValue, null);
             }
-            catch { }
+            catch (Exception ex) { Faults.Say("UIToolkit.WriteBackground", ex); }
         }
 
         /// <summary>
@@ -986,7 +963,7 @@ namespace UnityGameTranslator.Core
                 object background = _resolvedBackgroundProp.GetValue(resolved, null);
                 return _backgroundSpriteProp?.GetValue(background, null) as Sprite;
             }
-            catch { return null; }
+            catch (Exception ex) { Faults.Say("UIToolkit.SpriteOf", ex); return null; }
         }
 
         /// <summary>Give an element its own picture back, if we ever replaced it.</summary>
@@ -1028,17 +1005,17 @@ namespace UnityGameTranslator.Core
                     if (document == null) continue;
 
                     object root = null;
-                    try { root = _rootProp.GetValue(document, null); } catch { }
+                    try { root = _rootProp.GetValue(document, null); } catch (Exception ex) { Faults.Say("UIToolkit.PickAt root", ex); }
                     if (root == null) continue;
 
                     object panel = null;
-                    try { panel = _panelProp.GetValue(root, null); } catch { }
+                    try { panel = _panelProp.GetValue(root, null); } catch (Exception ex) { Faults.Say("UIToolkit.PickAt panel", ex); }
                     if (panel == null) continue;
 
                     var mapping = PanelMapping.For(panel, _screenToPanelMethod);
                     object hit = null;
                     try { hit = _pickMethod.Invoke(panel, new object[] { mapping.ToPanel(screenPoint) }); }
-                    catch { }
+                    catch (Exception ex) { Faults.Say("UIToolkit.PickAt pick", ex); }
 
                     for (int depth = 0; hit != null && depth < MaxPathDepth; depth++)
                     {
@@ -1048,11 +1025,11 @@ namespace UnityGameTranslator.Core
                             return hit;
                         }
 
-                        try { hit = _parentProp.GetValue(hit, null); } catch { break; }
+                        try { hit = _parentProp.GetValue(hit, null); } catch (Exception ex) { Faults.Say("UIToolkit.PickAt parent", ex); break; }
                     }
                 }
             }
-            catch { }
+            catch (Exception ex) { Faults.Say("UIToolkit.PickAt", ex); }
 
             return null;
         }
@@ -1060,7 +1037,7 @@ namespace UnityGameTranslator.Core
         private static bool HasText(object element)
         {
             try { return !string.IsNullOrEmpty(_textProp.GetValue(element, null) as string); }
-            catch { return false; }
+            catch (Exception ex) { Faults.Say("UIToolkit.HasText", ex); return false; }
         }
 
         private static Rect WorldBoundOf(object element)
@@ -1069,7 +1046,7 @@ namespace UnityGameTranslator.Core
             {
                 if (_worldBoundProp?.GetValue(element, null) is Rect rect) return rect;
             }
-            catch { }
+            catch (Exception ex) { Faults.Say("UIToolkit.WorldBoundOf", ex); }
             return default(Rect);
         }
 
@@ -1117,7 +1094,7 @@ namespace UnityGameTranslator.Core
                         mapping._scale = new Vector2(sx, sy);
                     }
                 }
-                catch { }
+                catch (Exception ex) { Faults.Say("UIToolkit.For", ex); }
 
                 return mapping;
             }
@@ -1161,12 +1138,12 @@ namespace UnityGameTranslator.Core
                 {
                     if (document == null) continue;
                     object root = null;
-                    try { root = _rootProp.GetValue(document, null); } catch { }
+                    try { root = _rootProp.GetValue(document, null); } catch (Exception ex) { Faults.Say("UIToolkit.Targets root", ex); }
                     if (root != null) CollectFrom(root, found, keep, ref visited);
                     if (visited >= MaxElementsPerPass) break;
                 }
             }
-            catch { }
+            catch (Exception ex) { Faults.Say("UIToolkit.Targets", ex); }
 
             return found;
         }
@@ -1195,7 +1172,7 @@ namespace UnityGameTranslator.Core
                     }
                 }
             }
-            catch { }
+            catch (Exception ex) { Faults.Say("UIToolkit.CollectFrom", ex); }
 
             int count = ChildCount(element);
             for (int i = 0; i < count; i++)
@@ -1244,7 +1221,7 @@ namespace UnityGameTranslator.Core
                     RestoreFontOf(element);
                     RestoreImageOf(element);
                 }
-                catch { }
+                catch (Exception ex) { Faults.Say("UIToolkit.RestoreAll", ex); }
             }
 
             if (restored > 0)
@@ -1300,7 +1277,7 @@ namespace UnityGameTranslator.Core
                     rule = TranslatorCore.FindFontOverride(IdFor(element), PathOf(element), font, text);  // the text as written, before routing
                 TextShaping.RtlPresenter.Present(element, IdFor(element), ref value, font, rule);
             }
-            catch { }
+            catch (Exception ex) { Faults.Say("UIToolkit.WriteRouted", ex); }
             WriteBack(element, value);
         }
 
@@ -1325,7 +1302,7 @@ namespace UnityGameTranslator.Core
                 _written.Remove(element);
                 _written.Add(element, text);
             }
-            catch { }
+            catch (Exception ex) { Faults.Say("UIToolkit.WriteBack", ex); }
         }
 
         #endregion
@@ -1442,7 +1419,7 @@ namespace UnityGameTranslator.Core
 
                 object root = null;
                 try { root = _rootProp.GetValue(document, null); }
-                catch { }
+                catch (Exception ex) { Faults.Say("UIToolkit.StartWalkCycle", ex); }
                 if (root != null) _walk.Push(root);
             }
             return _walk.Count > 0;
@@ -1465,7 +1442,7 @@ namespace UnityGameTranslator.Core
                     if (ReferenceEquals(_documents[i].Target, __instance)) return;
                 _documents.Add(new WeakReference(__instance));
             }
-            catch { }
+            catch (Exception ex) { Faults.Say("UIToolkit.UIDocument_OnEnable_Postfix", ex); }
         }
 
         /// <summary>Add every document the engine currently has — the one lookup we still pay.</summary>
@@ -1729,7 +1706,7 @@ namespace UnityGameTranslator.Core
                 _written.Remove(element);
                 _written.Add(element, translated);
             }
-            catch { }
+            catch (Exception ex) { Faults.Say("UIToolkit.TranslateElement", ex); }
             finally { Perf.Stop(Perf.UitkElement, tElement); }
         }
 
@@ -1775,7 +1752,7 @@ namespace UnityGameTranslator.Core
                       + "per-element state cannot be keyed on the object. Translation will repeat "
                       + "and fonts will be re-applied every pass.");
             }
-            catch { }
+            catch (Exception ex) { Faults.Say("UIToolkit.ReportProxyIdentityOnce", ex); }
         }
 
         /// <summary>
@@ -1803,7 +1780,7 @@ namespace UnityGameTranslator.Core
                 var cast = TypeHelper.Il2CppCast(element, TextElementType);
                 return TextElementType.IsInstanceOfType(cast) ? cast : null;
             }
-            catch { return null; }
+            catch (Exception ex) { Faults.Say("UIToolkit.AsTextElement", ex); return null; }
         }
 
         private static int ChildCount(object element)
@@ -1819,7 +1796,7 @@ namespace UnityGameTranslator.Core
                     if (hierarchy != null) return (int)_hierCountProp.GetValue(hierarchy, null);
                 }
             }
-            catch { }
+            catch (Exception ex) { Faults.Say("UIToolkit.ChildCount", ex); }
 
             return 0;
         }
@@ -1838,7 +1815,7 @@ namespace UnityGameTranslator.Core
                         return _hierElementAt.Invoke(hierarchy, new object[] { index });
                 }
             }
-            catch { }
+            catch (Exception ex) { Faults.Say("UIToolkit.ChildAt", ex); }
 
             return null;
         }
@@ -1950,8 +1927,9 @@ namespace UnityGameTranslator.Core
                 ApplyScale(element, settingsName);
                 return true;
             }
-            catch
+            catch (Exception ex)
             {
+                Faults.Say("UIToolkit.HandleFont", ex);
                 return true;
             }
             finally { Perf.Stop(Perf.UitkFont, tPerf); }
@@ -2056,7 +2034,7 @@ namespace UnityGameTranslator.Core
                 if (_restoreLogged.Add(settingsName))
                     TranslatorCore.LogInfo($"[UIToolkit] Font restored: back to {settingsName}");
             }
-            catch { }
+            catch (Exception ex) { Faults.Say("UIToolkit.RestoreOriginalFont", ex); }
         }
 
         private static readonly HashSet<string> _restoreLogged = new HashSet<string>();
@@ -2125,7 +2103,7 @@ namespace UnityGameTranslator.Core
                         + $"({original:F1} -> {wanted:F1})");
                 }
             }
-            catch { }
+            catch (Exception ex) { Faults.Say("UIToolkit.ApplyScale", ex); }
         }
 
         /// <summary>
@@ -2147,7 +2125,7 @@ namespace UnityGameTranslator.Core
                     return legacy;
                 }
             }
-            catch { }
+            catch (Exception ex) { Faults.Say("UIToolkit.ReadResolvedFont legacy font", ex); }
 
             try
             {
@@ -2164,7 +2142,7 @@ namespace UnityGameTranslator.Core
                 if (_fontDefFontProp?.GetValue(definition, null) is Font font && font != null)
                     return font;
             }
-            catch { }
+            catch (Exception ex) { Faults.Say("UIToolkit.ReadResolvedFont font definition", ex); }
 
             return null;
         }
@@ -2267,7 +2245,7 @@ namespace UnityGameTranslator.Core
 
                     object root = null;
                     try { root = _rootProp.GetValue(document, null); }
-                    catch { }
+                    catch (Exception ex) { Faults.Say("UIToolkit.HighlightFont", ex); }
                     if (root == null) continue;
 
                     Walk(root, MaxElementsPerPass, element =>
@@ -2315,7 +2293,7 @@ namespace UnityGameTranslator.Core
 
                 return ReadResolvedFont(resolved, out _)?.name;
             }
-            catch { return null; }
+            catch (Exception ex) { Faults.Say("UIToolkit.ResolvedFontNameOf", ex); return null; }
         }
 
         public static void ClearHighlight()
@@ -2332,7 +2310,7 @@ namespace UnityGameTranslator.Core
                         SetColour(element, original);
                     }
                 }
-                catch { }
+                catch (Exception ex) { Faults.Say("UIToolkit.ClearHighlight", ex); }
             }
 
             _highlighted.Clear();
@@ -2350,7 +2328,7 @@ namespace UnityGameTranslator.Core
 
                 return ReadResolvedFont(resolved, out _)?.name;
             }
-            catch { return null; }
+            catch (Exception ex) { Faults.Say("UIToolkit.SettingsFontNameOf", ex); return null; }
         }
 
         private static void RememberColour(object element)
@@ -2365,7 +2343,7 @@ namespace UnityGameTranslator.Core
                 if (_resolvedColorProp.GetValue(resolved, null) is Color current)
                     _highlightOriginalColor.Add(element, current);
             }
-            catch { }
+            catch (Exception ex) { Faults.Say("UIToolkit.RememberColour", ex); }
         }
 
         private static void SetColour(object element, Color colour)
@@ -2378,7 +2356,7 @@ namespace UnityGameTranslator.Core
                 var styleColour = Activator.CreateInstance(_styleColorType, colour);
                 _styleColorProp.SetValue(style, styleColour, null);
             }
-            catch { }
+            catch (Exception ex) { Faults.Say("UIToolkit.SetColour", ex); }
         }
 
 
@@ -2424,45 +2402,36 @@ namespace UnityGameTranslator.Core
             _rtlPlumbingResolved = true;
             var pubInst = BindingFlags.Public | BindingFlags.Instance;
 
-            // 🔴 Never GetMethod(name, flags) here, and one try PER member: Unity 6 ships TWO
-            // public MeasureTextSize overloads, so the single-name lookup throws
-            // AmbiguousMatchException — and behind a shared try block that one throw read as
-            // "no measure API, no styles, no ATG detection" on a runtime that has all of them,
-            // with a log line blaming the runtime (Timberborn crash analysis, §7.8).
-            try
+            // 🔴 Never GetMethod(name, flags) nor GetProperty(name, flags) here: Unity 6 ships TWO
+            // public MeasureTextSize overloads, and a name lookup that meets two members throws
+            // AmbiguousMatchException — behind a shared try block that one throw read as "no
+            // measure API, no styles, no ATG detection" on a runtime that has all of them, with a
+            // log line blaming the runtime (Timberborn crash analysis, §7.8). The members are
+            // walked instead (Engine/Members for properties): nothing here throws, nothing caught.
+            foreach (var m in TextElementType.GetMethods(pubInst))
             {
-                foreach (var m in TextElementType.GetMethods(pubInst))
-                {
-                    if (m.Name != "MeasureTextSize") continue;
-                    var ps = m.GetParameters();
-                    if (ps.Length != 5 || ps[0].ParameterType != typeof(string) || !ps[2].ParameterType.IsEnum)
-                        continue;
-                    // The MeasureMode enum is NESTED in VisualElement and its namespace moved
-                    // across versions — the parameter always knows its own type (the same lesson
-                    // as the ATG probe's StyleEnum<T> trick).
-                    _measureTextSize = m;
-                    _measureUndefined = Enum.ToObject(ps[2].ParameterType, 0);
-                    break;
-                }
+                if (m.Name != "MeasureTextSize") continue;
+                var ps = m.GetParameters();
+                if (ps.Length != 5 || ps[0].ParameterType != typeof(string) || !ps[2].ParameterType.IsEnum)
+                    continue;
+                // The MeasureMode enum is NESTED in VisualElement and its namespace moved
+                // across versions — the parameter always knows its own type (the same lesson
+                // as the ATG probe's StyleEnum<T> trick).
+                _measureTextSize = m;
+                _measureUndefined = Enum.ToObject(ps[2].ParameterType, 0);
+                break;
             }
-            catch { }
-            try { _contentRectProp = VisualElementType.GetProperty("contentRect", pubInst); } catch { }
-            try
-            {
-                var styleType = _styleProp?.PropertyType;
-                _styleTextAlignProp = styleType?.GetProperty("unityTextAlign", pubInst);
-                _styleWhiteSpaceProp = styleType?.GetProperty("whiteSpace", pubInst);
-            }
-            catch { }
-            try
-            {
-                var resolvedType = _resolvedStyleProp?.PropertyType;
-                _resolvedWhiteSpaceProp = resolvedType?.GetProperty("whiteSpace", pubInst);
-                _resolvedTextAlignProp = resolvedType?.GetProperty("unityTextAlign", pubInst);
-                _resolvedTextGenProp = resolvedType?.GetProperty("unityTextGenerator", pubInst);
-                _resolvedDisplayProp = resolvedType?.GetProperty("display", pubInst);
-            }
-            catch { }
+            _contentRectProp = Members.Property(VisualElementType, "contentRect", pubInst);
+
+            var styleType = _styleProp?.PropertyType;
+            _styleTextAlignProp = Members.Property(styleType, "unityTextAlign", pubInst);
+            _styleWhiteSpaceProp = Members.Property(styleType, "whiteSpace", pubInst);
+
+            var resolvedType = _resolvedStyleProp?.PropertyType;
+            _resolvedWhiteSpaceProp = Members.Property(resolvedType, "whiteSpace", pubInst);
+            _resolvedTextAlignProp = Members.Property(resolvedType, "unityTextAlign", pubInst);
+            _resolvedTextGenProp = Members.Property(resolvedType, "unityTextGenerator", pubInst);
+            _resolvedDisplayProp = Members.Property(resolvedType, "display", pubInst);
         }
 
         /// <summary>
@@ -2488,7 +2457,7 @@ namespace UnityGameTranslator.Core
                     current = _parentProp.GetValue(current, null);
                 }
             }
-            catch { }
+            catch (Exception ex) { Faults.Say("UIToolkit.WillBeLaidOut", ex); }
             return true;
         }
 
@@ -2498,7 +2467,7 @@ namespace UnityGameTranslator.Core
         internal static string GetElementText(object element)
         {
             try { return _textProp?.GetValue(element, null) as string; }
-            catch { return null; }
+            catch (Exception ex) { Faults.Say("UIToolkit.GetElementText", ex); return null; }
         }
 
         /// <summary>
@@ -2519,7 +2488,7 @@ namespace UnityGameTranslator.Core
         internal static bool IsElementAttached(object element)
         {
             try { return _panelProp != null && _panelProp.GetValue(element, null) != null; }
-            catch { return false; }
+            catch (Exception ex) { Faults.Say("UIToolkit.IsElementAttached", ex); return false; }
         }
 
         /// <summary>
@@ -2538,7 +2507,7 @@ namespace UnityGameTranslator.Core
                 object gen = _resolvedTextGenProp.GetValue(resolved, null);
                 return gen != null && Enum.GetName(gen.GetType(), gen) == "Advanced";
             }
-            catch { return false; }
+            catch (Exception ex) { Faults.Say("UIToolkit.IsAtgActive", ex); return false; }
         }
 
         // Underline crash guard plumbing — see UnderlineIsSafe. The font definition property
@@ -2563,23 +2532,19 @@ namespace UnityGameTranslator.Core
             if (!_underlineSafetyResolved)
             {
                 _underlineSafetyResolved = true;
-                try
-                {
-                    // "6000.3.6f1" → 6000 / 3. Anything at or past 6000.5 ships Unity's fix.
-                    var v = Application.unityVersion.Split('.');
-                    if (v.Length >= 2 && int.TryParse(v[0], out int major) && int.TryParse(v[1], out int minor))
-                        _engineHasUnderlineFix = major > 6000 || (major == 6000 && minor >= 5);
-                }
-                catch { }
-                try
-                {
-                    var pubInst = BindingFlags.Public | BindingFlags.Instance;
-                    _fontDefFontAssetProp = _resolvedFontDefProp?.PropertyType.GetProperty("fontAsset", pubInst);
-                    var assetType = _fontDefFontAssetProp?.PropertyType;
-                    _hasCharactersMethod = assetType?.GetMethod("HasCharacters",
-                        new[] { typeof(string), typeof(uint[]).MakeByRefType(), typeof(bool), typeof(bool) });
-                }
-                catch { }
+                // "6000.3.6f1" → 6000 / 3. Anything at or past 6000.5 ships Unity's fix. TryParse
+                // answers false on anything else; nothing here throws.
+                var v = Application.unityVersion.Split('.');
+                if (v.Length >= 2 && int.TryParse(v[0], out int major) && int.TryParse(v[1], out int minor))
+                    _engineHasUnderlineFix = major > 6000 || (major == 6000 && minor >= 5);
+
+                // A property looked up without the ambiguity trap (Engine/Members), and a method
+                // named WITH its parameter types, which cannot be ambiguous: nothing caught.
+                var pubInst = BindingFlags.Public | BindingFlags.Instance;
+                _fontDefFontAssetProp = Members.Property(_resolvedFontDefProp?.PropertyType, "fontAsset", pubInst);
+                var assetType = _fontDefFontAssetProp?.PropertyType;
+                _hasCharactersMethod = assetType?.GetMethod("HasCharacters",
+                    new[] { typeof(string), typeof(uint[]).MakeByRefType(), typeof(bool), typeof(bool) });
             }
 
             if (_engineHasUnderlineFix) return true;
@@ -2635,14 +2600,14 @@ namespace UnityGameTranslator.Core
                 coverage = all ? "covers every drawn glyph"
                                : $"missing {(missing == null ? "?" : missing.Length.ToString())} drawn glyph(s)";
             }
-            catch { }
+            catch (Exception ex) { Faults.Say("UIToolkit.DescribeAsset coverage", ex); }
             try
             {
                 var texturesProp = fontAsset.GetType().GetProperty("atlasTextures", BindingFlags.Public | BindingFlags.Instance);
                 if (texturesProp?.GetValue(fontAsset, null) is Array textures)
                     atlases = $", {textures.Length} atlas texture(s)";
             }
-            catch { }
+            catch (Exception ex) { Faults.Say("UIToolkit.DescribeAsset atlases", ex); }
             return $"'{name}' {coverage}{atlases} — this engine's DrawUnderlineMesh is not safe for RTL whatever the answer";
         }
 
@@ -2686,7 +2651,7 @@ namespace UnityGameTranslator.Core
                     if (wsName == "NoWrap" || wsName == "Pre")
                         return new List<string>(assigned.Split('\n'));
                 }
-                catch { }
+                catch (Exception ex) { Faults.Say("UIToolkit.TryBreakLines white space", ex); }
             }
 
             float width;
@@ -2695,7 +2660,7 @@ namespace UnityGameTranslator.Core
                 object rect = _contentRectProp.GetValue(element, null);
                 width = rect is Rect r ? r.width : float.NaN;
             }
-            catch { width = float.NaN; }
+            catch (Exception ex) { Faults.Say("UIToolkit.TryBreakLines content width", ex); width = float.NaN; }
             if (float.IsNaN(width) || width < 1f)
             { whyNot = "no layout yet (element has no width)"; return null; }
 
@@ -2775,7 +2740,7 @@ namespace UnityGameTranslator.Core
                         if (styleBack != null && align[0] != null) _styleTextAlignProp.SetValue(styleBack, align[0], null);
                     }
                 }
-                catch { }
+                catch (Exception ex) { Faults.Say("UIToolkit.MirrorAlign restore", ex); }
                 return;
             }
             try
@@ -2809,7 +2774,7 @@ namespace UnityGameTranslator.Core
                 if (Equals(_styleTextAlignProp.GetValue(styleNow, null), styleValue)) return;
                 _styleTextAlignProp.SetValue(styleNow, styleValue, null);
             }
-            catch { }
+            catch (Exception ex) { Faults.Say("UIToolkit.MirrorAlign", ex); }
         }
 
         /// <summary>
@@ -2858,7 +2823,7 @@ namespace UnityGameTranslator.Core
                 if (Equals(_styleWhiteSpaceProp.GetValue(style, null), noWrap)) return;
                 _styleWhiteSpaceProp.SetValue(style, noWrap, null);
             }
-            catch { }
+            catch (Exception ex) { Faults.Say("UIToolkit.DisableWrap", ex); }
         }
 
         /// <summary>
@@ -2877,7 +2842,7 @@ namespace UnityGameTranslator.Core
                 var style = _styleProp?.GetValue(element, null);
                 if (style != null && wrap[0] != null) _styleWhiteSpaceProp?.SetValue(style, wrap[0], null);
             }
-            catch { }
+            catch (Exception ex) { Faults.Say("UIToolkit.RestoreWrap", ex); }
             _rtlWrapRestoring.Remove(element);
             _rtlWrapRestoring.Add(element, wrap);
         }
@@ -2901,7 +2866,7 @@ namespace UnityGameTranslator.Core
                 }
                 _rtlWrapRestoring.Remove(element);
             }
-            catch { }
+            catch (Exception ex) { Faults.Say("UIToolkit.RestoreRtlAdjustments", ex); }
         }
 
         #endregion

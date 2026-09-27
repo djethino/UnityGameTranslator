@@ -276,6 +276,7 @@ namespace UnityGameTranslator.Core.Checks
             Section("Screen router (which screen is up after which act)", ScreenRouterChecks.Run);
             Section("Engine frontier (the engine names nothing of the interface)", EngineFrontierChecks.Run);
             Section("Silent catches (a ratchet down to none)", SilentCatchChecks.Run);
+            Section("Reflection lookups that answer instead of throwing", MembersChecks.Run);
             Section("Screens in data (the documents and the vocabulary)", ScreenDocumentChecks.Run);
         }
 

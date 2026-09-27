@@ -26,7 +26,6 @@
     "UI/Panels/UploadSetupPanel.cs": 1,
     "UI/TranslatorUIManager.cs": 5,
     "UI/UIHelpers.cs": 1,
-    "UIToolkitSupport.cs": 69,
     "VariableManager.cs": 30
   }
 }

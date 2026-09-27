@@ -990,7 +990,8 @@ namespace UnityGameTranslator.Core
         {
             if (!TextTrace.On) return;
             string name = instance is Component c && c != null ? c.gameObject.name : "";
-            TextTrace.Size(id, instance.GetType().Name, name, what, font, scale, original, firstSight, before, after);
+            string held = TypeHelper.GetFont(instance) is UnityEngine.Object f && f != null ? f.name : null;
+            TextTrace.Size(id, instance.GetType().Name, name, what, font, held, scale, original, firstSight, before, after);
         }
 
         private static void ApplyGenericFontScale(object instance, RegisteredTextType typeInfo, string fontName)

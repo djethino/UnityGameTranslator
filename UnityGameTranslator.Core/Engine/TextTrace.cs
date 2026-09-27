@@ -30,6 +30,8 @@ namespace UnityGameTranslator.Core
     /// <item><c>arrive</c> — a translation came back for <c>o</c>, for the components <c>c</c></item>
     /// <item><c>apply</c> — what became of it on one component (<c>ok</c>, <c>skip</c>, <c>reassemble</c>)</item>
     /// <item><c>reveal</c> — the game revealed <c>v</c> characters; the mod turned it into <c>scaled</c></item>
+    /// <item><c>size</c> — the mod put a size on a component (<c>held</c>: the font it carried then)</item>
+    /// <item><c>font</c> — the mod put font <c>to</c> on a component that carried <c>from</c>; <c>by</c> is the code that did it</item>
     /// </list>
     /// </summary>
     internal static class TextTrace
@@ -150,15 +152,32 @@ namespace UnityGameTranslator.Core
         /// component just now: a size the mod had already scaled, read back as an original, is the
         /// defect a trace of this has to show (a game cloning a template the mod had sized).
         /// </summary>
-        public static void Size(long comp, string type, string name, string what, string font, float scale,
+        /// <param name="held">The font the component carries as the size is put — the size is chosen
+        /// for <paramref name="font"/>'s replacement, and a text sized before that font reaches it
+        /// shows the replacement's size in the game's own font.</param>
+        public static void Size(long comp, string type, string name, string what, string font, string held, float scale,
                                 float original, bool firstSight, float before, float after)
         {
             if (!On) return;
             Emit(new JObject
             {
                 ["k"] = "size", ["c"] = comp, ["type"] = type, ["name"] = name, ["what"] = what,
-                ["font"] = font, ["scale"] = Math.Round(scale, 4), ["orig"] = original,
+                ["font"] = font, ["held"] = held, ["scale"] = Math.Round(scale, 4), ["orig"] = original,
                 ["first"] = firstSight, ["from"] = before, ["to"] = after,
+            });
+        }
+
+        /// <summary>
+        /// A font the mod put on a component. With <c>size</c>, it says in which order a text got
+        /// its replacement font and the size chosen for it.
+        /// </summary>
+        public static void Font(long comp, string type, string name, string from, string to, string by)
+        {
+            if (!On) return;
+            Emit(new JObject
+            {
+                ["k"] = "font", ["c"] = comp, ["type"] = type, ["name"] = name,
+                ["from"] = from, ["to"] = to, ["by"] = by,
             });
         }
 

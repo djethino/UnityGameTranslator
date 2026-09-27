@@ -342,7 +342,8 @@ namespace UnityGameTranslator.Core
         /// <summary>
         /// Set the font on a text component.
         /// </summary>
-        public static void SetFont(object component, object font)
+        /// <param name="by">Filled in by the compiler: which code put the font, for the text trace.</param>
+        public static void SetFont(object component, object font, [CallerMemberName] string by = null)
         {
             if (component == null || font == null) return;
 
@@ -374,7 +375,12 @@ namespace UnityGameTranslator.Core
                 // Il2CppTMPro.TMP_FontAsset fails without proper IL2CPP casting.
                 var expectedType = prop.PropertyType;
                 var castedFont = Il2CppCast(font, expectedType);
+                string from = TextTrace.On && prop.GetValue(component, null) is UnityEngine.Object was && was != null ? was.name : null;
                 prop.SetValue(component, castedFont, null);
+                if (TextTrace.On)
+                    TextTrace.Font(GetInstanceID(component), type.Name,
+                        component is Component c && c != null ? c.gameObject.name : "",
+                        from, font is UnityEngine.Object now && now != null ? now.name : null, by);
             }
             catch (Exception ex)
             {

@@ -2467,6 +2467,13 @@ namespace UnityGameTranslator.Core
             ApplyFontScale(instance, fontNameForScale);
         }
 
+        /// <summary>
+        /// The size the settings give <paramref name="fontName"/>, put on a component that has just
+        /// been given its replacement by a path that writes no text (the font passes over the scene).
+        /// The same work as the setter's, and as idempotent: nothing moves when the size is right.
+        /// </summary>
+        internal static void ApplyScaleForFont(object instance, string fontName) => ApplyFontScale(instance, fontName);
+
         private static void ApplyFontScale(object instance, string fontName)
         {
             if (IsOwnUIText(instance)) return;

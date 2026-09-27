@@ -3193,7 +3193,15 @@ namespace UnityGameTranslator.Core
                     if (string.IsNullOrEmpty(GetConfiguredFallback(effectiveFontName))) continue;
 
                     ApplyFontReplacement(c, fontObj, effectiveFontName);
-                    if (_replacedFor.ContainsKey(id)) applied++;
+                    if (_replacedFor.ContainsKey(id))
+                    {
+                        applied++;
+                        // 🔴 The size goes with the font. A text never re-written — one whose
+                        // translation is the word it already shows ("Agriculture") — only ever gets
+                        // its replacement here, and was left at its original size beside neighbours
+                        // the setter had sized: the replacement's face at the game font's size.
+                        TranslatorPatches.ApplyScaleForFont(c, effectiveFontName);
+                    }
                 }
 
                 _sceneTmp = null;   // cycle complete — the next call looks the scene up again
@@ -3360,6 +3368,13 @@ namespace UnityGameTranslator.Core
 
             var nowFont = TypeHelper.GetFont(c);
             string nowName = (nowFont is UnityEngine.Object nfo) ? nfo.name : null;
+
+            // The size goes with the font, whichever path put it on (see ApplyReplacementsToScene):
+            // wearing the replacement — a clone, or the game's own font whose names now draw the
+            // replacement — the component takes the replacement's size. A no-op when it already has it.
+            if (clone != null && string.Equals(nowName, clone.name, StringComparison.OrdinalIgnoreCase))
+                TranslatorPatches.ApplyScaleForFont(c, settingsFontName);
+
             return !string.Equals(nowName, fontName, StringComparison.OrdinalIgnoreCase);
         }
 

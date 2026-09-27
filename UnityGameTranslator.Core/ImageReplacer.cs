@@ -139,41 +139,22 @@ namespace UnityGameTranslator.Core
 
         private static Type FindType(string fullName)
         {
-            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
-            {
-                try
-                {
-                    var type = asm.GetType(fullName);
-                    if (type != null) return type;
-                }
-                catch { }
-            }
+            var exact = AssemblyTypes.Find(fullName);
+            if (exact != null) return exact;
 
             // IL2CPP: try with Il2Cpp prefix
-            string il2cppName = "Il2Cpp" + fullName;
-            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
-            {
-                try
-                {
-                    var type = asm.GetType(il2cppName);
-                    if (type != null) return type;
-                }
-                catch { }
-            }
+            var prefixed = AssemblyTypes.Find("Il2Cpp" + fullName);
+            if (prefixed != null) return prefixed;
 
-            // Last resort: name-only search
+            // Last resort: name-only search, over the types that load (see AssemblyTypes)
             string shortName = fullName.Substring(fullName.LastIndexOf('.') + 1);
             foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
             {
-                try
+                foreach (var type in AssemblyTypes.Of(asm))
                 {
-                    foreach (var type in asm.GetTypes())
-                    {
-                        if (type.Name == shortName || type.Name == "Il2Cpp" + shortName)
-                            return type;
-                    }
+                    if (type.Name == shortName || type.Name == "Il2Cpp" + shortName)
+                        return type;
                 }
-                catch { }
             }
 
             return null;
@@ -298,20 +279,17 @@ namespace UnityGameTranslator.Core
                 foreach (var obj in found)
                 {
                     if (obj == null) continue;
-                    try
+                    // Cast to Component to get gameObject. Il2CppCast says its own failures, and
+                    // Unity's own equality keeps a destroyed component from being touched.
+                    Component comp = obj as Component;
+                    if (comp == null)
                     {
-                        // Cast to Component to get gameObject
-                        Component comp = obj as Component;
-                        if (comp == null)
-                        {
-                            comp = TypeHelper.Il2CppCast(obj, typeof(Component)) as Component;
-                        }
-                        if (comp != null && comp.gameObject != null)
-                        {
-                            _imageComponentGOIds.Add(comp.gameObject.GetInstanceID());
-                        }
+                        comp = TypeHelper.Il2CppCast(obj, typeof(Component)) as Component;
                     }
-                    catch { }
+                    if (comp != null && comp.gameObject != null)
+                    {
+                        _imageComponentGOIds.Add(comp.gameObject.GetInstanceID());
+                    }
                 }
             }
             catch (Exception ex)
@@ -509,15 +487,17 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static string GetSpriteName(object spriteObj)
         {
-            if (spriteObj == null) return null;
+            // Destroyed since: its name would throw. Recognised, not caught.
+            if (!TypeHelper.IsUnityObjectAlive(spriteObj)) return null;
             try
             {
                 // All UnityEngine.Object have .name
-                var nameProp = spriteObj.GetType().GetProperty("name", BindingFlags.Public | BindingFlags.Instance);
+                var nameProp = Members.Property(spriteObj.GetType(), "name", BindingFlags.Public | BindingFlags.Instance);
                 if (nameProp != null)
                     return nameProp.GetValue(spriteObj, null) as string;
             }
-            catch { }
+            // The engine's own getter, reached by reflection: said.
+            catch (Exception ex) { Faults.Say("ImageReplacer.GetSpriteName", ex, spriteObj.GetType().Name); }
             return null;
         }
 
@@ -526,7 +506,8 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static Vector2Int GetSpriteSize(object spriteObj)
         {
-            if (spriteObj == null) return Vector2Int.zero;
+            // Destroyed since: its size would throw. Recognised, not caught.
+            if (!TypeHelper.IsUnityObjectAlive(spriteObj)) return Vector2Int.zero;
             try
             {
                 var type = spriteObj.GetType();
@@ -549,7 +530,7 @@ namespace UnityGameTranslator.Core
                     return new Vector2Int(w, h);
                 }
             }
-            catch { }
+            catch (Exception ex) { Faults.Say("ImageReplacer.GetSpriteSize", ex); }
             return Vector2Int.zero;
         }
 
@@ -1040,7 +1021,7 @@ namespace UnityGameTranslator.Core
                 if (main != null && seen.Add(main.GetInstanceID()))
                     found.Add(new MaterialTexture { Slot = "_MainTex", Texture = main, IsMain = true });
             }
-            catch { }
+            catch (Exception ex) { Faults.Say("ImageReplacer.TexturesOf", ex); }
 
             if (_slotReadUnavailable) return found;
 
@@ -1187,7 +1168,7 @@ namespace UnityGameTranslator.Core
                     }
                     }
                 }
-                catch { }
+                catch (Exception ex) { Faults.Say("ImageReplacer.ApplyToMaterials", ex); }
             }
 
             if (applied > 0)
@@ -1313,7 +1294,7 @@ namespace UnityGameTranslator.Core
         private static object Read(PropertyInfo prop, object component)
         {
             try { return prop.GetMethod != null ? prop.GetValue(component, null) : null; }
-            catch { return null; }
+            catch (Exception ex) { Faults.Say("ImageReplacer.Read", ex); return null; }
         }
 
         /// <summary>
@@ -1328,30 +1309,25 @@ namespace UnityGameTranslator.Core
         private static string Describe(object value)
         {
             if (value == null) return "(none)";
-            try
-            {
-                var obj = value as UnityEngine.Object;
-                if (obj == null) return value.GetType().Name;
+            // Unity's own equality answers null for an object destroyed since, so its name and
+            // texture are only read on a live one: nothing below throws.
+            var obj = value as UnityEngine.Object;
+            if (obj == null) return value.GetType().Name;
 
-                string size = "";
-                var sprite = value as Sprite;
-                if (sprite != null && sprite.texture != null)
-                    size = $" {sprite.texture.width}x{sprite.texture.height}";
+            string size = "";
+            var sprite = value as Sprite;
+            if (sprite != null && sprite.texture != null)
+                size = $" {sprite.texture.width}x{sprite.texture.height}";
 
-                return $"'{obj.name}'#{obj.GetInstanceID()}{size}";
-            }
-            catch { return "(unreadable)"; }
+            return $"'{obj.name}'#{obj.GetInstanceID()}{size}";
         }
 
         /// <inheritdoc cref="Describe"/>
         private static string NameOf(object component)
         {
-            try
-            {
-                var obj = component as UnityEngine.Object;
-                return obj != null ? obj.name : "(unnamed)";
-            }
-            catch { return "(unnamed)"; }
+            // Unity's own equality: a destroyed component reads as null, never touched.
+            var obj = component as UnityEngine.Object;
+            return obj != null ? obj.name : "(unnamed)";
         }
 
         /// <summary>
@@ -1665,8 +1641,9 @@ namespace UnityGameTranslator.Core
             foreach (var sprite in built)    // ③ and only now is ours thrown away
             {
                 if (sprite == null) continue;
+                // Handing an engine object back to the engine, possibly while it tears down: said.
                 try { UnityEngine.Object.Destroy(sprite); }
-                catch { }
+                catch (Exception ex) { Faults.Say("ImageReplacer.DropReplacements sprite", ex); }
             }
 
             if (_createdTextures == null) return;
@@ -1674,7 +1651,7 @@ namespace UnityGameTranslator.Core
             {
                 if (texture == null) continue;
                 try { UnityEngine.Object.Destroy(texture); }
-                catch { }
+                catch (Exception ex) { Faults.Say("ImageReplacer.DropReplacements texture", ex); }
             }
             _createdTextures.Clear();
         }
@@ -1685,8 +1662,9 @@ namespace UnityGameTranslator.Core
             {
                 if (kvp.Value != null)
                 {
+                    // Handing an engine object back to the engine, possibly while it tears down: said.
                     try { UnityEngine.Object.Destroy(kvp.Value); }
-                    catch { }
+                    catch (Exception ex) { Faults.Say("ImageReplacer.Cleanup sprite", ex); }
                 }
             }
             _loadedSprites.Clear();
@@ -1696,7 +1674,7 @@ namespace UnityGameTranslator.Core
                 if (tex != null)
                 {
                     try { UnityEngine.Object.Destroy(tex); }
-                    catch { }
+                    catch (Exception ex) { Faults.Say("ImageReplacer.Cleanup texture", ex); }
                 }
             }
             _createdTextures.Clear();

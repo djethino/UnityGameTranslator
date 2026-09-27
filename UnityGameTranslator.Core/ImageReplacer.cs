@@ -37,7 +37,7 @@ namespace UnityGameTranslator.Core
 
         #region Data
 
-        private static Dictionary<string, ImageReplacement> _replacements = new Dictionary<string, ImageReplacement>(StringComparer.OrdinalIgnoreCase);
+        private static Dictionary<string, ImageReplacement> _replacements = new Dictionary<string, ImageReplacement>(UnityGameTranslator.Common.TranslationFiles.SpriteNames);
         private static Dictionary<string, Sprite> _loadedSprites = new Dictionary<string, Sprite>(StringComparer.OrdinalIgnoreCase);
         private static List<Texture2D> _createdTextures = new List<Texture2D>();
         private static string _imagesFolder;
@@ -103,7 +103,7 @@ namespace UnityGameTranslator.Core
             _initialized = true;
 
             _imagesFolder = Path.Combine(modFolder, UnityGameTranslator.Common.AssetPacks.ImagesFolder);
-            _replacements = new Dictionary<string, ImageReplacement>(StringComparer.OrdinalIgnoreCase);
+            _replacements = new Dictionary<string, ImageReplacement>(UnityGameTranslator.Common.TranslationFiles.SpriteNames);
             _loadedSprites = new Dictionary<string, Sprite>(StringComparer.OrdinalIgnoreCase);
             _createdTextures = new List<Texture2D>();
 

@@ -3,7 +3,6 @@
   "files": {
     "ApiClient.cs": 6,
     "Compat.cs": 2,
-    "CustomFontLoader.cs": 21,
     "Engine/ConfigEffects.cs": 1,
     "Engine/NumberPatterns.cs": 1,
     "Engine/SseStream.cs": 2,

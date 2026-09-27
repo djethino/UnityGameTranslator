@@ -145,7 +145,7 @@ namespace UnityGameTranslator.Core
         {
             int maxAtlasSize = 8192;
             try { int sys = UnityEngine.SystemInfo.maxTextureSize; if (sys >= 512) maxAtlasSize = sys; }
-            catch { }
+            catch (Exception ex) { Faults.Say("CustomFontLoader.ResolveMaxAtlasSize", ex); }
             return maxAtlasSize;
         }
 
@@ -294,7 +294,7 @@ namespace UnityGameTranslator.Core
             {
                 string[] files;
                 try { files = Directory.GetFiles(fontsFolder, pattern); }
-                catch { continue; }
+                catch (Exception ex) { Faults.Say("CustomFontLoader.PurgeLegacyRasterCache", ex); continue; }
                 foreach (var f in files)
                 {
                     try
@@ -553,7 +553,7 @@ namespace UnityGameTranslator.Core
             {
                 string[] fontFiles;
                 try { fontFiles = Directory.GetFiles(fontsFolder, ext); }
-                catch { continue; }
+                catch (Exception ex) { Faults.Say("CustomFontLoader.Initialize", ex); continue; }
 
                 foreach (var fontPath in fontFiles)
                 {
@@ -1123,7 +1123,8 @@ namespace UnityGameTranslator.Core
                                                 drive = $"{driveInfo.Name} free={driveInfo.AvailableFreeSpace / 1024 / 1024} MB total={driveInfo.TotalSize / 1024 / 1024} MB";
                                             }
                                         }
-                                        catch { /* drive info best-effort */ }
+                                        // A diagnostic for the error line: when the drive cannot be read, it says why.
+                                        catch (Exception driveEx) { drive = $"(drive unreadable: {driveEx.GetType().Name})"; }
                                         TranslatorCore.LogWarning($"[CustomFontLoader] File.WriteAllBytes failed for atlas {ai}: {inner.GetType().FullName}: {inner.Message} | path={Sanitize.Path(targetPath)} | drive={drive} | size={pngData.Length}");
                                     }
                                 }
@@ -1444,7 +1445,8 @@ namespace UnityGameTranslator.Core
                             }
                         }
                     }
-                    catch { continue; }
+                    // An overload that does not take this argument: an answer, the next is tried.
+                    catch (Exception _e) { TranslatorCore.LogDebug($"[CustomFontLoader] {method} refused: {_e.GetType().Name}: {_e.Message}"); }
                 }
             }
             catch (Exception _e) { TranslatorCore.LogDebug($"[CustomFontLoader] suppressed: {_e.GetType().Name}: {_e.Message}"); }
@@ -1482,7 +1484,8 @@ namespace UnityGameTranslator.Core
                         if (result is UnityEngine.Object uobj)
                             return uobj;
                     }
-                    catch { continue; }
+                    // An overload that does not take this argument: an answer, the next is tried.
+                    catch (Exception _e) { TranslatorCore.LogDebug($"[CustomFontLoader] {method} refused: {_e.GetType().Name}: {_e.Message}"); }
                 }
 
                 // Try generic version: ScriptableObject.CreateInstance<T>()
@@ -1755,7 +1758,7 @@ namespace UnityGameTranslator.Core
             var lenProp = array.GetType().GetProperty("Length") ?? array.GetType().GetProperty("Count");
             if (lenProp == null) return -1;
             try { return Convert.ToInt32(lenProp.GetValue(array, null)); }
-            catch { return -1; }
+            catch (Exception ex) { Faults.Say("CustomFontLoader.GetArrayLength", ex); return -1; }
         }
 
         /// <summary>
@@ -1995,7 +1998,7 @@ namespace UnityGameTranslator.Core
                             if (lenProp != null)
                             {
                                 try { existingLen = Convert.ToInt32(lenProp.GetValue(atlasArray, null)); }
-                                catch { existingLen = -1; }
+                                catch (Exception ex) { Faults.Say("CustomFontLoader.CreateFontAsset", ex); existingLen = -1; }
                             }
                         }
 
@@ -2127,22 +2130,32 @@ namespace UnityGameTranslator.Core
         /// shader sampled garbage at our UV coords and rendered "carrés à dégradés" /
         /// "squares with gradients" instead of the actual SDF glyphs.
         ///
-        /// We restore the warm-up here without the logging cost. The walk is best-effort:
-        /// any individual property whose getter throws is swallowed, exactly like the
-        /// original dump did with its per-property try/catch.
+        /// We restore the warm-up here without the logging cost. The walk calls every getter for
+        /// its side effect, so a getter that throws is EXPECTED — one needing state this object
+        /// does not have yet. They are counted, never swallowed: one debug line says how many
+        /// were touched and how many threw, and a failure of the walk itself is a fault.
         /// </summary>
         private static void PrimeIL2CppPropertyGetters(object target)
         {
             if (target == null) return;
+            var pubInst = BindingFlags.Public | BindingFlags.Instance;
+            int touched = 0, threw = 0;
+            string lastError = null;
+
+            // One getter, called for what it initialises; its throw is counted, not a fault.
+            object Touch(Func<object> read)
+            {
+                touched++;
+                try { return read(); }
+                catch (Exception ex) { threw++; lastError = ex.GetType().Name; return null; }
+            }
+
+            Type t = target.GetType();
             try
             {
-                Type t = target.GetType();
-                var props = t.GetProperties(BindingFlags.Public | BindingFlags.Instance);
-                foreach (var prop in props)
+                foreach (var prop in t.GetProperties(pubInst))
                 {
-                    object val = null;
-                    try { val = prop.GetValue(target, null); }
-                    catch { continue; }
+                    object val = Touch(() => prop.GetValue(target, null));
                     if (val == null) continue;
 
                     // Mirror the original dump's "drill into glyph/character/atlas/material/face/font"
@@ -2154,68 +2167,48 @@ namespace UnityGameTranslator.Core
                           lower.Contains("atlas") || lower.Contains("material") ||
                           lower.Contains("face") || lower.Contains("font"))) continue;
 
-                    try
+                    var valType = val.GetType();
+                    // Members: GetProperty("Count") would throw on a type re-declaring it.
+                    var countProp = Members.Property(valType, "Count", pubInst);
+                    if (countProp == null) continue;
+                    if (!(Touch(() => Convert.ToInt32(countProp.GetValue(val, null))) is int count) || count <= 0) continue;
+
+                    // The int indexer, picked among the properties: GetProperty("Item") throws
+                    // AmbiguousMatchException on a type with several indexers.
+                    PropertyInfo indexer = null;
+                    foreach (var candidate in valType.GetProperties(pubInst))
                     {
-                        var valType = val.GetType();
-                        var countProp = valType.GetProperty("Count");
-                        if (countProp != null)
-                        {
-                            try
-                            {
-                                int count = Convert.ToInt32(countProp.GetValue(val, null));
-                                if (count > 0)
-                                {
-                                    var indexer = valType.GetProperty("Item");
-                                    if (indexer != null)
-                                    {
-                                        try
-                                        {
-                                            var firstItem = indexer.GetValue(val, new object[] { 0 });
-                                            if (firstItem != null)
-                                            {
-                                                var itemProps = firstItem.GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance);
-                                                foreach (var ip in itemProps)
-                                                {
-                                                    try { ip.GetValue(firstItem, null); } catch { }
-                                                }
-                                            }
-                                        }
-                                        catch { }
-                                    }
-                                }
-                            }
-                            catch { }
-                        }
+                        var ps = candidate.GetIndexParameters();
+                        if (candidate.Name == "Item" && ps.Length == 1 && ps[0].ParameterType == typeof(int)) { indexer = candidate; break; }
                     }
-                    catch { }
+                    if (indexer == null) continue;
+
+                    var firstItem = Touch(() => indexer.GetValue(val, new object[] { 0 }));
+                    if (firstItem == null) continue;
+                    foreach (var ip in firstItem.GetType().GetProperties(pubInst))
+                        Touch(() => ip.GetValue(firstItem, null));
                 }
 
                 // The original dump also touched the legacy `atlas` field and `m_fontInfo`
                 // by name. Replay both.
-                try
+                var atlasField = t.GetField("atlas", pubInst);
+                if (atlasField != null) Touch(() => atlasField.GetValue(target));
+
+                var fontInfoField = t.GetField("m_fontInfo", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                if (fontInfoField != null)
                 {
-                    var atlasField = t.GetField("atlas", BindingFlags.Public | BindingFlags.Instance);
-                    if (atlasField != null) atlasField.GetValue(target);
+                    var fi = Touch(() => fontInfoField.GetValue(target));
+                    if (fi != null)
+                        foreach (var f in fi.GetType().GetFields(pubInst))
+                            Touch(() => f.GetValue(fi));
                 }
-                catch { }
-                try
-                {
-                    var fontInfoField = t.GetField("m_fontInfo", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-                    if (fontInfoField != null)
-                    {
-                        var fi = fontInfoField.GetValue(target);
-                        if (fi != null)
-                        {
-                            foreach (var f in fi.GetType().GetFields(BindingFlags.Public | BindingFlags.Instance))
-                            {
-                                try { f.GetValue(fi); } catch { }
-                            }
-                        }
-                    }
-                }
-                catch { }
             }
-            catch { }
+            // The walk itself — listing the members of a type whose members need a file this game
+            // lacks: said, since the warm-up it exists for then did not happen.
+            catch (Exception ex) { Faults.Say("CustomFontLoader.PrimeIL2CppPropertyGetters", ex, t.Name); }
+
+            if (threw > 0)
+                TranslatorCore.LogDebug($"[CustomFontLoader] Primed {touched} getter(s) on {t.Name}, {threw} threw as expected (last: {lastError})");
         }
 
         /// <summary>
@@ -2558,8 +2551,9 @@ namespace UnityGameTranslator.Core
                             faceInfo = Activator.CreateInstance(actualFaceInfoType);
                             TranslatorCore.LogInfo($"[CustomFontLoader] Created FaceInfo from field type: {actualFaceInfoType.FullName}");
                         }
-                        catch
+                        catch (Exception ex)
                         {
+                            Faults.Say("CustomFontLoader.SetupFaceInfo field type", ex);
                             faceInfo = null;
                         }
                     }
@@ -2569,8 +2563,9 @@ namespace UnityGameTranslator.Core
                         {
                             faceInfo = Activator.CreateInstance(_faceInfoType);
                         }
-                        catch
+                        catch (Exception ex)
                         {
+                            Faults.Say("CustomFontLoader.SetupFaceInfo known type", ex);
                             faceInfo = null;
                         }
                     }
@@ -3037,7 +3032,7 @@ namespace UnityGameTranslator.Core
                     if (v != null) return Convert.ToInt64(v);
                 }
             }
-            catch { }
+            catch (Exception ex) { Faults.Say("CustomFontLoader.ReflectListCount", ex); }
             return -2;
         }
 
@@ -3242,8 +3237,9 @@ namespace UnityGameTranslator.Core
 
                 return character;
             }
-            catch
+            catch (Exception ex)
             {
+                Faults.Say("CustomFontLoader.CreateModernCharacter", ex);
                 return null;
             }
         }

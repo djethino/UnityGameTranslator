@@ -3686,6 +3686,16 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// The game's lines as they stand, copied under the cache's lock — for anything that walks
+        /// them while the worker may be adding one. Walking the map itself there throws, and every
+        /// walk that used to catch that answered "nothing" without a word.
+        /// </summary>
+        internal static KeyValuePair<string, TranslationEntry>[] TranslationLines()
+        {
+            lock (lockObj) { return TranslationCache.ToArray(); }
+        }
+
+        /// <summary>
         /// The patterns again, from the game's lines as they stand: after every change to them
         /// (a load, a new pattern translation, an edit). See PatternIndex.Rebuild.
         ///
@@ -3694,9 +3704,7 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static void BuildPatternEntries()
         {
-            KeyValuePair<string, TranslationEntry>[] lines;
-            lock (lockObj) { lines = TranslationCache.ToArray(); }
-            Patterns.Rebuild(lines);
+            Patterns.Rebuild(TranslationLines());
 
             if (DebugMode)
                 Adapter?.LogInfo($"Built {Patterns.Count} pattern entries");

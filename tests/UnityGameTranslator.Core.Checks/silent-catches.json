@@ -7,7 +7,6 @@
     "Engine/ConfigEffects.cs": 1,
     "Engine/NumberPatterns.cs": 1,
     "Engine/SseStream.cs": 2,
-    "FontManager.cs": 43,
     "ImageReplacer.cs": 15,
     "ModUiStore.cs": 1,
     "Rasterizer/CffParser.cs": 1,

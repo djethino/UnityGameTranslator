@@ -137,16 +137,14 @@ namespace UnityGameTranslator.Core
         {
             // Gather all chars from translation cache values
             var chars = new HashSet<char>();
-            try
+            // A copy taken under the cache's lock: the worker adds lines meanwhile, and a walk that met
+            // one used to be caught — an atlas built without those characters, without a word.
+            foreach (var entry in TranslatorCore.TranslationLines())
             {
-                foreach (var entry in TranslatorCore.TranslationCache)
-                {
-                    if (entry.Value?.Value != null)
-                        foreach (char c in entry.Value.Value)
-                            if (c > 31) chars.Add(c);
-                }
+                if (entry.Value?.Value != null)
+                    foreach (char c in entry.Value.Value)
+                        if (c > 31) chars.Add(c);
             }
-            catch { }
 
             // Add basic ASCII + common accented chars
             for (char c = ' '; c <= '~'; c++) chars.Add(c);
@@ -278,7 +276,7 @@ namespace UnityGameTranslator.Core
                             TranslatorCore.LogInfo($"[FontManager] CharacterInfo IL2CPP class ptr: {ptr}");
                         }
                     }
-                    catch { }
+                    catch (Exception ex) { Faults.Say("FontManager.CreateBitmapFont class pointer", ex); }
 
                     // Test individual chars
                     CharacterInfo ciA, ciP, ciE, ciSpace;
@@ -326,7 +324,8 @@ namespace UnityGameTranslator.Core
                     System.IO.File.WriteAllBytes(debugPath, result.RgbaData);
                     TranslatorCore.LogDebug($"[FontManager] Exported debug atlas to {Sanitize.Path(debugPath)} ({result.AtlasWidth}x{result.AtlasHeight} RGBA)");
                 }
-                catch { }
+                // A debug export, written to disk: a full disk or a locked file is said.
+                catch (Exception ex) { Faults.Say("FontManager.CreateBitmapFont debug export", ex); }
                 return font;
             }
             catch (Exception ex)
@@ -360,14 +359,12 @@ namespace UnityGameTranslator.Core
 
             // Snapshot to avoid "Collection was modified" if a clone is created during iteration
             KeyValuePair<string, Font>[] snapshot;
-            try
-            {
-                snapshot = new KeyValuePair<string, Font>[_unityFallbackFonts.Count];
-                int i = 0;
-                foreach (var kvp in _unityFallbackFonts)
-                    snapshot[i++] = new KeyValuePair<string, Font>(kvp.Key, kvp.Value);
-            }
-            catch { return; }
+            // Written on the main thread only (fonts are engine objects), as this runs: the copy cannot
+            // meet a write in progress (it used to be caught, and read as "nothing to protect").
+            snapshot = new KeyValuePair<string, Font>[_unityFallbackFonts.Count];
+            int i = 0;
+            foreach (var kvp in _unityFallbackFonts)
+                snapshot[i++] = new KeyValuePair<string, Font>(kvp.Key, kvp.Value);
 
             foreach (var kvp in snapshot)
             {
@@ -381,11 +378,12 @@ namespace UnityGameTranslator.Core
                 if (!_knownCharsStringCache.TryGetValue(kvp.Key, out charString) || charString == null)
                     continue;
 
+                // Filling the clone's atlas: a refusal means characters missing on screen — said.
                 try
                 {
                     kvp.Value.RequestCharactersInTexture(charString);
                 }
-                catch { }
+                catch (Exception ex) { Faults.Say("FontManager.ProtectCloneAtlases", ex, kvp.Key); }
             }
         }
 
@@ -458,8 +456,9 @@ namespace UnityGameTranslator.Core
                 var allChars = new string(new System.Collections.Generic.List<char>(known).ToArray());
                 _knownCharsStringCache[componentFallback] = allChars;
 
+                // Filling the clone's atlas: a refusal means characters missing on screen — said.
                 try { componentClone.RequestCharactersInTexture(allChars); }
-                catch { }
+                catch (Exception ex) { Faults.Say("FontManager.EnsureCharsInCloneAtlasInternal", ex); }
 
                 MarkCloneComponentsDirty(componentClone);
             }
@@ -585,6 +584,10 @@ namespace UnityGameTranslator.Core
         /// Mark all components using a clone font as dirty so they re-render with the updated atlas.
         /// Covers both _replacedComponentRefs (tracked by our font replacement) and scanner cache.
         /// </summary>
+        /// <summary>
+        /// Force Unity to re-render all components using a specific cloned font.
+        /// Uses SetAllDirty instead of set_text to avoid breaking font name tracking.
+        /// </summary>
         private static void MarkCloneComponentsDirty(Font clone)
         {
             if (clone == null) return;
@@ -598,44 +601,39 @@ namespace UnityGameTranslator.Core
 
             int marked = 0;
             int total = 0;
-            try
+            // Written on the main thread only, as this runs: walking it needs no guard.
+            foreach (var kvp in _replacedComponentRefs)
             {
-                foreach (var kvp in _replacedComponentRefs)
+                var comp = kvp.Value as Component;
+                if (comp == null) continue;
+                total++;
+                try
                 {
-                    var comp = kvp.Value as Component;
-                    if (comp == null) continue;
-                    total++;
-                    try
+                    var font = TypeHelper.GetFont(comp) as Font;
+                    if (font == null) continue;
+                    string fontName = font.name;
+                    if (!string.Equals(fontName, cloneName, StringComparison.OrdinalIgnoreCase)) continue;
+                    // SetAllDirty via reflection (no direct UI.Text dependency)
+                    var method = comp.GetType().GetMethod("SetAllDirty",
+                        BindingFlags.Public | BindingFlags.Instance);
+                    if (method != null)
                     {
-                        var font = TypeHelper.GetFont(comp) as Font;
-                        if (font == null) continue;
-                        string fontName = font.name;
-                        if (!string.Equals(fontName, cloneName, StringComparison.OrdinalIgnoreCase)) continue;
-                        // SetAllDirty via reflection (no direct UI.Text dependency)
-                        var method = comp.GetType().GetMethod("SetAllDirty",
-                            BindingFlags.Public | BindingFlags.Instance);
-                        if (method != null)
-                        {
-                            method.Invoke(comp, null);
-                            marked++;
-                        }
-                        else if (_markDirtyWarnCount < 3)
-                        {
-                            _markDirtyWarnCount++;
-                            TranslatorCore.LogWarning($"[MarkDirty] SetAllDirty NOT FOUND on {comp.GetType().FullName}");
-                        }
+                        method.Invoke(comp, null);
+                        marked++;
                     }
-                    catch { }
+                    else if (_markDirtyWarnCount < 3)
+                    {
+                        _markDirtyWarnCount++;
+                        TranslatorCore.LogWarning($"[MarkDirty] SetAllDirty NOT FOUND on {comp.GetType().FullName}");
+                    }
                 }
+                // One component's font read and redraw asked through its own code: one that
+                // fails keeps the stale glyphs, the others are redrawn, and it is said.
+                catch (Exception ex) { Faults.Say("FontManager.MarkCloneComponentsDirty", ex, comp.GetType().Name); }
             }
-            catch { }
             // Suppressed: was flooding logs with 200+ lines per atlas rebuild
         }
 
-        /// <summary>
-        /// Force Unity to re-render all components using a specific cloned font.
-        /// Uses SetAllDirty instead of set_text to avoid breaking font name tracking.
-        /// </summary>
         /// <summary>
         /// Called when a new component just received a cloned font.
         /// Ensures all known chars are in the atlas, then forces the component to redraw.
@@ -651,25 +649,20 @@ namespace UnityGameTranslator.Core
             // Get all known chars for this clone
             if (_knownCharsPerClone.TryGetValue(fallback, out var known) && known.Count > 0)
             {
+                // Filling the clone's atlas: a refusal means characters missing on screen — said.
                 try
                 {
                     var allChars = new string(new System.Collections.Generic.List<char>(known).ToArray());
                     clone.RequestCharactersInTexture(allChars);
                 }
-                catch { }
+                catch (Exception ex) { Faults.Say("FontManager.EnsureComponentGlyphs", ex, fallback); }
             }
 
             // Force this specific component to redraw with updated atlas
+            // TypeHelper.SetAllDirty is this, once, and says its own failures.
             var comp = component as Component;
             if (comp != null)
-            {
-                try
-                {
-                    var setDirty = comp.GetType().GetMethod("SetAllDirty", BindingFlags.Public | BindingFlags.Instance);
-                    setDirty?.Invoke(comp, null);
-                }
-                catch { }
-            }
+                TypeHelper.SetAllDirty(comp);
         }
 
         // Track which clones have been pre-warmed (by font name) — only do it once per clone lifetime
@@ -768,12 +761,7 @@ namespace UnityGameTranslator.Core
                         // IL2CPP: wrap the managed Action into the Il2Cpp delegate type
                         try
                         {
-                            Type delegateSupportType = null;
-                            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
-                            {
-                                delegateSupportType = asm.GetType("Il2CppInterop.Runtime.DelegateSupport");
-                                if (delegateSupportType != null) break;
-                            }
+                            var delegateSupportType = AssemblyTypes.Find("Il2CppInterop.Runtime.DelegateSupport");
                             if (delegateSupportType != null)
                             {
                                 var convertMethod = delegateSupportType.GetMethod("ConvertDelegate",
@@ -785,7 +773,9 @@ namespace UnityGameTranslator.Core
                                 }
                             }
                         }
-                        catch { }
+                        // Without the conversion the subscription below is refused, and the atlas
+                        // re-warm on scene change never runs: said.
+                        catch (Exception ex) { Faults.Say("FontManager.SubscribeWillRenderCanvases delegate", ex); }
                     }
                     else if (paramType != typeof(Action) && typeof(Delegate).IsAssignableFrom(paramType))
                     {
@@ -865,7 +855,7 @@ namespace UnityGameTranslator.Core
             // modification and right before the draw — detect a stalled reveal (glyphs
             // stuck invisible) and repair it in place, so it renders complete this frame.
             long tWatch = Perf.Start();
-            try { TranslatorScanner.TickRenderWatch(); } catch { }
+            TranslatorScanner.TickRenderWatch();   // says its own failures, entry by entry
             Perf.Stop(Perf.RenderWatch, tWatch);
 
             if (!_pendingSceneRefresh) return;
@@ -888,8 +878,8 @@ namespace UnityGameTranslator.Core
 
                 foreach (var kvp in _unityFallbackFonts)
                 {
+                    // Typed Font: this comparison is Unity's own, true for a font destroyed since.
                     if (kvp.Value == null) continue;
-                    try { var _ = kvp.Value.name; } catch { continue; }
 
                         // Isolate each clone's pre-warm so a single failure (e.g. a
                     // TypeLoadException from missing CharacterInfo metadata on some
@@ -934,12 +924,13 @@ namespace UnityGameTranslator.Core
             // were diagnostic-only (their results were never read).
             if (_knownCharsStringCache.TryGetValue(originalFontName, out string existing) && !string.IsNullOrEmpty(existing))
             {
+                // Filling the clone's atlas: a refusal means characters missing on screen — said.
                 try
                 {
                     clone.RequestCharactersInTexture(existing);
                     TranslatorCore.LogDebug($"[FontManager] PreWarm '{originalFontName}' with {existing.Length} known chars");
                 }
-                catch { }
+                catch (Exception ex) { Faults.Say("FontManager.PreWarmCloneAtlas known", ex, originalFontName); }
                 return;
             }
 
@@ -951,29 +942,28 @@ namespace UnityGameTranslator.Core
             // Build chars from translation cache VALUES only where text was actually
             // translated (value != key). This excludes CJK chars from untranslated entries.
             var cacheChars = new HashSet<char>();
-            try
+            // A copy taken under the cache's lock: the worker adds lines meanwhile, and a walk that met
+            // one used to give up the whole pre-warm without a word.
+            foreach (var entry in TranslatorCore.TranslationLines())
             {
-                foreach (var entry in TranslatorCore.TranslationCache)
-                {
-                    if (entry.Value?.Value != null && entry.Value.Value != entry.Key)
-                        foreach (char c in entry.Value.Value)
-                            if (c > 31 && (excluded == null || !excluded.Contains(c))) cacheChars.Add(c);
-                }
+                if (entry.Value?.Value != null && entry.Value.Value != entry.Key)
+                    foreach (char c in entry.Value.Value)
+                        if (c > 31 && (excluded == null || !excluded.Contains(c))) cacheChars.Add(c);
             }
-            catch { return; }
 
             if (cacheChars.Count == 0) return;
 
             var charString = new string(new System.Collections.Generic.List<char>(cacheChars).ToArray());
             _knownCharsPerClone[originalFontName] = cacheChars;
             _knownCharsStringCache[originalFontName] = charString;
+            // Filling the clone's atlas: a refusal means characters missing on screen — said.
             try
             {
                 clone.RequestCharactersInTexture(charString, 0, FontStyle.Normal);
                 int excludedCount = excluded != null ? excluded.Count : 0;
                 TranslatorCore.LogInfo($"[FontManager] PreWarm '{originalFontName}' with {cacheChars.Count} chars (excluded {excludedCount} non-renderable)");
             }
-            catch { }
+            catch (Exception ex) { Faults.Say("FontManager.PreWarmCloneAtlas", ex, originalFontName); }
         }
 
         /// <summary>
@@ -994,28 +984,26 @@ namespace UnityGameTranslator.Core
                     excluded = null;
 
                 var cloneChars = new HashSet<char>();
-                try
+                // A copy taken under the cache's lock (see TranslatorCore.TranslationLines).
+                foreach (var entry in TranslatorCore.TranslationLines())
                 {
-                    foreach (var entry in TranslatorCore.TranslationCache)
-                    {
-                        if (entry.Value?.Value != null)
-                            foreach (char c in entry.Value.Value)
-                                if (c > 31 && (excluded == null || !excluded.Contains(c))) cloneChars.Add(c);
-                    }
+                    if (entry.Value?.Value != null)
+                        foreach (char c in entry.Value.Value)
+                            if (c > 31 && (excluded == null || !excluded.Contains(c))) cloneChars.Add(c);
                 }
-                catch { }
 
                 if (cloneChars.Count == 0) continue;
 
                 var charString = new string(new System.Collections.Generic.List<char>(cloneChars).ToArray());
                 _knownCharsPerClone[kvp.Key] = cloneChars;
                 _knownCharsStringCache[kvp.Key] = charString;
+                // Filling the clone's atlas: a refusal means characters missing on screen — said.
                 try
                 {
                     clone.RequestCharactersInTexture(charString, 0, FontStyle.Normal);
                     TranslatorCore.LogDebug($"[FontManager] Pre-populated atlas for '{kvp.Key}' with {cloneChars.Count} chars from cache");
                 }
-                catch { }
+                catch (Exception ex) { Faults.Say("FontManager.PrePopulateCloneAtlasFromCache", ex, kvp.Key); }
             }
         }
 
@@ -1124,8 +1112,9 @@ namespace UnityGameTranslator.Core
                     // Re-request all known chars for this clone immediately
                     if (_knownCharsStringCache.TryGetValue(match.Key, out string charString) && charString != null)
                     {
+                        // Filling the clone's atlas: a refusal means characters missing on screen — said.
                         try { match.Value.RequestCharactersInTexture(charString); }
-                        catch { }
+                        catch (Exception ex) { Faults.Say("FontManager.OnFontTextureRebuilt", ex, match.Key); }
                     }
 
                     // Mark all components using this clone as dirty so they re-render
@@ -1404,7 +1393,9 @@ namespace UnityGameTranslator.Core
                                 fontNames.Add(name);
                         }
                     }
-                    catch { }
+                    // A system font folder this account cannot read: its fonts are not offered, and
+                    // it is said.
+                    catch (Exception ex) { Faults.Say("FontManager.TryGetFontNamesFromFilesystem", ex, Sanitize.Path(dir)); }
                 }
 
                 if (fontNames.Count > 0)
@@ -1636,12 +1627,14 @@ namespace UnityGameTranslator.Core
             string family = clean;
             if (ttfPath != null)
             {
+                // A font file unreadable or not what its extension says: its file name stands for its
+                // family, and it is said.
                 try
                 {
                     var parser = new Rasterizer.TtfParser(System.IO.File.ReadAllBytes(ttfPath));
                     if (!string.IsNullOrEmpty(parser.Metrics.FontName)) family = parser.Metrics.FontName;
                 }
-                catch { }
+                catch (Exception ex) { Faults.Say("FontManager.ResolveSystemFontFamily", ex, Sanitize.Path(ttfPath)); }
             }
             return family;
         }
@@ -1771,7 +1764,9 @@ namespace UnityGameTranslator.Core
         public static int GetMaxTextureSize()
         {
             int maxTex = 8192;
-            try { int sys = UnityEngine.SystemInfo.maxTextureSize; if (sys >= 512) maxTex = sys; } catch { }
+            // The engine's answer; 8192 stands in when it cannot give one, and that is said.
+            try { int sys = UnityEngine.SystemInfo.maxTextureSize; if (sys >= 512) maxTex = sys; }
+            catch (Exception ex) { Faults.Say("FontManager.GetMaxTextureSize", ex); }
             return maxTex;
         }
 
@@ -2203,7 +2198,8 @@ namespace UnityGameTranslator.Core
                 var field = t.GetField("material", BindingFlags.Public | BindingFlags.Instance);
                 return field?.GetValue(fontAsset);
             }
-            catch { return null; }
+            // The font asset's own getter, reached by reflection: said.
+            catch (Exception ex) { Faults.Say("FontManager.GetFontAssetMaterial", ex, fontAsset.GetType().Name); return null; }
         }
 
         /// <summary>
@@ -2902,12 +2898,12 @@ namespace UnityGameTranslator.Core
                                 if (containsMethod != null)
                                     alreadyThere = (bool)containsMethod.Invoke(fallbackList, new[] { castedOriginal });
                             }
-                            catch { }
+                            catch (Exception ex) { Faults.Say("FontManager.ApplyFontReplacement fallback Contains", ex); }
                             if (!alreadyThere)
                                 addMethod.Invoke(fallbackList, new[] { castedOriginal });
                             _fallbackAppliedFonts.Add(originalFontName + "_reverse");
                         }
-                        catch { }
+                        catch (Exception ex) { Faults.Say("FontManager.ApplyFontReplacement reverse fallback", ex); }
                     }
                 }
             }
@@ -3911,21 +3907,21 @@ namespace UnityGameTranslator.Core
                     var colorProp = textType.GetProperty("color", BindingFlags.Public | BindingFlags.Instance);
                     if (colorProp != null) color = (Color)colorProp.GetValue(textComp, null);
                 }
-                catch { }
+                catch (Exception ex) { Faults.Say("FontManager.ConvertUITextToTMP color read", ex); }
 
                 try
                 {
                     var sizeProp = textType.GetProperty("fontSize", BindingFlags.Public | BindingFlags.Instance);
                     if (sizeProp != null) fontSize = (int)sizeProp.GetValue(textComp, null);
                 }
-                catch { }
+                catch (Exception ex) { Faults.Say("FontManager.ConvertUITextToTMP fontSize read", ex); }
 
                 try
                 {
                     var alignProp = textType.GetProperty("alignment", BindingFlags.Public | BindingFlags.Instance);
                     if (alignProp != null) alignment = (int)alignProp.GetValue(textComp, null);
                 }
-                catch { }
+                catch (Exception ex) { Faults.Say("FontManager.ConvertUITextToTMP alignment read", ex); }
 
                 // Disable the UI.Text component
                 try
@@ -3934,7 +3930,7 @@ namespace UnityGameTranslator.Core
                     if (enabledProp != null)
                         enabledProp.SetValue(textComp, false, null);
                 }
-                catch { }
+                catch (Exception ex) { Faults.Say("FontManager.ConvertUITextToTMP disable source", ex); }
 
                 // Add TextMeshProUGUI component to the same GameObject
                 var tmpTextType = TypeHelper.TMP_TextType;
@@ -4046,7 +4042,7 @@ namespace UnityGameTranslator.Core
                     var textProp = tmpCompType.GetProperty("text", BindingFlags.Public | BindingFlags.Instance);
                     if (textProp != null) textProp.SetValue(tmpComponent, text, null);
                 }
-                catch { }
+                catch (Exception ex) { Faults.Say("FontManager.ConvertUITextToTMP text write", ex); }
 
                 // Set color
                 try
@@ -4054,7 +4050,7 @@ namespace UnityGameTranslator.Core
                     var colorProp = tmpCompType.GetProperty("color", BindingFlags.Public | BindingFlags.Instance);
                     if (colorProp != null) colorProp.SetValue(tmpComponent, color, null);
                 }
-                catch { }
+                catch (Exception ex) { Faults.Say("FontManager.ConvertUITextToTMP color write", ex); }
 
                 // Set font size
                 try
@@ -4062,7 +4058,7 @@ namespace UnityGameTranslator.Core
                     var sizeProp = tmpCompType.GetProperty("fontSize", BindingFlags.Public | BindingFlags.Instance);
                     if (sizeProp != null) sizeProp.SetValue(tmpComponent, (float)fontSize, null);
                 }
-                catch { }
+                catch (Exception ex) { Faults.Say("FontManager.ConvertUITextToTMP fontSize write", ex); }
 
                 _convertedToTMP.Add(goId);
                 _createdFallbackFontNames.Add(cleanFallback);
@@ -4229,7 +4225,7 @@ namespace UnityGameTranslator.Core
                     // Save atlas state BEFORE SetFontNames
                     int texIdBefore = 0;
                     try { texIdBefore = originalGameFont.material?.mainTexture?.GetInstanceID() ?? 0; }
-                    catch { }
+                    catch (Exception ex) { Faults.Say("FontManager.GetUnityReplacementFont texture id", ex); }
 
                     bool set = UniverseLib.Runtime.TextureHelper.SetFontNames(
                         originalGameFont, fontNamesList.ToArray());
@@ -4558,7 +4554,7 @@ namespace UnityGameTranslator.Core
                                             var val = p.GetValue(font, null);
                                             propInfo.Add($"{p.Name}={val}({(p.CanWrite ? "rw" : "ro")})");
                                         }
-                                        catch { propInfo.Add($"{p.Name}=(err)"); }
+                                        catch (Exception ex) { propInfo.Add($"{p.Name}=(err: {ex.GetType().Name})"); }
                                     }
                                     TranslatorCore.LogDebug($"[FontManager] Font props: {string.Join(", ", propInfo)}");
 
@@ -4655,7 +4651,7 @@ namespace UnityGameTranslator.Core
                                 if (arrayCtor != null)
                                     fontNamesArray = arrayCtor.Invoke(new object[] { new string[] { fontName } });
                             }
-                            catch { }
+                            catch (Exception ex) { Faults.Say("FontManager.CreateUnityFont names array string", ex); }
 
                             if (fontNamesArray == null)
                             {
@@ -4669,7 +4665,7 @@ namespace UnityGameTranslator.Core
                                         indexer?.SetValue(fontNamesArray, fontName, new object[] { 0 });
                                     }
                                 }
-                                catch { }
+                                catch (Exception ex) { Faults.Say("FontManager.CreateUnityFont names array int", ex); }
                             }
 
                             if (fontNamesArray != null)
@@ -4698,7 +4694,7 @@ namespace UnityGameTranslator.Core
                 TranslatorCore.LogWarning($"[FontManager] Font constructors: {ctorInfo}");
                 TranslatorCore.LogWarning($"[FontManager] Font factory methods: {string.Join(", ", factoryMethods)}");
             }
-            catch { }
+            catch (Exception ex) { Faults.Say("FontManager.CreateUnityFont diagnostics", ex); }
 
             TranslatorCore.LogWarning($"[FontManager] Cannot create Font on this runtime for: {fontName}");
             return null;
@@ -4770,7 +4766,7 @@ namespace UnityGameTranslator.Core
                         }
                     }
                 }
-                catch { }
+                catch (Exception ex) { Faults.Say("FontManager.FindFontFilePath", ex); }
             }
 
             TranslatorCore.LogWarning($"[FontManager] Font file not found for: {fontName}");
@@ -4933,7 +4929,7 @@ namespace UnityGameTranslator.Core
                     if (list != null) return list;
                 }
             }
-            catch { }
+            catch (Exception ex) { Faults.Say("FontManager.GetFallbackListReflection property", ex); }
 
             // Try fallbackFontAssets field (older TMP versions)
             try
@@ -4952,7 +4948,7 @@ namespace UnityGameTranslator.Core
                     return list;
                 }
             }
-            catch { }
+            catch (Exception ex) { Faults.Say("FontManager.GetFallbackListReflection field", ex); }
 
             return null;
         }
@@ -5106,7 +5102,7 @@ namespace UnityGameTranslator.Core
                             return result;
                         }
                     }
-                    catch { }
+                    catch (Exception ex) { Faults.Say("FontManager.CreateSdfFontAssetByFamily by style", ex); }
 
                     // If that failed and we had a style, try with just family name + "Regular"
                     if (styleName != "Regular")
@@ -5122,7 +5118,7 @@ namespace UnityGameTranslator.Core
                                 return result;
                             }
                         }
-                        catch { }
+                        catch (Exception ex) { Faults.Say("FontManager.CreateSdfFontAssetByFamily Regular", ex); }
                     }
 
                     // Last resort: try original name as family with Regular
@@ -5139,7 +5135,7 @@ namespace UnityGameTranslator.Core
                                 return result;
                             }
                         }
-                        catch { }
+                        catch (Exception ex) { Faults.Say("FontManager.CreateSdfFontAssetByFamily by font name", ex); }
                     }
                 }
 

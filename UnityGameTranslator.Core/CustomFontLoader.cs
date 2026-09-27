@@ -455,6 +455,27 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// Registers one font file just written into the fonts folder — an asset pack, applied while
+        /// the game runs — exactly as the scan at start registers a .ttf/.otf: by name, rasterised on
+        /// demand. Replaces an earlier registration of the same name, so a font replaced on disk is
+        /// read again rather than served from the old file.
+        /// </summary>
+        public static void Register(string fontPath)
+        {
+            if (string.IsNullOrEmpty(fontPath) || !UnityGameTranslator.Common.AssetPacks.IsFontFile(fontPath)) return;
+
+            var fileName = Path.GetFileNameWithoutExtension(fontPath);
+            _customFonts[fileName] = new CustomFontInfo
+            {
+                Name = fileName,
+                TtfPath = fontPath,
+                Source = "custom"
+            };
+
+            TranslatorCore.LogInfo($"[CustomFontLoader] Registered TTF: {fileName} (added from an asset pack)");
+        }
+
+        /// <summary>
         /// Scans the fonts folder and loads all available custom fonts.
         /// </summary>
         public static void Initialize(string pluginFolder)

@@ -337,7 +337,12 @@ namespace UnityGameTranslator.Core
         /// file without asking anybody is exactly how this was found missing once already.
         /// </summary>
         /// <param name="by">Whose translation the act involves, as a mention. Optional.</param>
-        public static void TakeAutomatic(BackupReason reason, string by = null)
+        /// <param name="withAssets">
+        /// ⚠ False everywhere but one caller: an ordinary replacement leaves fonts and images where they
+        /// are. Adding an asset pack is the exception — it may replace a picture somebody retouched by
+        /// hand, which exists nowhere else (the same rule as UGT Manager's TakeAutomatic).
+        /// </param>
+        public static void TakeAutomatic(BackupReason reason, string by = null, bool withAssets = false)
         {
             if (reason == BackupReason.Saved)
             {
@@ -345,7 +350,7 @@ namespace UnityGameTranslator.Core
                 return;
             }
 
-            Take(reason, by, label: null, withAssets: false);
+            Take(reason, by, label: null, withAssets: withAssets);
             Prune();
         }
 

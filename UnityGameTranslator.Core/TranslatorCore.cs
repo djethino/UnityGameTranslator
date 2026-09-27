@@ -578,6 +578,13 @@ namespace UnityGameTranslator.Core
         public static string FileTargetLanguage => _languages.FileTarget;
 
         /// <summary>
+        /// The translation file on disk could not be read at the last load — the cache runs empty
+        /// beside it. Asset packs add no image setting then (AssetPlanner.DamagedTranslation), as
+        /// UGT Manager refuses to write into a file it cannot read.
+        /// </summary>
+        public static bool TranslationFileUnreadable { get; private set; }
+
+        /// <summary>
         /// The languages in force for this translation, resolved from the server, then the file,
         /// then the configuration. Null on either side when nobody has settled it yet.
         /// </summary>
@@ -2781,6 +2788,8 @@ namespace UnityGameTranslator.Core
             // above now is: FileUuid, LastSyncedHash, LastMergedMainHash, SourceSiteId and the
             // four ForkedFrom* read through it and start null.
 
+            TranslationFileUnreadable = false;
+
             if (!File.Exists(CachePath))
             {
                 // Generate UUID for new translation file
@@ -3044,6 +3053,7 @@ namespace UnityGameTranslator.Core
             catch (Exception e)
             {
                 Adapter.LogError($"Failed to load cache: {e.Message}");
+                TranslationFileUnreadable = true;
                 TranslationCache = new Dictionary<string, TranslationEntry>();
 
                 // ⚠ The reverse indexes with it. They are built from the cache in the success path

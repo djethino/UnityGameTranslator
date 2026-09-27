@@ -593,6 +593,74 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// The replacement settings as the socle models them — what an asset pack is planned against.
+        /// </summary>
+        public static List<UnityGameTranslator.Common.ImageDefinition> Definitions()
+        {
+            var definitions = new List<UnityGameTranslator.Common.ImageDefinition>();
+            foreach (var entry in _replacements.Values)
+            {
+                var values = new Dictionary<string, object>
+                {
+                    [UnityGameTranslator.Common.TranslationFiles.ImageSpriteField] = entry.SpriteName,
+                    [UnityGameTranslator.Common.TranslationFiles.ImagePathField] = entry.HierarchyPath,
+                    ["original_width"] = (double)entry.OriginalWidth,
+                    ["original_height"] = (double)entry.OriginalHeight,
+                    ["pivot_x"] = (double)entry.PivotX,
+                    ["pivot_y"] = (double)entry.PivotY,
+                    ["border_left"] = (double)entry.BorderLeft,
+                    ["border_bottom"] = (double)entry.BorderBottom,
+                    ["border_right"] = (double)entry.BorderRight,
+                    ["border_top"] = (double)entry.BorderTop,
+                    ["pixels_per_unit"] = (double)entry.PixelsPerUnit,
+                    [UnityGameTranslator.Common.TranslationFiles.ImageFileField] = entry.File,
+                };
+
+                var definition = UnityGameTranslator.Common.ImageDefinition.Read(
+                    field => values.TryGetValue(field, out var value) ? value : null);
+                if (definition != null) definitions.Add(definition);
+            }
+
+            return definitions;
+        }
+
+        /// <summary>
+        /// Sets one replacement from a setting an asset pack carried — replacing the entry for the
+        /// same sprite (the socle's comparison: case ignored), so the section keeps one per sprite.
+        /// A field the pack left out takes the value a freshly marked sprite would have.
+        /// </summary>
+        public static void SetDefinition(UnityGameTranslator.Common.ImageDefinition definition)
+        {
+            if (definition == null || string.IsNullOrEmpty(definition.File)) return;
+
+            float Number(string field, float fallback)
+            {
+                var index = Array.IndexOf(UnityGameTranslator.Common.TranslationFiles.ImageNumberFields, field);
+                return index >= 0 && definition.Numbers[index] is double value ? (float)value : fallback;
+            }
+
+            // The dictionary compares sprites as the socle does, so this replaces "Logo" with "logo".
+            _replacements[definition.Sprite] = new ImageReplacement
+            {
+                SpriteName = definition.Sprite,
+                HierarchyPath = definition.Path ?? "",
+                OriginalWidth = (int)Number("original_width", 0),
+                OriginalHeight = (int)Number("original_height", 0),
+                PivotX = Number("pivot_x", 0.5f),
+                PivotY = Number("pivot_y", 0.5f),
+                BorderLeft = Number("border_left", 0),
+                BorderBottom = Number("border_bottom", 0),
+                BorderRight = Number("border_right", 0),
+                BorderTop = Number("border_top", 0),
+                PixelsPerUnit = Number("pixels_per_unit", 100f) is float ppu && ppu > 0 ? ppu : 100f,
+                File = definition.File,
+            };
+
+            TranslatorCore.SetMetadataDirty();
+            TranslatorCore.LogInfo($"[ImageReplacer] Set replacement from an asset pack: {definition.Sprite} <- {definition.File}");
+        }
+
+        /// <summary>
         /// Remove a replacement entry.
         /// </summary>
         public static void RemoveReplacement(string spriteName)

@@ -13,7 +13,6 @@
     "RawAtlasCache.cs": 1,
     "SseClient.cs": 5,
     "TextRule.cs": 2,
-    "TextShaping/RtlPresenter.cs": 22,
     "TextTargets.cs": 2,
     "TextureUtils.cs": 1,
     "TranslationBackups.cs": 3,

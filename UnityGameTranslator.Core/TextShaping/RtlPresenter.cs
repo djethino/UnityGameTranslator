@@ -181,10 +181,10 @@ namespace UnityGameTranslator.Core.TextShaping
                     if (compId != -1 && !_flaggedOriginal.ContainsKey(compId))
                     {
                         bool original = false;
-                        try { original = prop.GetMethod != null && (bool)prop.GetValue(instance, null); } catch { }
+                        try { original = prop.GetMethod != null && (bool)prop.GetValue(instance, null); } catch (Exception ex) { Faults.Say("RtlPresenter.Present flag read", ex); }
                         _flaggedOriginal[compId] = original;
                     }
-                    try { prop.SetValue(instance, true, null); } catch { }
+                    try { prop.SetValue(instance, true, null); } catch (Exception ex) { Faults.Say("RtlPresenter.Present flag write", ex); }
                     MirrorAlignment(instance, compId, mirror);
                     RegisterShown(compId, flagged, value);
                     Log(compId, "flagged", value, flagged);
@@ -718,7 +718,7 @@ namespace UnityGameTranslator.Core.TextShaping
                     if (renderer != null && (bool)_cullProp.GetValue(renderer, null)) return false;
                 }
             }
-            catch { }
+            catch (Exception ex) { Faults.Say("RtlPresenter.WillBeRedrawn", ex); }
             return true;
         }
 
@@ -736,7 +736,7 @@ namespace UnityGameTranslator.Core.TextShaping
                     _wrapOriginal[compId] = current;
                 prop.SetValue(comp, overflow, null);
             }
-            catch { }
+            catch (Exception ex) { Faults.Say("RtlPresenter.DisableRewrap", ex); }
         }
 
         /// <summary>
@@ -798,10 +798,14 @@ namespace UnityGameTranslator.Core.TextShaping
                         var ps = m.GetParameters();
                         if (ps.Length == 2 && ps[0].ParameterType == typeof(string)) { _generatorPopulate = m; break; }
                     }
-                    try { _ownGenerator = Activator.CreateInstance(genType); } catch { }
+                    // A text generator of our own: the engine may refuse to make one — said.
+                    try { _ownGenerator = Activator.CreateInstance(genType); }
+                    catch (Exception ex) { Faults.Say("RtlPresenter.EnsureGeneratorPlumbing own generator", ex); }
                 }
             }
-            catch { }
+            // The uGUI text generator's members, found by reflection on this engine: a refusal
+            // leaves right-to-left lines unmeasured, and it is said.
+            catch (Exception ex) { Faults.Say("RtlPresenter.EnsureGeneratorPlumbing", ex); }
         }
         }
 
@@ -823,7 +827,7 @@ namespace UnityGameTranslator.Core.TextShaping
                 var rtProp = comp.GetType().GetProperty("rectTransform", BindingFlags.Public | BindingFlags.Instance);
                 if (rtProp?.GetValue(comp, null) is UnityEngine.RectTransform rt) rectSize = $"{rt.rect.width:F1}x{rt.rect.height:F1}";
                 var t = settings.GetType();
-                object F(string name) { try { return t.GetField(name)?.GetValue(settings); } catch { return "?"; } }
+                object F(string name) { try { return t.GetField(name)?.GetValue(settings); } catch (Exception ex) { return $"?({ex.GetType().Name})"; } }
                 int lines = cut == null ? -1 : cut.Split('\n').Length;
                 string preview = assigned.Length > 24 ? assigned.Substring(0, 24) + "…" : assigned;
                 TranslatorCore.LogDebug($"[RtlPresenter] cut comp={TypeHelper.GetInstanceID(comp)} {(comp is UnityEngine.Component cc && cc.gameObject != null ? (cc.gameObject.activeInHierarchy ? "active" : "INACTIVE") : "?")} pixelRect={pixelRect.width:F1}x{pixelRect.height:F1} rect={rectSize} "
@@ -1046,7 +1050,7 @@ namespace UnityGameTranslator.Core.TextShaping
                 }
                 return true;
             }
-            catch { return false; }
+            catch (Exception ex) { Faults.Say("RtlPresenter.ReadUGuiGlyphs", ex); return false; }
         }
 
         private static string BuildUGuiLinesNow(object comp, string assigned, out string whyNot)
@@ -1087,7 +1091,7 @@ namespace UnityGameTranslator.Core.TextShaping
                         if (vertical != null) vertical.SetValue(settings, Enum.ToObject(vertical.FieldType, 1));
                     }
                 }
-                catch { }
+                catch (Exception ex) { Faults.Say("RtlPresenter.BuildUGuiLinesNow", ex); }
                 if (!(bool)_generatorPopulate.Invoke(_ownGenerator, new object[] { assigned, settings }))
                 { whyNot = "generator refused to populate"; return null; }
 
@@ -1131,7 +1135,7 @@ namespace UnityGameTranslator.Core.TextShaping
                     if (_supportRichTextProp != null)
                         richText = (bool)_supportRichTextProp.GetValue(comp, null);
                 }
-                catch { }
+                catch (Exception ex) { Faults.Say("RtlPresenter.BuildPerLineVisual", ex); }
                 if (richText) tagMap = RichTextIndexMap.Build(assigned, out strippedLength);
             }
             int referenceLength = rawLength;
@@ -1203,7 +1207,7 @@ namespace UnityGameTranslator.Core.TextShaping
             if (prop == null) { whyNot = "processedText disappeared"; return null; }
 
             string processed = null;
-            try { processed = prop.GetValue(comp, null) as string; } catch { }
+            try { processed = prop.GetValue(comp, null) as string; } catch (Exception ex) { Faults.Say("RtlPresenter.BuildNguiLines", ex); }
             if (string.IsNullOrEmpty(processed)) { whyNot = "processedText not ready"; return null; }
 
             if (!EqualsIgnoringWhitespace(processed, assigned))
@@ -1215,14 +1219,10 @@ namespace UnityGameTranslator.Core.TextShaping
         private static PropertyInfo ProcessedTextProp(Type type)
         {
             if (_processedTextProps.TryGetValue(type, out var cached)) return cached;
-            PropertyInfo prop = null;
-            try
-            {
-                prop = type.GetProperty("processedText", BindingFlags.Public | BindingFlags.Instance);
-                if (prop != null && (prop.PropertyType != typeof(string) || prop.GetMethod == null))
-                    prop = null;
-            }
-            catch { }
+            // Members.Property: no AmbiguousMatchException to catch on a type that re-declares it.
+            PropertyInfo prop = Members.Property(type, "processedText", BindingFlags.Public | BindingFlags.Instance);
+            if (prop != null && (prop.PropertyType != typeof(string) || prop.GetMethod == null))
+                prop = null;
             _processedTextProps[type] = prop;
             return prop;
         }
@@ -1256,14 +1256,12 @@ namespace UnityGameTranslator.Core.TextShaping
             if (!_tk2dResolved)
             {
                 _tk2dResolved = true;
-                try
-                {
-                    _tk2dFormatText = TranslatorPatches.Tk2dType.GetMethod("FormatText",
-                        BindingFlags.Public | BindingFlags.Instance, null, new[] { typeof(string) }, null);
-                    _tk2dInlineStyling = TranslatorPatches.Tk2dType.GetProperty("inlineStyling",
-                        BindingFlags.Public | BindingFlags.Instance);
-                }
-                catch { }
+                // A method named with its parameter types cannot be ambiguous, and the property goes
+                // through Members: nothing here throws.
+                _tk2dFormatText = TranslatorPatches.Tk2dType.GetMethod("FormatText",
+                    BindingFlags.Public | BindingFlags.Instance, null, new[] { typeof(string) }, null);
+                _tk2dInlineStyling = Members.Property(TranslatorPatches.Tk2dType, "inlineStyling",
+                    BindingFlags.Public | BindingFlags.Instance);
             }
 
             string shaped = RtlComposer.ShapeLogicalOnly(logical);
@@ -1272,7 +1270,7 @@ namespace UnityGameTranslator.Core.TextShaping
             {
                 bool styling = false;
                 try { styling = _tk2dInlineStyling != null && (bool)_tk2dInlineStyling.GetValue(instance, null); }
-                catch { }
+                catch (Exception ex) { Faults.Say("RtlPresenter.ComposeTk2dPerLine styling", ex); }
                 if (styling) return ComposeVisualPerLine(logical);
             }
 
@@ -1280,7 +1278,7 @@ namespace UnityGameTranslator.Core.TextShaping
             if (_tk2dFormatText != null)
             {
                 try { wrapped = (string)_tk2dFormatText.Invoke(instance, new object[] { shaped }) ?? shaped; }
-                catch { wrapped = shaped; }
+                catch (Exception ex) { Faults.Say("RtlPresenter.ComposeTk2dPerLine format", ex); wrapped = shaped; }
             }
             else if (_fallbackLogBudget > 0)
             {
@@ -1351,24 +1349,25 @@ namespace UnityGameTranslator.Core.TextShaping
                 if (mirroredObj == null || Equals(mirroredObj, current)) return;
                 alignProp.SetValue(comp, mirroredObj, null);
             }
-            catch { }
+            catch (Exception ex) { Faults.Say("RtlPresenter.MirrorAlignment", ex); }
         }
 
         /// <summary>The mirrored value of one alignment enum, or null when there is nothing to swap.</summary>
         internal static object MirroredAlignmentValue(Type enumType, object original)
         {
-            string name = null;
-            try { name = Enum.GetName(enumType, original); } catch { }
+            // Enum.GetName throws on a value not of that enum, and Enum.Parse on a name it lacks:
+            // both are recognised beforehand instead of caught.
+            // (GetName takes the enum's own values and its underlying integer, nothing else.)
+            string name = original != null
+                          && (original.GetType() == enumType || original.GetType() == Enum.GetUnderlyingType(enumType))
+                ? Enum.GetName(enumType, original) : null;
             if (name != null)
             {
                 string swapped =
                     name.IndexOf("Left", StringComparison.Ordinal) >= 0 ? name.Replace("Left", "Right") :
                     name.IndexOf("Right", StringComparison.Ordinal) >= 0 ? name.Replace("Right", "Left") : null;
-                if (swapped != null)
-                {
-                    try { return Enum.Parse(enumType, swapped); }
-                    catch { }
-                }
+                if (swapped != null && Enum.IsDefined(enumType, swapped))
+                    return Enum.Parse(enumType, swapped);
                 return null;   // named value with no Left/Right — Center, Justified, Automatic…
             }
 
@@ -1408,7 +1407,7 @@ namespace UnityGameTranslator.Core.TextShaping
             if (prop != null && _flaggedOriginal.TryGetValue(compId, out bool original))
             {
                 _flaggedOriginal.Remove(compId);
-                try { prop.SetValue(instance, original, null); } catch { }
+                try { prop.SetValue(instance, original, null); } catch (Exception ex) { Faults.Say("RtlPresenter.RestoreIfFlagged", ex); }
             }
             RestoreAlignment(instance, compId);
             RestoreRewrap(instance, compId);
@@ -1424,7 +1423,7 @@ namespace UnityGameTranslator.Core.TextShaping
                 var alignProp = instance.GetType().GetProperty("alignment", BindingFlags.Public | BindingFlags.Instance);
                 alignProp?.SetValue(instance, anchor, null);
             }
-            catch { }
+            catch (Exception ex) { Faults.Say("RtlPresenter.RestoreAlignment", ex); }
         }
 
         /// <summary>The wrap mode a component had before <see cref="DisableRewrap"/>, put back.</summary>
@@ -1437,7 +1436,7 @@ namespace UnityGameTranslator.Core.TextShaping
                 var wrapProp = instance.GetType().GetProperty("horizontalOverflow", BindingFlags.Public | BindingFlags.Instance);
                 wrapProp?.SetValue(instance, wrap, null);
             }
-            catch { }
+            catch (Exception ex) { Faults.Say("RtlPresenter.RestoreRewrap", ex); }
         }
 
         private static void Log(long compId, string mode, string logical, string composed)
@@ -1524,9 +1523,8 @@ namespace UnityGameTranslator.Core.TextShaping
             if (instance == null) return null;
             var type = instance.GetType();
             if (_rtlProps.TryGetValue(type, out var cached)) return cached;
-            PropertyInfo prop = null;
-            try { prop = type.GetProperty("isRightToLeftText", BindingFlags.Public | BindingFlags.Instance); }
-            catch { }
+            // Members.Property: no AmbiguousMatchException to catch on a type that re-declares it.
+            PropertyInfo prop = Members.Property(type, "isRightToLeftText", BindingFlags.Public | BindingFlags.Instance);
             if (prop?.SetMethod == null) prop = null;
             _rtlProps[type] = prop;
             return prop;

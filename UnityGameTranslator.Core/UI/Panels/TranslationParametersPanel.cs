@@ -1923,7 +1923,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Build options array based on font type
             var options = new List<string> { "(None)" };
             string[] availableFonts = null;
-            bool isTMPFont = fontInfo.Type == "TMP" || fontInfo.Type == "TextMeshPro" || fontInfo.Type == "TMP (alt)";
+            bool isTMPFont = FontReferences.ReadsFontFiles(fontInfo.Type);
 
             if (fontInfo.Type == "TMP (alt)")
             {
@@ -2022,7 +2022,18 @@ namespace UnityGameTranslator.Core.UI.Panels
 
                 if (match == null)
                 {
-                    match = fontInfo.FallbackFont + FontManager.IncompatibleMarker;
+                    // 🔴 Said as the game uses it (FontReferences): an installed font this computer
+                    // lacks is still served, for TextMeshPro text, by a copy of it in the fonts folder
+                    // — "incompatible" there would be untrue. Legacy text cannot use a copy.
+                    string name = FontReferences.Name(fontInfo.FallbackFont);
+                    var served = FontReferences.Serving(fontInfo.FallbackFont,
+                        gameHas: FontManager.IsGameFont(name),
+                        customHas: CustomFontLoader.CustomFonts.ContainsKey(name),
+                        systemHas: AssetAvailability.IsSystemFontAvailable(name));
+
+                    match = fontInfo.FallbackFont + (isTMPFont && served == FontSource.Custom
+                        ? FontManager.FromFontsFolderMarker
+                        : FontManager.IncompatibleMarker);
                     options.Add(match);
                 }
 

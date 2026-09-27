@@ -4441,46 +4441,89 @@ namespace UnityGameTranslator.Core
         {
             try
             {
-                string cleanName = StripFontPrefix(fontName);
+                string cleanName = UnityGameTranslator.Common.FontReferences.Name(fontName);
 
-                if (IsCustomFont(cleanName))
+                // 🔴 **The origin chosen is the origin used** (user, 2026-09-27 — the socle's
+                // FontReferences.Order). This tried fonts/ first whatever the mark said, so
+                // "[Game] Arial" was served fonts/Arial.ttf whenever one was there. Now "[Game] X"
+                // is the game's, "[Custom] X" is fonts/'s, and a bare X is the installed font — or,
+                // when it is not installed, a copy of it an asset pack put in fonts/.
+                foreach (var source in UnityGameTranslator.Common.FontReferences.Order(fontName))
                 {
-                    // Load custom font via CustomFontLoader
-                    var customAsset = CustomFontLoader.LoadCustomFont(cleanName);
-                    if (customAsset != null)
+                    switch (source)
                     {
-                        // Track the created asset name to exclude from game font detection
-                        if (customAsset is UnityEngine.Object uobj2)
-                            _createdFallbackFontNames.Add(uobj2.name);
-                        TranslatorCore.LogDebug($"[FontManager] Created fallback from custom font: {cleanName}");
-                        return customAsset;
+                        case UnityGameTranslator.Common.FontSource.Custom:
+                        {
+                            if (!CustomFontLoader.CustomFonts.ContainsKey(cleanName)) break;
+
+                            var customAsset = CustomFontLoader.LoadCustomFont(cleanName);
+                            if (customAsset != null)
+                            {
+                                // Track the created asset name to exclude from game font detection
+                                if (customAsset is UnityEngine.Object uobj2)
+                                    _createdFallbackFontNames.Add(uobj2.name);
+                                TranslatorCore.LogDebug($"[FontManager] Created fallback from custom font: {cleanName}");
+                                return customAsset;
+                            }
+
+                            // A null here usually means "not yet", not "broken": the asset needs a game
+                            // TMP_FontAsset to clone from, and none is loaded this early. Saying "Failed"
+                            // in both cases sent us hunting a bug that did not exist.
+                            if (CustomFontLoader.IsFontDeferred(cleanName))
+                            {
+                                TranslatorCore.LogDebug($"[FontManager] Custom font not ready yet, will retry once a game font is loaded: {cleanName}");
+                                return null;
+                            }
+
+                            TranslatorCore.LogWarning($"[FontManager] Failed to load custom font: {cleanName}");
+                            break;
+                        }
+
+                        case UnityGameTranslator.Common.FontSource.Game:
+                        {
+                            // Works on IL2CPP — already valid IL2CPP objects
+                            var gameFont = GetGameFont(cleanName);
+                            if (gameFont != null)
+                            {
+                                TranslatorCore.LogDebug($"[FontManager] Using game font as fallback: {cleanName}");
+                                return gameFont;
+                            }
+                            break;
+                        }
+
+                        case UnityGameTranslator.Common.FontSource.System:
+                        {
+                            var systemAsset = CreateFallbackFromSystem(cleanName);
+                            if (systemAsset != null) return systemAsset;
+                            break;
+                        }
                     }
-                    // A null here usually means "not yet", not "broken": the asset needs a game
-                    // TMP_FontAsset to clone from, and none is loaded this early. Saying "Failed"
-                    // in both cases sent us hunting a bug that did not exist.
-                    if (CustomFontLoader.IsFontDeferred(cleanName))
-                        TranslatorCore.LogDebug($"[FontManager] Custom font not ready yet, will retry once a game font is loaded: {cleanName}");
-                    else
-                        TranslatorCore.LogWarning($"[FontManager] Failed to load custom font: {cleanName}");
-                    return null;
                 }
 
-                // Try game fonts first (works on IL2CPP — already valid IL2CPP objects)
-                var gameFont = GetGameFont(cleanName);
-                if (gameFont != null)
-                {
-                    TranslatorCore.LogDebug($"[FontManager] Using game font as fallback: {cleanName}");
-                    return gameFont;
-                }
+                TranslatorCore.LogWarning($"[FontManager] All font creation methods failed for: {cleanName}");
+                return null;
+            }
+            catch (Exception ex)
+            {
+                TranslatorCore.LogError($"[FontManager] Error creating fallback: {ex.Message}");
+                return null;
+            }
+        }
 
-                // Create a Unity Font from system font name
-                Font unityFont = CreateUnityFont(cleanName);
-                if (unityFont == null)
-                {
-                    TranslatorCore.LogWarning($"[FontManager] Cannot create Font for: {cleanName}");
-                    return null;
-                }
+        /// <summary>
+        /// A TMP fallback from an installed font — null, and silent, when the font is not installed:
+        /// a bare name goes on to a copy of it in fonts/ (see CreateFallbackAsset).
+        /// </summary>
+        private static object CreateFallbackFromSystem(string cleanName)
+        {
+            // Not installed at all: nothing to try, and nothing to warn about — the next source answers.
+            if (!SystemFonts.Contains(cleanName) && CustomFontLoader.FindSystemTtfPath(cleanName) == null)
+                return null;
 
+            // Create a Unity Font from system font name
+            Font unityFont = SystemFonts.Contains(cleanName) ? CreateUnityFont(cleanName) : null;
+            if (unityFont != null)
+            {
                 // Use TMP_FontAsset.CreateFontAsset(Font) — TMP does ALL the work
                 // (atlas SDF generation, glyph tables, character tables, material, metrics)
                 var tmpAsset = CreateTMPFontAssetFromFont(unityFont);
@@ -4497,23 +4540,17 @@ namespace UnityGameTranslator.Core
                     TranslatorCore.LogDebug($"[FontManager] Created legacy TMP_FontAsset from: {cleanName}");
                     return legacyAsset;
                 }
-
-                // Last resort: try TTF rasterizer (finds the .ttf on disk and rasterizes to SDF)
-                var rasterizedAsset = CustomFontLoader.LoadSystemTtfFont(cleanName);
-                if (rasterizedAsset != null)
-                {
-                    TranslatorCore.LogDebug($"[FontManager] Created TMP_FontAsset via TTF rasterizer: {cleanName}");
-                    return rasterizedAsset;
-                }
-
-                TranslatorCore.LogWarning($"[FontManager] All font creation methods failed for: {cleanName}");
-                return null;
             }
-            catch (Exception ex)
+
+            // Last resort: try TTF rasterizer (finds the .ttf on disk and rasterizes to SDF)
+            var rasterizedAsset = CustomFontLoader.LoadSystemTtfFont(cleanName);
+            if (rasterizedAsset != null)
             {
-                TranslatorCore.LogError($"[FontManager] Error creating fallback: {ex.Message}");
-                return null;
+                TranslatorCore.LogDebug($"[FontManager] Created TMP_FontAsset via TTF rasterizer: {cleanName}");
+                return rasterizedAsset;
             }
+
+            return null;
         }
 
         /// <summary>
@@ -5540,6 +5577,12 @@ namespace UnityGameTranslator.Core
         public const string IncompatibleMarker = " (incompatible)";
 
         /// <summary>
+        /// Suffix marking an installed font this computer does not have, served by a copy of it in
+        /// the fonts folder (an asset pack brings installed fonts that way) — FontReferences.Order.
+        /// </summary>
+        public const string FromFontsFolderMarker = " (from fonts folder)";
+
+        /// <summary>
         /// Remove the display-only suffix a picker entry may carry. Only strips a KNOWN marker at
         /// the very end — font names do contain parentheses, and cutting on any of them would
         /// silently rename the font the user picked.
@@ -5553,6 +5596,8 @@ namespace UnityGameTranslator.Core
                 return entry.Substring(0, entry.Length - UnloadedMarker.Length);
             if (entry.EndsWith(IncompatibleMarker, StringComparison.Ordinal))
                 return entry.Substring(0, entry.Length - IncompatibleMarker.Length);
+            if (entry.EndsWith(FromFontsFolderMarker, StringComparison.Ordinal))
+                return entry.Substring(0, entry.Length - FromFontsFolderMarker.Length);
             return entry;
         }
 

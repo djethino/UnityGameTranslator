@@ -129,15 +129,14 @@ namespace UnityGameTranslator.Core.Checks
                 "asked before any lookup can answer",
                 "it is a lookup ANSWERING that does the damage, so asking afterwards is asking too late");
 
-            string forget = BodyOf(core, "public static void ForgetTemplateText(string text)");
-            check(forget != null && forget.Contains("_expandedInPlace.Add(skeleton)", StringComparison.Ordinal),
-                "and one door records it, as a skeleton",
-                "🔴 recorded as the text, a refusal covers one state of the expansion and none of the others — which is how the half-resolved form reached the model on the component beside it");
-
-            string ask = BodyOf(core, "internal static bool IsExpandedInPlace(string text)");
-            check(ask != null && ask.Contains("!TextRelations.HasUnresolvedTokens(text)", StringComparison.Ordinal),
-                "and the finished form is let through",
-                "refusing the whole skeleton would leave the line in the game's own language, which is worse than the defect being fixed");
+            // The rule itself — skeleton recorded, finished form let through — is held by the routing
+            // corpus (`template/…` cases), which replays it rather than reading it. What stays
+            // lexical is that the two doors outside the router ask the router, not a copy.
+            check(queueing.Contains("Router.IsExpandedInPlace(", StringComparison.Ordinal)
+                  && storing.Contains("Router.IsExpandedInPlace(", StringComparison.Ordinal)
+                  && !core.Contains("_expandedInPlace", StringComparison.Ordinal),
+                "and the queue and the store ask the router, which alone remembers templates",
+                "🔴 a second memory beside the router's is a rule the replay cannot see and a second engine would have to copy");
 
             // 🔴 Being out of sight changes what may be QUEUED, never what may be KNOWN.
             //

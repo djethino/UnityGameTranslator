@@ -921,6 +921,62 @@
         {"f": 61, "t": 2.1, "c": 5, "shows": ""}
       ],
       "queued": ["A very friendly looking platypus. He told you the story of untold wealth.", "A very friendly looking platypus. He told you the story of untold wealth.", "A very friendly looking platypus. He told you the story of untold wealth.", "A very friendly looking platypus. He told you the story of untold wealth.", "A very friendly looking platypus. He told you the story of untold wealth."]
+    },
+    {
+      "id": "template/a-template-expanded-in-place-is-never-sent",
+      "why": "a game writes its own template ('*Activate* ({0})…') then resolves it in place, a few tokens at a time: the template and the half-resolved states are not lines anybody reads, and translated they stop the game expanding them — only the finished form is sent",
+      "file": {},
+      "steps": [
+        {"f": 5, "t": 1.0, "c": 1, "write": "*Activate* ({0}): Add {1} *Power*.", "shows": "*Activate* ({0}): Add {1} *Power*."},
+        {"f": 5, "t": 1.0, "c": 1, "write": "*Activate* (2): Add 3 *Power*.", "shows": "*Activate* (2): Add 3 *Power*."},
+        {"f": 5, "t": 1.0, "c": 1, "write": "<color=#FFB95D>Activate</color> (<color=#F4FF58>2</color>): Add <color=#F4FF58>3</color> <color=#E72F4D>Power</color>.", "shows": "<color=#FFB95D>Activate</color> (<color=#F4FF58>2</color>): Add <color=#F4FF58>3</color> <color=#E72F4D>Power</color>."},
+        {"f": 60, "t": 2.0, "tick": true}
+      ],
+      "queued": ["<color=#FFB95D>Activate</color> (<color=#F4FF58>2</color>): Add <color=#F4FF58>3</color> <color=#E72F4D>Power</color>."],
+      "withdrawn": ["*Activate* ({0}): Add {1} *Power*."]
+    },
+    {
+      "id": "template/a-half-resolved-state-on-another-component-is-not-sent",
+      "why": "the refusal is kept on the SKELETON, not the text: the same template half-resolved with other values on the component beside it is refused too — recorded as the text, it went to the model and came back with its keyword translated, which the game cannot expand",
+      "file": {},
+      "steps": [
+        {"f": 5, "t": 1.0, "c": 1, "write": "*Activate* ({0}): Add {1} *Power*.", "shows": "*Activate* ({0}): Add {1} *Power*."},
+        {"f": 5, "t": 1.0, "c": 1, "write": "*Activate* (2): Add 3 *Power*.", "shows": "*Activate* (2): Add 3 *Power*."},
+        {"f": 5, "t": 1.0, "c": 1, "write": "<color=#FFB95D>Activate</color> (<color=#F4FF58>2</color>): Add <color=#F4FF58>3</color> <color=#E72F4D>Power</color>.", "shows": "<color=#FFB95D>Activate</color> (<color=#F4FF58>2</color>): Add <color=#F4FF58>3</color> <color=#E72F4D>Power</color>."},
+        {"f": 60, "t": 2.0, "tick": true},
+        {"f": 90, "t": 3.0, "c": 2, "write": "*Activate* (4): Add 5 *Power*.", "shows": "*Activate* (4): Add 5 *Power*."},
+        {"f": 150, "t": 4.0, "tick": true}
+      ],
+      "queued": ["<color=#FFB95D>Activate</color> (<color=#F4FF58>2</color>): Add <color=#F4FF58>3</color> <color=#E72F4D>Power</color>."],
+      "withdrawn": ["*Activate* ({0}): Add {1} *Power*."]
+    },
+    {
+      "id": "template/a-tooltip-filled-while-hidden-sends-the-finished-form",
+      "why": "a game fills its tooltips before showing them: out of sight, a component may not be QUEUED, but it still tells the reveal what it shows — turned back without a word, the reveal froze on the template and sent it while the next state sat on the component",
+      "file": {},
+      "steps": [
+        {"f": 5, "t": 1.0, "c": 1, "hidden": true, "write": "*Activate* ({0}): Add {1} *Power*.", "shows": "*Activate* ({0}): Add {1} *Power*."},
+        {"f": 6, "t": 1.02, "c": 1, "held": "*Activate* (2): Add 3 *Power*.", "sweep": true, "shows": "*Activate* (2): Add 3 *Power*."},
+        {"f": 7, "t": 1.04, "c": 1, "held": "<color=#FFB95D>Activate</color> (<color=#F4FF58>2</color>): Add <color=#F4FF58>3</color> <color=#E72F4D>Power</color>.", "sweep": true, "shows": "<color=#FFB95D>Activate</color> (<color=#F4FF58>2</color>): Add <color=#F4FF58>3</color> <color=#E72F4D>Power</color>."},
+        {"f": 60, "t": 2.0, "tick": true},
+        {"f": 70, "t": 2.2, "c": 1, "hidden": false, "sweep": true},
+        {"f": 130, "t": 3.3, "tick": true}
+      ],
+      "queued": ["<color=#FFB95D>Activate</color> (<color=#F4FF58>2</color>): Add <color=#F4FF58>3</color> <color=#E72F4D>Power</color>."],
+      "withdrawn": ["*Activate* ({0}): Add {1} *Power*."]
+    },
+    {
+      "id": "template/a-template-a-file-already-holds-is-no-longer-written-back",
+      "why": "a file made before the rule holds the template's translation: nothing is deleted from it, but once the game is seen expanding the template, that translation no longer reaches the screen — written back, the game could not expand its own text",
+      "file": {"*Activate* ({0}): Add {1} *Power*.": "*Activer* ({0}) : ajoute {1} *Puissance*."},
+      "steps": [
+        {"f": 5, "t": 1.0, "c": 1, "write": "*Activate* ({0}): Add {1} *Power*.", "shows": "*Activer* ({0}) : ajoute {1} *Puissance*."},
+        {"f": 5, "t": 1.0, "c": 1, "write": "*Activate* (2): Add 3 *Power*.", "shows": "*Activate* (2): Add 3 *Power*."},
+        {"f": 5, "t": 1.0, "c": 1, "write": "<color=#FFB95D>Activate</color> (<color=#F4FF58>2</color>): Add <color=#F4FF58>3</color> <color=#E72F4D>Power</color>.", "shows": "<color=#FFB95D>Activate</color> (<color=#F4FF58>2</color>): Add <color=#F4FF58>3</color> <color=#E72F4D>Power</color>."},
+        {"f": 60, "t": 2.0, "tick": true},
+        {"f": 90, "t": 3.0, "c": 2, "write": "*Activate* ({0}): Add {1} *Power*.", "shows": "*Activate* ({0}): Add {1} *Power*."}
+      ],
+      "queued": ["<color=#FFB95D>Activate</color> (<color=#F4FF58>2</color>): Add <color=#F4FF58>3</color> <color=#E72F4D>Power</color>."]
     }
   ]
 }

@@ -138,6 +138,9 @@ namespace UnityGameTranslator.Core.Checks
                 // What the component held before this step, when a recorded case says so: a
                 // game that empties a component leaves no other trace of it (TraceToCase).
                 if (step["held"] != null) box.Shown = (string)step["held"];
+                // Out of sight from this step on, or back in sight: a game that fills a tooltip
+                // before showing it (Unity: not active in the hierarchy).
+                if (step["hidden"] != null) box.Hidden = (bool)step["hidden"];
 
                 if (step["write"] != null)
                     host.GameWrites(box, (string)step["write"]);
@@ -188,6 +191,19 @@ namespace UnityGameTranslator.Core.Checks
                 var actual = host.Queued.Select(q => q.Text).ToList();
                 if (!expected.SequenceEqual(actual))
                     return $"queued [{string.Join(" | ", actual.Select(Quote))}], expected [{string.Join(" | ", expected.Select(Quote))}]";
+            }
+
+            if (c["withdrawn"] is JArray withdrawn)
+            {
+                var expected = withdrawn.Select(q => (string)q).ToList();
+                if (!expected.SequenceEqual(host.Withdrawn))
+                    return $"withdrawn [{string.Join(" | ", host.Withdrawn.Select(Quote))}], expected [{string.Join(" | ", expected.Select(Quote))}]";
+
+                // Proved before it was ever queued, unless the case says otherwise: taken back from
+                // the queue, a template may already have gone to the model in a game.
+                var takenBack = c["takenBack"] is JArray tb ? tb.Select(q => (string)q).ToList() : new List<string>();
+                if (!takenBack.SequenceEqual(host.TakenBack))
+                    return $"taken back from the queue [{string.Join(" | ", host.TakenBack.Select(Quote))}], expected [{string.Join(" | ", takenBack.Select(Quote))}]";
             }
 
             return null;

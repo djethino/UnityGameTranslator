@@ -41,12 +41,14 @@ namespace UnityGameTranslator.Core
         string MatchPattern(string text);
         /// <summary>Re-resolve the game's variables before a never-seen text is queued; true when it ran (throttled by the host).</summary>
         bool RefreshVariables();
-        /// <summary>A template the game expands in place: never written back.</summary>
-        bool IsExpandedInPlace(string text);
         /// <summary>The source of one of our translations, from the store of its side.</summary>
         string SourceOf(string translation, bool ownUi);
-        /// <summary>A template taken back from the queue once its expansion proved what it was.</summary>
-        void ForgetTemplate(string text);
+        /// <summary>
+        /// A text the router has just proved is a template the game expands in place
+        /// (TextRouter.Templates): taken back out of the queue if it is still waiting, and not asked
+        /// again. Said once per template.
+        /// </summary>
+        void WithdrawTemplate(string text);
 
         // --- components ---
         /// <summary>The id the router follows this component under, or -1.</summary>

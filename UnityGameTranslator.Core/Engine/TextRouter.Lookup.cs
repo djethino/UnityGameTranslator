@@ -93,7 +93,7 @@ namespace UnityGameTranslator.Core
             //
             // ⚠ Before every lookup, since it is a lookup ANSWERING that does the damage. The
             // test inside costs nothing on the games that never do this.
-            if (_host.IsExpandedInPlace(text))
+            if (IsExpandedInPlace(text))
                 return text;
 
             // Fast path: check concat assembled cache (runtime only, not JSON)

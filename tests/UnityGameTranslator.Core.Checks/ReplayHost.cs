@@ -10,6 +10,7 @@ namespace UnityGameTranslator.Core.Checks
         public long Id;
         public string Shown = "";
         public float FontSize = 10f;   // a monospaced font: a character is FontSize / 10 wide
+        public bool Hidden;            // out of sight (a tooltip the game fills before showing it)
     }
 
     /// <summary>
@@ -56,8 +57,26 @@ namespace UnityGameTranslator.Core.Checks
         public IVariableSubstitution Variables => null;
         public string MatchPattern(string text) => null;
         public bool RefreshVariables() => false;
-        public bool IsExpandedInPlace(string text) => false;
-        public void ForgetTemplate(string text) { }
+
+        /// <summary>Templates proved, in the order the router proved them.</summary>
+        public readonly List<string> Withdrawn = new List<string>();
+
+        /// <summary>
+        /// Of those, the ones already WAITING in the queue when the proof came. In a game that is
+        /// a race the worker may have won — the template sent, its answer refused only at the
+        /// store — so the replay, which processes nothing in between, must not let the withdrawal
+        /// hide it.
+        /// </summary>
+        public readonly List<string> TakenBack = new List<string>();
+        private readonly HashSet<string> _refused = new HashSet<string>();
+
+        /// <summary>As TranslatorCore.WithdrawTemplate: out of the queue, and never asked again.</summary>
+        public void WithdrawTemplate(string text)
+        {
+            Withdrawn.Add(text);
+            _refused.Add(text);
+            if (Queued.RemoveAll(q => q.Text == text) > 0) TakenBack.Add(text);
+        }
 
         public string SourceOf(string translation, bool ownUi)
         {
@@ -67,7 +86,7 @@ namespace UnityGameTranslator.Core.Checks
         }
 
         public long IdOf(object component) => component is ReplayBox b ? b.Id : -1;
-        public bool IsHidden(object component) => false;
+        public bool IsHidden(object component) => (component as ReplayBox)?.Hidden == true;
         public string GetText(object component) => (component as ReplayBox)?.Shown;
         public void Write(object target, string text) { if (WritesThrough && target is ReplayBox b) GameWrites(b, text); }
         public bool IsGone(object target) => false;
@@ -83,6 +102,8 @@ namespace UnityGameTranslator.Core.Checks
 
         public void Queue(string text, object component, bool ownUi)
         {
+            // The queue's door, as QueueForTranslation keeps it: a template is never queued.
+            if (_refused.Contains(text) || Router.IsExpandedInPlace(text)) return;
             if (!Queued.Any(q => q.Text == text && ReferenceEquals(q.Box, component)))
                 Queued.Add((text, component as ReplayBox));
         }
@@ -163,6 +184,8 @@ namespace UnityGameTranslator.Core.Checks
         /// </summary>
         public void Arrive(string original, string translation)
         {
+            // An answer already in flight for a template is not stored, as AddToCache refuses it.
+            if (Router.IsExpandedInPlace(original)) return;
             Add(original, translation);
             foreach (var q in Queued.Where(q => q.Text == original && q.Box != null).ToList())
             {

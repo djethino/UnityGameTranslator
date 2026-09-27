@@ -142,11 +142,11 @@ namespace UnityGameTranslator.Core
                 //
                 // ⚠ Taken back rather than merely not sent: the template is stable long enough to
                 // be queued (501 ms, measured), so by the time the expansion proves what it was, it
-                // is already waiting. See TranslatorCore.ForgetTemplateText for what that does and,
-                // as importantly, what it refuses to do.
+                // is already waiting. See TextRouter.Templates for what that does and, as
+                // importantly, what it refuses to do.
                 if (TextRelations.SameAfterExpansion(state.TypewritingText, newText))
                 {
-                    _host.ForgetTemplate(state.TypewritingText);
+                    ForgetTemplate(state.TypewritingText);
                     HoldTypewriting(state, compId, newText, now, grew: false);
                     return true;
                 }

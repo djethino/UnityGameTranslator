@@ -4420,16 +4420,9 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// Clear the translation queue. Called when AI is disabled.
-        ///
-        /// ⚠ Two containers, emptied together, and that is the point: this used to empty three of
-        /// four, and the survivor was the set of "these texts are the mod's interface". A GAME text
-        /// queued afterwards that happened to equal one of our labels was then filed as interface.
-        /// </summary>
-        /// <summary>
-        /// This text turned out to be a template the game expands in place, not a line anybody
-        /// reads. Take it back out of the queue if it is still waiting, and never ask for it again
-        /// this session.
+        /// A text the router proved is a template the game expands in place (TextRouter.Templates,
+        /// which remembers it and refuses it from then on): taken back out of the queue if it is
+        /// still waiting, and never asked for again this session.
         ///
         /// 🔴 **Nothing is deleted.** A translation already in the file belongs to whoever built
         /// that file, and a local observation on one component cannot decide what to remove from a
@@ -4440,22 +4433,9 @@ namespace UnityGameTranslator.Core
         /// and if the game still expands the text in place it will be refused again in the same
         /// second.
         /// </summary>
-        public static void ForgetTemplateText(string text)
+        public static void WithdrawTemplate(string text)
         {
             if (string.IsNullOrEmpty(text)) return;
-
-            // 🔴 The SKELETON, not the text. The game resolves its tokens a few at a time, and each
-            // state is its own string — so a refusal recorded on one of them says nothing about the
-            // next, nor about the same template appearing on another component in another half-
-            // resolved form. Measured: the fully-tokenised state was refused while
-            // `…[*White*] Energy, add 2 Strength.` went to the model on the component beside it and
-            // came back with the keyword translated, which is exactly what the game cannot expand.
-            string skeleton = TextRelations.ExpansionSkeleton(text);
-            if (skeleton.Length == 0) return;
-
-            bool known;
-            lock (lockObj) { known = !_expandedInPlace.Add(skeleton); }
-            if (known) return;
 
             string key = NormalizeForCacheLookup(text);
             bool withdrawn = _queue.Withdraw(text) || _queue.Withdraw(key);
@@ -4465,36 +4445,12 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// Whether this text is one the game expands in place — a template, not a line anybody
-        /// reads. Asked at the three moments it matters, because it is one FACT rather than one act.
+        /// Clear the translation queue. Called when AI is disabled.
         ///
-        /// 🔴 **Taking it out of the queue is not enough, and saying otherwise was wrong.** The
-        /// proof arrives with the expansion, a few hundred milliseconds after the template was
-        /// queued, and the worker may have taken it in between — which no amount of reasoning about
-        /// how long a model takes can rule out. So the withdrawal is the best case, not the rule:
-        /// what makes this deterministic is that once the pair has been seen, the text can never be
-        /// queued, never be stored, and above all **never be written back**.
-        ///
-        /// ⚠ That last one is what protects a file polluted before this rule existed. The line stays
-        /// in it — deleting somebody's translation on a local observation is the thing this project
-        /// refuses — but it stops reaching the screen, so the game can expand its own text again.
-        ///
-        /// ⚠ In memory, per session, like every other refusal here.
+        /// ⚠ Two containers, emptied together, and that is the point: this used to empty three of
+        /// four, and the survivor was the set of "these texts are the mod's interface". A GAME text
+        /// queued afterwards that happened to equal one of our labels was then filed as interface.
         /// </summary>
-        private static readonly HashSet<string> _expandedInPlace = new HashSet<string>();
-
-        internal static bool IsExpandedInPlace(string text)
-        {
-            if (_expandedInPlace.Count == 0 || string.IsNullOrEmpty(text)) return false;
-
-            // 🔴 The FINISHED form of the same template goes through, and it must: it is the line
-            // the player reads and the one worth translating. Only the states that still carry
-            // something for the game to resolve are refused.
-            if (!TextRelations.HasUnresolvedTokens(text)) return false;
-
-            lock (lockObj) { return _expandedInPlace.Contains(TextRelations.ExpansionSkeleton(text)); }
-        }
-
         public static void ClearQueue()
         {
             int count = _queue.Clear();
@@ -5874,7 +5830,7 @@ namespace UnityGameTranslator.Core
                 // hundred milliseconds after the text was queued — which is usually before the
                 // model answers, but nothing guarantees it, so the answer is refused HERE as well.
                 // That is what makes it deterministic rather than a race the worker usually loses.
-                if (!toModUi && IsExpandedInPlace(normalizedKey))
+                if (!toModUi && Router.IsExpandedInPlace(normalizedKey))
                 {
                     LogInfo($"[TW-TEMPLATE] answer discarded, the game expands this in place: '{(normalizedKey.Length > 60 ? normalizedKey.Substring(0, 60) : normalizedKey)}'");
                     return;
@@ -6077,8 +6033,8 @@ namespace UnityGameTranslator.Core
 
             // A template the game expands in place. Refused at this door rather than in the worker,
             // so nothing is queued at all: no line in the notice that says a translation is running,
-            // and no call. See IsExpandedInPlace.
-            if (IsExpandedInPlace(text)) return false;
+            // and no call. See TextRouter.IsExpandedInPlace.
+            if (Router.IsExpandedInPlace(text)) return false;
 
             // 🔴 The server has stopped answering. Nothing new goes in — a queue filling behind a
             // dead server is work nobody will get, and every entry would carry its own notice — but
@@ -6426,9 +6382,8 @@ namespace UnityGameTranslator.Core
             public IVariableSubstitution Variables => GameVariables.Instance;
             public string MatchPattern(string text) => TryPatternMatch(text);
             public bool RefreshVariables() => VariableManager.RefreshOnMiss();
-            public bool IsExpandedInPlace(string text) => TranslatorCore.IsExpandedInPlace(text);
             public string SourceOf(string translation, bool ownUi) => GetSourceForTranslation(translation, ownUi ? ModUiCache : TranslationCache);
-            public void ForgetTemplate(string text) => ForgetTemplateText(text);
+            public void WithdrawTemplate(string text) => TranslatorCore.WithdrawTemplate(text);
 
             // Followed per component: what is a Component. A UI Toolkit element is routed under
             // its own id by its caller, but was never followed through the lookup.

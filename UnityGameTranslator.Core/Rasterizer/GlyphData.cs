@@ -56,6 +56,9 @@ namespace UnityGameTranslator.Core.Rasterizer
         public float UnderlinePosition;
         public float UnderlineThickness;
         public string FontName;
+
+        /// <summary>Every family (ids 1, 16) and full name (id 4) the file carries, first seen first.</summary>
+        public System.Collections.Generic.List<string> Names = new System.Collections.Generic.List<string>();
     }
 
     /// <summary>

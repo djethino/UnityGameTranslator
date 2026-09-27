@@ -210,7 +210,8 @@ namespace UnityGameTranslator.Core.Rasterizer
                 LineGap = ReadInt16AtTable("hhea", 8),
                 UnderlinePosition = Metrics?.UnderlinePosition ?? 0,
                 UnderlineThickness = Metrics?.UnderlineThickness ?? 0,
-                FontName = Metrics?.FontName ?? "Unknown"
+                FontName = Metrics?.FontName ?? "Unknown",
+                Names = Metrics?.Names ?? new System.Collections.Generic.List<string>()
             };
 
             GlyphCount = _numGlyphs;
@@ -457,7 +458,7 @@ namespace UnityGameTranslator.Core.Rasterizer
                 int length = ReadUInt16(nameRecOff + 8);
                 int nameOffset = ReadUInt16(nameRecOff + 10);
 
-                if (nameID != 1 && nameID != 4)
+                if (nameID != 1 && nameID != 4 && nameID != 16)
                     continue;
 
                 string name = null;
@@ -474,6 +475,11 @@ namespace UnityGameTranslator.Core.Rasterizer
 
                 if (!string.IsNullOrEmpty(name))
                 {
+                    // Every family and full name the file carries, on any platform: an engine that
+                    // looks a font up by name may have read any of them (a file can carry its full
+                    // name for Mac only, and only a typographic family, id 16, for Windows).
+                    if (!Metrics.Names.Contains(name)) Metrics.Names.Add(name);
+
                     if (nameID == 1 && familyName == null)
                         familyName = name;
                     else if (nameID == 4 && fullName == null)

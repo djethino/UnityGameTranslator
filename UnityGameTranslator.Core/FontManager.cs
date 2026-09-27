@@ -1623,7 +1623,23 @@ namespace UnityGameTranslator.Core
         public static string ResolveSystemFontFamily(string fontName, out string ttfPath)
         {
             string clean = StripFontPrefix(fontName);
-            ttfPath = CustomFontLoader.FindSystemTtfPath(clean);
+            ttfPath = null;
+
+            // The origin the reference names (FontReferences): "[Custom] X" is fonts/X only; a bare
+            // name is the System font, else its copy in fonts/. The family read from a fonts/ file is
+            // found by the engine because FontFolderRedirect shows it in the system's font folder.
+            foreach (var source in UnityGameTranslator.Common.FontReferences.Order(fontName))
+            {
+                if (source == UnityGameTranslator.Common.FontSource.System)
+                    ttfPath = CustomFontLoader.FindSystemTtfPath(clean);
+                else if (source == UnityGameTranslator.Common.FontSource.Custom
+                         && CustomFontLoader.CustomFonts.TryGetValue(clean, out var custom)
+                         && !string.IsNullOrEmpty(custom.TtfPath))
+                    ttfPath = custom.TtfPath;
+
+                if (ttfPath != null) break;
+            }
+
             string family = clean;
             if (ttfPath != null)
             {
@@ -4222,12 +4238,14 @@ namespace UnityGameTranslator.Core
                     // Modifying the original: one font, one atlas, no conflicts.
 
                     // Build excluded chars set from the TTF cmap table.
+                    List<string> namesInFile = null;
                     if (ttfPath != null)
                     {
                         try
                         {
                             var ttfData = System.IO.File.ReadAllBytes(ttfPath);
                             var ttfProbe = new Rasterizer.TtfParser(ttfData);
+                            namesInFile = ttfProbe.Metrics?.Names;
                             var excludedSet = new HashSet<char>();
 
                             int totalChecked = 0, excludedCount = 0;
@@ -4263,7 +4281,12 @@ namespace UnityGameTranslator.Core
                     // Unity's FreeType on original fonts resolves family names, not file paths.
                     var fontNamesList = new List<string>();
                     fontNamesList.Add(realFontName); // e.g., "Comic Sans MS" (from TTF name table)
-                    if (!string.Equals(realFontName, cleanFallback, StringComparison.OrdinalIgnoreCase))
+                    // TEST: every other name the file carries — the engine may know it by its family,
+                    // or by the Windows-only typographic family (a file can carry its full name for Mac only).
+                    if (namesInFile != null)
+                        foreach (var fileName in namesInFile)
+                            if (!fontNamesList.Contains(fileName)) fontNamesList.Add(fileName);
+                    if (!fontNamesList.Contains(cleanFallback))
                         fontNamesList.Add(cleanFallback); // e.g., "comic" (filename)
                     if (_originalFontNames.TryGetValue(originalFontName, out var origNames) && origNames != null)
                     {

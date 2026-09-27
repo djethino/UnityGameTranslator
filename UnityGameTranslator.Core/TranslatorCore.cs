@@ -1985,6 +1985,10 @@ namespace UnityGameTranslator.Core
                 catch (Exception e) { Adapter?.LogWarning($"[Assets] Could not create {prepared}/: {e.Message}"); }
             }
 
+            // As early as the mod exists: the engine lists the system font folder once, and fonts/
+            // must already be in that list for legacy text to find its files by name.
+            FontFolderRedirect.Install(Path.Combine(ModFolder, UnityGameTranslator.Common.AssetPacks.FontsFolder));
+
             CachePath = Path.Combine(ModFolder, "translations.json");
             ModUiCachePath = Path.Combine(ModFolder, ModUi.FileName);
             ConfigPath = Path.Combine(ModFolder, "config.json");

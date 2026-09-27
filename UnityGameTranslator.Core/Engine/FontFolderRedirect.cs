@@ -1,0 +1,322 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Runtime.InteropServices;
+
+namespace UnityGameTranslator.Core
+{
+    /// <summary>
+    /// Shows the font files of the mod's fonts/ folder to the Unity engine AS IF they were in the
+    /// system's font folder — inside this game only, nothing written on the computer.
+    ///
+    /// 🔴 Why (user, 2026-09-28): legacy text (UI.Text) finds a font by NAME, and the engine builds
+    /// its name → file list by walking a folder written into UnityPlayer.dll: "C:\Windows\Fonts"
+    /// (measured on 16 engines, Unity 2018.4 → 6000.5: FindFirstFile(Ex)W / FindNextFileW /
+    /// CreateFileW, all imported from KERNEL32 by UnityPlayer.dll itself; no registry, no GDI).
+    /// Registering a font with Windows for this process, or loading it as a Font, is not seen —
+    /// both tried and measured the same day. So the engine's own questions are answered here:
+    ///
+    /// - listing that folder also returns our files, after the real ones;
+    /// - opening (or asking the attributes of) "<that folder>\ours.ttf" opens fonts/ours.ttf.
+    ///
+    /// ⚠ Only UnityPlayer.dll's import table is changed: every other module of the process, the
+    /// mod and the loader included, keeps the real functions. A file with the name of a real
+    /// installed font is never shown: the installed one stays.
+    ///
+    /// ⚠ TEST (2026-09-28): Windows only, and whether the engine walks the folder after the mod is
+    /// loaded is what this test measures ("[FontFolder] engine lists the font folder" in the log).
+    /// </summary>
+    internal static class FontFolderRedirect
+    {
+        // ── Win32 ────────────────────────────────────────────────────────────────────────────────
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] private static extern IntPtr GetModuleHandleW(string name);
+        [DllImport("kernel32.dll")] private static extern bool VirtualProtect(IntPtr address, UIntPtr size, uint newProtect, out uint oldProtect);
+        [DllImport("kernel32.dll")] private static extern void SetLastError(uint code);
+        [DllImport("kernel32.dll")] private static extern uint GetLastError();
+
+        private const uint PAGE_READWRITE = 0x04;
+        private const uint ERROR_NO_MORE_FILES = 18;
+        private const uint FILE_ATTRIBUTE_NORMAL = 0x80;
+        private static readonly IntPtr InvalidHandle = new IntPtr(-1);
+
+        [UnmanagedFunctionPointer(CallingConvention.Winapi)] private delegate IntPtr FindFirstFileExW_(IntPtr name, int level, IntPtr data, int op, IntPtr filter, int flags);
+        [UnmanagedFunctionPointer(CallingConvention.Winapi)] private delegate IntPtr FindFirstFileW_(IntPtr name, IntPtr data);
+        [UnmanagedFunctionPointer(CallingConvention.Winapi)] private delegate int FindNextFileW_(IntPtr handle, IntPtr data);
+        [UnmanagedFunctionPointer(CallingConvention.Winapi)] private delegate int FindClose_(IntPtr handle);
+        [UnmanagedFunctionPointer(CallingConvention.Winapi)] private delegate IntPtr CreateFileW_(IntPtr name, uint access, uint share, IntPtr security, uint disposition, uint flags, IntPtr template);
+        [UnmanagedFunctionPointer(CallingConvention.Winapi)] private delegate uint GetFileAttributesW_(IntPtr name);
+        [UnmanagedFunctionPointer(CallingConvention.Winapi)] private delegate int GetFileAttributesExW_(IntPtr name, int level, IntPtr info);
+
+        // The real functions, and our replacements — kept referenced so they are never collected
+        // while the engine holds their addresses.
+        private static FindFirstFileExW_ _realFindFirstEx; private static readonly FindFirstFileExW_ OurFindFirstEx = FindFirstEx;
+        private static FindFirstFileW_ _realFindFirst; private static readonly FindFirstFileW_ OurFindFirst = FindFirst;
+        private static FindNextFileW_ _realFindNext; private static readonly FindNextFileW_ OurFindNext = FindNext;
+        private static FindClose_ _realFindClose; private static readonly FindClose_ OurFindClose = Close;
+        private static CreateFileW_ _realCreateFile; private static readonly CreateFileW_ OurCreateFile = CreateFile;
+        private static GetFileAttributesW_ _realGetAttributes; private static readonly GetFileAttributesW_ OurGetAttributes = GetAttributes;
+        private static GetFileAttributesExW_ _realGetAttributesEx; private static readonly GetFileAttributesExW_ OurGetAttributesEx = GetAttributesEx;
+
+        private static string _systemFonts;                                   // "C:\Windows\Fonts", no trailing separator
+        private static Dictionary<string, string> _ours;                      // file name → full path in fonts/
+        private static readonly Dictionary<IntPtr, Queue<string>> Pending = new Dictionary<IntPtr, Queue<string>>();
+        private static readonly object Gate = new object();
+        private static bool _installed, _sawListing, _sawInstalledOpen;
+
+        /// <summary>Changes UnityPlayer.dll's import table. Once; Windows only; says what it did.</summary>
+        public static void Install(string fontsFolder)
+        {
+            if (_installed || Environment.OSVersion.Platform != PlatformID.Win32NT) return;
+            _installed = true;
+
+            try
+            {
+                _systemFonts = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "Fonts").TrimEnd('\\');
+
+                _ours = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                if (Directory.Exists(fontsFolder))
+                {
+                    foreach (var file in Directory.GetFiles(fontsFolder))
+                    {
+                        var name = Path.GetFileName(file);
+                        if (!UnityGameTranslator.Common.AssetPacks.IsFontFile(name)) continue;
+                        if (File.Exists(Path.Combine(_systemFonts, name))) continue;   // the installed one stays
+                        _ours[name] = file;
+                    }
+                }
+
+                var module = GetModuleHandleW("UnityPlayer.dll");
+                if (module == IntPtr.Zero)
+                {
+                    TranslatorCore.LogInfo("[FontFolder] No UnityPlayer.dll in this process — nothing to redirect");
+                    return;
+                }
+
+                int patched = Patch(module, "kernel32.dll", new Dictionary<string, Func<IntPtr, IntPtr>>
+                {
+                    ["FindFirstFileExW"] = real => { _realFindFirstEx = Marshal.GetDelegateForFunctionPointer<FindFirstFileExW_>(real); return Marshal.GetFunctionPointerForDelegate(OurFindFirstEx); },
+                    ["FindFirstFileW"] = real => { _realFindFirst = Marshal.GetDelegateForFunctionPointer<FindFirstFileW_>(real); return Marshal.GetFunctionPointerForDelegate(OurFindFirst); },
+                    ["FindNextFileW"] = real => { _realFindNext = Marshal.GetDelegateForFunctionPointer<FindNextFileW_>(real); return Marshal.GetFunctionPointerForDelegate(OurFindNext); },
+                    ["FindClose"] = real => { _realFindClose = Marshal.GetDelegateForFunctionPointer<FindClose_>(real); return Marshal.GetFunctionPointerForDelegate(OurFindClose); },
+                    ["CreateFileW"] = real => { _realCreateFile = Marshal.GetDelegateForFunctionPointer<CreateFileW_>(real); return Marshal.GetFunctionPointerForDelegate(OurCreateFile); },
+                    ["GetFileAttributesW"] = real => { _realGetAttributes = Marshal.GetDelegateForFunctionPointer<GetFileAttributesW_>(real); return Marshal.GetFunctionPointerForDelegate(OurGetAttributes); },
+                    ["GetFileAttributesExW"] = real => { _realGetAttributesEx = Marshal.GetDelegateForFunctionPointer<GetFileAttributesExW_>(real); return Marshal.GetFunctionPointerForDelegate(OurGetAttributesEx); },
+                });
+
+                TranslatorCore.LogInfo($"[FontFolder] {patched} engine import(s) redirected; {_ours.Count} font file(s) shown in {_systemFonts}: {string.Join(", ", _ours.Keys)}");
+            }
+            catch (Exception ex)
+            {
+                // The boundary with the process's own code: an unexpected layout is said, never hidden.
+                TranslatorCore.LogWarning($"[FontFolder] Could not redirect the engine's font folder: {ex.GetType().Name}: {ex.Message}");
+            }
+        }
+
+        /// <summary>Replaces, in a module's import table, the named functions of one DLL. Returns how many.</summary>
+        private static int Patch(IntPtr module, string dll, Dictionary<string, Func<IntPtr, IntPtr>> replacements)
+        {
+            int pe = Marshal.ReadInt32(module, 0x3C);
+            bool is64 = Marshal.ReadInt16(module, pe + 24) == 0x20B;
+            int dataDirectory = pe + 24 + (is64 ? 112 : 96);
+            int importRva = Marshal.ReadInt32(module, dataDirectory + 8);
+            int slot = IntPtr.Size;
+            int count = 0;
+
+            for (int descriptor = importRva; ; descriptor += 20)
+            {
+                int nameRva = Marshal.ReadInt32(module, descriptor + 12);
+                if (nameRva == 0) break;
+                if (!string.Equals(Marshal.PtrToStringAnsi(module + nameRva), dll, StringComparison.OrdinalIgnoreCase)) continue;
+
+                int lookup = Marshal.ReadInt32(module, descriptor);        // OriginalFirstThunk: names
+                int address = Marshal.ReadInt32(module, descriptor + 16);  // FirstThunk: the table the code calls through
+                if (lookup == 0) continue;
+
+                for (int i = 0; ; i++)
+                {
+                    long entry = is64 ? Marshal.ReadInt64(module, lookup + i * slot) : (uint)Marshal.ReadInt32(module, lookup + i * slot);
+                    if (entry == 0) break;
+                    bool byOrdinal = is64 ? entry < 0 : (entry & 0x80000000) != 0;
+                    if (byOrdinal) continue;
+
+                    string name = Marshal.PtrToStringAnsi(module + (int)(entry & 0x7FFFFFFF) + 2);
+                    if (name == null || !replacements.TryGetValue(name, out var replace)) continue;
+
+                    IntPtr cell = module + address + i * slot;
+                    IntPtr ours = replace(Marshal.ReadIntPtr(cell));
+                    VirtualProtect(cell, (UIntPtr)(uint)slot, PAGE_READWRITE, out uint old);
+                    Marshal.WriteIntPtr(cell, ours);
+                    VirtualProtect(cell, (UIntPtr)(uint)slot, old, out _);
+                    count++;
+                }
+            }
+
+            return count;
+        }
+
+        // ── Answers ──────────────────────────────────────────────────────────────────────────────
+
+        /// <summary>The fonts/ file standing for a path in the system font folder, or null.</summary>
+        private static string OursFor(IntPtr namePtr)
+        {
+            if (namePtr == IntPtr.Zero || _ours == null || _ours.Count == 0) return null;
+            var path = Marshal.PtrToStringUni(namePtr);
+            if (string.IsNullOrEmpty(path)) return null;
+
+            var dir = Path.GetDirectoryName(path);
+            if (dir == null || !string.Equals(dir.TrimEnd('\\'), _systemFonts, StringComparison.OrdinalIgnoreCase)) return null;
+            return _ours.TryGetValue(Path.GetFileName(path), out var file) ? file : null;
+        }
+
+        private static bool IsFontFolderListing(IntPtr namePtr)
+        {
+            if (namePtr == IntPtr.Zero || _ours == null) return false;
+            var pattern = Marshal.PtrToStringUni(namePtr);
+            var dir = pattern == null ? null : Path.GetDirectoryName(pattern);
+            return dir != null && string.Equals(dir.TrimEnd('\\'), _systemFonts, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static void Track(IntPtr handle, IntPtr pattern)
+        {
+            if (handle == InvalidHandle || !IsFontFolderListing(pattern)) return;
+            lock (Gate) Pending[handle] = new Queue<string>(_ours.Keys);
+
+            if (!_sawListing)
+            {
+                _sawListing = true;
+                TranslatorCore.LogInfo($"[FontFolder] engine lists the font folder ({Marshal.PtrToStringUni(pattern)}) — our {_ours.Count} file(s) added");
+            }
+        }
+
+        private static IntPtr FindFirstEx(IntPtr name, int level, IntPtr data, int op, IntPtr filter, int flags)
+        {
+            var handle = _realFindFirstEx(name, level, data, op, filter, flags);
+            uint error = GetLastError();
+            try { Track(handle, name); } catch (Exception ex) { Faults.Say("FontFolderRedirect.FindFirstEx", ex); }
+            SetLastError(error);
+            return handle;
+        }
+
+        private static IntPtr FindFirst(IntPtr name, IntPtr data)
+        {
+            var handle = _realFindFirst(name, data);
+            uint error = GetLastError();
+            try { Track(handle, name); } catch (Exception ex) { Faults.Say("FontFolderRedirect.FindFirst", ex); }
+            SetLastError(error);
+            return handle;
+        }
+
+        private static int FindNext(IntPtr handle, IntPtr data)
+        {
+            int found = _realFindNext(handle, data);
+            uint error = GetLastError();
+            if (found != 0 || error != ERROR_NO_MORE_FILES) { SetLastError(error); return found; }
+
+            try
+            {
+                string next = null;
+                lock (Gate)
+                {
+                    if (Pending.TryGetValue(handle, out var queue) && queue.Count > 0) next = queue.Dequeue();
+                }
+
+                if (next != null)
+                {
+                    Describe(data, next, new FileInfo(_ours[next]).Length);
+                    SetLastError(0);
+                    return 1;
+                }
+            }
+            catch (Exception ex) { Faults.Say("FontFolderRedirect.FindNext", ex); }
+
+            SetLastError(error);
+            return found;
+        }
+
+        private static int Close(IntPtr handle)
+        {
+            lock (Gate) Pending.Remove(handle);
+            return _realFindClose(handle);
+        }
+
+        /// <summary>WIN32_FIND_DATAW for one of our files: attributes, size, name — times left at zero.</summary>
+        private static void Describe(IntPtr data, string name, long length)
+        {
+            for (int i = 0; i < 592; i += 4) Marshal.WriteInt32(data, i, 0);   // sizeof(WIN32_FIND_DATAW)
+            Marshal.WriteInt32(data, 0, (int)FILE_ATTRIBUTE_NORMAL);
+            Marshal.WriteInt32(data, 28, (int)(length >> 32));
+            Marshal.WriteInt32(data, 32, (int)(length & 0xFFFFFFFF));
+            var chars = name.ToCharArray();
+            for (int i = 0; i < chars.Length && i < 259; i++) Marshal.WriteInt16(data, 44 + i * 2, chars[i]);
+        }
+
+        private static readonly HashSet<string> Said = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>TEST: each kind of engine request on one of our files, said once.</summary>
+        private static void SayOnce(string what, string ours, string result)
+        {
+            lock (Gate) { if (!Said.Add(what + "|" + ours)) return; }
+            TranslatorCore.LogInfo($"[FontFolder] engine {what} {Path.GetFileName(ours)} → {result}");
+        }
+
+        private static IntPtr CreateFile(IntPtr name, uint access, uint share, IntPtr security, uint disposition, uint flags, IntPtr template)
+        {
+            string ours = null;
+            try
+            {
+                ours = OursFor(name);
+                // TEST: whether the engine opens installed fonts through this call at all.
+                if (ours == null && !_sawInstalledOpen && IsFontFolderListing(name))
+                {
+                    _sawInstalledOpen = true;
+                    TranslatorCore.LogInfo($"[FontFolder] engine opens installed fonts through this call, e.g. {Path.GetFileName(Marshal.PtrToStringUni(name))}");
+                }
+            }
+            catch (Exception ex) { Faults.Say("FontFolderRedirect.CreateFile", ex); }
+            if (ours == null) return _realCreateFile(name, access, share, security, disposition, flags, template);
+
+            var redirected = Marshal.StringToHGlobalUni(ours);
+            try
+            {
+                var handle = _realCreateFile(redirected, access, share, security, disposition, flags, template);
+                uint error = GetLastError();
+                SayOnce("opens", ours, handle == InvalidHandle ? $"failed ({error})" : "opened");
+                SetLastError(error);
+                return handle;
+            }
+            finally { Marshal.FreeHGlobal(redirected); }
+        }
+
+        private static uint GetAttributes(IntPtr name)
+        {
+            string ours = null;
+            try { ours = OursFor(name); } catch (Exception ex) { Faults.Say("FontFolderRedirect.GetAttributes", ex); }
+            if (ours == null) return _realGetAttributes(name);
+
+            var redirected = Marshal.StringToHGlobalUni(ours);
+            try
+            {
+                var result = _realGetAttributes(redirected);
+                SayOnce("asks the attributes of", ours, result.ToString("X"));
+                return result;
+            }
+            finally { Marshal.FreeHGlobal(redirected); }
+        }
+
+        private static int GetAttributesEx(IntPtr name, int level, IntPtr info)
+        {
+            string ours = null;
+            try { ours = OursFor(name); } catch (Exception ex) { Faults.Say("FontFolderRedirect.GetAttributesEx", ex); }
+            if (ours == null) return _realGetAttributesEx(name, level, info);
+
+            var redirected = Marshal.StringToHGlobalUni(ours);
+            try
+            {
+                var result = _realGetAttributesEx(redirected, level, info);
+                SayOnce("asks the attributes (ex) of", ours, result != 0 ? "ok" : "failed");
+                return result;
+            }
+            finally { Marshal.FreeHGlobal(redirected); }
+        }
+    }
+}

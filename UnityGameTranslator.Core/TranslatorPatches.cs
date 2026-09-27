@@ -249,6 +249,17 @@ namespace UnityGameTranslator.Core
                         patchCount++;
                     }
 
+                    // UI.Text.font setter — same reason as TMP's above: a game putting its own font
+                    // back (a language refresh, a style reset) left the text in that font at the size
+                    // chosen for the replacement until a scene pass came round.
+                    var uiFontProp = TypeHelper.UI_TextType.GetProperty("font", BindingFlags.Public | BindingFlags.Instance);
+                    if (uiFontProp?.SetMethod != null)
+                    {
+                        var postfix = typeof(TranslatorPatches).GetMethod(nameof(UIText_SetFont_Postfix), BindingFlags.Static | BindingFlags.Public);
+                        patcher(uiFontProp.SetMethod, null, postfix);
+                        patchCount++;
+                    }
+
 
                     // UI.Text.fontSize setter — only on Mono (on IL2CPP, causes font atlas corruption)
                     if (TranslatorCore.Adapter != null && !TranslatorCore.Adapter.IsIL2CPP)
@@ -3238,6 +3249,18 @@ namespace UnityGameTranslator.Core
             {
                 TranslatorCore.LogDebug($"[Patches] SetFont postfix error: {ex.Message}");
             }
+        }
+
+        /// <summary>
+        /// Postfix on UI.Text.font setter: the game assigned a font (FontManager.OnGameAssignedUnityFont).
+        /// Our own SetFont echoes here and stops at the first test.
+        /// </summary>
+        public static void UIText_SetFont_Postfix(object __instance)
+        {
+            if (__instance == null) return;
+            // Inside the game's own setter: an exception escaping here would break it. Said.
+            try { FontManager.OnGameAssignedUnityFont(__instance); }
+            catch (Exception ex) { Faults.Say("Patches.UIText_SetFont_Postfix", ex, __instance.GetType().Name); }
         }
 
         /// <summary>

@@ -3307,29 +3307,7 @@ namespace UnityGameTranslator.Core
 
                     var c = comps[_sceneUguiAt];
                     if (c == null) continue;
-                    int id = c.GetInstanceID();
-
-                    var comp = c as Component;
-                    if (comp != null && TranslatorCore.ShouldSkipTranslation(comp)) continue;
-
-                    var fontObj = TypeHelper.GetFont(c);
-                    string fontName = (fontObj is UnityEngine.Object fo) ? fo.name : null;
-                    if (string.IsNullOrEmpty(fontName)) continue;
-
-                    string settingsFontName = GetSettingsFontName(id, fontName);
-                    // Already wearing its clone — the common case, keep it cheap.
-                    if (!string.Equals(settingsFontName, fontName, StringComparison.OrdinalIgnoreCase)) continue;
-                    if (!IsTranslationEnabled(settingsFontName)) continue;
-                    if (string.IsNullOrEmpty(GetConfiguredFallback(settingsFontName))) continue;
-
-                    string text = TypeHelper.GetText(c);
-                    var clone = TryApplyUnityClone(c, fontObj, settingsFontName, text);
-                    if (clone != null && !string.IsNullOrEmpty(text))
-                        EnsureCharsInCloneAtlasDirect(text, clone, settingsFontName);
-
-                    var nowFont = TypeHelper.GetFont(c);
-                    string nowName = (nowFont is UnityEngine.Object nfo) ? nfo.name : null;
-                    if (!string.Equals(nowName, fontName, StringComparison.OrdinalIgnoreCase)) applied++;
+                    if (PutUnityClone(c)) applied++;
                 }
 
                 _sceneUgui = null;   // cycle complete
@@ -3342,6 +3320,58 @@ namespace UnityGameTranslator.Core
                 TranslatorCore.LogDebug($"[FontManager] ApplyUnityClonesToScene error: {ex.Message}");
             }
             finally { Perf.Stop(Perf.FontClones, tPerf); }
+        }
+
+        /// <summary>
+        /// Puts its clone on one UI.Text still wearing a game font the settings replace; true when
+        /// the font changed. The one implementation behind the scene pass above and the font setter
+        /// (OnGameAssignedUnityFont): what a component gets must not depend on which of the two saw it.
+        /// </summary>
+        private static bool PutUnityClone(UnityEngine.Object c)
+        {
+            int id = c.GetInstanceID();
+
+            var comp = c as Component;
+            if (comp != null && TranslatorCore.ShouldSkipTranslation(comp)) return false;
+            // Never the mod's own window, whatever translate_mod_ui is (same defence as OnGameAssignedFont).
+            if (comp != null && TranslatorCore.IsOwnUI(comp)) return false;
+
+            var fontObj = TypeHelper.GetFont(c);
+            string fontName = (fontObj is UnityEngine.Object fo) ? fo.name : null;
+            if (string.IsNullOrEmpty(fontName)) return false;
+
+            string settingsFontName = GetSettingsFontName(id, fontName);
+            // Already wearing its clone — the common case (and the echo of our own SetFont), kept cheap.
+            if (!string.Equals(settingsFontName, fontName, StringComparison.OrdinalIgnoreCase)) return false;
+            if (!IsTranslationEnabled(settingsFontName)) return false;
+            if (string.IsNullOrEmpty(GetConfiguredFallback(settingsFontName))) return false;
+
+            string text = TypeHelper.GetText(c);
+            var clone = TryApplyUnityClone(c, fontObj, settingsFontName, text);
+            if (clone != null && !string.IsNullOrEmpty(text))
+                EnsureCharsInCloneAtlasDirect(text, clone, settingsFontName);
+
+            var nowFont = TypeHelper.GetFont(c);
+            string nowName = (nowFont is UnityEngine.Object nfo) ? nfo.name : null;
+            return !string.Equals(nowName, fontName, StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
+        /// Called by the UI.Text font-setter postfix: the game put a font on a component — often
+        /// its own font back on a component that wore the clone. The clone goes back on at once.
+        ///
+        /// 🔴 **Why at once, and not on the next scene pass.** The size the mod gave the component
+        /// is the one chosen for the replacement font; with the game's font back, the text shows at
+        /// that size in the wrong face — a pixel font scaled down loses whole columns and reads as
+        /// other characters — until a pass comes round (seen: several seconds). Unlike TMP
+        /// (OnGameAssignedFont), a UI.Text takes its texture from its font, so there is no material
+        /// assigned after the font to wait for.
+        /// </summary>
+        public static void OnGameAssignedUnityFont(object component)
+        {
+            if (_suppressFontSetterReapply) return;   // a restore putting the game's font back
+            if (!TranslatorCore.FontReplacementActive || _unityFallbackFonts.Count == 0) return;
+            if (component is UnityEngine.Object c && c != null) PutUnityClone(c);
         }
 
         /// <summary>

@@ -66,7 +66,7 @@ namespace UnityGameTranslator.Core
         // scanner's own slot above covers one caller, and a lookup of every component or every
         // MonoBehaviour elsewhere is an atomic call no per-frame budget can split.
         internal const int FindAll = 24;         // TypeHelper.FindAllObjectsOfType, the whole call
-        internal const int SceneFilter = 25;     // ...of which: keeping only what a scene holds (OnlyInScene)
+        internal const int SceneRead = 25;       // reading which scene an object is in, once per object (TypeHelper.IsInScene)
         private const int SlotCount = 26;
 
         private static readonly string[] Names =
@@ -76,7 +76,7 @@ namespace UnityGameTranslator.Core
             "Scan.Find", "UITK.Cycle", "UITK.Setter", "Scan.Process", "Scan.Text",
             "Scan.Gate", "Scan.Translate", "Scan.Apply",
             "Setter", "Setter.Note", "Setter.Release", "TMP.Layout", "Reveal", "RenderWatch",
-            "Find.All", "Scene.Filter",
+            "Find.All", "Scene.Read",
         };
 
         private static readonly long[] _ticks = new long[SlotCount];

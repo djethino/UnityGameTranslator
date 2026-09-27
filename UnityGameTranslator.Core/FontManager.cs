@@ -2711,6 +2711,10 @@ namespace UnityGameTranslator.Core
             if (!TranslatorCore.FontReplacementActive)
                 return;
 
+            // A template keeps the game's font: its copies would start with ours and be taken for
+            // components already sized (TypeHelper.IsInScene).
+            if (!TypeHelper.IsInScene(component)) return;
+
             // Fast check: already wearing the replacement asked for under this name (no reflection).
             // First, before anything reads `originalFontObj`: on a component that is ours, the caller
             // read OUR font, not the game's.
@@ -3215,6 +3219,9 @@ namespace UnityGameTranslator.Core
         public static Font TryApplyUnityClone(object component, object fontObj, string settingsFontName, string text)
         {
             if (component == null || string.IsNullOrEmpty(settingsFontName)) return null;
+            // A template keeps the game's font: a copy made from it with our clone is taken for a
+            // component already sized, and never sized (TypeHelper.IsInScene).
+            if (!TypeHelper.IsInScene(component)) return null;
 
             RegisterUnityFontObject(settingsFontName, fontObj);
 

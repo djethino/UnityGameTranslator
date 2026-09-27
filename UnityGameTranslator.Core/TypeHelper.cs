@@ -1515,7 +1515,7 @@ namespace UnityGameTranslator.Core
                     {
                         var result = _il2cppResourcesFindAllMethod.Invoke(null, new[] { il2cppType });
                         if (result is UnityEngine.Object[] array)
-                            return OnlyInScene(type, array);
+                            return array;
 
                         // IL2CPP may return Il2CppReferenceArray — convert
                         if (result is System.Collections.IEnumerable enumerable)
@@ -1526,7 +1526,7 @@ namespace UnityGameTranslator.Core
                                 if (item is UnityEngine.Object uobj)
                                     list.Add(uobj);
                             }
-                            return OnlyInScene(type, list.ToArray());
+                            return list.ToArray();
                         }
                     }
                 }
@@ -1560,57 +1560,21 @@ namespace UnityGameTranslator.Core
         private static bool _sceneMembershipRefused;
 
         /// <summary>
-        /// What a scene lookup must answer: the objects of the loaded scenes, never the prefabs and
-        /// other assets that <c>Resources.FindObjectsOfTypeAll</c> returns beside them.
-        ///
-        /// 🔴 **Why.** The IL2CPP route (and the last Mono fallback) of <see cref="FindAllObjectsOfType"/>
-        /// is <c>FindObjectsOfTypeAll</c>, so it handed the scanner a game's PREFABS as if they were on
-        /// screen. The mod then scaled a template's font size; every copy the game made of it afterwards
-        /// started from the scaled size, which the mod read as the copy's own and scaled again. Text
-        /// shrank on the second load of a save, stayed small until the game restarted, and only the
-        /// texts built from templates were affected. The Mono route never saw a prefab: this puts both
-        /// runtimes back on one answer.
-        ///
-        /// ⚠ Components and GameObjects only — an asset type (a font, a sprite) is what an asset scan
-        /// is FOR, and passes untouched.
-        /// </summary>
-        public static UnityEngine.Object[] OnlyInScene(Type type, UnityEngine.Object[] found)
-        {
-            if (found == null || found.Length == 0 || _sceneMembershipRefused) return found;
-            if (!typeof(Component).IsAssignableFrom(type) && type != typeof(GameObject)) return found;
-            long t = Perf.Start();
-            try { return OnlyInSceneUntimed(found); }
-            finally { Perf.Stop(Perf.SceneFilter, t); }
-        }
-
-        private static UnityEngine.Object[] OnlyInSceneUntimed(UnityEngine.Object[] found)
-        {
-            // Nothing is allocated when every object is in a scene — the usual answer.
-            List<UnityEngine.Object> kept = null;
-            for (int i = 0; i < found.Length; i++)
-            {
-                var obj = found[i];
-                bool inScene = obj != null && InScene(obj);
-                if (_sceneMembershipRefused) return found;
-
-                if (inScene)
-                {
-                    kept?.Add(obj);
-                }
-                else if (kept == null)
-                {
-                    kept = new List<UnityEngine.Object>(found.Length);
-                    for (int j = 0; j < i; j++) kept.Add(found[j]);
-                }
-            }
-            return kept == null ? found : kept.ToArray();
-        }
-
-        /// <summary>
         /// Whether a text component is one the game shows — in a loaded scene — rather than a prefab
         /// or other asset. What is not a Unity object (a component of another engine's UI) is shown.
-        /// The size code asks it: a setter the game calls on a TEMPLATE reaches the patches too, and a
-        /// template's size must stay the game's, since every copy starts from it (see OnlyInScene).
+        ///
+        /// 🔴 **Why.** On IL2CPP (and the last Mono fallback) <see cref="FindAllObjectsOfType"/> is
+        /// <c>Resources.FindObjectsOfTypeAll</c>, which also returns a game's PREFABS. The mod scaled
+        /// a template's font size; every copy the game made of it afterwards started from the scaled
+        /// size, which the mod read as the copy's own and scaled again — text shrank on the second
+        /// load of a save and stayed small until the game restarted. So the scanner, the font
+        /// replacement and the size code each leave a template alone.
+        ///
+        /// ⚠ **Asked per component, inside the walks, never on a lookup's whole result.** Filtering
+        /// the result inside the lookup put a per-object question in the one part of a pass that
+        /// cannot be split across frames: measured on an IL2CPP game, 30-45 ms per lookup in steady
+        /// play and 225-348 ms on a scene change. Asked here, it is spent from each walk's frame
+        /// budget like the rest of the work on that component.
         /// </summary>
         public static bool IsInScene(object instance)
         {
@@ -1619,13 +1583,14 @@ namespace UnityGameTranslator.Core
         }
 
         // The verdict for one live object, read once per object. The engine may not expose a
-        // GameObject's scene on this runtime: said once, and every object is then treated as shown —
-        // what lookups answered before this filter existed.
+        // GameObject's scene on this runtime: said once, and every object is then treated as shown,
+        // as before this check existed.
         private static bool InScene(UnityEngine.Object obj)
         {
             if (_sceneMembershipRefused) return true;
             int id = obj.GetInstanceID();
             if (_inScene.TryGetValue(id, out bool inScene)) return inScene;
+            long t = Perf.Start();
             try { inScene = ReadInScene(obj); }
             catch (Exception ex)
             {
@@ -1633,6 +1598,7 @@ namespace UnityGameTranslator.Core
                 Faults.Say("TypeHelper.InScene", ex, "scene membership cannot be read here: prefabs are treated as shown");
                 return true;
             }
+            finally { Perf.Stop(Perf.SceneRead, t); }
             _inScene[id] = inScene;
             return inScene;
         }
@@ -1811,7 +1777,7 @@ namespace UnityGameTranslator.Core
                 if (method != null)
                 {
                     var result = method.Invoke(null, new object[] { type }) as UnityEngine.Object[];
-                    if (result != null) return OnlyInScene(type, result);
+                    if (result != null) return result;
                 }
             }
             catch (Exception ex) { Faults.Say("TypeHelper.FindAllObjectsOfTypeMono Resources.FindObjectsOfTypeAll", ex, type.Name); }

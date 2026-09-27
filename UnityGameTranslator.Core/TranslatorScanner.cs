@@ -1503,6 +1503,10 @@ namespace UnityGameTranslator.Core
                     if (TranslatorCore.ShouldSkipTranslation(comp))
                         return;
 
+                    // A prefab the engine's lookup returned beside the scene (TypeHelper.IsInScene).
+                    if (!TypeHelper.IsInScene(comp))
+                        return;
+
                     // Skip if translation disabled for this font
                     string fontName = GetFontNameForType(component, type);
                     if (!string.IsNullOrEmpty(fontName) && !FontManager.IsTranslationEnabled(fontName))
@@ -3376,8 +3380,6 @@ namespace UnityGameTranslator.Core
             var result = resourcesFindAllMethod.Invoke(null, new[] { il2cppType });
             if (result == null) return null;
 
-            // FindObjectsOfTypeAll also returns the game's prefabs: only what a scene holds is kept
-            // (TypeHelper.OnlyInScene says why).
             var asArray = result as UnityEngine.Object[];
             if (asArray == null)
             {
@@ -3390,12 +3392,12 @@ namespace UnityGameTranslator.Core
                         if (item is UnityEngine.Object uobj)
                             list.Add(uobj);
                     }
-                    return TypeHelper.OnlyInScene(typeof(Component), list.ToArray());
+                    return list.ToArray();
                 }
                 return null;
             }
 
-            return TypeHelper.OnlyInScene(typeof(Component), asArray);
+            return asArray;
         }
 
         #endregion

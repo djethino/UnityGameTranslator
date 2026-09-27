@@ -1009,7 +1009,7 @@ namespace UnityGameTranslator.Core
         {
             if (IsOwnUIText(instance)) return;
             if (typeInfo.FontSizeProp == null || string.IsNullOrEmpty(fontName)) return;
-            // A template's size stays the game's: every copy starts from it (TypeHelper.OnlyInScene).
+            // A template's size stays the game's: every copy starts from it (TypeHelper.IsInScene).
             if (!TypeHelper.IsInScene(instance)) return;
 
             int instanceId = TypeHelper.GetInstanceID(instance);
@@ -2463,7 +2463,7 @@ namespace UnityGameTranslator.Core
         {
             if (IsOwnUIText(instance)) return;
             if (instance == null || string.IsNullOrEmpty(fontName)) return;
-            // A template's size stays the game's: every copy starts from it (TypeHelper.OnlyInScene).
+            // A template's size stays the game's: every copy starts from it (TypeHelper.IsInScene).
             if (!TypeHelper.IsInScene(instance)) return;
 
             int instanceId = TypeHelper.GetInstanceID(instance);

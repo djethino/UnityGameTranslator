@@ -232,6 +232,7 @@
     <Compile Include="../../UnityGameTranslator.Core/Engine/AtomicFile.cs" />
     <!-- The lines the AI gave up on this session, kept to be settled by hand instead of refused in the log. -->
     <Compile Include="../../UnityGameTranslator.Core/Engine/Failures.cs" />
+    <Compile Include="../../UnityGameTranslator.Core/Engine/ServerErrorBlame.cs" />
     <Compile Include="../../UnityGameTranslator.Core/Engine/FailureStore.cs" />
     <Compile Include="../../UnityGameTranslator.Core/Engine/ElementStore.cs" />
     <!-- A long text cut into pieces a label can draw: the canvas mesh's limit, not a figure chosen. -->

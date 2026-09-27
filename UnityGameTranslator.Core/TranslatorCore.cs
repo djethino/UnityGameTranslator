@@ -4599,10 +4599,8 @@ namespace UnityGameTranslator.Core
         // error (the status and its message); null when it translated, or never answered.
         [ThreadStatic] private static string _lastServerError;
 
-        // How many chat requests the server has answered successfully this session, and, per line
-        // it answered with an error, that count when it did (NoteServerError).
-        private static int _serverAnswers;
-        private static readonly ConcurrentDictionary<string, int> _serverErrorAt = new ConcurrentDictionary<string, int>();
+        // Whether a line the server answered with an error is to blame, or the server (NoteServerError).
+        private static readonly ServerErrorBlame _serverErrors = new ServerErrorBlame();
 
         /// <summary>
         /// Why the translation server cannot be reached, or <see cref="ConnectionProblem.None"/>:
@@ -5540,7 +5538,7 @@ namespace UnityGameTranslator.Core
                 if (response.IsSuccessStatusCode)
                 {
                     NoteModelUsed();
-                    Interlocked.Increment(ref _serverAnswers);
+                    _serverErrors.Answered();
                     string responseJson = response.Content.ReadAsStringAsync().Result;
                     var responseObj = ApiClient.ParseJsonSafe(responseJson);
                     return responseObj["choices"]?[0]?["message"]?["content"]?.ToString()?.Trim();
@@ -5601,28 +5599,15 @@ namespace UnityGameTranslator.Core
         /// 🔴 **It used to be read as "no answer"** — the case meant for a server that is off or too
         /// slow, where a line is not to blame and is asked again when it next appears. Nothing was
         /// kept, so a line the model cannot handle was sent again at every appearance, for ever,
-        /// with its notification and its seconds of work.
-        ///
-        /// ⚠ **The line is blamed on evidence, not on a count.** A broken server answers EVERY line
-        /// with an error, and filing them all as failures would bury the tab. So a line goes to
-        /// Failures when it has failed this way before this session AND the same server translated
-        /// something else in between: then the server works, and this text is what it cannot do.
-        /// Until then it is asked again at its next appearance, as before. Once filed, it is kept
-        /// across launches like any failure, and only Retranslate (AI) on the tab asks it again.
+        /// with its notification and its seconds of work. Who is to blame is decided on evidence
+        /// (<see cref="ServerErrorBlame"/>); once filed, the line is kept across launches like any
+        /// failure, and only Retranslate (AI) on the tab asks it again.
         /// </summary>
         private static void NoteServerError(string key)
         {
             string error = _lastServerError;
-            if (error == null || string.IsNullOrEmpty(key)) return;
+            if (error == null || !_serverErrors.Blames(key)) return;
 
-            int answers = Volatile.Read(ref _serverAnswers);
-            if (!_serverErrorAt.TryGetValue(key, out int before) || answers <= before)
-            {
-                _serverErrorAt[key] = answers;
-                return;
-            }
-
-            _serverErrorAt.TryRemove(key, out _);
             _queue.NoteRefused(key);
             Failures.Note(new FailedLine
             {

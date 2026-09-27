@@ -262,6 +262,7 @@ namespace UnityGameTranslator.Core.Checks
             Section("Companion files (ancestors, images)", CompanionFilesChecks.Run);
             Section("Translation store (the moments of the file)", TranslationStoreChecks.Run);
             Section("Failed lines (kept to be settled by hand)", FailureLedgerChecks.Run);
+            Section("A server error blames the line, or the server", ServerErrorBlameChecks.Run);
             Section("Failed lines beside the file, across a launch", FailureStoreChecks.Run);
             Section("What was learnt about the elements, beside the file, across a launch", ElementStoreChecks.Run);
             Section("Long text in pieces a label can draw", TextChunksChecks.Run);

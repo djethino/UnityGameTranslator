@@ -18,7 +18,7 @@ namespace UnityGameTranslator.Core.Checks
     /// for replaying a recorded trace (TraceReplay). Every answer is the plain one a game with this
     /// file would give; nothing is tuned to make a case pass.
     /// </summary>
-    internal sealed class ReplayHost : ITextRouterHost
+    internal sealed class ReplayHost : ITextRouterHost, IAdmissionFacts
     {
         public TextRouter Router;
 
@@ -68,15 +68,24 @@ namespace UnityGameTranslator.Core.Checks
         /// hide it.
         /// </summary>
         public readonly List<string> TakenBack = new List<string>();
-        private readonly HashSet<string> _refused = new HashSet<string>();
 
-        /// <summary>As TranslatorCore.WithdrawTemplate: out of the queue, and never asked again.</summary>
+        /// <summary>The mod's own queue: its withdrawals and give-ups, never a copy of them.</summary>
+        private readonly TranslationQueue _queue = new TranslationQueue();
+
+        /// <summary>As TranslatorCore.WithdrawTemplate, through the same rule.</summary>
         public void WithdrawTemplate(string text)
         {
             Withdrawn.Add(text);
-            _refused.Add(text);
-            if (Queued.RemoveAll(q => q.Text == text) > 0) TakenBack.Add(text);
+            if (TextAdmission.WithdrawTemplate(_queue, text, Router.NormalizeForCacheLookup(text))) TakenBack.Add(text);
+            Queued.RemoveAll(q => q.Text == text);
         }
+
+        // The facts TextAdmission reads — as TranslatorCore's AdmissionFacts reads them.
+        public bool IsExpandedInPlace(string text) => Router.IsExpandedInPlace(text);
+        public bool IsAlreadyTarget(string text)
+            => _readback.IsAlreadyTarget(text, Router.NormalizeForCacheLookup(text).TrimEnd(), ownUi: false);
+        public bool IsReadback(string key, bool ownUi) => _readback.IsReadback(key, ownUi);
+        public bool WasGivenUp(string text, bool ownUi) => _queue.WasRefused(Router.NormalizeForCacheLookup(text));
 
         public string SourceOf(string translation, bool ownUi)
         {
@@ -102,8 +111,10 @@ namespace UnityGameTranslator.Core.Checks
 
         public void Queue(string text, object component, bool ownUi)
         {
-            // The queue's door, as QueueForTranslation keeps it: a template is never queued.
-            if (_refused.Contains(text) || Router.IsExpandedInPlace(text)) return;
+            // The queue's door: what the text is refused for, by the rule QueueForTranslation
+            // applies. The mod's state refusals (switched off, offline) have no replay.
+            if (TextAdmission.ForQueue(text, ownUi, this) != Admission.Admitted) return;
+            _queue.Submit(text, component, ownUi, out _, out _);
             if (!Queued.Any(q => q.Text == text && ReferenceEquals(q.Box, component)))
                 Queued.Add((text, component as ReplayBox));
         }
@@ -184,8 +195,9 @@ namespace UnityGameTranslator.Core.Checks
         /// </summary>
         public void Arrive(string original, string translation)
         {
-            // An answer already in flight for a template is not stored, as AddToCache refuses it.
-            if (Router.IsExpandedInPlace(original)) return;
+            // What AddToCache refuses to store, by the same rule (a template, our own translation
+            // read back under another decoration).
+            if (TextAdmission.ForStore(Router.NormalizeForCacheLookup(original), false, this) != Admission.Admitted) return;
             Add(original, translation);
             foreach (var q in Queued.Where(q => q.Text == original && q.Box != null).ToList())
             {

@@ -111,11 +111,13 @@ namespace UnityGameTranslator.Core.Checks
                 "this check reads them; without them, it proves nothing");
             if (queueing == null || storing == null || lookup == null) return;
 
-            check(queueing.Contains("IsExpandedInPlace(", StringComparison.Ordinal),
+            // The queue and the store ask the one rule (Engine/TextAdmission) — which the corpus
+            // replays through the same door (`template/…` cases); here, only that they ask it.
+            check(queueing.Contains("TextAdmission.ForQueue(", StringComparison.Ordinal),
                 "a template is never queued",
                 "queued, it costs a call and shows a notice saying a translation is running on a line the player can see is done");
 
-            check(storing.Contains("IsExpandedInPlace(", StringComparison.Ordinal),
+            check(storing.Contains("TextAdmission.ForStore(", StringComparison.Ordinal),
                 "and its answer is never stored, if one was already in flight",
                 "🔴 this is what makes the rule deterministic instead of a race the worker usually loses");
 
@@ -132,8 +134,7 @@ namespace UnityGameTranslator.Core.Checks
             // The rule itself — skeleton recorded, finished form let through — is held by the routing
             // corpus (`template/…` cases), which replays it rather than reading it. What stays
             // lexical is that the two doors outside the router ask the router, not a copy.
-            check(queueing.Contains("Router.IsExpandedInPlace(", StringComparison.Ordinal)
-                  && storing.Contains("Router.IsExpandedInPlace(", StringComparison.Ordinal)
+            check(core.Contains("public bool IsExpandedInPlace(string text) => Router.IsExpandedInPlace(text);", StringComparison.Ordinal)
                   && !core.Contains("_expandedInPlace", StringComparison.Ordinal),
                 "and the queue and the store ask the router, which alone remembers templates",
                 "🔴 a second memory beside the router's is a rule the replay cannot see and a second engine would have to copy");

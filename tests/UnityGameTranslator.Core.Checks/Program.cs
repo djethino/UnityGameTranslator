@@ -139,6 +139,7 @@ namespace UnityGameTranslator.Core.Checks
         /// <summary>The texts waiting for a backend, across the sequence that empties them.</summary>
         private static void WhatWaitsForABackend()
         {
+            Section("What a text is refused for, at the door and at the store", TextAdmissionChecks.Run);
             Section("The translation queue, across a whole sequence", TranslationQueueChecks.Run);
             Section("One item through the worker, in order", TranslationWorkerChecks.Run);
             Section("A text asked for and never answered", OwedTextChecks.Run);

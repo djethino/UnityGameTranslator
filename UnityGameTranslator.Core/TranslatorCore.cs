@@ -4437,9 +4437,7 @@ namespace UnityGameTranslator.Core
         {
             if (string.IsNullOrEmpty(text)) return;
 
-            string key = NormalizeForCacheLookup(text);
-            bool withdrawn = _queue.Withdraw(text) || _queue.Withdraw(key);
-            _queue.NoteRefused(key);
+            bool withdrawn = TextAdmission.WithdrawTemplate(_queue, text, NormalizeForCacheLookup(text));
 
             LogInfo($"[TW-TEMPLATE] the game expands this in place — {(withdrawn ? "taken out of the queue" : "it was not waiting")}, not asked again, and never written back: '{(text.Length > 60 ? text.Substring(0, 60) : text)}'");
         }
@@ -5826,24 +5824,18 @@ namespace UnityGameTranslator.Core
                 if (store.ContainsKey(normalizedKey))
                     return;
 
-                // A template the game expands in place. The proof arrives with the expansion, a few
-                // hundred milliseconds after the text was queued — which is usually before the
-                // model answers, but nothing guarantees it, so the answer is refused HERE as well.
-                // That is what makes it deterministic rather than a race the worker usually loses.
-                if (!toModUi && Router.IsExpandedInPlace(normalizedKey))
+                // What the answer is refused for, decided with the replay and every engine
+                // (Engine/TextAdmission); what is said about it stays here.
+                var admission = TextAdmission.ForStore(normalizedKey, toModUi, _admissionFacts);
+                if (admission == Admission.Template)
                 {
                     LogInfo($"[TW-TEMPLATE] answer discarded, the game expands this in place: '{(normalizedKey.Length > 60 ? normalizedKey.Substring(0, 60) : normalizedKey)}'");
                     return;
                 }
-
-                // Last stop before an entry exists: every route that creates one passes here, so this
-                // is where the read-back guard finally belongs. Guarding the queue, then the
-                // synchronous translate path, each time left another route open — the same
-                // target-language key kept coming back. A key we can recognise as our own translation
-                // wearing a different decoration must never become an entry, whoever asked for it.
-                // The stack is logged once so the caller that got this far is named, not guessed at.
-                if (IsReadbackOfOwnTranslation(normalizedKey, toModUi))
+                if (admission == Admission.AlreadyTarget)
                 {
+                    // Every route that creates an entry passes here, so the stack is logged once:
+                    // the caller that got this far is named, not guessed at.
                     if (_readbackStoreLogged < 3)
                     {
                         _readbackStoreLogged++;
@@ -6007,34 +5999,34 @@ namespace UnityGameTranslator.Core
                 return false;
             }
 
-            // 🔴 Presentation forms never enter the queue — so they can never become a cache KEY.
-            // Two ways such text reaches a gate: our own composed output read back during the
-            // short window where a cache reload emptied the presented→logical table (the
-            // registration is gone, the screen still shows shaped text), and a game that ships
-            // its own RTL support (RTLTMPro hands the base setter shaped strings). The first is
-            // ours and must be dropped; the second is a real source this project cannot
-            // translate yet (unshaping is ambiguous — issue #24 scope, §6.4-4): logged so the
-            // limitation is visible instead of silent.
-            if (text != null && TextShaping.RtlText.ContainsPresentationForms(text))
-            {
-                if (_shapedQueueRefusals++ < 3)
-                    LogWarning($"[Queue] Refused presentation-form text as a source key (own composed output, or a game already shipping shaped RTL — not translatable yet): '{(text.Length > 40 ? text.Substring(0, 40) + "…" : text)}'");
-                return false;
-            }
             // Google/DeepL require online mode
             if (Config.ActiveBackendRequiresOnline && !Config.online_mode) return false;
             if (string.IsNullOrEmpty(text)) return false;
 
-            // ⚠ Counted BEFORE the refusal below, so the tally covers every text this door meets
+            // ⚠ Counted BEFORE the refusals below, so the tally covers every text this door meets
             // rather than only the ones it lets through. See NotePrivateUseShare.
             NotePrivateUseShare(text);
 
-            if (IsNumericOrSymbol(text)) return false;
-
-            // A template the game expands in place. Refused at this door rather than in the worker,
-            // so nothing is queued at all: no line in the notice that says a translation is running,
-            // and no call. See TextRouter.IsExpandedInPlace.
-            if (Router.IsExpandedInPlace(text)) return false;
+            // What the TEXT is refused for — one rule with the replay and every engine
+            // (Engine/TextAdmission). What is said about a refusal stays here, with the log.
+            var admission = TextAdmission.ForQueue(text, isOwnUI, _admissionFacts);
+            if (admission == Admission.PresentationForms)
+            {
+                // The second way in (a game shipping its own shaping) is a real source this project
+                // cannot translate yet: logged so the limitation is visible instead of silent.
+                if (_shapedQueueRefusals++ < 3)
+                    LogWarning($"[Queue] Refused presentation-form text as a source key (own composed output, or a game already shipping shaped RTL — not translatable yet): '{(text.Length > 40 ? text.Substring(0, 40) + "…" : text)}'");
+                return false;
+            }
+            if (admission == Admission.TooLong)
+            {
+                // Once per text: this runs on every scan, and a warning repeated forever is noise.
+                // Silence would be worse — a line that never gets translated has to say why.
+                if (_queue.NoteTooLong(text))
+                    Adapter?.LogWarning($"[Queue] Text too long ({text.Length} chars, limit {Limits.AiTextLength}), left untranslated");
+                return false;
+            }
+            if (admission != Admission.Admitted) return false;
 
             // 🔴 The server has stopped answering. Nothing new goes in — a queue filling behind a
             // dead server is work nobody will get, and every entry would carry its own notice — but
@@ -6045,46 +6037,6 @@ namespace UnityGameTranslator.Core
             // the state is an ANSWER. Refusing everything instead would be a deadlock: nothing
             // would ever ask again, so nothing would ever answer.
             if (_backendSilent && (_queue.Count > 0 || isTranslating))
-                return false;
-
-            // Longer than any backend will accept. Refused HERE, at the single door, rather than
-            // deeper down where the refusal used to be recorded as a cache entry tagged "S".
-            //
-            // That entry was an aberration twice over. The cache key IS the source text, and the
-            // value was the same text again, so a credits or licence blob added some thirty
-            // kilobytes to translations.json — a file that is uploaded, hashed, merged and shown.
-            // And it recorded a technical give-up under the tag that means "a human decided to
-            // keep this as it is", which is the tag the quality score is about to rely on.
-            //
-            // Nothing is stored now: the line stays untranslated in the game, which is the honest
-            // signal, and the check being deterministic on the text itself, the scanner simply
-            // turns back here on every pass — nothing queued, nothing sent.
-            if (text.Length > Limits.AiTextLength)
-            {
-                // Once per text: this runs on every scan, and a warning repeated forever is
-                // noise. Silence would be worse — a line that never gets translated has to say
-                // why somewhere.
-                if (_queue.NoteTooLong(text))
-                    Adapter?.LogWarning($"[Queue] Text too long ({text.Length} chars, limit {Limits.AiTextLength}), left untranslated");
-                return false;
-            }
-            // Last line of defence, here rather than only at the call sites: this is the single door
-            // into the queue, and guarding the two obvious callers still let target-language text
-            // through by other routes (a stored entry whose translation was already indexed came back
-            // and was translated again, drifting). Own UI is exempt: its labels are source text we
-            // produce ourselves, never a read-back of the game's rendering — and its own submitters
-            // already refuse a label the interface file knows (see IsOwnUITextKnown).
-            //
-            // ⚠ The game's index is the one asked, and it is now the game's ALONE: it used to hold
-            // the interface's translations too, so a label of ours could declare a game text
-            // "already in the target language" and keep it out of the file for good.
-            if (!isOwnUI && IsAlreadyTargetText(text)) return false;
-
-            // Given up this session: the worker would only skip it. Refused here, at the door, so
-            // a tooltip hovered again does not come back into the queue — and into the count the
-            // player watches — on every pass. What reopens it is a person asking for it again
-            // (ForgetRefused), never another hover.
-            if (_queue.WasRefused(TextGate.KeyShape(text, isOwnUI, GameVariables.Instance, Config.normalize_numbers, out _, out _)))
                 return false;
 
             _queue.Submit(text, component, isOwnUI, out bool isNew, out int queueSize);
@@ -6358,6 +6310,18 @@ namespace UnityGameTranslator.Core
         /// texts built in parts, read-backs, late translations put back (Engine/TextRouter).
         /// </summary>
         internal static readonly TextRouter Router = new TextRouter(new RouterHost());
+
+        /// <summary>The facts TextAdmission reads, as this mod holds them.</summary>
+        private static readonly IAdmissionFacts _admissionFacts = new AdmissionFacts();
+
+        private sealed class AdmissionFacts : IAdmissionFacts
+        {
+            public bool IsExpandedInPlace(string text) => Router.IsExpandedInPlace(text);
+            public bool IsAlreadyTarget(string text) => IsAlreadyTargetText(text);
+            public bool IsReadback(string key, bool ownUi) => IsReadbackOfOwnTranslation(key, ownUi);
+            public bool WasGivenUp(string text, bool ownUi)
+                => _queue.WasRefused(TextGate.KeyShape(text, ownUi, GameVariables.Instance, Config.normalize_numbers, out _, out _));
+        }
 
         /// <summary>
         /// What the router asks of Unity and of this mod, answered from the same places the code

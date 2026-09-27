@@ -152,6 +152,11 @@
     <Compile Include="../../UnityGameTranslator.Core/Engine/TextRouter*.cs" />
     <Compile Include="../../UnityGameTranslator.Core/Engine/TextTrace.cs" />
     <!--
+      What the TEXT is refused for at the queue's door and at the store — the rule the mod applies
+      and the replay applies, so the corpus sees a refusal the way a game would.
+    -->
+    <Compile Include="../../UnityGameTranslator.Core/Engine/TextAdmission.cs" />
+    <!--
       "Is this text one of OUR translations coming back?" — the anti-loop device every gate asks
       first. Too wide, it refuses genuine source text and the game stays untranslated in silence;
       too narrow, our own output is queued as a new source and published under a target-language

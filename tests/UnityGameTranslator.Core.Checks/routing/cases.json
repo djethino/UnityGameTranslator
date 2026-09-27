@@ -280,6 +280,19 @@
       "queued": [ "Armor: 3" ]
     },
     {
+      "id": "readback/our-translation-applied-in-the-frame-of-its-source-is-ours",
+      "why": "🔴 seen in a capture (2026-09-27): the game writes `Text`, and in the same frame the answer comes back and is applied, `Texte`. A translation that begins with its source read as the game appending `e` — two writes in one frame, the second growing the first: flagged as an assembly, the screen showed `Textee` and `e` went to the model. The text is exactly what the file translates the last one into: our own output",
+      "file": {},
+      "steps": [
+        {"f": 1, "t": 0.0, "write": "Text", "shows": "Text"},
+        {"f": 60, "t": 1.0, "tick": true},
+        {"f": 90, "t": 1.5, "write": "Text", "shows": "Text"},
+        {"f": 90, "t": 1.5, "arrive": {"o": "Text", "tr": "Texte"}, "shows": "Texte"},
+        {"f": 150, "t": 2.5, "tick": true, "shows": "Texte"}
+      ],
+      "queued": ["Text"]
+    },
+    {
       "id": "readback/a-page-appended-to-our-translation",
       "why": "a book written sentence by sentence onto the component: the whole page when the file has it, the new sentence alone otherwise, a late answer put back into the page",
       "file": {

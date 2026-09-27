@@ -109,6 +109,28 @@ namespace UnityGameTranslator.Core
                     // original), so re-asserting it is free.
                     return RouteOutcome.StopButRescale;
                 }
+
+                // 🔴 **Our translation of what the component showed is OUR output, never the game
+                // growing its text.** A late answer is applied through the setter, often in the very
+                // frame the game wrote the source: `Text` written by the game, `Texte` by us. A
+                // translation that begins with its source then read as the game appending `e` —
+                // two writes in one frame, the second growing the first — so the component was
+                // flagged as an assembly, showed the translation plus `e` ("Textee", seen in a
+                // capture, 2026-09-27) and sent `e` to the model. Asked of the file, not of a size
+                // or a language: the text is exactly what the file translates the last one into.
+                //
+                // ⚠ Asked only of a write that GROWS the last one — the shape that is mistaken —
+                // so a lookup is not added to every write: our translation that does not begin
+                // with its source is recognised further on, as a text already translated.
+                string heldSource = state.LastRaw;
+                if (!string.IsNullOrEmpty(heldSource) && TextRelations.Grows(heldSource, textValue)
+                    && TranslationOf(heldSource, isOwnUI, isOwnUI ? _host.OwnUiStore : _host.GameStore) == textValue)
+                {
+                    if (comp != null) _host.StoreOriginal(comp, heldSource);
+                    TrackTranslation(compId, heldSource, textValue);
+                    state.LastTranslated = textValue;
+                    return RouteOutcome.Translated;
+                }
             }
 
             // === Frame tracking for concat detection ===

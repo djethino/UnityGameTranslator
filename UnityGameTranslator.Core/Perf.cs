@@ -61,7 +61,13 @@ namespace UnityGameTranslator.Core
         internal const int TmpLayout = 21;       // the GenerateTextMesh postfix (input fields, probe)
         internal const int Reveal = 22;          // the maxVisibleCharacters setter prefix (RevealScale)
         internal const int RenderWatch = 23;     // TranslatorScanner.TickRenderWatch, every frame before the draw
-        private const int SlotCount = 24;
+
+        // Every engine lookup, whoever asks (scanner, fonts, images, variables, inspector) — the
+        // scanner's own slot above covers one caller, and a lookup of every component or every
+        // MonoBehaviour elsewhere is an atomic call no per-frame budget can split.
+        internal const int FindAll = 24;         // TypeHelper.FindAllObjectsOfType, the whole call
+        internal const int SceneFilter = 25;     // ...of which: keeping only what a scene holds (OnlyInScene)
+        private const int SlotCount = 26;
 
         private static readonly string[] Names =
         {
@@ -70,6 +76,7 @@ namespace UnityGameTranslator.Core
             "Scan.Find", "UITK.Cycle", "UITK.Setter", "Scan.Process", "Scan.Text",
             "Scan.Gate", "Scan.Translate", "Scan.Apply",
             "Setter", "Setter.Note", "Setter.Release", "TMP.Layout", "Reveal", "RenderWatch",
+            "Find.All", "Scene.Filter",
         };
 
         private static readonly long[] _ticks = new long[SlotCount];

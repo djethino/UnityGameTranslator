@@ -1496,6 +1496,13 @@ namespace UnityGameTranslator.Core
         public static UnityEngine.Object[] FindAllObjectsOfType(Type type)
         {
             if (type == null) return new UnityEngine.Object[0];
+            long t = Perf.Start();
+            try { return FindAllObjectsOfTypeUntimed(type); }
+            finally { Perf.Stop(Perf.FindAll, t); }
+        }
+
+        private static UnityEngine.Object[] FindAllObjectsOfTypeUntimed(Type type)
+        {
 
             // IL2CPP path: use Il2CppType.Of<T>() pattern
             if (_il2cppHelpersInitialized && _il2cppTypeOfMethod != null && _il2cppResourcesFindAllMethod != null
@@ -1571,7 +1578,13 @@ namespace UnityGameTranslator.Core
         {
             if (found == null || found.Length == 0 || _sceneMembershipRefused) return found;
             if (!typeof(Component).IsAssignableFrom(type) && type != typeof(GameObject)) return found;
+            long t = Perf.Start();
+            try { return OnlyInSceneUntimed(found); }
+            finally { Perf.Stop(Perf.SceneFilter, t); }
+        }
 
+        private static UnityEngine.Object[] OnlyInSceneUntimed(UnityEngine.Object[] found)
+        {
             // Nothing is allocated when every object is in a scene — the usual answer.
             List<UnityEngine.Object> kept = null;
             for (int i = 0; i < found.Length; i++)

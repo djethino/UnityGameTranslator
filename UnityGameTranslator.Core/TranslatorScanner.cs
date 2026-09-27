@@ -65,11 +65,13 @@ namespace UnityGameTranslator.Core
             // Set up IL2CPP cache for this type if available
             if (il2cppScanAvailable && il2cppTypeOfMethod != null)
             {
+                // Reflection into the game's runtime: a type it does not know refuses here, and no
+                // condition can tell beforehand. Said, since that type then goes unscanned on IL2CPP.
                 try
                 {
                     type.IL2CPPType = il2cppTypeOfMethod.MakeGenericMethod(type.ComponentType).Invoke(null, null);
                 }
-                catch { }
+                catch (Exception ex) { Faults.Say("Scanner.RegisterType Il2CppType.Of", ex, $"{type.Name}: not scanned through IL2CPP"); }
 
                 if (tryCastMethod != null)
                 {
@@ -77,7 +79,7 @@ namespace UnityGameTranslator.Core
                     {
                         type.TryCastMethod = tryCastMethod.MakeGenericMethod(type.ComponentType);
                     }
-                    catch { }
+                    catch (Exception ex) { Faults.Say("Scanner.RegisterType TryCast", ex, $"{type.Name}: found objects are not cast"); }
                 }
             }
 
@@ -356,10 +358,6 @@ namespace UnityGameTranslator.Core
 
         #region Unified Scan
 
-        /// <summary>
-        /// Unified scan method - replaces ScanMono() and ScanIL2CPP().
-        /// Works for both Mono and IL2CPP runtimes.
-        /// </summary>
         // === PROFILING (activate via debug file in plugin folder) ===
         private static readonly System.Diagnostics.Stopwatch _scanProfSw = new System.Diagnostics.Stopwatch();
         private static long _scanProfRefreshTicks = 0;
@@ -371,6 +369,7 @@ namespace UnityGameTranslator.Core
         private static int _scanProfRefreshCount = 0;
         private static float _scanProfLastLog = 0f;
 
+        /// <summary>One tick of the scanner, on both Mono and IL2CPP runtimes.</summary>
         public static void Scan()
         {
             // Apply any pending translations from AI (main thread) - always do this
@@ -492,7 +491,10 @@ namespace UnityGameTranslator.Core
                 scanCycleComplete = _round.Complete;
                 if (scanCycleComplete) _batchTypeStart = 0;
             }
-            catch { }
+            // Runs every frame: let through, a failure here would be logged by the tick on every
+            // frame and stop the rest of it. Said once, then counted — a round that keeps failing
+            // never completes, and that must show.
+            catch (Exception ex) { Faults.Say("Scanner.Scan per-component pass", ex); }
 
             if (profiling)
             {
@@ -851,9 +853,11 @@ namespace UnityGameTranslator.Core
 
             foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
             {
+                // Assembly.GetType(name) answers null for a name it does not hold, but throws when
+                // the assembly needs a file this game does not have — which no condition can tell
+                // beforehand. That assembly is then skipped, and said.
                 try
                 {
-                    // Try exact name first
                     var type = asm.GetType(fullName);
                     if (type != null) return type;
 
@@ -866,21 +870,17 @@ namespace UnityGameTranslator.Core
                         if (type != null) return type;
                     }
                 }
-                catch { }
+                catch (Exception ex) { Faults.Say("Scanner.FindType", ex, $"{asm.GetName().Name} skipped while looking for {fullName}"); }
             }
 
             // Last resort: scan all types by class name (handles any namespace prefix)
             foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
             {
-                try
+                foreach (var type in AssemblyTypes.Of(asm))
                 {
-                    foreach (var type in asm.GetTypes())
-                    {
-                        if (type.Name == className && !type.IsAbstract)
-                            return type;
-                    }
+                    if (type.Name == className && !type.IsAbstract)
+                        return type;
                 }
-                catch { }
             }
             return null;
         }
@@ -949,9 +949,19 @@ namespace UnityGameTranslator.Core
             }
             else if (type.IL2CPPNativeState == StrategyState.Works)
             {
-                var found = FindAllComponentsIL2CPPCached(type.IL2CPPType);
-                if (found != null && found.Length > 0) return found;
-                type.IL2CPPNativeState = StrategyState.Empty;
+                // The runtime's own search, which may stop answering: dropped and said, as in the
+                // discovery path below, rather than failing again on every refresh.
+                try
+                {
+                    var found = FindAllComponentsIL2CPPCached(type.IL2CPPType);
+                    if (found != null && found.Length > 0) return found;
+                    type.IL2CPPNativeState = StrategyState.Empty;
+                }
+                catch (Exception ex)
+                {
+                    type.IL2CPPNativeState = StrategyState.Failed;
+                    Faults.Say("Scanner.FindComponents IL2CPP native", ex, $"{type.Name}: this way of finding it is dropped");
+                }
             }
             else if (type.StaticListsState == StrategyState.Works)
             {
@@ -981,7 +991,13 @@ namespace UnityGameTranslator.Core
                     }
                     type.IL2CPPNativeState = StrategyState.Empty;
                 }
-                catch { type.IL2CPPNativeState = StrategyState.Failed; }
+                // Given up for the session — and said, since it is the first thing to know when a
+                // game's texts are not found.
+                catch (Exception ex)
+                {
+                    type.IL2CPPNativeState = StrategyState.Failed;
+                    Faults.Say("Scanner.FindComponents IL2CPP native", ex, $"{type.Name}: this way of finding it is dropped");
+                }
             }
 
             // Strategy 2: TypeHelper
@@ -1000,7 +1016,11 @@ namespace UnityGameTranslator.Core
                     }
                     type.TypeHelperState = StrategyState.Empty;
                 }
-                catch { type.TypeHelperState = StrategyState.Failed; }
+                catch (Exception ex)
+                {
+                    type.TypeHelperState = StrategyState.Failed;
+                    Faults.Say("Scanner.FindComponents TypeHelper", ex, $"{type.Name}: this way of finding it is dropped");
+                }
             }
 
             // Strategy 3: Static lists
@@ -1018,7 +1038,11 @@ namespace UnityGameTranslator.Core
                     }
                     type.StaticListsState = StrategyState.Empty;
                 }
-                catch { type.StaticListsState = StrategyState.Failed; }
+                catch (Exception ex)
+                {
+                    type.StaticListsState = StrategyState.Failed;
+                    Faults.Say("Scanner.FindComponents static lists", ex, $"{type.Name}: this way of finding it is dropped");
+                }
             }
 
             return null;
@@ -1113,9 +1137,8 @@ namespace UnityGameTranslator.Core
                         var type = _phase2Types[t];
                         bool matches = false;
 
-                        // Try IsInstanceOfType first (works on Mono)
-                        try { matches = type.ComponentType.IsInstanceOfType(obj); }
-                        catch { }
+                        // IsInstanceOfType first (works on Mono). It answers false, it never throws.
+                        matches = type.ComponentType.IsInstanceOfType(obj);
 
                         // Fallback: match by type name (handles IL2CPP proxy types where
                         // IsInstanceOfType doesn't recognize the runtime proxy).
@@ -1210,44 +1233,6 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// Strategy 1: IL2CPP native scan via cached Il2CppType.
-        /// Throws on fundamental failure (marks strategy as Failed).
-        /// </summary>
-        private static void TryAddFromIL2CPPNative(RegisteredTextType type, List<UnityEngine.Object> results, HashSet<int> seenIds)
-        {
-            if (!il2cppScanAvailable || type.IL2CPPType == null) return;
-
-            // Let exceptions propagate for strategy state tracking
-            var found = FindAllComponentsIL2CPPCached(type.IL2CPPType);
-            if (found == null) return;
-            foreach (var obj in found)
-            {
-                if (obj == null) continue;
-                int id = obj.GetInstanceID();
-                if (seenIds.Add(id))
-                    results.Add(obj);
-            }
-        }
-
-        /// <summary>
-        /// Strategy 2: TypeHelper (Resources.FindObjectsOfTypeAll).
-        /// Throws on fundamental failure (marks strategy as Failed).
-        /// </summary>
-        private static void TryAddFromTypeHelper(RegisteredTextType type, List<UnityEngine.Object> results, HashSet<int> seenIds)
-        {
-            // Let exceptions propagate for strategy state tracking
-            var found = TypeHelper.FindAllObjectsOfType(type.ComponentType);
-            if (found == null) return;
-            foreach (var obj in found)
-            {
-                if (obj == null) continue;
-                int id = obj.GetInstanceID();
-                if (seenIds.Add(id))
-                    results.Add(obj);
-            }
-        }
-
-        /// <summary>
         /// Strategy 3: Static list fields (NGUI mList, etc.).
         /// Throws on fundamental failure (marks strategy as Failed).
         /// </summary>
@@ -1281,9 +1266,18 @@ namespace UnityGameTranslator.Core
                         continue;
                 }
 
+                // A static of an open generic type has no value to read: recognised, not caught.
+                if (field.DeclaringType != null && field.DeclaringType.ContainsGenericParameters) continue;
+
+                // Reading the static runs the game's static constructor if it has not run yet,
+                // which may throw anything: said, and this field skipped.
                 object listObj = null;
                 try { listObj = field.GetValue(null); }
-                catch { continue; }
+                catch (Exception ex)
+                {
+                    Faults.Say("Scanner.TryAddFromStaticLists", ex, $"{componentType.Name}.{field.Name} not read");
+                    continue;
+                }
                 if (listObj == null) continue;
 
                 var items = ExtractObjectsFromList(listObj, componentType);
@@ -1344,7 +1338,9 @@ namespace UnityGameTranslator.Core
                     }
                 }
             }
-            catch { }
+            // A walk over every component of the scene, run by the refresh: a failure here skips
+            // this type for this refresh, and is said.
+            catch (Exception ex) { Faults.Say("Scanner.TryAddFromMonoBehaviourFilter", ex, $"{type.ComponentType.Name} not found this refresh"); }
         }
 
         /// <summary>
@@ -1404,7 +1400,9 @@ namespace UnityGameTranslator.Core
                     if (results.Count > 0) return results.ToArray();
                 }
             }
-            catch { }
+            // The game's own collection, read through its own code (an indexer, an enumerator it
+            // may be changing while we read): said, and nothing taken from it this time.
+            catch (Exception ex) { Faults.Say("Scanner.ExtractObjectsFromList", ex, $"{listObj.GetType().Name} of {expectedType.Name}"); }
 
             return null;
         }
@@ -1450,13 +1448,14 @@ namespace UnityGameTranslator.Core
 
             // Generic types: use font property directly
             if (type.FontProp == null) return null;
+            // The getter of a game's own text component: its code, which may throw.
             try
             {
                 var fontObj = type.FontProp.GetValue(component, null);
                 if (fontObj is UnityEngine.Object uobj && !string.IsNullOrEmpty(uobj.name))
                     return uobj.name;
             }
-            catch { }
+            catch (Exception ex) { Faults.Say("Scanner.GetFontNameForType", ex, $"{type.Name}.{type.FontProp.Name}"); }
             return null;
         }
 
@@ -1649,7 +1648,10 @@ namespace UnityGameTranslator.Core
                 }
                 finally { Perf.Stop(Perf.ScanApply, tApply); }
             }
-            catch { }
+            // One component of the game — its setter, its mesh, and the router deciding about its
+            // text: one that fails must not stop the others, and must be said. This used to be a
+            // `catch { }`, behind which every error the router raised here disappeared.
+            catch (Exception ex) { Faults.Say("Scanner.ProcessOneComponent", ex, type.Name); }
         }
 
         #endregion
@@ -1709,7 +1711,9 @@ namespace UnityGameTranslator.Core
                                 restored++;
                             }
                         }
-                        catch { }
+                        // Writing into the game's component runs its setter: one that fails keeps
+                        // its translation, the others are restored, and it is said.
+                        catch (Exception ex) { Faults.Say("Scanner.RestoreAllOriginals", ex, type.Name); }
                     }
                 }
 
@@ -1718,12 +1722,15 @@ namespace UnityGameTranslator.Core
                 // covers. Without it they keep displaying the old translation, which the
                 // scanner would then queue for AI as if it were untranslated source text.
                 List<KeyValuePair<int, object>> patchRefs;
-                try { patchRefs = new List<KeyValuePair<int, object>>(TranslatorPatches.PatchedComponentRefs); }
-                catch { patchRefs = new List<KeyValuePair<int, object>>(); }
+                // Written by the text setters' prefixes, on the main thread, as this runs: a copy cannot
+                // meet a write in progress (it used to be caught, and read as "no component").
+                patchRefs = new List<KeyValuePair<int, object>>(TranslatorPatches.PatchedComponentRefs);
 
                 foreach (var kvp in patchRefs)
                 {
                     if (kvp.Value == null || processedIds.Contains(kvp.Key)) continue;
+                    // Destroyed since the patch saw it: the reference outlives the object.
+                    if (kvp.Value is UnityEngine.Object gone && gone == null) continue;
                     try
                     {
                         string original = GetOriginalText(kvp.Key);
@@ -1739,7 +1746,7 @@ namespace UnityGameTranslator.Core
                         ClearOriginalText(kvp.Key);
                         restored++;
                     }
-                    catch { }
+                    catch (Exception ex) { Faults.Say("Scanner.RestoreAllOriginals patch-seen", ex, kvp.Value.GetType().Name); }
                 }
 
                 if (restored > 0)
@@ -1830,8 +1837,9 @@ namespace UnityGameTranslator.Core
                 // These are components in inactive GameObjects that got their text set
                 // before becoming visible — the setter prefix saw them but the scanner didn't.
                 List<KeyValuePair<int, object>> patchRefs;
-                try { patchRefs = new List<KeyValuePair<int, object>>(TranslatorPatches.PatchedComponentRefs); }
-                catch { patchRefs = new List<KeyValuePair<int, object>>(); }
+                // Written by the text setters' prefixes, on the main thread, as this runs: a copy cannot
+                // meet a write in progress (it used to be caught, and read as "no component").
+                patchRefs = new List<KeyValuePair<int, object>>(TranslatorPatches.PatchedComponentRefs);
 
                 // ⚠ **One implementation, in RefreshPatchRef** — the spread walks the same list
                 // over several frames, and a second copy of this would be free to drift from it.
@@ -1978,8 +1986,9 @@ namespace UnityGameTranslator.Core
                 }
             }
 
-            try { pass.PatchRefs = new List<KeyValuePair<int, object>>(TranslatorPatches.PatchedComponentRefs); }
-            catch { pass.PatchRefs = new List<KeyValuePair<int, object>>(); }
+            // Written by the text setters' prefixes, on the main thread, as this runs: a copy cannot
+            // meet a write in progress (it used to be caught, and read as "no component").
+            pass.PatchRefs = new List<KeyValuePair<int, object>>(TranslatorPatches.PatchedComponentRefs);
 
             if (_spread != null)
                 TranslatorCore.LogDebug("[SPREAD-REFRESH] a new one replaces the pass still running");
@@ -2106,6 +2115,9 @@ namespace UnityGameTranslator.Core
         {
             if (probe != null) probe.Seen++;
 
+            // Destroyed since the patch saw it: the reference outlives the object.
+            if (kvp.Value == null || (kvp.Value is UnityEngine.Object gone && gone == null)) return;
+
             try
             {
                 long tMark = probe?.Watch.ElapsedTicks ?? 0;
@@ -2198,7 +2210,9 @@ namespace UnityGameTranslator.Core
                 if (probe != null) probe.DirtyTicks += probe.Watch.ElapsedTicks - tMark;
                 refreshed++;
             }
-            catch { }
+            // The game's setter and getter, and the mesh rebuild: one component that fails keeps
+            // what it shows, the others are refreshed, and it is said.
+            catch (Exception ex) { Faults.Say("Scanner.RefreshPatchRef", ex, kvp.Value.GetType().Name); }
         }
 
         /// <summary>
@@ -2333,7 +2347,9 @@ namespace UnityGameTranslator.Core
                     refreshed++;
                 }
             }
-            catch { }
+            // The game's setter and the mesh rebuild, per component: one that fails is said, and
+            // the refresh goes on with the others.
+            catch (Exception ex) { Faults.Say("Scanner.RefreshComponent", ex, type.Name); }
             finally { _phApply += System.Diagnostics.Stopwatch.GetTimestamp() - _t; }
         }
 
@@ -2478,7 +2494,7 @@ namespace UnityGameTranslator.Core
                     return 1;
                 }
             }
-            catch { }
+            catch (Exception ex) { Faults.Say("Scanner.RestoreComponentForFont", ex, type.Name); }
             return 0;
         }
 
@@ -2548,7 +2564,7 @@ namespace UnityGameTranslator.Core
                     return 1;
                 }
             }
-            catch { }
+            catch (Exception ex) { Faults.Say("Scanner.RefreshComponentForFont", ex, type.Name); }
             return 0;
         }
 
@@ -2614,23 +2630,27 @@ namespace UnityGameTranslator.Core
                             processedIds.Add(id);
                             HighlightComponent(component, id, fontName);
                         }
-                        catch { }
+                        // The component's colour, through the game's own graphic: one that fails
+                        // is left as it is, the others are highlighted, and it is said.
+                        catch (Exception ex) { Faults.Say("Scanner.HighlightFont", ex, type.Name); }
                     }
                 }
 
                 // Pass 2: components seen by the patch but not in scanner cache
                 List<KeyValuePair<int, object>> patchRefsSnapshot;
-                try { patchRefsSnapshot = new List<KeyValuePair<int, object>>(TranslatorPatches.PatchedComponentRefs); }
-                catch { patchRefsSnapshot = new List<KeyValuePair<int, object>>(); }
+                // Written by the text setters' prefixes, on the main thread, as this runs: a copy cannot
+                // meet a write in progress (it used to be caught, and read as "no component").
+                patchRefsSnapshot = new List<KeyValuePair<int, object>>(TranslatorPatches.PatchedComponentRefs);
                 foreach (var kvp in patchRefsSnapshot)
                 {
                     if (processedIds.Contains(kvp.Key)) continue;
-                    if (kvp.Value == null) continue;
+                    // Destroyed since the patch saw it: the reference outlives the object.
+                    if (kvp.Value == null || (kvp.Value is UnityEngine.Object gone && gone == null)) continue;
                     try
                     {
                         HighlightComponent(kvp.Value, kvp.Key, fontName);
                     }
-                    catch { }
+                    catch (Exception ex) { Faults.Say("Scanner.HighlightFont patch-seen", ex, kvp.Value.GetType().Name); }
                 }
 
                 // Keep Animators disabled during highlight (diagnostic mode).
@@ -2672,39 +2692,38 @@ namespace UnityGameTranslator.Core
         {
             if (_highlightedFontName == null && _highlightOriginalColors.Count == 0) return;
 
-            try
+            // Restore from scanner cache
+            foreach (var type in _registeredTypes)
             {
-                // Restore from scanner cache
-                foreach (var type in _registeredTypes)
+                if (type.CachedComponents == null) continue;
+                foreach (var obj in type.CachedComponents)
                 {
-                    if (type.CachedComponents == null) continue;
-                    foreach (var obj in type.CachedComponents)
+                    if (obj == null) continue;
+                    try
                     {
-                        if (obj == null) continue;
-                        try
-                        {
-                            object component = ResolveComponent(obj, type);
-                            if (component == null) continue;
-                            int id = TypeHelper.GetInstanceID(component);
-                            if (id == -1) continue;
-                            RestoreComponentColor(component, id);
-                        }
-                        catch { }
+                        object component = ResolveComponent(obj, type);
+                        if (component == null) continue;
+                        int id = TypeHelper.GetInstanceID(component);
+                        if (id == -1) continue;
+                        RestoreComponentColor(component, id);
                     }
-                }
-
-                // Restore from patch-tracked components (not in scanner cache)
-                List<KeyValuePair<int, object>> clearSnapshot;
-                try { clearSnapshot = new List<KeyValuePair<int, object>>(TranslatorPatches.PatchedComponentRefs); }
-                catch { clearSnapshot = new List<KeyValuePair<int, object>>(); }
-                foreach (var kvp in clearSnapshot)
-                {
-                    if (kvp.Value == null) continue;
-                    try { RestoreComponentColor(kvp.Value, kvp.Key); }
-                    catch { }
+                    // One component whose colour cannot be put back keeps the highlight; said.
+                    catch (Exception ex) { Faults.Say("Scanner.ClearHighlight", ex, type.Name); }
                 }
             }
-            catch { }
+
+            // Restore from patch-tracked components (not in scanner cache)
+            List<KeyValuePair<int, object>> clearSnapshot;
+            // Written by the text setters' prefixes, on the main thread, as this runs: a copy cannot
+            // meet a write in progress (it used to be caught, and read as "no component").
+            clearSnapshot = new List<KeyValuePair<int, object>>(TranslatorPatches.PatchedComponentRefs);
+            foreach (var kvp in clearSnapshot)
+            {
+                // Destroyed since the patch saw it: the reference outlives the object.
+                if (kvp.Value == null || (kvp.Value is UnityEngine.Object gone && gone == null)) continue;
+                try { RestoreComponentColor(kvp.Value, kvp.Key); }
+                catch (Exception ex) { Faults.Say("Scanner.ClearHighlight patch-seen", ex, kvp.Value.GetType().Name); }
+            }
 
             // The UI Toolkit half keeps its own record — no instance id to key one here.
             UIToolkitSupport.ClearHighlight();
@@ -3152,7 +3171,12 @@ namespace UnityGameTranslator.Core
                         TextTrace.Apply(skipId, late == TextRouter.LateOutcome.Reassembled ? "reassemble" : "skip", TypeHelper.GetText(comp));
                     }
                 }
-                catch { }
+                // 🔴 One component of the game receiving a late answer — the router's decision,
+                // the game's setter, its mesh: one that fails must not keep the answer from the
+                // others. This was a `catch { }`: every error the router raised while putting a late
+                // translation back on screen disappeared here, and the line stayed untranslated
+                // with nothing anywhere to say why.
+                catch (Exception ex) { Faults.Say("Scanner.ApplyTranslationToComponents", ex, comp?.GetType().Name); }
             }
         }
 
@@ -3227,7 +3251,9 @@ namespace UnityGameTranslator.Core
                     e.StableSince = Time.realtimeSinceStartup;
                     TranslatorCore.LogDebug($"[RenderWatch] comp={kvp.Key} same-length break — nudged (+space) to re-run reveal cleanly");
                 }
-                catch { }
+                // The game's setter, which re-runs its reveal: one that fails keeps its stalled
+                // text, and it is said.
+                catch (Exception ex) { Faults.Say("Scanner.ApplyPendingNudges", ex, e.Comp.GetType().Name); }
             }
         }
 
@@ -3313,7 +3339,14 @@ namespace UnityGameTranslator.Core
                         (expired ??= new List<int>()).Add(kvp.Key);
                     }
                 }
-                catch { }
+                // Reading and forcing the glyphs of a mesh the game animates, every frame, just
+                // before the draw: one that fails is said, and dropped from the watch rather than
+                // failing again on every frame.
+                catch (Exception ex)
+                {
+                    Faults.Say("Scanner.TickRenderWatch", ex, e.Comp.GetType().Name);
+                    (expired ??= new List<int>()).Add(kvp.Key);
+                }
             }
 
             if (expired != null)
@@ -3331,6 +3364,8 @@ namespace UnityGameTranslator.Core
         {
             if (obj == null || typedTryCastMethod == null) return null;
 
+            // TryCast answers null when the object is not of that type; it throws only when the
+            // runtime refuses the call — which is said, since the component is then never reached.
             try
             {
                 if (tryCastMethod != null && tryCastMethod.IsStatic)
@@ -3338,7 +3373,7 @@ namespace UnityGameTranslator.Core
                 else
                     return typedTryCastMethod.Invoke(obj, null);
             }
-            catch { }
+            catch (Exception ex) { Faults.Say("Scanner.TryCastToType", ex, typedTryCastMethod.ToString()); }
 
             return null;
         }
@@ -3347,57 +3382,29 @@ namespace UnityGameTranslator.Core
         {
             if (!il2cppScanAvailable || il2cppType == null) return null;
 
-            try
-            {
-                var result = resourcesFindAllMethod.Invoke(null, new[] { il2cppType });
-                if (result == null) return null;
+            // ⚠ Not caught here: its caller does, says it and drops this strategy. Caught here, a
+            // failure came back as "nothing found" — read as an empty scene, and tried again.
+            var result = resourcesFindAllMethod.Invoke(null, new[] { il2cppType });
+            if (result == null) return null;
 
-                var asArray = result as UnityEngine.Object[];
-                if (asArray == null)
+            var asArray = result as UnityEngine.Object[];
+            if (asArray == null)
+            {
+                var enumerable = result as System.Collections.IEnumerable;
+                if (enumerable != null)
                 {
-                    var enumerable = result as System.Collections.IEnumerable;
-                    if (enumerable != null)
+                    var list = new List<UnityEngine.Object>();
+                    foreach (var item in enumerable)
                     {
-                        var list = new List<UnityEngine.Object>();
-                        foreach (var item in enumerable)
-                        {
-                            if (item is UnityEngine.Object uobj)
-                                list.Add(uobj);
-                        }
-                        return list.ToArray();
+                        if (item is UnityEngine.Object uobj)
+                            list.Add(uobj);
                     }
-                    return null;
+                    return list.ToArray();
                 }
-
-                return asArray;
-            }
-            catch
-            {
                 return null;
             }
-        }
 
-        #endregion
-
-        #region Legacy API (backward compatibility)
-
-        /// <summary>
-        /// Legacy method - now delegates to Scan().
-        /// Kept for backward compatibility during migration.
-        /// </summary>
-        public static void ScanMono()
-        {
-            Scan();
-        }
-
-        /// <summary>
-        /// Legacy method - now delegates to Scan().
-        /// Kept for backward compatibility during migration.
-        /// </summary>
-        public static void ScanIL2CPP()
-        {
-            if (!il2cppMethodsInitialized) InitializeIL2CPP();
-            Scan();
+            return asArray;
         }
 
         #endregion
@@ -3441,7 +3448,9 @@ namespace UnityGameTranslator.Core
         {
             if (_lateUpdateCoroutine != null)
             {
-                try { UniverseLib.RuntimeHelper.StopCoroutine(_lateUpdateCoroutine); } catch { }
+                // At shutdown, while the game tears its objects down: said if it refuses.
+                try { UniverseLib.RuntimeHelper.StopCoroutine(_lateUpdateCoroutine); }
+                catch (Exception ex) { Faults.Say("Scanner.StopLateUpdateRunner", ex); }
                 _lateUpdateCoroutine = null;
             }
             _lateUpdateRunning = false;
@@ -3492,23 +3501,21 @@ namespace UnityGameTranslator.Core
                         foreach (var obj in type.CachedComponents)
                         {
                             if (obj == null) continue;
-                            try
-                            {
-                                object component = ResolveComponent(obj, type);
-                                if (component == null) continue;
-                                int id = TypeHelper.GetInstanceID(component);
-                                if (id == -1 || !processedIds.Add(id)) continue;
-                                _lateUpdateComponents.Add(new KeyValuePair<int, object>(id, component));
-                            }
-                            catch { }
+                            // ResolveComponent says its own failures (TryCastToType) and answers null.
+                            object component = ResolveComponent(obj, type);
+                            if (component == null) continue;
+                            int id = TypeHelper.GetInstanceID(component);
+                            if (id == -1 || !processedIds.Add(id)) continue;
+                            _lateUpdateComponents.Add(new KeyValuePair<int, object>(id, component));
                         }
                     }
 
                     // Patch-tracked components not in scanner cache
                     // Snapshot to avoid "Collection was modified" if prefix fires during iteration
                     List<KeyValuePair<int, object>> patchedSnapshot;
-                    try { patchedSnapshot = new List<KeyValuePair<int, object>>(TranslatorPatches.PatchedComponentRefs); }
-                    catch { patchedSnapshot = new List<KeyValuePair<int, object>>(); }
+                    // Written by the text setters' prefixes, on the main thread, as this runs: a copy cannot
+                    // meet a write in progress (it used to be caught, and read as "no component").
+                    patchedSnapshot = new List<KeyValuePair<int, object>>(TranslatorPatches.PatchedComponentRefs);
 
                     foreach (var kvp in patchedSnapshot)
                     {
@@ -3520,15 +3527,16 @@ namespace UnityGameTranslator.Core
                     _lateUpdateLastRebuild = now;
                 }
 
-                // Snapshot fontNameCache for thread safety
-                Dictionary<int, string> fontNameSnapshot;
-                try { fontNameSnapshot = new Dictionary<int, string>(TranslatorPatches.FontNameCache); }
-                catch { fontNameSnapshot = new Dictionary<int, string>(); }
+                // Written by the text setters' prefixes, on the main thread, as this coroutine runs:
+                // a copy cannot meet a write in progress (it used to be caught, and read as empty).
+                var fontNameSnapshot = new Dictionary<int, string>(TranslatorPatches.FontNameCache);
 
                 foreach (var kvp in _lateUpdateComponents)
                 {
                     int id = kvp.Key;
                     object component = kvp.Value;
+                    // Destroyed since the list was built: the reference outlives the object.
+                    if (component is UnityEngine.Object gone && gone == null) continue;
 
                     // Get font name from cache or component
                     string fontName;
@@ -3555,7 +3563,9 @@ namespace UnityGameTranslator.Core
                     }
                 }
             }
-            catch { }
+            // A coroutine run every frame: an exception escaping it would stop it for good. Said,
+            // and the next frame tries again.
+            catch (Exception ex) { Faults.Say("Scanner.OnLateUpdate", ex); }
         }
 
         #endregion

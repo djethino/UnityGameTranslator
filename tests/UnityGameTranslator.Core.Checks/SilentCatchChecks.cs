@@ -8,8 +8,9 @@ using Newtonsoft.Json.Linq;
 namespace UnityGameTranslator.Core.Checks
 {
     /// <summary>
-    /// No catch in the Core may swallow a failure without a word — a `catch { }`, or one that only
-    /// returns, continues or breaks.
+    /// No catch in the Core may swallow a failure without a word: every catch either says it (a
+    /// Log call, Faults.Say) or lets it go on (throw). A `catch { }`, one that only returns,
+    /// continues or breaks, one that quietly hands back a default — all the same blindness.
     ///
     /// 🔴 **Why it is a check and not a rule in a document**: the rule existed
     /// (.claude/rules/general-coding.md, "You never fallback to hide legitimate errors") and 375 of
@@ -24,16 +25,52 @@ namespace UnityGameTranslator.Core.Checks
     /// </summary>
     internal static class SilentCatchChecks
     {
-        // A catch with nothing in it, or nothing but a return / continue / break — read with the
-        // comments taken out, so a comment inside it does not hide it and one that merely NAMES
-        // the pattern (this file's own documentation) is not counted.
-        private static readonly Regex Silent = new Regex(
-            @"catch\s*(\([^)]*\))?\s*\{\s*((return[^;{}]*|continue|break);\s*)?\}",
-            RegexOptions.Compiled);
+        // Read with the comments and the string literals taken out, so a comment inside a catch does
+        // not hide it and one that merely NAMES the pattern (this file's own documentation) is not
+        // counted.
         private static readonly Regex Comments = new Regex(@"//[^\n]*|/\*.*?\*/", RegexOptions.Compiled | RegexOptions.Singleline);
+        private static readonly Regex Strings = new Regex(@"@""(?:[^""]|"""")*""|\$?""(?:[^""\\\n]|\\.)*""", RegexOptions.Compiled);
+        private static readonly Regex CatchHead = new Regex(@"\bcatch\b\s*(\([^)]*\))?\s*(when\s*\([^)]*\)\s*)?\{", RegexOptions.Compiled);
+        // What makes a catch NOT silent: it says something, or it lets the failure go on.
+        private static readonly Regex Speaks = new Regex(@"\bLog\w*\s*\(|\bFaults\.|\bthrow\b|\bSay\w*\s*\(", RegexOptions.Compiled);
+
+        /// <summary>How many catches in this source neither say anything nor rethrow.</summary>
+        internal static int CountSilent(string source)
+        {
+            string code = Strings.Replace(Comments.Replace(source, ""), "\"\"");
+            int count = 0;
+            foreach (Match m in CatchHead.Matches(code))
+            {
+                int open = m.Index + m.Length - 1;
+                int depth = 0, end = -1;
+                for (int i = open; i < code.Length; i++)
+                {
+                    if (code[i] == '{') depth++;
+                    else if (code[i] == '}' && --depth == 0) { end = i; break; }
+                }
+                if (end < 0) continue;
+                if (!Speaks.IsMatch(code.Substring(open, end - open + 1))) count++;
+            }
+            return count;
+        }
 
         public static void Run(Action<bool, string, string> check)
         {
+            // The counter itself, on the shapes it has to tell apart.
+            void Counts(string code, int expected, string what)
+            {
+                int got = CountSilent(code);
+                check(got == expected, what, got == expected ? "the ratchet counts what it names" : $"counted {got}, expected {expected}");
+            }
+            Counts("try { A(); } catch { }", 1, "an empty catch is silent");
+            Counts("try { A(); } catch { return null; }", 1, "one that only returns is silent");
+            Counts("try { A(); } catch { list = new List<int>(); }", 1, "one that quietly hands back a default is silent");
+            Counts("try { A(); } catch (Exception ex) { Faults.Say(\"here\", ex); }", 0, "one that says it through Faults is not");
+            Counts("try { A(); } catch (Exception e) { TranslatorCore.LogWarning(e.Message); return; }", 0, "nor one that logs");
+            Counts("try { A(); } catch { throw; }", 0, "nor one that lets it go on");
+            Counts("// catch { }\nvar s = \"catch { }\";", 0, "a catch in a comment or a string is not code");
+            Counts("try { A(); } catch { if (x) { y = 1; } }", 1, "nested braces are read to the catch's own end");
+
             string core = FindDir("UnityGameTranslator.Core");
             string baselineFile = FindFile("tests", "UnityGameTranslator.Core.Checks", "silent-catches.json");
             check(core != null && baselineFile != null, "the Core and the silent-catch baseline are found",
@@ -43,14 +80,7 @@ namespace UnityGameTranslator.Core.Checks
             var baseline = ((JObject)JObject.Parse(File.ReadAllText(baselineFile))["files"])
                 .Properties().ToDictionary(p => p.Name, p => (int)p.Value);
 
-            var found = new Dictionary<string, int>();
-            foreach (string path in Directory.GetFiles(core, "*.cs", SearchOption.AllDirectories))
-            {
-                string rel = Path.GetRelativePath(core, path).Replace('\\', '/');
-                if (rel.StartsWith("obj/") || rel.StartsWith("bin/")) continue;
-                int n = Silent.Matches(Comments.Replace(File.ReadAllText(path), "")).Count;
-                if (n > 0) found[rel] = n;
-            }
+            var found = CountAll(core);
 
             var worse = found.Where(f => f.Value > (baseline.TryGetValue(f.Key, out int b) ? b : 0))
                              .Select(f => $"{f.Key}: {f.Value} (allowed {(baseline.TryGetValue(f.Key, out int b) ? b : 0)})").ToList();
@@ -65,6 +95,37 @@ namespace UnityGameTranslator.Core.Checks
                 better.Count == 0
                     ? $"{found.Values.Sum()} left in {found.Count} files; the goal is none"
                     : "lower silent-catches.json to what is left, in the same commit: " + string.Join("; ", better));
+        }
+
+        private static Dictionary<string, int> CountAll(string core)
+        {
+            var found = new SortedDictionary<string, int>(StringComparer.Ordinal);
+            foreach (string path in Directory.GetFiles(core, "*.cs", SearchOption.AllDirectories))
+            {
+                string rel = Path.GetRelativePath(core, path).Replace('\\', '/');
+                if (rel.StartsWith("obj/") || rel.StartsWith("bin/")) continue;
+                int n = CountSilent(File.ReadAllText(path));
+                if (n > 0) found[rel] = n;
+            }
+            return new Dictionary<string, int>(found);
+        }
+
+        /// <summary>`dotnet run -- silent-baseline`: the baseline rewritten to what is left.</summary>
+        internal static int WriteBaseline()
+        {
+            string core = FindDir("UnityGameTranslator.Core");
+            string file = FindFile("tests", "UnityGameTranslator.Core.Checks", "silent-catches.json");
+            if (core == null || file == null) { Console.WriteLine("Core or baseline not found."); return 1; }
+
+            var found = CountAll(core);
+            var doc = new JObject
+            {
+                ["about"] = "Silent catches left in UnityGameTranslator.Core, per file (SilentCatchChecks): a catch that neither says anything nor rethrows. A ratchet: never above, lowered in the same commit as each fix (dotnet run -- silent-baseline). The goal is an empty list. Inventory: analyse/catch-silencieux.md (root, out of git).",
+                ["files"] = new JObject(found.OrderBy(f => f.Key, StringComparer.Ordinal).Select(f => new JProperty(f.Key, f.Value))),
+            };
+            File.WriteAllText(file, doc.ToString() + "\n");
+            Console.WriteLine($"{found.Values.Sum()} silent catches left in {found.Count} files.");
+            return 0;
         }
 
         private static string FindDir(string name)

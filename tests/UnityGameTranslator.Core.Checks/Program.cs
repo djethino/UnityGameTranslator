@@ -57,6 +57,10 @@ namespace UnityGameTranslator.Core.Checks
                 return 0;
             }
 
+            // Rewrites silent-catches.json with what is left — after fixing some, never to raise it.
+            if (args.Length >= 1 && args[0] == "silent-baseline")
+                return SilentCatchChecks.WriteBaseline();
+
             if (args.Length >= 3 && args[0] == "tocase")
                 return TraceToCase.Run(args[1], long.Parse(args[2]),
                     args.Length >= 4 ? int.Parse(args[3]) : int.MinValue,

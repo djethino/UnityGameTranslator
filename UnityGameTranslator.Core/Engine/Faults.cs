@@ -40,8 +40,12 @@ namespace UnityGameTranslator.Core
             if (sink != null) foreach (string line in held) sink(line);
         }
 
-        /// <summary>A failure caught at <paramref name="place"/> — a short name a reader can search the code for.</summary>
-        public static void Say(string place, Exception ex)
+        /// <summary>
+        /// A failure caught at <paramref name="place"/> — a short name a reader can search the code
+        /// for. <paramref name="detail"/> says what it was about (a type, a file) and what it costs;
+        /// it is printed, never counted apart, so one place stays one line however many things fail there.
+        /// </summary>
+        public static void Say(string place, Exception ex, string detail = null)
         {
             int count;
             Action<string> sink;
@@ -52,11 +56,15 @@ namespace UnityGameTranslator.Core
                 sink = _sink;
             }
 
+            // The exception behind a reflective call is the one that says something.
+            if (ex is System.Reflection.TargetInvocationException tie && tie.InnerException != null) ex = tie.InnerException;
+            string about = string.IsNullOrEmpty(detail) ? "" : $" ({detail})";
+
             string line;
             if (count == 1)
-                line = $"[Fault] {place}: {ex?.GetType().Name ?? "?"}: {ex?.Message}\n{ex?.StackTrace}";
+                line = $"[Fault] {place}{about}: {ex?.GetType().Name ?? "?"}: {ex?.Message}\n{ex?.StackTrace}";
             else if (count == 10 || count == 100 || count == 1000)
-                line = $"[Fault] {place}: {count} times now (last: {ex?.GetType().Name ?? "?"}: {ex?.Message})";
+                line = $"[Fault] {place}: {count} times now (last{about}: {ex?.GetType().Name ?? "?"}: {ex?.Message})";
             else
                 return;
 

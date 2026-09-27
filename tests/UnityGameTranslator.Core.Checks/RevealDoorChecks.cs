@@ -182,7 +182,7 @@ namespace UnityGameTranslator.Core.Checks
                 "🔴 without it, a text replaced mid-wait is declared final by a branch while another is still deciding it is not");
 
             check(method.Contains("if (settled)", StringComparison.Ordinal)
-                  && method.IndexOf("ProcessFinalizedText(compId, state.TypewritingText);", StringComparison.Ordinal)
+                  && method.IndexOf("ProcessFinalizedText(compId, state.TypewritingText, stillShown: false);", StringComparison.Ordinal)
                      > method.IndexOf("if (settled)", StringComparison.Ordinal),
                 "and only a settled one is sent",
                 "a text replaced within half a second of appearing was read by nobody, and is a template being expanded as often as not");

@@ -64,14 +64,84 @@
       "queued": [ "Agility potential +5\nAgility +5\nCost: 4", "Gear speed +10%\nCost: 4" ]
     },
     {
-      "id": "reveal/a-resumed-line-cut-mid-sentence-is-still-held",
-      "why": "the case the head rule was written for (2026-09-12): a recording resumed part-way sets the first part of a known line at once and stands still — cut in the middle of a sentence, it is a head, and is not sent as a line of its own",
+      "id": "reveal/a-resumed-recording-is-taken-back-once-it-goes-on",
+      "why": "🔴 the recording (2026-09-12): resumed part-way, its first part is set at once and stands still — exactly like a whole label, so it is sent. Going on revealing from it proves it was a head: taken back before any call, and held on that component from then on, so the next resume costs nothing. Decided on what FOLLOWS: the old rule compared the text with the file's lines and needed an exception per game (analyse/debuts-de-revelation.md)",
       "file": { "The river runs red tonight, and nobody knows why.": "La rivière est rouge ce soir, et personne ne sait pourquoi." },
       "steps": [
         { "f": 1, "t": 0.0, "write": "The river runs red tonight, and", "shows": "The river runs red tonight, and" },
+        { "f": 60, "t": 1.0, "tick": true },
+        { "f": 90, "t": 1.5, "write": "The river runs red tonight, and n" },
+        { "f": 91, "t": 1.54, "write": "The river runs red tonight, and no" },
+        { "f": 92, "t": 1.58, "write": "The river runs red tonight, and nobody knows why.", "shows": "La rivière est rouge ce soir, et personne ne sait pourquoi." },
+        { "f": 300, "t": 5.0, "write": "The river runs red tonight, and", "shows": "The river runs red tonight, and" },
+        { "f": 360, "t": 6.0, "tick": true },
+        { "f": 390, "t": 6.5, "write": "The river runs red tonight, and n" },
+        { "f": 391, "t": 6.54, "write": "The river runs red tonight, and no" },
+        { "f": 392, "t": 6.58, "write": "The river runs red tonight, and nobody knows why.", "shows": "La rivière est rouge ce soir, et personne ne sait pourquoi." },
+        { "f": 450, "t": 7.5, "tick": true }
+      ],
+      "queued": [],
+      "withdrawn": ["The river runs red tonight, and"],
+      "takenBack": ["The river runs red tonight, and"]
+    },
+    {
+      "id": "reveal/a-label-that-begins-a-known-line-is-sent",
+      "why": "🔴 seen in a game (2026-09-27): a character sheet writes its personality 性格 纯粹 whole, and the file holds 性格 纯粹(好感加成[!v*0]) from another screen. Taken for the head of that line, it was never sent and stayed in the source language on every sheet. What a text begins says nothing: it is sent",
+      "file": { "性格 纯粹(好感加成[!v*0])": "Nature : pure (affinité [!v*0])" },
+      "steps": [
+        { "f": 1, "t": 0.0, "write": "性格 纯粹", "shows": "性格 纯粹" },
         { "f": 60, "t": 1.0, "tick": true }
       ],
-      "queued": []
+      "queued": ["性格 纯粹"],
+      "withdrawn": []
+    },
+    {
+      "id": "reveal/one-longer-text-that-stays-proves-nothing",
+      "why": "a label replaced by a longer one nobody has yet, which begins with it (the personality, then the personality with its bonus), and then stands still: a replacement, not a reveal going on — both are sent, nothing is taken back",
+      "file": {},
+      "steps": [
+        { "f": 1, "t": 0.0, "write": "性格 纯粹", "shows": "性格 纯粹" },
+        { "f": 60, "t": 1.0, "tick": true },
+        { "f": 180, "t": 3.0, "write": "性格 纯粹(好感加成5)", "shows": "性格 纯粹(好感加成5)" },
+        { "f": 300, "t": 5.0, "tick": true }
+      ],
+      "queued": ["性格 纯粹", "性格 纯粹(好感加成5)"],
+      "withdrawn": []
+    },
+    {
+      "id": "reveal/a-head-replaced-without-going-on-was-whole-and-is-sent",
+      "why": "a finding is tested every time it holds a text back: held as a head, then replaced by something that does not go on from it, the text was whole this time — the finding goes and the text is sent. A finding the game outgrew, or one two siblings share, corrects itself after one showing",
+      "file": { "The river runs red tonight, and nobody knows why.": "La rivière est rouge ce soir, et personne ne sait pourquoi." },
+      "steps": [
+        { "f": 1, "t": 0.0, "write": "The river runs red tonight, and" },
+        { "f": 60, "t": 1.0, "tick": true },
+        { "f": 90, "t": 1.5, "write": "The river runs red tonight, and n" },
+        { "f": 91, "t": 1.54, "write": "The river runs red tonight, and no" },
+        { "f": 92, "t": 1.58, "write": "The river runs red tonight, and nobody knows why." },
+        { "f": 300, "t": 5.0, "write": "The river runs red tonight, and" },
+        { "f": 360, "t": 6.0, "tick": true },
+        { "f": 480, "t": 8.0, "write": "Something else entirely", "shows": "Something else entirely" },
+        { "f": 540, "t": 9.0, "tick": true }
+      ],
+      "queued": ["The river runs red tonight, and", "Something else entirely"],
+      "withdrawn": ["The river runs red tonight, and"],
+      "takenBack": ["The river runs red tonight, and"]
+    },
+    {
+      "id": "reveal/a-reading-pause-is-never-a-head",
+      "why": "a dialogue box reveals its first sentence, waits for a click, then reveals the next one after it: the sentence it stopped on was REVEALED, not written at once — a moment somebody reads, never a head. Taken back, it would be read in the source language for as long as the click takes",
+      "file": {},
+      "steps": [
+        { "f": 1, "t": 0.0, "write": "Hel" },
+        { "f": 2, "t": 0.04, "write": "Hello." },
+        { "f": 60, "t": 1.0, "tick": true },
+        { "f": 180, "t": 3.0, "write": "Hello. H" },
+        { "f": 181, "t": 3.04, "write": "Hello. Ho" },
+        { "f": 182, "t": 3.08, "write": "Hello. How are you?" },
+        { "f": 240, "t": 4.0, "tick": true }
+      ],
+      "queued": ["Hello.", "Hello. How are you?"],
+      "withdrawn": []
     },
     {
       "id": "reveal/a-short-label-that-heads-a-longer-one-is-sent",

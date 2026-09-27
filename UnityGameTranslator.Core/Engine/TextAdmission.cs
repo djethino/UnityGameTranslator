@@ -13,6 +13,8 @@ namespace UnityGameTranslator.Core
         NumericOrSymbol,
         /// <summary>A template the game expands in place (TextRouter.Templates).</summary>
         Template,
+        /// <summary>The head of a reveal resumed part-way, proved after it was sent (TextRouter.Heads).</summary>
+        Head,
         /// <summary>Longer than any backend accepts.</summary>
         TooLong,
         /// <summary>Already a translation of ours, read back from the screen.</summary>
@@ -32,6 +34,11 @@ namespace UnityGameTranslator.Core
         bool IsReadback(string key, bool ownUi);
         /// <summary>The queue gave this text up this session.</summary>
         bool WasGivenUp(string text, bool ownUi);
+        /// <summary>
+        /// A head proved while its request was already on its way (TextRouter.IsWithdrawnHead): its
+        /// answer, when it comes, is not a line.
+        /// </summary>
+        bool IsWithdrawnHead(string key);
     }
 
     /// <summary>
@@ -89,6 +96,11 @@ namespace UnityGameTranslator.Core
             // as well: that is what makes the rule deterministic rather than a race.
             if (!ownUi && facts.IsExpandedInPlace(key)) return Admission.Template;
 
+            // The head of a reveal, proved after its request had left: the answer is a fragment's.
+            // Asked only for the one request that was in flight, never of the text as such — the
+            // same characters can be a whole label on another component (TextRouter.Heads).
+            if (!ownUi && facts.IsWithdrawnHead(key)) return Admission.Head;
+
             // The last stop before an entry exists: every route that creates one passes here. A key
             // we recognise as our own translation wearing another decoration never becomes one.
             if (facts.IsReadback(key, ownUi)) return Admission.AlreadyTarget;
@@ -97,13 +109,19 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// A template proved: taken back out of the queue if it is still waiting, and given up for
-        /// the session. True when it was waiting — in a game, a race the worker may have won.
+        /// A text proved not to be a line: taken back out of the queue if it is still waiting. True
+        /// when it was waiting — in a game, a race the worker may have won.
+        ///
+        /// ⚠ **Given up for the session only when the TEXT is the proof.** A template is refused by
+        /// its text wherever it appears, so the queue gives it up. A head is a fact about ONE
+        /// component: the same characters are a whole label elsewhere (`性格 纯粹` on a character
+        /// sheet heads `性格 纯粹(好感加成…)` shown on another screen), and giving the text up would
+        /// leave that label in the source language for the session.
         /// </summary>
-        public static bool WithdrawTemplate(TranslationQueue queue, string text, string key)
+        public static bool Withdraw(TranslationQueue queue, string text, string key, Admission why)
         {
             bool withdrawn = queue.Withdraw(text) || queue.Withdraw(key);
-            queue.NoteRefused(key);
+            if (why == Admission.Template) queue.NoteRefused(key);
             return withdrawn;
         }
     }

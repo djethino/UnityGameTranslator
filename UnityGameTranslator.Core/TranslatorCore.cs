@@ -1549,6 +1549,28 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// Where a component sits, the same from one launch to the next: its path with each step's
+        /// sibling index, then its type — what TextRouter.Heads remembers a finding on.
+        ///
+        /// ⚠ Not <see cref="GetGameObjectPath"/>: names repeat among siblings (the rows of a list are
+        /// all `Item/Text`), and a finding about one row must not speak for the next. An index moves
+        /// when a list is reordered — the finding is then simply made again, one request at worst.
+        /// </summary>
+        public static string GetComponentPlace(Component component)
+        {
+            if (component == null) return null;
+
+            var parts = new List<string>();
+            var current = component.transform;
+            while (current != null)
+            {
+                parts.Insert(0, current.name + "[" + current.GetSiblingIndex() + "]");
+                current = current.parent;
+            }
+            return string.Join("/", parts) + "#" + component.GetType().Name;
+        }
+
+        /// <summary>
         /// Check if a component is excluded by user-defined patterns.
         /// Uses caching for performance.
         /// </summary>
@@ -4374,9 +4396,10 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// A text the router proved is a template the game expands in place (TextRouter.Templates,
-        /// which remembers it and refuses it from then on): taken back out of the queue if it is
-        /// still waiting, and never asked for again this session.
+        /// A text the router proved is not a line of its own — a template the game expands in place
+        /// (TextRouter.Templates), or the head of a reveal resumed part-way (TextRouter.Heads) — taken
+        /// back out of the queue if it is still waiting. A template is also never asked for again
+        /// this session; a head is not given up by its text (see TextAdmission.Withdraw).
         ///
         /// 🔴 **Nothing is deleted.** A translation already in the file belongs to whoever built
         /// that file, and a local observation on one component cannot decide what to remove from a
@@ -4387,13 +4410,16 @@ namespace UnityGameTranslator.Core
         /// and if the game still expands the text in place it will be refused again in the same
         /// second.
         /// </summary>
-        public static void WithdrawTemplate(string text)
+        public static bool Withdraw(string text, Admission why)
         {
-            if (string.IsNullOrEmpty(text)) return;
+            if (string.IsNullOrEmpty(text)) return false;
 
-            bool withdrawn = TextAdmission.WithdrawTemplate(_queue, text, NormalizeForCacheLookup(text));
+            bool withdrawn = TextAdmission.Withdraw(_queue, text, NormalizeForCacheLookup(text), why);
 
-            LogInfo($"[TW-TEMPLATE] the game expands this in place — {(withdrawn ? "taken out of the queue" : "it was not waiting")}, not asked again, and never written back: '{(text.Length > 60 ? text.Substring(0, 60) : text)}'");
+            // A head is said by the router, which knows the component it was proved on.
+            if (why == Admission.Template)
+                LogInfo($"[TW-TEMPLATE] the game expands this in place — {(withdrawn ? "taken out of the queue" : "it was not waiting")}, not asked again, and never written back: '{(text.Length > 60 ? text.Substring(0, 60) : text)}'");
+            return withdrawn;
         }
 
         /// <summary>
@@ -5764,6 +5790,13 @@ namespace UnityGameTranslator.Core
                     LogInfo($"[TW-TEMPLATE] answer discarded, the game expands this in place: '{(normalizedKey.Length > 60 ? normalizedKey.Substring(0, 60) : normalizedKey)}'");
                     return;
                 }
+                if (admission == Admission.Head)
+                {
+                    // The one request that had left when its text was proved a head: refused once.
+                    Router.ForgetWithdrawnHead(normalizedKey);
+                    LogInfo($"[TW-HEAD] answer discarded, it was for the head of a reveal: '{(normalizedKey.Length > 60 ? normalizedKey.Substring(0, 60) : normalizedKey)}'");
+                    return;
+                }
                 if (admission == Admission.AlreadyTarget)
                 {
                     // Every route that creates an entry passes here, so the stack is logged once:
@@ -6253,6 +6286,7 @@ namespace UnityGameTranslator.Core
             public bool IsReadback(string key, bool ownUi) => IsReadbackOfOwnTranslation(key, ownUi);
             public bool WasGivenUp(string text, bool ownUi)
                 => _queue.WasRefused(TextGate.KeyShape(text, ownUi, GameVariables.Instance, Config.normalize_numbers, out _, out _));
+            public bool IsWithdrawnHead(string key) => Router.IsWithdrawnHead(key);
         }
 
         /// <summary>
@@ -6279,11 +6313,15 @@ namespace UnityGameTranslator.Core
             public string MatchPattern(string text) => TryPatternMatch(text);
             public bool RefreshVariables() => VariableManager.RefreshOnMiss();
             public string SourceOf(string translation, bool ownUi) => GetSourceForTranslation(translation, ownUi ? ModUiCache : TranslationCache);
-            public void WithdrawTemplate(string text) => TranslatorCore.WithdrawTemplate(text);
+            public bool Withdraw(string text, Admission why) => TranslatorCore.Withdraw(text, why);
 
             // Followed per component: what is a Component. A UI Toolkit element is routed under
             // its own id by its caller, but was never followed through the lookup.
             public long IdOf(object component) => component is Component comp ? TypeHelper.GetInstanceID(comp) : -1;
+
+            // A destroyed component has no place left: recognised by Unity's own equality.
+            public string PlaceOf(object component)
+                => component is Component comp && comp != null ? GetComponentPlace(comp) : null;
 
             public bool IsHidden(object component)
             {

@@ -75,12 +75,14 @@ namespace UnityGameTranslator.Core.Checks
         /// <summary>The mod's own queue: its withdrawals and give-ups, never a copy of them.</summary>
         private readonly TranslationQueue _queue = new TranslationQueue();
 
-        /// <summary>As TranslatorCore.WithdrawTemplate, through the same rule.</summary>
-        public void WithdrawTemplate(string text)
+        /// <summary>As TranslatorCore.Withdraw, through the same rule.</summary>
+        public bool Withdraw(string text, Admission why)
         {
             Withdrawn.Add(text);
-            if (TextAdmission.WithdrawTemplate(_queue, text, Router.NormalizeForCacheLookup(text))) TakenBack.Add(text);
+            bool waiting = TextAdmission.Withdraw(_queue, text, Router.NormalizeForCacheLookup(text), why);
+            if (waiting) TakenBack.Add(text);
             Queued.RemoveAll(q => q.Text == text);
+            return waiting;
         }
 
         // The facts TextAdmission reads — as TranslatorCore's AdmissionFacts reads them.
@@ -89,6 +91,7 @@ namespace UnityGameTranslator.Core.Checks
             => _readback.IsAlreadyTarget(text, Router.NormalizeForCacheLookup(text).TrimEnd(), ownUi: false);
         public bool IsReadback(string key, bool ownUi) => _readback.IsReadback(key, ownUi);
         public bool WasGivenUp(string text, bool ownUi) => _queue.WasRefused(Router.NormalizeForCacheLookup(text));
+        public bool IsWithdrawnHead(string key) => Router.IsWithdrawnHead(key);
 
         public string SourceOf(string translation, bool ownUi)
         {
@@ -98,6 +101,8 @@ namespace UnityGameTranslator.Core.Checks
         }
 
         public long IdOf(object component) => component is ReplayBox b ? b.Id : -1;
+        /// <summary>A box's place is its id: the replay has no hierarchy, and one launch.</summary>
+        public string PlaceOf(object component) => component is ReplayBox b ? "box" + b.Id : null;
         public bool IsHidden(object component) => (component as ReplayBox)?.Hidden == true;
         public string GetText(object component) => (component as ReplayBox)?.Shown;
         public void Write(object target, string text) { if (WritesThrough && target is ReplayBox b) GameWrites(b, text); }
@@ -203,7 +208,10 @@ namespace UnityGameTranslator.Core.Checks
         {
             // What AddToCache refuses to store, by the same rule (a template, our own translation
             // read back under another decoration).
-            if (TextAdmission.ForStore(Router.NormalizeForCacheLookup(original), false, this) != Admission.Admitted) return;
+            string key = Router.NormalizeForCacheLookup(original);
+            var admission = TextAdmission.ForStore(key, false, this);
+            if (admission == Admission.Head) Router.ForgetWithdrawnHead(key);
+            if (admission != Admission.Admitted) return;
             Add(original, translation);
             foreach (var q in Queued.Where(q => q.Text == original && q.Box != null).ToList())
             {

@@ -75,7 +75,7 @@ namespace UnityGameTranslator.Core
 
             bool added;
             lock (_templatesLock) { added = _expandedInPlace.Add(skeleton); }
-            if (added) _host.WithdrawTemplate(text);
+            if (added) _host.Withdraw(text, Admission.Template);
         }
     }
 }

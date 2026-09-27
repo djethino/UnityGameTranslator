@@ -44,15 +44,22 @@ namespace UnityGameTranslator.Core
         /// <summary>The source of one of our translations, from the store of its side.</summary>
         string SourceOf(string translation, bool ownUi);
         /// <summary>
-        /// A text the router has just proved is a template the game expands in place
-        /// (TextRouter.Templates): taken back out of the queue if it is still waiting, and not asked
-        /// again. Said once per template.
+        /// A text the router has just proved is not a line of its own — a template the game expands
+        /// in place (TextRouter.Templates) or the head of a reveal resumed part-way
+        /// (TextRouter.Heads): taken back out of the queue if it is still waiting, through
+        /// TextAdmission.Withdraw. True when it was waiting. Said once per proof.
         /// </summary>
-        void WithdrawTemplate(string text);
+        bool Withdraw(string text, Admission why);
 
         // --- components ---
         /// <summary>The id the router follows this component under, or -1.</summary>
         long IdOf(object component);
+        /// <summary>
+        /// Where this component sits, the same from one launch to the next — an instance id is not
+        /// (Unity: its path, each step with its sibling index). A head is proved on a place.
+        /// Null when the engine cannot say.
+        /// </summary>
+        string PlaceOf(object component);
         /// <summary>Out of sight (Unity: not active in the hierarchy). False for what the engine cannot tell.</summary>
         bool IsHidden(object component);
         string GetText(object component);
@@ -248,6 +255,8 @@ namespace UnityGameTranslator.Core
             public float TypewritingSince;
             public bool TypewritingQueued;  // already handed over; do not hand it over twice
             public bool TypewritingGrew;    // the held text grew (or its markup walked) — a reveal, not a text written whole
+            public string HeldAsHead;       // held, not sent: this place resumed a reveal from it before (TextRouter.Heads)
+            public string ResumedFrom;      // handed over, then grown from once: growing again proves it a head
         }
 
         private readonly Dictionary<long, ComponentTextState> _componentState =

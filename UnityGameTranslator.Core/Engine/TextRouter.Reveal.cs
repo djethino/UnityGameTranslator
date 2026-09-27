@@ -89,6 +89,14 @@ namespace UnityGameTranslator.Core
         /// as opposed to a text the game wrote whole in one go.</param>
         private void HoldTypewriting(ComponentTextState state, long compId, string text, float now, bool grew)
         {
+            // Handed over, grown from once, and now growing again before it settled: the component
+            // is revealing from what it sent — that text was the head of a reveal (TextRouter.Heads).
+            // Any other new start ends the question: one longer text that stays is a replacement.
+            string resumedFrom = state.ResumedFrom;
+            state.ResumedFrom = null;
+            if (grew && resumedFrom != null) ProveHead(compId, resumedFrom);
+            state.HeldAsHead = null;
+
             state.Mode = TextMode.Typewriter;
             state.TypewritingGrew = grew;
             state.TypewritingText = text;
@@ -153,6 +161,31 @@ namespace UnityGameTranslator.Core
 
                 float elapsed = (now - state.TypewritingSince) * 1000f;
                 bool isGrowing = TextRelations.Grows(state.TypewritingText, newText);
+
+                // 🔴 **A text handed over, then another write: this is where a head is told from a
+                // whole text** (TextRouter.Heads). Held as a head, it either goes on — the finding
+                // holds — or is replaced by something else — it was whole this time, and is sent.
+                // Handed over normally and now grown from, it MAY be a head: one more growth before
+                // it settles proves it (HoldTypewriting); a longer text that stays proves nothing.
+                //
+                // ⚠ **Only a text WRITTEN at once.** One the component revealed itself and then
+                // stopped on is a reading pause — a dialogue box waiting for a click before it adds
+                // its next sentence — and is read for as long as the player likes: held, it would
+                // stay in the source language for exactly that time. A resumed recording is the
+                // other shape: its first part set in one write, then the reveal going on.
+                string resumedFrom = null;
+                if (state.TypewritingQueued)
+                {
+                    if (state.HeldAsHead != null)
+                    {
+                        if (isGrowing) state.HeldAsHead = null;
+                        else RefuteHead(compId, state);
+                    }
+                    else if (isGrowing && !state.TypewritingGrew)
+                    {
+                        resumedFrom = state.TypewritingText;
+                    }
+                }
 
                 // Log every call for typewriting components
                 if (_host.DebugMode)
@@ -220,7 +253,7 @@ namespace UnityGameTranslator.Core
                     if (settled)
                     {
                         _host.LogDebug($"[TW-FINAL] comp={compId} isGrowing={isGrowing} elapsed={elapsed:F0}ms\n  prev({state.TypewritingText.Length}c)='{state.TypewritingText}'\n  new({newText.Length}c)='{newText}'");
-                        ProcessFinalizedText(compId, state.TypewritingText);
+                        ProcessFinalizedText(compId, state.TypewritingText, stillShown: false);
                     }
                     else if (WrittenWhole(state))
                     {
@@ -229,7 +262,7 @@ namespace UnityGameTranslator.Core
                         // it was dropped at every pass and stayed in the source language for good
                         // (2026-09-26, a row of attribute tooltips swept by the pointer).
                         _host.LogDebug($"[TW-WHOLE] comp={compId} written whole, replaced after {elapsed:F0}ms — sent as it was\n  ({state.TypewritingText.Length}c)='{state.TypewritingText}'");
-                        ProcessFinalizedText(compId, state.TypewritingText);
+                        ProcessFinalizedText(compId, state.TypewritingText, stillShown: false);
                     }
                     else
                     {
@@ -239,6 +272,7 @@ namespace UnityGameTranslator.Core
 
                 // Store new text as new start, defer it
                 HoldTypewriting(state, compId, newText, now, grew: false);
+                state.ResumedFrom = resumedFrom;
                 return true;
             }
 
@@ -274,7 +308,12 @@ namespace UnityGameTranslator.Core
         /// Process a finalized typewriting text: queue for AI if not in cache,
         /// or re-trigger the write if already cached.
         /// </summary>
-        private void ProcessFinalizedText(long compId, string text)
+        /// <param name="stillShown">
+        /// The text is still on the component (the stabiliser), as opposed to being replaced at this
+        /// very write. Replaced without going on, a text is whole — so a head finding about it no
+        /// longer holds (TextRouter.Heads).
+        /// </param>
+        private void ProcessFinalizedText(long compId, string text, bool stillShown)
         {
             if (string.IsNullOrEmpty(text)) return;
 
@@ -287,25 +326,21 @@ namespace UnityGameTranslator.Core
             // Same question as every other gate, same answer: inCache already covered the key, so
             // what remains is "is this text itself target language?".
             bool alreadyTranslated = !inCache && _host.Readback.IsAlreadyTarget(text, normalizedText.TrimEnd(), ownUi: false);
-            // The head of a line the file already holds: a reveal resumed part-way, stood still,
-            // and is not a line of its own (TextRelations.IsHeadOfALongerLine). Held, not sent:
-            // the reveal goes on from here, and the line it belongs to answers when it arrives.
-            //
-            // ⚠ **Not a text of one step that never grew.** Written at once and no longer than a
-            // single step of a reveal, it has shown no reveal at all — nothing says it is waiting
-            // for more. And short labels are heads of longer ones all the time where words are not
-            // spaced: 聪慧 ("Intelligent") is the head of 聪慧绝伦 ("Brilliant"), a talent of its
-            // own. Held as a head, it stayed in the source language for good (2026-09-26).
-            var held = PeekState(compId);
-            bool writtenWhole = held != null && !held.TypewritingGrew;
-            bool oneStepNeverGrown = writtenWhole && text.Length <= TextRelations.TypewriterMaxCharsPerStep;
-            bool headOfKnown = !inCache && !alreadyTranslated && !oneStepNeverGrown
-                               && TextRelations.IsHeadOfALongerLine(normalizedText, _host.GameStore.Keys,
-                                                                    blockEndingAtABreakIsWhole: writtenWhole);
+            // 🔴 **Held only where this place has resumed a reveal from it before** (TextRouter.Heads)
+            // — never because it begins a line the file holds. That comparison needed an exception
+            // per game and still left a character sheet's 性格 纯粹 in the source language for good.
+            // Replaced at this write without going on, it was whole this time: the finding goes.
+            bool headHere = !inCache && !alreadyTranslated && IsHeadHere(compId, normalizedText);
+            if (headHere && !stillShown)
+            {
+                DropHead(compId, text);
+                _host.Log($"[TW-HEAD] comp={compId} replaced without going on — it was whole this time: no longer held here, sent: '{Head40(text)}'");
+                headHere = false;
+            }
 
             if (_host.DebugMode)
             {
-                _host.LogDebug($"[TW-FINALIZE] comp={compId} inCache={inCache} alreadyTranslated={alreadyTranslated} headOfKnown={headOfKnown} text({text.Length}c)='{text}'");
+                _host.LogDebug($"[TW-FINALIZE] comp={compId} inCache={inCache} alreadyTranslated={alreadyTranslated} headHere={headHere} text({text.Length}c)='{text}'");
             }
 
             if (inCache)
@@ -319,9 +354,11 @@ namespace UnityGameTranslator.Core
                 if (_host.DebugMode)
                     _host.LogDebug($"[TW-FINALIZE] SKIP already translated: '{Head40(text)}'");
             }
-            else if (headOfKnown)
+            else if (headHere)
             {
-                _host.Log($"[TW-PARTIAL] comp={compId} the head of a longer known line — held, not sent: '{Head40(text)}'");
+                var state = PeekState(compId);
+                if (state != null) state.HeldAsHead = text;
+                _host.Log($"[TW-PARTIAL] comp={compId} this component went on revealing from this text before — held, not sent, until what follows says otherwise: '{Head40(text)}'");
             }
             else if (AssembleLines(compId, TargetOf(compId), text, false, skipQueueing: false) is string assembled)
             {
@@ -403,7 +440,7 @@ namespace UnityGameTranslator.Core
                 state.TypewritingQueued = true;
 
                 _host.LogDebug($"[TW-STAB] comp={compId} stabilized after {(now - state.TypewritingSince) * 1000:F0}ms text='{Head40(state.TypewritingText)}'");
-                ProcessFinalizedText(compId, state.TypewritingText);
+                ProcessFinalizedText(compId, state.TypewritingText, stillShown: true);
             }
         }
 
@@ -418,6 +455,8 @@ namespace UnityGameTranslator.Core
             state.TypewritingText = null;
             state.TypewritingSince = 0f;
             state.TypewritingQueued = false;
+            state.HeldAsHead = null;
+            state.ResumedFrom = null;
         }
 
         /// <summary>

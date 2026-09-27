@@ -21,10 +21,12 @@ namespace UnityGameTranslator.Core.Checks
             public readonly HashSet<string> Targets = new HashSet<string>();
             public readonly HashSet<string> Readbacks = new HashSet<string>();
             public readonly HashSet<string> GivenUp = new HashSet<string>();
+            public readonly HashSet<string> WithdrawnHeads = new HashSet<string>();
             public bool IsExpandedInPlace(string text) => Templates.Contains(text);
             public bool IsAlreadyTarget(string text) => Targets.Contains(text);
             public bool IsReadback(string key, bool ownUi) => Readbacks.Contains(key);
             public bool WasGivenUp(string text, bool ownUi) => GivenUp.Contains(text);
+            public bool IsWithdrawnHead(string key) => WithdrawnHeads.Contains(key);
         }
 
         public static void Run(Action<bool, string, string> check)
@@ -79,6 +81,14 @@ namespace UnityGameTranslator.Core.Checks
             Store("*Activate* ({0}): Add {1} *Power*.", true, Admission.Admitted,
                 "the interface's own store is not asked about the game's templates", "the two sides never answer for each other");
 
+            facts.WithdrawnHeads.Add("The river runs red tonight, and");
+            Store("The river runs red tonight, and", false, Admission.Head,
+                "the answer for a head proved while its request was on its way is never stored",
+                "a fragment of a reveal is not a line; nothing else stops it once the request has left");
+            Queue("The river runs red tonight, and", false, Admission.Admitted,
+                "but the same text is never refused at the queue's door",
+                "🔴 a head is a fact about one component: the same characters are a whole label elsewhere, and refused by text it would stay in the source language there");
+
             facts.Readbacks.Add("<b>Ouvrir la porte</b>");
             Store("<b>Ouvrir la porte</b>", false, Admission.AlreadyTarget,
                 "our own translation under another decoration never becomes an entry",
@@ -86,13 +96,19 @@ namespace UnityGameTranslator.Core.Checks
 
             var queue = new TranslationQueue();
             queue.Submit("*Activate* ({0}): Add {1} *Power*.", null, false, out _, out _);
-            bool waiting = TextAdmission.WithdrawTemplate(queue, "*Activate* ({0}): Add {1} *Power*.", "*Activate* ({0}): Add {1} *Power*.");
+            bool waiting = TextAdmission.Withdraw(queue, "*Activate* ({0}): Add {1} *Power*.", "*Activate* ({0}): Add {1} *Power*.", Admission.Template);
             check(waiting && queue.Count == 0 && queue.WasRefused("*Activate* ({0}): Add {1} *Power*."),
                 "a template proved while waiting is taken out, and given up",
                 "taken out so no call is made; given up so the next write of it does not queue it again");
-            check(!TextAdmission.WithdrawTemplate(queue, "*Overclock* ({0})", "*Overclock* ({0})") && queue.WasRefused("*Overclock* ({0})"),
+            check(!TextAdmission.Withdraw(queue, "*Overclock* ({0})", "*Overclock* ({0})", Admission.Template) && queue.WasRefused("*Overclock* ({0})"),
                 "one proved before it was queued is given up all the same",
                 "the answer says whether a call may already have gone; the give-up holds either way");
+
+            queue.Submit("性格 纯粹", null, false, out _, out _);
+            bool headWaiting = TextAdmission.Withdraw(queue, "性格 纯粹", "性格 纯粹", Admission.Head);
+            check(headWaiting && queue.Count == 0 && !queue.WasRefused("性格 纯粹"),
+                "a head proved while waiting is taken out, and NOT given up",
+                "🔴 given up by its text, the same characters shown whole on another component would never be asked for again this session");
         }
     }
 }

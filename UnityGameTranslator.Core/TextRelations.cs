@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using UnityGameTranslator.Common;
 
 namespace UnityGameTranslator.Core
@@ -52,54 +51,6 @@ namespace UnityGameTranslator.Core
         {
             return current.Length > previous.Length
                    && current.StartsWith(previous, StringComparison.Ordinal);
-        }
-
-        /// <summary>
-        /// Is this text the HEAD of a longer line among <paramref name="lines"/> — the same
-        /// characters, and more after them.
-        ///
-        /// 🔴 A reveal that stabilises on the head of a line the file already holds is not a line
-        /// of its own. Seen 2026-09-12: a tape recording resumed where the player had stopped it,
-        /// so the component was set to the first 191 characters at once, stood still for the
-        /// stabilising delay, and was finalised — sent to the model, cached as a line, translated
-        /// as a fragment. Deleting the fragment in the editor changed nothing: the next resume
-        /// made it again. Held instead, the screen shows the source until the reveal reaches the
-        /// line it is the head of, exactly as during any other reveal.
-        ///
-        /// ⚠ Ordinal, like <see cref="Grows"/>, and for the same reasons. Asked of the NORMALISED
-        /// text against the cache's keys, which are normalised the same way — the numbers are
-        /// lifted out on both sides, so "Tape 12" and "Tape [!v*0]" are one head. An equal line is
-        /// not a head: that is a cache hit, answered before this is asked.
-        /// </summary>
-        /// <param name="blockEndingAtABreakIsWhole">
-        /// For a text written whole in one go: ending exactly where the longer line goes on to a
-        /// NEW line, it is a block of its own, not a head. 🔴 A talent tooltip (three lines) is,
-        /// numbers lifted out, the head of the next level's tooltip (the same three lines, then a
-        /// fourth): held as a head, it was never sent and stayed in the source language (2026-09-26).
-        /// A reveal (grown) or a resume cut mid-sentence still counts as a head.
-        ///
-        /// 🔴 Same flag, second rule: **a head that several lines go on from differently is a stem,
-        /// not a reveal.** 金刚密宗 (a sect's name, written whole) begins both 金刚密宗亲传弟子 and
-        /// 金刚密宗入门弟子. A reveal resumed part-way heads ONE line, the one it goes on to show; a
-        /// name two titles share is a text of its own. Held, it stayed in the source language on
-        /// every screen naming the sect (2026-09-26).
-        /// </param>
-        public static bool IsHeadOfALongerLine(string text, IEnumerable<string> lines, bool blockEndingAtABreakIsWhole = false)
-        {
-            if (string.IsNullOrEmpty(text) || lines == null) return false;
-            char? onlyNext = null;
-            foreach (var line in lines)
-            {
-                if (line != null && line.Length > text.Length && line.StartsWith(text, StringComparison.Ordinal))
-                {
-                    char next = line[text.Length];
-                    if (!blockEndingAtABreakIsWhole) return true;
-                    if (next == '\n' || next == '\r') continue;
-                    if (onlyNext.HasValue && onlyNext.Value != next) return false;
-                    onlyNext = next;
-                }
-            }
-            return onlyNext.HasValue;
         }
 
         /// <summary>Most characters a single typewriter step is assumed to reveal.</summary>

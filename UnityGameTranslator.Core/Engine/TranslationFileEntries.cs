@@ -255,16 +255,15 @@ namespace UnityGameTranslator.Core
         {
             if (token == null || token.Type != JTokenType.Integer) return null;
 
-            try
-            {
-                long value = token.Value<long>();
-                return (value >= 1 && value <= MaxOrderIndex) ? value : (long?)null;
-            }
-            catch
-            {
-                // Integer beyond long range (BigInteger) — treat as absent
-                return null;
-            }
+            // A JSON integer is held as a long (as read from text) or an int (as built in memory);
+            // beyond a long it is a BigInteger, which no index can be — absent, recognised rather
+            // than caught.
+            object raw = (token as JValue)?.Value;
+            long value;
+            if (raw is long asLong) value = asLong;
+            else if (raw is int asInt) value = asInt;
+            else return null;
+            return (value >= 1 && value <= MaxOrderIndex) ? value : (long?)null;
         }
     }
 }

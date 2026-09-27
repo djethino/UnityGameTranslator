@@ -4913,9 +4913,8 @@ namespace UnityGameTranslator.Core.UI
 
             // Conflicts are already defaulted to the remote (browser) value inside the
             // merge — the browser is the editor of record, so take the merged set as-is.
-            TranslatorCore.TranslationCache.Clear();
-            foreach (var kvp in mergeResult.Merged)
-                TranslatorCore.TranslationCache[kvp.Key] = kvp.Value;
+            // Under the cache's lock, which the worker writes under too.
+            TranslatorCore.ReplaceTranslations(mergeResult.Merged);
             // The browser side can carry capture-order indices above our counter.
             TranslatorCore.SyncOrderIndexCounter();
 
@@ -5203,11 +5202,8 @@ namespace UnityGameTranslator.Core.UI
             // was the one family of them that took no copy at all.
             BackupCacheFile(BackupReason.Merged);
 
-            TranslatorCore.TranslationCache.Clear();
-            foreach (var kvp in mergeResult.Merged)
-            {
-                TranslatorCore.TranslationCache[kvp.Key] = kvp.Value;
-            }
+            // Under the cache's lock, which the worker writes under too.
+            TranslatorCore.ReplaceTranslations(mergeResult.Merged);
             // The Main can carry capture-order indices above our counter
             TranslatorCore.SyncOrderIndexCounter();
 
@@ -5245,11 +5241,8 @@ namespace UnityGameTranslator.Core.UI
             // was the one family of them that took no copy at all.
             BackupCacheFile(BackupReason.Merged);
 
-            TranslatorCore.TranslationCache.Clear();
-            foreach (var kvp in mergeResult.Merged)
-            {
-                TranslatorCore.TranslationCache[kvp.Key] = kvp.Value;
-            }
+            // Under the cache's lock, which the worker writes under too.
+            TranslatorCore.ReplaceTranslations(mergeResult.Merged);
             // The other branch can bring in capture-order indices above our
             // counter — future captures must not reuse them
             TranslatorCore.SyncOrderIndexCounter();

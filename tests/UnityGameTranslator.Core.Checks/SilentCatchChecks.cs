@@ -33,12 +33,22 @@ namespace UnityGameTranslator.Core.Checks
         private static readonly Regex CatchHead = new Regex(@"\bcatch\b\s*(\([^)]*\))?\s*(when\s*\([^)]*\)\s*)?\{", RegexOptions.Compiled);
         // What makes a catch NOT silent: it says something, or it lets the failure go on.
         private static readonly Regex Speaks = new Regex(@"\bLog\w*\s*\(|\bFaults\.|\bthrow\b|\bSay\w*\s*\(", RegexOptions.Compiled);
+        private static readonly Regex CaughtName = new Regex(@"catch\s*\(\s*[\w.]+\s+(\w+)\s*\)", RegexOptions.Compiled);
 
         /// <summary>How many catches in this source neither say anything nor rethrow.</summary>
-        internal static int CountSilent(string source)
+        internal static int CountSilent(string source) => SilentLines(source).Count;
+
+        /// <summary>
+        /// The line of each silent catch. Comments and strings are blanked, never removed, so a
+        /// position in the blanked text is a position in the source.
+        /// </summary>
+        internal static List<int> SilentLines(string source)
         {
-            string code = Strings.Replace(Comments.Replace(source, ""), "\"\"");
-            int count = 0;
+            // Strings are kept for one question only — does the catch use its exception, which an
+            // interpolated $"…{ex.Message}" does — and blanked for the rest (braces, calls).
+            string withStrings = Comments.Replace(source, Blank);
+            string code = Strings.Replace(withStrings, Blank);
+            var lines = new List<int>();
             foreach (Match m in CatchHead.Matches(code))
             {
                 int open = m.Index + m.Length - 1;
@@ -49,9 +59,34 @@ namespace UnityGameTranslator.Core.Checks
                     else if (code[i] == '}' && --depth == 0) { end = i; break; }
                 }
                 if (end < 0) continue;
-                if (!Speaks.IsMatch(code.Substring(open, end - open + 1))) count++;
+                string body = code.Substring(open, end - open + 1);
+                if (Speaks.IsMatch(body)) continue;
+                // It carries the exception somewhere (a diagnostic line it returns, a field a
+                // report reads): not mute either.
+                var named = CaughtName.Match(m.Value);
+                if (named.Success && Regex.IsMatch(withStrings.Substring(open, end - open + 1),
+                        @"\b" + Regex.Escape(named.Groups[1].Value) + @"\b")) continue;
+                lines.Add(1 + code.Take(m.Index).Count(c => c == '\n'));
             }
-            return count;
+            return lines;
+        }
+
+        // Same length, line breaks kept: positions survive the blanking.
+        private static string Blank(Match m) => new string(m.Value.Select(c => c == '\n' ? '\n' : ' ').ToArray());
+
+        /// <summary>`dotnet run -- silent-list [file]`: where the silent catches are, file by file.</summary>
+        internal static int List(string only)
+        {
+            string core = FindDir("UnityGameTranslator.Core");
+            if (core == null) { Console.WriteLine("Core not found."); return 1; }
+            foreach (string path in Directory.GetFiles(core, "*.cs", SearchOption.AllDirectories).OrderBy(p => p, StringComparer.Ordinal))
+            {
+                string rel = Path.GetRelativePath(core, path).Replace('\\', '/');
+                if (rel.StartsWith("obj/") || rel.StartsWith("bin/")) continue;
+                if (only != null && !rel.EndsWith(only, StringComparison.OrdinalIgnoreCase)) continue;
+                foreach (int line in SilentLines(File.ReadAllText(path))) Console.WriteLine($"{rel}:{line}");
+            }
+            return 0;
         }
 
         public static void Run(Action<bool, string, string> check)
@@ -68,6 +103,11 @@ namespace UnityGameTranslator.Core.Checks
             Counts("try { A(); } catch (Exception ex) { Faults.Say(\"here\", ex); }", 0, "one that says it through Faults is not");
             Counts("try { A(); } catch (Exception e) { TranslatorCore.LogWarning(e.Message); return; }", 0, "nor one that logs");
             Counts("try { A(); } catch { throw; }", 0, "nor one that lets it go on");
+            Counts("try { return A(); } catch (Exception ex) { return \"unknown (\" + ex.GetType().Name + \")\"; }", 0,
+                "nor one that carries the exception into what it returns");
+            Counts("try { A(); } catch (Exception ex) { return null; }", 1, "but naming it and dropping it is silent");
+            Counts("try { A(); } catch (Exception ex) { note = $\"(error: {ex.Message})\"; }", 0,
+                "an interpolated string that carries it counts as carrying it");
             Counts("// catch { }\nvar s = \"catch { }\";", 0, "a catch in a comment or a string is not code");
             Counts("try { A(); } catch { if (x) { y = 1; } }", 1, "nested braces are read to the catch's own end");
 

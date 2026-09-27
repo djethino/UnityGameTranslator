@@ -941,7 +941,9 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static bool TranslationTouchesRtl()
         {
-            try
+            // Under the cache's lock: the worker adds lines while this reads. It used to be caught
+            // instead — a read that met a write answered "no right-to-left text" without a word.
+            lock (lockObj)
             {
                 foreach (var kvp in TranslationCache)
                 {
@@ -951,7 +953,6 @@ namespace UnityGameTranslator.Core
                     if (v != null && TextShaping.RtlText.ContainsStrongRtl(v)) return true;
                 }
             }
-            catch { }
             return false;
         }
 
@@ -2036,21 +2037,23 @@ namespace UnityGameTranslator.Core
             // Hand back any Input System device we took. A game left with its keyboard disabled is
             // unplayable, and nothing else would ever put that right — first, before anything that
             // could fail and skip it.
-            try { UniverseLib.Input.InputCapture.ReleaseAll(); } catch { }
+            // Each step of the shutdown is its own boundary: one that fails must not skip the ones
+            // after it (the keyboard handed back, the file saved) — and is said.
+            try { UniverseLib.Input.InputCapture.ReleaseAll(); } catch (Exception e) { Faults.Say("Shutdown input release", e); }
             // A game left frozen would be unplayable, and nothing else would put it right.
-            try { GamePause.Release(); } catch { }
+            try { GamePause.Release(); } catch (Exception e) { Faults.Say("Shutdown game pause release", e); }
 
             // The host stops its streams and ends the live edit session server-side (bounded
             // wait) — closing the game is one of the two legitimate session-end events, and it
             // must run BEFORE httpClient disposal below.
-            try { Host?.ShuttingDown(); } catch { }
+            try { Host?.ShuttingDown(); } catch (Exception e) { Faults.Say("Shutdown host", e); }
 
-            // Stop the LateUpdate coroutine
-            try { TranslatorScanner.StopLateUpdateRunner(); } catch { }
+            // Stop the LateUpdate coroutine (it says its own failure)
+            TranslatorScanner.StopLateUpdateRunner();
 
             // Remove the Canvas.willRenderCanvases subscription so the callback can't fire
             // against objects Unity is destroying during teardown (native crash on exit).
-            try { FontManager.UnsubscribeWillRenderCanvases(); } catch { }
+            try { FontManager.UnsubscribeWillRenderCanvases(); } catch (Exception e) { Faults.Say("Shutdown willRenderCanvases", e); }
 
             // Wait briefly for worker thread to notice ShuttingDown flag and exit
             if (workerRunning)
@@ -2069,7 +2072,7 @@ namespace UnityGameTranslator.Core
                 SendModelMemory(ModelMemory.Release(_usedModelUrl, _usedModel), wait: true);
 
             // Dispose HttpClient (cancels in-flight requests)
-            try { httpClient?.Dispose(); } catch { }
+            try { httpClient?.Dispose(); } catch (Exception e) { Faults.Say("Shutdown http client", e); }
 
             // A retranslation the worker never got to had its line taken out of the cache to make
             // room for an answer that will now never arrive. The save below writes the WHOLE cache,
@@ -2079,7 +2082,8 @@ namespace UnityGameTranslator.Core
 
             if (cacheModified)
             {
-                try { SaveCache(); } catch { }
+                // SaveCache says a failed write itself; what fails around it is said here.
+                try { SaveCache(); } catch (Exception e) { Faults.Say("Shutdown save", e); }
             }
             // No try/catch: SaveModUiCache logs its own failure rather than throwing.
             SaveModUiCacheIfDirty();
@@ -3760,9 +3764,9 @@ namespace UnityGameTranslator.Core
             }
 
             // Displayed text is a translated value (placeholders in source appearance order).
-            // try/catch: the AI worker can mutate TranslationCache during this iteration
-            // (same reason BuildPatternEntries snapshots) — fall through to pattern matching.
-            try
+            // Under the cache's lock: the worker adds lines while this reads. It used to be caught
+            // instead, and a read that met a write fell through as "not a translation of ours".
+            lock (lockObj)
             {
                 foreach (var kvp in TranslationCache)
                 {
@@ -3776,7 +3780,6 @@ namespace UnityGameTranslator.Core
                     }
                 }
             }
-            catch { }
 
             // Translated value whose placeholders were reordered by the translation:
             // match the displayed text against each pattern's translated form
@@ -3830,6 +3833,24 @@ namespace UnityGameTranslator.Core
         /// the community sees on upload. Filing a machine sentence as human work claims a review
         /// nobody performed.
         /// </param>
+        /// <summary>
+        /// Every line replaced by a merge's result (an edit session, an upstream merge, a branch
+        /// merge), in place.
+        ///
+        /// 🔴 **Under the cache's lock.** The worker adds lines under it while this runs; three
+        /// copies of this loop in the interface cleared and refilled the map without it, and a
+        /// dictionary written by two threads at once can corrupt itself — on Mono, loop forever.
+        /// </summary>
+        public static void ReplaceTranslations(IEnumerable<KeyValuePair<string, TranslationEntry>> merged)
+        {
+            lock (lockObj)
+            {
+                TranslationCache.Clear();
+                foreach (var kvp in merged)
+                    TranslationCache[kvp.Key] = kvp.Value;
+            }
+        }
+
         public static void SetTranslationFromEditor(string key, string newValue, string tag = "H")
         {
             if (string.IsNullOrEmpty(key) || string.IsNullOrEmpty(newValue)) return;
@@ -3871,21 +3892,25 @@ namespace UnityGameTranslator.Core
                 return;
             }
 
-            if (TranslationCache.TryGetValue(key, out var existing))
+            // Under the cache's lock: the worker adds lines under it (see ReplaceTranslations).
+            lock (lockObj)
             {
-                existing.Value = newValue;
-                existing.Tag = tag;
-                // Editing never changes the capture order; only entries that
-                // somehow have no index yet get one (defensive — LoadCache
-                // backfills everything)
-                if (!existing.Index.HasValue)
+                if (TranslationCache.TryGetValue(key, out var existing))
                 {
-                    existing.Index = NextOrderIndex();
+                    existing.Value = newValue;
+                    existing.Tag = tag;
+                    // Editing never changes the capture order; only entries that
+                    // somehow have no index yet get one (defensive — LoadCache
+                    // backfills everything)
+                    if (!existing.Index.HasValue)
+                    {
+                        existing.Index = NextOrderIndex();
+                    }
                 }
-            }
-            else
-            {
-                TranslationCache[key] = new TranslationEntry { Value = newValue, Tag = tag, Index = NextOrderIndex() };
+                else
+                {
+                    TranslationCache[key] = new TranslationEntry { Value = newValue, Tag = tag, Index = NextOrderIndex() };
+                }
             }
 
             // Reverse cache sync so the new value isn't detected as untranslated text. The GAME's:
@@ -4289,14 +4314,10 @@ namespace UnityGameTranslator.Core
         /// </summary>
         private static void BuildStaleTranslationSnapshot()
         {
-            // Snapshot first: the AI worker can mutate TranslationCache during
-            // this iteration (same reason BuildPatternEntries snapshots)
+            // Copied under the cache's lock: the worker adds lines meanwhile. It used to be caught
+            // instead, and a copy that met a write left no snapshot at all, without a word.
             KeyValuePair<string, TranslationEntry>[] cacheSnapshot;
-            try
-            {
-                cacheSnapshot = new List<KeyValuePair<string, TranslationEntry>>(TranslationCache).ToArray();
-            }
-            catch { return; }
+            lock (lockObj) { cacheSnapshot = TranslationCache.ToArray(); }
 
             _stale.Take(cacheSnapshot, Config.normalize_numbers);
         }
@@ -4631,7 +4652,8 @@ namespace UnityGameTranslator.Core
 
                 Adapter?.LogWarning($"[AI] {message} The line is left as it is and will be asked for again. "
                                     + "If the model is simply slow, raise timeout_ms in config.json.");
-                try { Host?.Warn(message); } catch { }
+                // The interface, told from the worker's thread: its failure is ours, and said.
+                try { Host?.Warn(message); } catch (Exception e) { Faults.Say("Backend silent: Host.Warn", e); }
                 return null;
             }
         }
@@ -4831,9 +4853,11 @@ namespace UnityGameTranslator.Core
                                 return;
                             }
                         }
-                        catch
+                        catch (Exception e)
                         {
                             // Not this server's route, or the server went: the next one is tried.
+                            // Expected on every server but one, so a debug line, not a fault.
+                            LogDebug($"[AI] {r.Server} refused {r.Url}: {e.GetType().Name}: {e.Message}");
                         }
                     }
                 }
@@ -5411,7 +5435,8 @@ namespace UnityGameTranslator.Core
 
                 int statusCode = (int)response.StatusCode;
                 string errorBody = "";
-                try { errorBody = response.Content.ReadAsStringAsync().Result; } catch { }
+                try { errorBody = response.Content.ReadAsStringAsync().Result; }
+                catch (Exception bodyEx) { errorBody = $"(body unreadable: {bodyEx.GetType().Name}: {bodyEx.Message})"; }
 
                 // Only these mean "this body is not acceptable". 401/404/429/5xx say nothing about
                 // our parameters and must not make us give any of them up.
@@ -5493,7 +5518,8 @@ namespace UnityGameTranslator.Core
                     if (statusCode == 429)
                         _apiRateLimited = true;
                     string errorBody = "";
-                    try { errorBody = response.Content.ReadAsStringAsync().Result; } catch { }
+                    try { errorBody = response.Content.ReadAsStringAsync().Result; }
+                    catch (Exception bodyEx) { errorBody = $"(body unreadable: {bodyEx.GetType().Name}: {bodyEx.Message})"; }
                     Adapter?.LogWarning($"[Google] HTTP {statusCode}: {errorBody}");
                     return null;
                 }
@@ -5570,7 +5596,8 @@ namespace UnityGameTranslator.Core
                     if (statusCode == 429)
                         _apiRateLimited = true;
                     string errorBody = "";
-                    try { errorBody = response.Content.ReadAsStringAsync().Result; } catch { }
+                    try { errorBody = response.Content.ReadAsStringAsync().Result; }
+                    catch (Exception bodyEx) { errorBody = $"(body unreadable: {bodyEx.GetType().Name}: {bodyEx.Message})"; }
                     Adapter?.LogWarning($"[DeepL] HTTP {statusCode}: {errorBody}");
                     return null;
                 }
@@ -5651,34 +5678,6 @@ namespace UnityGameTranslator.Core
         }
 
 
-        /// <summary>
-        /// Max value for the per-entry capture-order index "i": JavaScript's
-        /// Number.MAX_SAFE_INTEGER (2^53 - 1), the web editor being the consumer.
-        /// </summary>
-        internal const long MaxOrderIndex = 9007199254740991L;
-
-        /// <summary>
-        /// Parse the optional capture-order index "i" of a translation entry.
-        /// NEVER throws: an invalid or out-of-range value reads as "no index"
-        /// (LoadCache's catch-all resets the cache and regenerates the UUID,
-        /// so a corrupted download must not be able to trigger it).
-        /// </summary>
-        private static long? ParseTranslationIndex(JToken token)
-        {
-            if (token == null || token.Type != JTokenType.Integer)
-                return null;
-
-            try
-            {
-                long value = token.Value<long>();
-                return (value >= 1 && value <= MaxOrderIndex) ? value : (long?)null;
-            }
-            catch
-            {
-                // Integer beyond long range (BigInteger) — treat as absent
-                return null;
-            }
-        }
 
         /// <summary>
         /// Reserve the next capture-order index. Lock-protected because entries
@@ -6281,11 +6280,9 @@ namespace UnityGameTranslator.Core
             public bool IsHidden(object component)
             {
                 if (!(component is Component visComp)) return false;
-                try
-                {
-                    return visComp.gameObject != null && !visComp.gameObject.activeInHierarchy;
-                }
-                catch { return false; }
+                // Destroyed: nothing to see, and its gameObject would throw. Recognised, not caught.
+                if (visComp == null) return false;
+                return visComp.gameObject != null && !visComp.gameObject.activeInHierarchy;
             }
 
             public string GetText(object component) => TypeHelper.GetText(component);
@@ -6335,14 +6332,12 @@ namespace UnityGameTranslator.Core
 
             public string Describe(object target)
             {
-                try
-                {
-                    var probeComp = target as Component;
-                    return probeComp != null
-                        ? $"{probeComp.GetType().Name} '{probeComp.gameObject.name}'"
-                        : (target != null ? target.GetType().Name : "no target");
-                }
-                catch { return "?"; }
+                // A destroyed component compares equal to null here (Unity's own equality), so its
+                // gameObject is never touched: the type alone is described.
+                var probeComp = target as Component;
+                return probeComp != null
+                    ? $"{probeComp.GetType().Name} '{probeComp.gameObject.name}'"
+                    : (target != null ? target.GetType().Name : "no target");
             }
         }
 

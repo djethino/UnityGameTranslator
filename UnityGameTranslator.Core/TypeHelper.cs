@@ -180,33 +180,30 @@ namespace UnityGameTranslator.Core
             // Log all loaded assemblies containing "TMP" for diagnostics.
             foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
             {
-                try
+                string asmName = asm.GetName().Name;
+                if (asmName.IndexOf("TMP", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    asmName.IndexOf("TextMesh", StringComparison.OrdinalIgnoreCase) >= 0)
                 {
-                    string asmName = asm.GetName().Name;
-                    if (asmName.IndexOf("TMP", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                        asmName.IndexOf("TextMesh", StringComparison.OrdinalIgnoreCase) >= 0)
+                    TranslatorCore.LogInfo($"[TypeHelper] Found TMP-related assembly: {asmName}");
+                    // The types that load (AssemblyTypes: GetTypes refuses a whole assembly for one —
+                    // and a TMP assembly refused whole is TMP never found, without a word).
+                    foreach (var type in AssemblyTypes.Of(asm))
                     {
-                        TranslatorCore.LogInfo($"[TypeHelper] Found TMP-related assembly: {asmName}");
-                        // Try to find TMP_Text in this assembly
-                        foreach (var type in asm.GetTypes())
+                        if (type.Name == "TMP_Text" && TMP_TextType == null)
                         {
-                            if (type.Name == "TMP_Text" && TMP_TextType == null)
-                            {
-                                TMP_TextType = type;
-                                TranslatorCore.LogInfo($"[TypeHelper] Found TMP_Text: {type.FullName} in {asmName}");
-                            }
-                            else if (type.Name == "TMP_FontAsset" && TMP_FontAssetType == null)
-                            {
-                                TMP_FontAssetType = type;
-                            }
-                            else if (type.Name == "TMP_InputField" && TMP_InputFieldType == null)
-                            {
-                                TMP_InputFieldType = type;
-                            }
+                            TMP_TextType = type;
+                            TranslatorCore.LogInfo($"[TypeHelper] Found TMP_Text: {type.FullName} in {asmName}");
+                        }
+                        else if (type.Name == "TMP_FontAsset" && TMP_FontAssetType == null)
+                        {
+                            TMP_FontAssetType = type;
+                        }
+                        else if (type.Name == "TMP_InputField" && TMP_InputFieldType == null)
+                        {
+                            TMP_InputFieldType = type;
                         }
                     }
                 }
-                catch { }
             }
 
             UseAlternateTMP = false;
@@ -266,19 +263,7 @@ namespace UnityGameTranslator.Core
         /// <summary>
         /// Find a type by full name across all loaded assemblies.
         /// </summary>
-        private static Type FindType(string fullName)
-        {
-            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
-            {
-                try
-                {
-                    var type = asm.GetType(fullName);
-                    if (type != null) return type;
-                }
-                catch { }
-            }
-            return null;
-        }
+        private static Type FindType(string fullName) => AssemblyTypes.Find(fullName);
 
         /// <summary>
         /// Returns the component type category: "TMP", "Unity", "TextMesh", or null.
@@ -310,13 +295,10 @@ namespace UnityGameTranslator.Core
         {
             if (component == null) return null;
 
-            try
-            {
-                object font = GetFont(component);
-                if (font is UnityEngine.Object unityObj)
-                    return unityObj.name;
-            }
-            catch { }
+            // GetFont says its own failures; a font destroyed since is recognised, not caught.
+            object font = GetFont(component);
+            if (font is UnityEngine.Object unityObj && unityObj != null)
+                return unityObj.name;
 
             return null;
         }
@@ -328,7 +310,8 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static object GetFont(object component)
         {
-            if (component == null) return null;
+            // Destroyed: its properties would throw. Recognised, not caught.
+            if (!IsUnityObjectAlive(component)) return null;
 
             try
             {
@@ -350,7 +333,8 @@ namespace UnityGameTranslator.Core
                 if (fontProp != null)
                     return fontProp.GetValue(component, null);
             }
-            catch { }
+            // The component's own font getter: its code, which may throw. Said.
+            catch (Exception ex) { Faults.Say("TypeHelper.GetFont", ex, component.GetType().Name); }
 
             return null;
         }
@@ -411,7 +395,8 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static float GetFontSize(object component)
         {
-            if (component == null) return -1f;
+            // Destroyed: its properties would throw. Recognised, not caught.
+            if (!IsUnityObjectAlive(component)) return -1f;
 
             try
             {
@@ -433,7 +418,8 @@ namespace UnityGameTranslator.Core
                     return Convert.ToSingle(val);
                 }
             }
-            catch { }
+            // The component's own fontSize getter: its code, which may throw. Said.
+            catch (Exception ex) { Faults.Say("TypeHelper.GetFontSize", ex, component.GetType().Name); }
 
             return -1f;
         }
@@ -552,7 +538,8 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static Color GetTextColor(object component)
         {
-            if (component == null) return Color.white;
+            // Destroyed: its properties would throw. Recognised, not caught.
+            if (!IsUnityObjectAlive(component)) return Color.white;
             try
             {
                 var type = component.GetType();
@@ -563,7 +550,8 @@ namespace UnityGameTranslator.Core
                     if (val is Color c) return c;
                 }
             }
-            catch { }
+            // The component's own code, reached by reflection: said.
+            catch (Exception ex) { Faults.Say("TypeHelper.GetTextColor", ex, component.GetType().Name); }
             return Color.white;
         }
 
@@ -572,7 +560,8 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static void SetTextColor(object component, Color color)
         {
-            if (component == null) return;
+            // Destroyed: its properties would throw. Recognised, not caught.
+            if (!IsUnityObjectAlive(component)) return;
             try
             {
                 var type = component.GetType();
@@ -582,7 +571,8 @@ namespace UnityGameTranslator.Core
                     colorProp.SetValue(component, color, null);
                 }
             }
-            catch { }
+            // The component's own code, reached by reflection: said.
+            catch (Exception ex) { Faults.Say("TypeHelper.SetTextColor", ex, component.GetType().Name); }
         }
 
         /// <summary>
@@ -590,7 +580,8 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static string GetText(object component)
         {
-            if (component == null) return null;
+            // Destroyed: its properties would throw. Recognised, not caught.
+            if (!IsUnityObjectAlive(component)) return null;
 
             try
             {
@@ -610,7 +601,8 @@ namespace UnityGameTranslator.Core
                 if (textProp != null)
                     return textProp.GetValue(component, null) as string;
             }
-            catch { }
+            // The component's own code, reached by reflection: said.
+            catch (Exception ex) { Faults.Say("TypeHelper.GetText", ex, component.GetType().Name); }
 
             return null;
         }
@@ -620,7 +612,8 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static void SetText(object component, string text)
         {
-            if (component == null) return;
+            // Destroyed: its properties would throw. Recognised, not caught.
+            if (!IsUnityObjectAlive(component)) return;
 
             try
             {
@@ -666,7 +659,8 @@ namespace UnityGameTranslator.Core
                     return;
                 }
             }
-            catch { }
+            // The component's own code, reached by reflection: said.
+            catch (Exception ex) { Faults.Say("TypeHelper.SetText", ex, component.GetType().Name); }
         }
 
         /// <summary>
@@ -693,15 +687,12 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static bool IsTextComponentOfInputField(object inputField, object textComponent)
         {
-            try
-            {
-                var wired = GetInputFieldTextComponent(inputField);
-                if (wired == null) return false;
-                int a = GetInstanceID(wired);
-                int b = GetInstanceID(textComponent);
-                return a != -1 && a == b;
-            }
-            catch { return false; }
+            // GetInputFieldTextComponent says its own failures; GetInstanceID does not throw.
+            var wired = GetInputFieldTextComponent(inputField);
+            if (wired == null) return false;
+            int a = GetInstanceID(wired);
+            int b = GetInstanceID(textComponent);
+            return a != -1 && a == b;
         }
 
         /// <summary>
@@ -710,6 +701,7 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static object FindParentInputField(Component component)
         {
+            // Destroyed: its properties would throw. Recognised, not caught.
             if (component == null) return null;
 
             try
@@ -730,7 +722,8 @@ namespace UnityGameTranslator.Core
                     t = t.parent;
                 }
             }
-            catch { }
+            // The component's own code, reached by reflection: said.
+            catch (Exception ex) { Faults.Say("TypeHelper.FindParentInputField", ex, component.GetType().Name); }
 
             return null;
         }
@@ -738,7 +731,8 @@ namespace UnityGameTranslator.Core
         /// <summary>Current typed value of an InputField / TMP_InputField (null if unavailable).</summary>
         public static string GetInputFieldText(object inputField)
         {
-            if (inputField == null) return null;
+            // Destroyed: its properties would throw. Recognised, not caught.
+            if (!IsUnityObjectAlive(inputField)) return null;
 
             try
             {
@@ -753,7 +747,8 @@ namespace UnityGameTranslator.Core
 
                 return prop != null ? prop.GetValue(inputField, null) as string : null;
             }
-            catch { }
+            // The component's own code, reached by reflection: said.
+            catch (Exception ex) { Faults.Say("TypeHelper.GetInputFieldText", ex, inputField.GetType().Name); }
 
             return null;
         }
@@ -761,7 +756,8 @@ namespace UnityGameTranslator.Core
         /// <summary>The textComponent wired on an InputField / TMP_InputField.</summary>
         public static object GetInputFieldTextComponent(object inputField)
         {
-            if (inputField == null) return null;
+            // Destroyed: its properties would throw. Recognised, not caught.
+            if (!IsUnityObjectAlive(inputField)) return null;
 
             try
             {
@@ -776,7 +772,8 @@ namespace UnityGameTranslator.Core
 
                 return prop != null ? prop.GetValue(inputField, null) : null;
             }
-            catch { }
+            // The component's own code, reached by reflection: said.
+            catch (Exception ex) { Faults.Say("TypeHelper.GetInputFieldTextComponent", ex, inputField.GetType().Name); }
 
             return null;
         }
@@ -791,6 +788,7 @@ namespace UnityGameTranslator.Core
         /// <summary>GetComponent(searchType) working on both Mono and IL2CPP.</summary>
         public static object GetComponentOfType(Component target, Type searchType)
         {
+            // Destroyed: its properties would throw. Recognised, not caught.
             if (target == null || searchType == null) return null;
 
             try
@@ -823,7 +821,8 @@ namespace UnityGameTranslator.Core
                 if (closed != null)
                     return closed.Invoke(target, null);
             }
-            catch { }
+            // The component's own code, reached by reflection: said.
+            catch (Exception ex) { Faults.Say("TypeHelper.GetComponentOfType", ex, searchType.Name); }
 
             return null;
         }
@@ -861,7 +860,8 @@ namespace UnityGameTranslator.Core
 
         public static void ForceMeshUpdate(object component)
         {
-            if (component == null) return;
+            // Destroyed: its properties would throw. Recognised, not caught.
+            if (!IsUnityObjectAlive(component)) return;
 
             try
             {
@@ -875,7 +875,8 @@ namespace UnityGameTranslator.Core
                 NoArgMethodOf(_forceMeshUpdateByType, component.GetType(), "ForceMeshUpdate")
                     ?.Invoke(component, null);
             }
-            catch { }
+            // The component's own code, reached by reflection: said.
+            catch (Exception ex) { Faults.Say("TypeHelper.ForceMeshUpdate", ex, component.GetType().Name); }
         }
 
         /// <summary>
@@ -887,7 +888,8 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static void ForceMeshUpdateReparse(object component)
         {
-            if (component == null) return;
+            // Destroyed: its properties would throw. Recognised, not caught.
+            if (!IsUnityObjectAlive(component)) return;
             try
             {
                 var type = component.GetType();
@@ -901,7 +903,8 @@ namespace UnityGameTranslator.Core
                     return;
                 }
             }
-            catch { }
+            // The component's own code, reached by reflection: said.
+            catch (Exception ex) { Faults.Say("TypeHelper.ForceMeshUpdateReparse", ex, component.GetType().Name); }
             ForceMeshUpdate(component);
         }
 
@@ -929,8 +932,10 @@ namespace UnityGameTranslator.Core
             if (obj == null) return false;
             if (obj is UnityEngine.Object unityObj)
             {
+                // Unity's own equality asks the native side; on an IL2CPP proxy whose native object
+                // is gone it can throw. Read as dead, and said.
                 try { return unityObj != null; }
-                catch { return false; }
+                catch (Exception ex) { Faults.Say("TypeHelper.IsUnityObjectAlive", ex, obj.GetType().Name); return false; }
             }
             return true;
         }
@@ -949,7 +954,8 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static void ToggleEnabled(object component)
         {
-            if (component == null) return;
+            // Destroyed: its properties would throw. Recognised, not caught.
+            if (!IsUnityObjectAlive(component)) return;
 
             try
             {
@@ -962,7 +968,8 @@ namespace UnityGameTranslator.Core
                     enabledProp.SetValue(component, current, null);
                 }
             }
-            catch { }
+            // The component's own mesh and properties, reached by reflection: said.
+            catch (Exception ex) { Faults.Say("TypeHelper.ToggleEnabled", ex, component.GetType().Name); }
         }
 
         /// <summary>
@@ -978,7 +985,8 @@ namespace UnityGameTranslator.Core
         public static bool GetRenderHealth(object component, out int visible, out int hidden)
         {
             visible = 0; hidden = 0;
-            if (component == null) return false;
+            // Destroyed: its properties would throw. Recognised, not caught.
+            if (!IsUnityObjectAlive(component)) return false;
             try
             {
                 var ti = component.GetType().GetProperty("textInfo", BindingFlags.Public | BindingFlags.Instance)?.GetValue(component, null);
@@ -1016,7 +1024,8 @@ namespace UnityGameTranslator.Core
                 }
                 return visible > 0;
             }
-            catch { return false; }
+            // The component's own mesh and properties, reached by reflection: said.
+            catch (Exception ex) { Faults.Say("TypeHelper.GetRenderHealth", ex, component.GetType().Name); return false; }
         }
 
         private static MethodInfo _updateVertexDataMethod;
@@ -1032,7 +1041,8 @@ namespace UnityGameTranslator.Core
         public static void GetLayoutMeshHeights(object component, out float layoutMaxH, out float meshMaxH)
         {
             layoutMaxH = -1f; meshMaxH = -1f;
-            if (component == null) return;
+            // Destroyed: its properties would throw. Recognised, not caught.
+            if (!IsUnityObjectAlive(component)) return;
             try
             {
                 var ti = component.GetType().GetProperty("textInfo", BindingFlags.Public | BindingFlags.Instance)?.GetValue(component, null);
@@ -1078,7 +1088,8 @@ namespace UnityGameTranslator.Core
                 }
                 layoutMaxH = lMax; meshMaxH = mMax;
             }
-            catch { }
+            // The component's own mesh and properties, reached by reflection: said.
+            catch (Exception ex) { Faults.Say("TypeHelper.GetLayoutMeshHeights", ex, component.GetType().Name); }
         }
 
         /// <summary>
@@ -1092,7 +1103,8 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static bool ForceVertexAlphaOpaque(object component)
         {
-            if (component == null) return false;
+            // Destroyed: its properties would throw. Recognised, not caught.
+            if (!IsUnityObjectAlive(component)) return false;
             try
             {
                 var ti = component.GetType().GetProperty("textInfo", BindingFlags.Public | BindingFlags.Instance)?.GetValue(component, null);
@@ -1138,7 +1150,8 @@ namespace UnityGameTranslator.Core
                     _updateVertexDataMethod.Invoke(component, null);
                 return true;
             }
-            catch { return false; }
+            // The component's own mesh and properties, reached by reflection: said.
+            catch (Exception ex) { Faults.Say("TypeHelper.ForceVertexAlphaOpaque", ex, component.GetType().Name); return false; }
         }
 
         /// <summary>
@@ -1153,7 +1166,8 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static bool ForceVertexFullRender(object component)
         {
-            if (component == null) return false;
+            // Destroyed: its properties would throw. Recognised, not caught.
+            if (!IsUnityObjectAlive(component)) return false;
             try
             {
                 var ti = component.GetType().GetProperty("textInfo", BindingFlags.Public | BindingFlags.Instance)?.GetValue(component, null);
@@ -1237,7 +1251,13 @@ namespace UnityGameTranslator.Core
                     _updateVertexDataMethod.Invoke(component, null);
                 return true;
             }
-            catch { return ForceVertexAlphaOpaque(component); }
+            // The layout could not be read on this runtime: the alpha-only repair is used instead,
+            // and that is said — otherwise the full repair failing everywhere would never show.
+            catch (Exception ex)
+            {
+                Faults.Say("TypeHelper.ForceVertexFullRender", ex, $"{component.GetType().Name}: alpha-only repair used");
+                return ForceVertexAlphaOpaque(component);
+            }
         }
 
         /// <summary>
@@ -1247,7 +1267,8 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static float GetVertexYSpan(object component)
         {
-            if (component == null) return -1f;
+            // Destroyed: its properties would throw. Recognised, not caught.
+            if (!IsUnityObjectAlive(component)) return -1f;
             try
             {
                 var ti = component.GetType().GetProperty("textInfo", BindingFlags.Public | BindingFlags.Instance)?.GetValue(component, null);
@@ -1275,7 +1296,8 @@ namespace UnityGameTranslator.Core
                 }
                 if (hi > float.MinValue) return hi - lo;
             }
-            catch { }
+            // The component's own mesh and properties, reached by reflection: said.
+            catch (Exception ex) { Faults.Say("TypeHelper.GetVertexYSpan", ex, component.GetType().Name); }
             return -1f;
         }
 
@@ -1295,13 +1317,7 @@ namespace UnityGameTranslator.Core
             try
             {
                 if (_canvasGroupType == null)
-                {
-                    foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
-                    {
-                        _canvasGroupType = asm.GetType("UnityEngine.CanvasGroup");
-                        if (_canvasGroupType != null) break;
-                    }
-                }
+                    _canvasGroupType = AssemblyTypes.Find("UnityEngine.CanvasGroup");
                 if (_canvasGroupType == null) return -1f;
 
                 if (!_getComponentResolved)
@@ -1319,7 +1335,7 @@ namespace UnityGameTranslator.Core
                 {
                     object cg = null;
                     try { cg = _getComponentMethod.Invoke(t.gameObject, new object[] { _canvasGroupType }); }
-                    catch { return -1f; }
+                    catch (Exception ex) { Faults.Say("TypeHelper.GetHierarchyCanvasGroupAlpha GetComponent", ex); return -1f; }
                     var cgCast = Il2CppCast(cg, _canvasGroupType) ?? cg;
                     if (cgCast != null)
                     {
@@ -1329,7 +1345,8 @@ namespace UnityGameTranslator.Core
                     t = t.parent;
                 }
             }
-            catch { }
+            // A diagnostic walking the game's hierarchy through reflection: said.
+            catch (Exception ex) { Faults.Say("TypeHelper.GetHierarchyCanvasGroupAlpha", ex); }
             return -1f;
         }
 
@@ -1338,7 +1355,8 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static void SetAllDirty(object component)
         {
-            if (component == null) return;
+            // Destroyed: its properties would throw. Recognised, not caught.
+            if (!IsUnityObjectAlive(component)) return;
 
             try
             {
@@ -1346,7 +1364,8 @@ namespace UnityGameTranslator.Core
                 NoArgMethodOf(_setAllDirtyByType, component.GetType(), "SetAllDirty")
                     ?.Invoke(component, null);
             }
-            catch { }
+            // The component's own mesh and properties, reached by reflection: said.
+            catch (Exception ex) { Faults.Say("TypeHelper.SetAllDirty", ex, component.GetType().Name); }
         }
 
         // Canvas.ForceUpdateCanvases() — static, resolved once.
@@ -1365,21 +1384,13 @@ namespace UnityGameTranslator.Core
             if (!_forceUpdateCanvasesResolved)
             {
                 _forceUpdateCanvasesResolved = true;
-                try
-                {
-                    foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
-                    {
-                        var canvasType = asm.GetType("UnityEngine.Canvas");
-                        if (canvasType == null) continue;
-                        _forceUpdateCanvasesMethod = canvasType.GetMethod("ForceUpdateCanvases",
-                            BindingFlags.Public | BindingFlags.Static, null, Type.EmptyTypes, null);
-                        if (_forceUpdateCanvasesMethod != null) break;
-                    }
-                }
-                catch { }
+                // GetMethod answers null when it is not there; it does not throw.
+                _forceUpdateCanvasesMethod = AssemblyTypes.Find("UnityEngine.Canvas")?.GetMethod("ForceUpdateCanvases",
+                    BindingFlags.Public | BindingFlags.Static, null, Type.EmptyTypes, null);
             }
+            // Unity's own layout rebuild of every canvas: said if it throws.
             try { _forceUpdateCanvasesMethod?.Invoke(null, null); }
-            catch { }
+            catch (Exception ex) { Faults.Say("TypeHelper.ForceUpdateCanvases", ex); }
         }
 
         #endregion
@@ -1441,29 +1452,29 @@ namespace UnityGameTranslator.Core
 
                     if (result != null) return result;
                 }
-                catch { }
+                // TryCast answers null for an object of another type; it throws only when the
+                // runtime refuses the call. Said, and the instance Cast below is tried.
+                catch (Exception ex) { Faults.Say("TypeHelper.Il2CppCast TryCast", ex, targetType.Name); }
             }
 
-            // Try instance Cast<T>() method on the object itself
-            try
+            // Try instance Cast<T>() method on the object itself (GetMethods does not throw)
+            var objType = obj.GetType();
+            foreach (var method in objType.GetMethods(BindingFlags.Public | BindingFlags.Instance))
             {
-                var objType = obj.GetType();
-                foreach (var method in objType.GetMethods(BindingFlags.Public | BindingFlags.Instance))
+                if ((method.Name == "Cast" || method.Name == "TryCast") &&
+                    method.IsGenericMethodDefinition && method.GetParameters().Length == 0)
                 {
-                    if ((method.Name == "Cast" || method.Name == "TryCast") &&
-                        method.IsGenericMethodDefinition && method.GetParameters().Length == 0)
+                    try
                     {
-                        try
-                        {
-                            var typedMethod = method.MakeGenericMethod(targetType);
-                            var result = typedMethod.Invoke(obj, null);
-                            if (result != null) return result;
-                        }
-                        catch { continue; }
+                        var typedMethod = method.MakeGenericMethod(targetType);
+                        var result = typedMethod.Invoke(obj, null);
+                        if (result != null) return result;
                     }
+                    // Cast<T> throws on an object of another type — an answer, not a fault: the next
+                    // one is tried, and a debug line keeps it visible.
+                    catch (Exception ex) { TranslatorCore.LogDebug($"[TypeHelper] {method.Name}<{targetType.Name}> refused on {objType.Name}: {ex.GetType().Name}"); }
                 }
             }
-            catch { }
 
             return obj; // Return original if cast not possible
         }
@@ -1600,33 +1611,28 @@ namespace UnityGameTranslator.Core
             if (!_findResolved)
             {
                 _findResolved = true;
-                try
+                // Assembly.GetType and GetMethod answer null when the member is not there; they do
+                // not throw, so nothing here is caught.
+                //
+                // 🔴 The unsorted lookup first, wherever the engine has it (2021.3.18+ / 2022.2+).
+                // FindObjectsOfType sorts its result by instance id, and Unity's own
+                // deprecation note calls the unsorted mode "considerably faster". Measured on
+                // a bench save: the sorted call cost 31 ms — an atomic hitch no per-frame
+                // budget can split — for every type, every cycle. Same semantics otherwise:
+                // inactive objects included, as the call below always asked for.
+                var inactiveEnum = typeof(UnityEngine.Object).Assembly.GetType("UnityEngine.FindObjectsInactive");
+                var sortEnum = typeof(UnityEngine.Object).Assembly.GetType("UnityEngine.FindObjectsSortMode");
+                if (inactiveEnum != null && sortEnum != null)
                 {
-                    // 🔴 The unsorted lookup first, wherever the engine has it (2021.3.18+ / 2022.2+).
-                    // FindObjectsOfType sorts its result by instance id, and Unity's own
-                    // deprecation note calls the unsorted mode "considerably faster". Measured on
-                    // a bench save: the sorted call cost 31 ms — an atomic hitch no per-frame
-                    // budget can split — for every type, every cycle. Same semantics otherwise:
-                    // inactive objects included, as the call below always asked for.
-                    var inactiveEnum = typeof(UnityEngine.Object).Assembly.GetType("UnityEngine.FindObjectsInactive");
-                    var sortEnum = typeof(UnityEngine.Object).Assembly.GetType("UnityEngine.FindObjectsSortMode");
-                    if (inactiveEnum != null && sortEnum != null)
-                    {
-                        _findByTypeUnsorted = typeof(UnityEngine.Object).GetMethod("FindObjectsByType",
-                            BindingFlags.Public | BindingFlags.Static,
-                            null, new Type[] { typeof(Type), inactiveEnum, sortEnum }, null);
-                        if (_findByTypeUnsorted != null)
-                            _findByTypeArgs = new object[] { null, Enum.ToObject(inactiveEnum, 1), Enum.ToObject(sortEnum, 0) };
-                    }
-                }
-                catch { _findByTypeUnsorted = null; }
-                try
-                {
-                    _findOfTypeInactive = typeof(UnityEngine.Object).GetMethod("FindObjectsOfType",
+                    _findByTypeUnsorted = typeof(UnityEngine.Object).GetMethod("FindObjectsByType",
                         BindingFlags.Public | BindingFlags.Static,
-                        null, new Type[] { typeof(Type), typeof(bool) }, null);
+                        null, new Type[] { typeof(Type), inactiveEnum, sortEnum }, null);
+                    if (_findByTypeUnsorted != null)
+                        _findByTypeArgs = new object[] { null, Enum.ToObject(inactiveEnum, 1), Enum.ToObject(sortEnum, 0) };
                 }
-                catch { }
+                _findOfTypeInactive = typeof(UnityEngine.Object).GetMethod("FindObjectsOfType",
+                    BindingFlags.Public | BindingFlags.Static,
+                    null, new Type[] { typeof(Type), typeof(bool) }, null);
                 TranslatorCore.LogDebug(_findByTypeUnsorted != null
                     ? "[TypeHelper] scene lookup: FindObjectsByType (unsorted, inactive included)"
                     : "[TypeHelper] scene lookup: FindObjectsOfType (sorted) — FindObjectsByType not on this engine");
@@ -1640,7 +1646,9 @@ namespace UnityGameTranslator.Core
                     var result = _findByTypeUnsorted.Invoke(null, _findByTypeArgs) as UnityEngine.Object[];
                     if (result != null) return result;
                 }
-                catch { }
+                // Each lookup below is an older engine's way of asking the same thing: a refusal
+                // moves on to the next one, and is said.
+                catch (Exception ex) { Faults.Say("TypeHelper.FindAllObjectsOfTypeMono FindObjectsByType", ex, type.Name); }
             }
 
             // Use reflection for ALL calls to avoid JIT resolution issues
@@ -1653,7 +1661,7 @@ namespace UnityGameTranslator.Core
                     if (result != null) return result;
                 }
             }
-            catch { }
+            catch (Exception ex) { Faults.Say("TypeHelper.FindAllObjectsOfTypeMono FindObjectsOfType(Type, bool)", ex, type.Name); }
 
             try
             {
@@ -1667,7 +1675,7 @@ namespace UnityGameTranslator.Core
                     if (result != null) return result;
                 }
             }
-            catch { }
+            catch (Exception ex) { Faults.Say("TypeHelper.FindAllObjectsOfTypeMono FindObjectsOfType(Type)", ex, type.Name); }
 
             try
             {
@@ -1681,7 +1689,7 @@ namespace UnityGameTranslator.Core
                     if (result != null) return result;
                 }
             }
-            catch { }
+            catch (Exception ex) { Faults.Say("TypeHelper.FindAllObjectsOfTypeMono Resources.FindObjectsOfTypeAll", ex, type.Name); }
 
             return new UnityEngine.Object[0];
         }
@@ -1718,7 +1726,8 @@ namespace UnityGameTranslator.Core
                         return uobj;
                 }
             }
-            catch { }
+            // The engine refusing the generic form: the non-generic one is tried, and it is said.
+            catch (Exception ex) { Faults.Say("TypeHelper.CreateScriptableObject generic", ex, type.Name); }
 
             // Fallback: non-generic via reflection (avoids JIT issues)
             return CreateScriptableObjectMono(type);
@@ -1740,7 +1749,7 @@ namespace UnityGameTranslator.Core
                         return uobj;
                 }
             }
-            catch { }
+            catch (Exception ex) { Faults.Say("TypeHelper.CreateScriptableObjectMono CreateInstance(Type)", ex, type.Name); }
 
             try
             {
@@ -1748,7 +1757,7 @@ namespace UnityGameTranslator.Core
                 if (obj is UnityEngine.Object uobj)
                     return uobj;
             }
-            catch { }
+            catch (Exception ex) { Faults.Say("TypeHelper.CreateScriptableObjectMono Activator", ex, type.Name); }
 
             TranslatorCore.LogWarning($"[TypeHelper] Cannot create ScriptableObject of type {type.Name}");
             return null;
@@ -1801,8 +1810,10 @@ namespace UnityGameTranslator.Core
                     _componentByTypeDirect = false;
                     TranslatorCore.LogDebug("[TypeHelper] GetComponent(Type) absent on this runtime, switching to reflection");
                 }
-                catch
+                // A GameObject destroyed since, or the engine refusing: said.
+                catch (Exception ex)
                 {
+                    Faults.Say("TypeHelper.GetComponentByType", ex, type.Name);
                     return null;
                 }
             }
@@ -1810,20 +1821,17 @@ namespace UnityGameTranslator.Core
             if (!_componentByTypeSearched)
             {
                 _componentByTypeSearched = true;
-                try
+                // GetMethods lists; it does not throw.
+                foreach (var method in go.GetType().GetMethods(BindingFlags.Public | BindingFlags.Instance))
                 {
-                    foreach (var method in go.GetType().GetMethods(BindingFlags.Public | BindingFlags.Instance))
+                    if (method.Name != "GetComponent") continue;
+                    var parms = method.GetParameters();
+                    if (parms.Length == 1 && parms[0].ParameterType == typeof(Type))
                     {
-                        if (method.Name != "GetComponent") continue;
-                        var parms = method.GetParameters();
-                        if (parms.Length == 1 && parms[0].ParameterType == typeof(Type))
-                        {
-                            _componentByTypeMethod = method;
-                            break;
-                        }
+                        _componentByTypeMethod = method;
+                        break;
                     }
                 }
-                catch { }
 
                 if (_componentByTypeMethod == null && !_saidItCannotResolve)
                 {
@@ -1840,7 +1848,7 @@ namespace UnityGameTranslator.Core
                 {
                     return _componentByTypeMethod.Invoke(go, new object[] { type }) as Component;
                 }
-                catch { }
+                catch (Exception ex) { Faults.Say("TypeHelper.GetComponentByType reflection", ex, type.Name); }
             }
 
             return null;

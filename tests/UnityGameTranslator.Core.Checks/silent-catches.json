@@ -19,7 +19,6 @@
     "TextureUtils.cs": 1,
     "TranslationBackups.cs": 3,
     "TranslationSettings.cs": 1,
-    "TypeHelper.cs": 43,
     "UI/Components/HotkeyCapture.cs": 1,
     "UI/Components/PendingMarks.cs": 1,
     "UI/EngineHostAdapter.cs": 3,

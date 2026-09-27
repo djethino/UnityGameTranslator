@@ -35,14 +35,12 @@ namespace UnityGameTranslator.Core
                 var textMesh = TypeHelper.Il2CppCast(component, typeof(TextMesh)) as TextMesh;
                 if (textMesh != null) return MeasureTextMesh(textMesh, line, atSize);
 
+                var uiText = TypeHelper.Il2CppCast(component, typeof(UnityEngine.UI.Text)) as UnityEngine.UI.Text;
+                if (uiText != null) return MeasureUiText(uiText, line, atSize);
+
                 float? now = null;
                 if (TypeHelper.TMP_TextType != null && TypeHelper.TMP_TextType.IsInstanceOfType(component))
                     now = MeasureTmp(component, line);
-                else
-                {
-                    var uiText = TypeHelper.Il2CppCast(component, typeof(UnityEngine.UI.Text)) as UnityEngine.UI.Text;
-                    if (uiText != null) now = MeasureUiText(uiText, line);
-                }
                 if (now == null || atSize == null) return now;
                 float current = TypeHelper.GetFontSize(component);
                 return current > 0f ? now.Value * atSize.Value / current : (float?)null;
@@ -55,13 +53,20 @@ namespace UnityGameTranslator.Core
             return null;
         }
 
-        // Sum of the advances, as the font draws each character at the component's size and style.
         private static float? MeasureTextMesh(TextMesh textMesh, string line, float? atSize)
+            => MeasureWithFont(textMesh.font, line, atSize.HasValue ? (int)Math.Round(atSize.Value) : textMesh.fontSize, textMesh.fontStyle);
+
+        // ⚠ Not through the text generator (GetGenerationSettings + GetPreferredWidth): its
+        // settings are a value type, which the Core — compiled once against Mono — cannot hand to
+        // IL2CPP ("TypeLoadException … value type mismatch", measured 2026-09-27). The advances
+        // are what the generator lays a dynamic font's line out with, on both runtimes.
+        private static float? MeasureUiText(UnityEngine.UI.Text text, string line, float? atSize)
+            => MeasureWithFont(text.font, line, atSize.HasValue ? (int)Math.Round(atSize.Value) : text.fontSize, text.fontStyle);
+
+        // Sum of the advances, as the font draws each character at that size and style.
+        private static float? MeasureWithFont(Font font, string line, int size, FontStyle style)
         {
-            var font = textMesh.font;
             if (font == null) return null;
-            int size = atSize.HasValue ? (int)Math.Round(atSize.Value) : textMesh.fontSize;
-            FontStyle style = textMesh.fontStyle;
             font.RequestCharactersInTexture(line, size, style);
             float width = 0f;
             for (int i = 0; i < line.Length; i++)
@@ -79,12 +84,6 @@ namespace UnityGameTranslator.Core
             if (_tmpPreferred == null) return null;
             var size = _tmpPreferred.Invoke(tmp, new object[] { line });
             return size is Vector2 v ? v.x : (float?)null;
-        }
-
-        private static float? MeasureUiText(UnityEngine.UI.Text text, string line)
-        {
-            var settings = text.GetGenerationSettings(Vector2.zero);
-            return text.cachedTextGeneratorForLayout.GetPreferredWidth(line, settings) / text.pixelsPerUnit;
         }
     }
 }

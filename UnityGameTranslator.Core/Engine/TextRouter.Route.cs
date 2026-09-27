@@ -514,6 +514,7 @@ namespace UnityGameTranslator.Core
                 state.LayoutLastStep = null;
                 state.LayoutStarts.Clear();
                 state.LayoutStarts.Add(0);
+                state.LayoutSpread = null;
                 state.LayoutOurs = whole == state.LastTranslated || _concatTranslatedValues.Contains(whole);
                 _host.LayoutPassSeen(comp, whole);
             }
@@ -557,10 +558,12 @@ namespace UnityGameTranslator.Core
             if (state.LayoutOffset + step.Length < state.LayoutWhole.Length) return true;
 
             // The end reached on a line that is not the first: the lines were cut for other
-            // components, and this one only measured them.
+            // components, and this one only measured them. ⚠ Not necessarily the last line: when
+            // the step reaching the end overflows, the game starts one more from its last word —
+            // noted again then, with that line (TextRouter.Spread).
             if (state.LayoutOffset > 0)
             {
-                if (!state.LayoutReachedFull) NoteSpread(state, comp, compId);
+                NoteSpread(state, comp, compId);
                 state.LayoutReachedFull = true;
                 return true;
             }

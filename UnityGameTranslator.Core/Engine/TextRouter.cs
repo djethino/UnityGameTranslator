@@ -236,6 +236,7 @@ namespace UnityGameTranslator.Core
             public int LayoutOffset;        // where the line being built starts in LayoutWhole
             public string LayoutLastStep;   // the step before, breaks set aside
             public List<int> LayoutStarts = new List<int>();  // where each line began (TextRouter.Spread)
+            public SpreadLayout LayoutSpread; // the spread layout this pass noted, if any
             public SpreadLayout SpreadOf;   // the spread layout this component shows a line of
             public int SpreadIndex = -1;    // ...which line
             public bool AssemblyMissing;    // the assembly shown still has a part waiting for an answer

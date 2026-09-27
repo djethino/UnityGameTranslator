@@ -70,11 +70,26 @@ namespace UnityGameTranslator.Core
             return false;
         }
 
-        /// <summary>The pass reached the end of the whole on a line that is not its first.</summary>
+        /// <summary>
+        /// The pass reached the end of the whole on a line that is not its first. Reached again
+        /// after one more line started (the last word overflowed), it replaces what it noted.
+        /// </summary>
         private void NoteSpread(ComponentTextState state, object comp, long compId)
         {
-            var lines = new List<string>();
             var starts = state.LayoutStarts;
+            var before = state.LayoutSpread;
+            if (before != null)
+            {
+                if (before.Lines.Count == starts.Count) return;   // the same lines, drawn again
+                foreach (string line in before.Lines)
+                {
+                    string key = LineKey(line);
+                    if (_spreadLines.TryGetValue(key, out SpreadLayout noted) && noted == before)
+                        _spreadLines.Remove(key);
+                }
+            }
+
+            var lines = new List<string>();
             for (int i = 0; i < starts.Count; i++)
             {
                 int end = i + 1 < starts.Count ? starts[i + 1] : state.LayoutWhole.Length;
@@ -90,6 +105,7 @@ namespace UnityGameTranslator.Core
                 Frame = _host.Frame,
                 LaidOut = string.Join("\n", lines),
             };
+            state.LayoutSpread = spread;
             foreach (string line in lines)
             {
                 string key = LineKey(line);

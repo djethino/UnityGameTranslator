@@ -81,10 +81,13 @@ namespace UnityGameTranslator.Core
             return false;
         }
 
-        private enum Os { Windows, Linux, Mac }
+        internal enum Os { Windows, Linux, Mac }
 
-        /// <summary>The system this game runs on, as far as the engine's font folders go; null when unknown.</summary>
-        private static Os? Current()
+        /// <summary>
+        /// The system this game runs on, as far as font folders go; null when unknown. Read without
+        /// Unity, so any thread may ask (the mod's System font search runs off the main one too).
+        /// </summary>
+        internal static Os? Current()
         {
             if (Environment.OSVersion.Platform == PlatformID.Win32NT) return Os.Windows;   // Proton included
             if (Environment.OSVersion.Platform == PlatformID.MacOSX || File.Exists("/System/Library/CoreServices/SystemVersion.plist")) return Os.Mac;

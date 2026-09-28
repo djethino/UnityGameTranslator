@@ -591,6 +591,45 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// The folders holding this system's installed fonts, those that exist — the socle's one list
+        /// (<see cref="UnityGameTranslator.Common.SystemFontFolders"/>), shared with UGT Manager, for
+        /// every search of a System font in the mod. The system is the one the game runs on: a Windows
+        /// build under Wine is on Windows, and its folders are the prefix's.
+        /// </summary>
+        internal static List<string> SystemFontDirectories()
+        {
+            // FontFolderRedirect's reading of the system, not Application.platform: this runs off the
+            // main thread too (an export's System fonts), where Unity may not be asked anything.
+            var current = FontFolderRedirect.Current();
+            if (current == null) return new List<string>();
+            var os = current == FontFolderRedirect.Os.Windows ? UnityGameTranslator.Common.SystemFontFolders.Os.Windows
+                : current == FontFolderRedirect.Os.Mac ? UnityGameTranslator.Common.SystemFontFolders.Os.MacOs
+                : UnityGameTranslator.Common.SystemFontFolders.Os.Linux;
+
+            string Folder(Environment.SpecialFolder folder)
+            {
+                try { return Environment.GetFolderPath(folder); }
+                catch (Exception e) when (e is PlatformNotSupportedException || e is System.Security.SecurityException)
+                {
+                    // A folder this runtime will not name: its fonts are not searched, and it is said.
+                    Faults.Say("CustomFontLoader.SystemFontDirectories", e, folder.ToString());
+                    return null;
+                }
+            }
+
+            var windows = os == UnityGameTranslator.Common.SystemFontFolders.Os.Windows
+                ? Environment.GetEnvironmentVariable("WINDIR") ?? Folder(Environment.SpecialFolder.Windows)
+                : null;
+
+            return UnityGameTranslator.Common.SystemFontFolders
+                .For(os, windows, Folder(Environment.SpecialFolder.LocalApplicationData),
+                     Environment.GetEnvironmentVariable("HOME") ?? Folder(Environment.SpecialFolder.UserProfile),
+                     Environment.GetEnvironmentVariable("XDG_DATA_HOME"))
+                .Where(Directory.Exists)
+                .ToList();
+        }
+
+        /// <summary>
         /// Try to find a .ttf/.otf file for a system font name on the filesystem.
         /// Handles display names like "Adobe Devanagari Italic" → "AdobeDevanagari-Italic.otf"
         /// by normalizing names (stripping spaces, checking with style suffixes).
@@ -610,18 +649,7 @@ namespace UnityGameTranslator.Core
                 return null;
             }
 
-            var dirs = new List<string>();
-            try
-            {
-                var winFonts = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "Fonts");
-                if (Directory.Exists(winFonts)) dirs.Add(winFonts);
-                var userFonts = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                    "Microsoft", "Windows", "Fonts");
-                if (Directory.Exists(userFonts)) dirs.Add(userFonts);
-                if (Directory.Exists("/usr/share/fonts")) dirs.Add("/usr/share/fonts");
-                if (Directory.Exists("/Library/Fonts")) dirs.Add("/Library/Fonts");
-            }
-            catch (Exception _e) { TranslatorCore.LogDebug($"[CustomFontLoader] suppressed: {_e.GetType().Name}: {_e.Message}"); }
+            var dirs = SystemFontDirectories();
 
             // Build candidate filenames from the display name
             // "Adobe Devanagari Italic" → try: "Adobe Devanagari Italic", "AdobeDevanagari-Italic",

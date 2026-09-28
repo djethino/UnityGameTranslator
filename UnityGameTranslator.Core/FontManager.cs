@@ -1356,24 +1356,8 @@ namespace UnityGameTranslator.Core
 
             try
             {
-                string[] fontDirs;
-                if (Application.platform == RuntimePlatform.WindowsPlayer || Application.platform == RuntimePlatform.WindowsEditor)
-                {
-                    string winDir = System.Environment.GetEnvironmentVariable("WINDIR") ?? @"C:\Windows";
-                    fontDirs = new[] { System.IO.Path.Combine(winDir, "Fonts") };
-                }
-                else if (Application.platform == RuntimePlatform.LinuxPlayer || Application.platform == RuntimePlatform.LinuxEditor)
-                {
-                    fontDirs = new[] { "/usr/share/fonts", "/usr/local/share/fonts" };
-                }
-                else if (Application.platform == RuntimePlatform.OSXPlayer || Application.platform == RuntimePlatform.OSXEditor)
-                {
-                    fontDirs = new[] { "/Library/Fonts", "/System/Library/Fonts" };
-                }
-                else
-                {
-                    return new string[0];
-                }
+                // The socle's one list — the same folders every other System font search reads.
+                var fontDirs = CustomFontLoader.SystemFontDirectories();
 
                 foreach (var dir in fontDirs)
                 {
@@ -1406,7 +1390,8 @@ namespace UnityGameTranslator.Core
                 TranslatorCore.LogWarning($"[FontManager] Filesystem font scan failed: {ex.Message}");
             }
 
-            return fontNames.ToArray();
+            // Once each: macOS's Supplemental folder sits inside the one walked above it.
+            return fontNames.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         }
 
         /// <summary>
@@ -4863,24 +4848,8 @@ namespace UnityGameTranslator.Core
                 return null;
             }
 
-            string[] fontDirs;
-            if (Application.platform == RuntimePlatform.WindowsPlayer || Application.platform == RuntimePlatform.WindowsEditor)
-            {
-                string winDir = System.Environment.GetEnvironmentVariable("WINDIR") ?? @"C:\Windows";
-                fontDirs = new[] { System.IO.Path.Combine(winDir, "Fonts") };
-            }
-            else if (Application.platform == RuntimePlatform.LinuxPlayer || Application.platform == RuntimePlatform.LinuxEditor)
-            {
-                fontDirs = new[] { "/usr/share/fonts", "/usr/local/share/fonts" };
-            }
-            else if (Application.platform == RuntimePlatform.OSXPlayer || Application.platform == RuntimePlatform.OSXEditor)
-            {
-                fontDirs = new[] { "/Library/Fonts", "/System/Library/Fonts" };
-            }
-            else
-            {
-                return null;
-            }
+            // The socle's one list — the same folders every other System font search reads.
+            var fontDirs = CustomFontLoader.SystemFontDirectories();
 
             // Search for exact match first, then partial
             foreach (var dir in fontDirs)

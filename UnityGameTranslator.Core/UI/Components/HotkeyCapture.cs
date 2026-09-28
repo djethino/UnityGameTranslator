@@ -23,7 +23,7 @@ namespace UnityGameTranslator.Core.UI.Components
         private Text _displayLabel;
 
         // State
-        private string _key = "F10";
+        private string _key = Hotkeys.BaseKeyOf(Hotkeys.Default);
         private bool _ctrl;
         private bool _alt;
         private bool _shift;
@@ -73,7 +73,7 @@ namespace UnityGameTranslator.Core.UI.Components
         /// Create a new hotkey capture component.
         /// </summary>
         /// <param name="initialHotkey">Initial hotkey string (e.g., "Ctrl+F10")</param>
-        public HotkeyCapture(string initialHotkey = "F10")
+        public HotkeyCapture(string initialHotkey = Hotkeys.Default)
         {
             ParseHotkey(initialHotkey);
         }

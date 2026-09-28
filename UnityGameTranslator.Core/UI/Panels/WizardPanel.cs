@@ -193,7 +193,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
 
             // Initialize components
-            string existingHotkey = TranslatorCore.Config.settings_hotkey ?? "F10";
+            string existingHotkey = TranslatorCore.Config.settings_hotkey ?? Hotkeys.Default;
             _hotkeyCapture = new HotkeyCapture(existingHotkey);
             _translationList = new TranslationList();
 

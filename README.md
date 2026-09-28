@@ -128,7 +128,7 @@ The full set of measures, and who sees each, is published at `/docs`.
 ### In-Game Overlay
 
 - **First-run wizard** — guided setup on first launch
-- **Settings hotkey** — F10 (configurable) opens the full settings panel
+- **Settings hotkey** — Shift+F10 (configurable) opens the full settings panel
 - **Translation info** — H/V/A/S distribution, review stage, lines left to review, sync status
 - **Translation Tools** — tabs for Tools (editors), Exclusions, Fonts (Global + Overrides), Images, Variables
 - **Merge panel** — resolve conflicts with per-entry Keep Mine / Take Server choices
@@ -181,7 +181,7 @@ Download the release matching your mod loader from [GitHub Releases](https://git
 The mod displays a setup wizard. If you filled in your settings in UnityGameTranslator Manager
 before installing, it writes them into the game and the wizard is skipped.
 1. **Online mode** — enable community features or stay offline
-2. **Settings hotkey** — pick a key to open settings (default: F10)
+2. **Settings hotkey** — pick a key to open settings (default: Shift+F10)
 3. **Translation search** — search for existing community translations
 4. **AI setup** — configure translation backend and model (optional)
 
@@ -213,7 +213,7 @@ The mod works with **any server that exposes the OpenAI-compatible API** (`/v1/c
 | [Google Translate](https://cloud.google.com/translate) | Cloud Translation API |
 | [DeepL](https://www.deepl.com/pro-api) | Free and Pro tiers |
 
-**Setup:** Open the mod panel (F10) → Mod Options → Translation tab → select backend → enter URL/key → Test → Enable.
+**Setup:** Open the mod panel (Shift+F10) → Mod Options → Translation tab → select backend → enter URL/key → Test → Enable.
 
 > **Which local model?** A file cannot answer that: models age in weeks, and a name written here
 > would still be advertised long after it stopped being a sensible choice — the one that used to sit
@@ -239,7 +239,7 @@ Translation cache: `translations.json` in the same folder.
 | `translation_backend` | `"llm"`, `"google"`, `"deepl"`, or `"none"` |
 | `target_language` | `"auto"` (system language) or specific (e.g., `"French"`) |
 | `game_context` | Game description for better AI translations (e.g., `"Medieval fantasy RPG"`) |
-| `settings_hotkey` | Key to open settings (default: `"F10"`) |
+| `settings_hotkey` | Key to open settings (default: `"Shift+F10"`) |
 | `online_mode` | Enable community features (sync, upload) |
 | `sync.merge_strategy` | `"ask"`, `"merge"`, or `"replace"` |
 

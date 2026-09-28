@@ -273,7 +273,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                     interface_font = TranslatorCore.Config.interface_font,
                     source_language = TranslatorCore.Config.source_language ?? "auto",
                     target_language = TranslatorCore.Config.target_language ?? "auto",
-                    settings_hotkey = TranslatorCore.Config.settings_hotkey ?? "F10",
+                    settings_hotkey = TranslatorCore.Config.settings_hotkey ?? Hotkeys.Default,
                     toggle_translations_hotkey = TranslatorCore.Config.toggle_translations_hotkey ?? "",
                     toggle_ai_hotkey = TranslatorCore.Config.toggle_ai_hotkey ?? "",
                     toggle_images_hotkey = TranslatorCore.Config.toggle_images_hotkey ?? "",
@@ -370,7 +370,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// </summary>
         protected override void ConstructPanelContent()
         {
-            _hotkeyCapture = new HotkeyCapture("F10");
+            _hotkeyCapture = new HotkeyCapture(Hotkeys.Default);
             _hotkeyToggleTranslations = new HotkeyCapture("");
             _hotkeyToggleAI = new HotkeyCapture("");
             _hotkeyToggleImages = new HotkeyCapture("");
@@ -948,7 +948,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
 
             // Hotkey
-            _hotkeyCapture.SetHotkey(TranslatorCore.Config.settings_hotkey ?? "F10");
+            _hotkeyCapture.SetHotkey(TranslatorCore.Config.settings_hotkey ?? Hotkeys.Default);
             _hotkeyToggleTranslations.SetHotkey(TranslatorCore.Config.toggle_translations_hotkey ?? "");
             _hotkeyToggleAI.SetHotkey(TranslatorCore.Config.toggle_ai_hotkey ?? "");
             _hotkeyToggleImages.SetHotkey(TranslatorCore.Config.toggle_images_hotkey ?? "");

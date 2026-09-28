@@ -451,7 +451,8 @@ namespace UnityGameTranslator.Core
         // so it is safe on already-published translations. See analyse/font-rendering-target-size.md.
         public int max_font_atlas_size { get; set; } = 0;
 
-        public string settings_hotkey { get; set; } = "F10";
+        // The socle's default, one key on every system (Hotkeys.Default says why it is Shift+F10).
+        public string settings_hotkey { get; set; } = Hotkeys.Default;
 
         // Additional hotkeys (empty = disabled). Configured via Options panel only.
         // Each one maps to a toggle/action. Unused by the wizard to avoid conflicts.

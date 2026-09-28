@@ -5860,7 +5860,7 @@ namespace UnityGameTranslator.Core.UI
 
             var config = TranslatorCore.Config;
 
-            // Main settings panel hotkey (always configured, default Ctrl+F10)
+            // Main settings panel hotkey (always configured, default Hotkeys.Default)
             if (IsHotkeyPressed(config.settings_hotkey))
             {
                 ToggleMain();

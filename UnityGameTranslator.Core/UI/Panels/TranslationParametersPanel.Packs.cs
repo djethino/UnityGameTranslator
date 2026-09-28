@@ -214,7 +214,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
                     var state = row.Label("State");
                     state.Visible = offer.Change != AssetChange.Replace;
-                    row.Say("state", offer.Change == AssetChange.Add ? "New" : "Already in this game");
+                    row.Say("state", AssetPlanner.StateText(offer.Change));
                     state.Tone = offer.Change == AssetChange.Add ? Tone.Success : Tone.Muted;
 
                     // The mark Apply (N) counts: green for what arrives, amber for a ticked replacement.

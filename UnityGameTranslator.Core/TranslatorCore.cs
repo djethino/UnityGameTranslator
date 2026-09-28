@@ -2141,6 +2141,9 @@ namespace UnityGameTranslator.Core
             try { UniverseLib.Input.InputCapture.ReleaseAll(); } catch (Exception e) { Faults.Say("Shutdown input release", e); }
             // A game left frozen would be unplayable, and nothing else would put it right.
             try { GamePause.Release(); } catch (Exception e) { Faults.Say("Shutdown game pause release", e); }
+            // The engine gets its real file functions back before this code goes away: it still opens
+            // files while the game closes.
+            try { FontFolderRedirect.Uninstall(); } catch (Exception e) { Faults.Say("Shutdown font folder", e); }
 
             // The host stops its streams and ends the live edit session server-side (bounded
             // wait) — closing the game is one of the two legitimate session-end events, and it

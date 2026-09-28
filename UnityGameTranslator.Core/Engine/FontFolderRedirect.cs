@@ -85,6 +85,9 @@ namespace UnityGameTranslator.Core
                     }
                 }
 
+                // Nothing to show: the engine is left exactly as it is.
+                if (_ours.Count == 0) return;
+
                 var module = GetModuleHandleW("UnityPlayer.dll");
                 if (module == IntPtr.Zero)
                 {
@@ -143,15 +146,36 @@ namespace UnityGameTranslator.Core
                     if (name == null || !replacements.TryGetValue(name, out var replace)) continue;
 
                     IntPtr cell = module + address + i * slot;
-                    IntPtr ours = replace(Marshal.ReadIntPtr(cell));
-                    VirtualProtect(cell, (UIntPtr)(uint)slot, PAGE_READWRITE, out uint old);
-                    Marshal.WriteIntPtr(cell, ours);
-                    VirtualProtect(cell, (UIntPtr)(uint)slot, old, out _);
+                    IntPtr real = Marshal.ReadIntPtr(cell);
+                    Write(cell, replace(real));
+                    Patched.Add(new KeyValuePair<IntPtr, IntPtr>(cell, real));
                     count++;
                 }
             }
 
             return count;
+        }
+
+        /// <summary>The cells changed, with what they held — what Uninstall puts back.</summary>
+        private static readonly List<KeyValuePair<IntPtr, IntPtr>> Patched = new List<KeyValuePair<IntPtr, IntPtr>>();
+
+        private static void Write(IntPtr cell, IntPtr value)
+        {
+            var size = (UIntPtr)(uint)IntPtr.Size;
+            VirtualProtect(cell, size, PAGE_READWRITE, out uint old);
+            Marshal.WriteIntPtr(cell, value);
+            VirtualProtect(cell, size, old, out _);
+        }
+
+        /// <summary>
+        /// Gives the engine its real functions back — at shutdown, before this code can go away while
+        /// the engine still opens files.
+        /// </summary>
+        public static void Uninstall()
+        {
+            foreach (var cell in Patched) Write(cell.Key, cell.Value);
+            if (Patched.Count > 0) TranslatorCore.LogInfo($"[FontFolder] {Patched.Count} engine import(s) given back");
+            Patched.Clear();
         }
 
         // ── Answers ──────────────────────────────────────────────────────────────────────────────

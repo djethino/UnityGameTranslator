@@ -4281,8 +4281,9 @@ namespace UnityGameTranslator.Core
                     // Unity's FreeType on original fonts resolves family names, not file paths.
                     var fontNamesList = new List<string>();
                     fontNamesList.Add(realFontName); // e.g., "Comic Sans MS" (from TTF name table)
-                    // TEST: every other name the file carries — the engine may know it by its family,
-                    // or by the Windows-only typographic family (a file can carry its full name for Mac only).
+                    // Every other name the file carries: the engine may know it by its family, or by the
+                    // Windows-only typographic family — a file can carry its full name for Mac only, and
+                    // then the full name alone is never found (measured 2026-09-28, FontFolderRedirect).
                     if (namesInFile != null)
                         foreach (var fileName in namesInFile)
                             if (!fontNamesList.Contains(fileName)) fontNamesList.Add(fileName);

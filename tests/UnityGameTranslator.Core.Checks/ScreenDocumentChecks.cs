@@ -259,9 +259,9 @@ namespace UnityGameTranslator.Core.Checks
                 // the Asset Packs card lists the packs folder and what a pack would add.
                 "every one of the thirteen lists states its preferred height, and the hidden find lists take no spare height",
                 "ScrollingListHeightRule: a list weighed at its minimum leaves the panel no slack");
-            check(tools.Acts.Count == 31 && tools.Nodes["FontSharpness"].Word("options") == "code"
+            check(tools.Acts.Count == 34 && tools.Nodes["FontSharpness"].Word("options") == "code"
                   && (bool)tools.Nodes["TextEditorBtn"].Props["scope"]["onThisMachine"] && !(bool)tools.Nodes["TextEditorBtn"].Props["scope"]["yourPublishedCopy"],
-                "tools.json asks for 31 acts (eight of them settle a failed line, three turning its pages, four open, refresh, add or clear packs); the sharpness choices are the GPU's; the editors write locally", $"got {tools.Acts.Count} acts");
+                "tools.json asks for 34 acts (eight of them settle a failed line, three turning its pages, four open, refresh, add or clear packs, three export one); the sharpness choices are the GPU's; the editors write locally", $"got {tools.Acts.Count} acts");
 
             var options = ScreenDocument.FromFile(Path.Combine(folder, "options.json"));
             check(options.Header.Count == 1 && options.Header[0].Kind == "tabs" && options.Header[0].Children.Count == 6 && options.Body.Count == 0,

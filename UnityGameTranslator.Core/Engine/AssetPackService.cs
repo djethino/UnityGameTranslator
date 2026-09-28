@@ -238,6 +238,105 @@ namespace UnityGameTranslator.Core
             }
         }
 
+        // ── Export ──────────────────────────────────────────────────────────────────────────────
+
+        /// <summary>Where the mod writes its exports: packs/exported/, which the packs list does not read.</summary>
+        public static string ExportFolder =>
+            PacksFolder == null ? null : Path.Combine(PacksFolder, AssetPackWriter.ExportedFolder);
+
+        /// <summary>What an export reads, copied on the main thread (the inspector edits it there).</summary>
+        public sealed class ExportSource
+        {
+            public string Folder;
+            public List<string> FontReferences;
+            public List<ImageDefinition> Definitions;
+            public string GameName;
+            public string ManifestGameName;
+            public string SteamId;
+            public string TargetLanguage;
+        }
+
+        /// <summary>
+        /// The translation as the game applies it, for an export — ⚠ on the MAIN thread.
+        ///
+        /// ⚠ The references are read as UGT Manager reads them from the file (GameAssets.FontReferencesNamed):
+        /// a setting switched off is not used, a rule with nothing to match is not either. So the two
+        /// products export the same fonts from the same translation.
+        /// </summary>
+        public static ExportSource ExportSide()
+        {
+            var references = new List<string>();
+
+            foreach (var settings in TranslatorCore.FontSettingsMap.Values)
+            {
+                if (settings != null && settings.enabled && !string.IsNullOrWhiteSpace(settings.fallback))
+                    references.Add(settings.fallback);
+            }
+
+            foreach (var rule in TranslatorCore.FontOverrides)
+            {
+                if (rule != null && rule.enabled && !string.IsNullOrWhiteSpace(rule.match) && !string.IsNullOrWhiteSpace(rule.replacement))
+                    references.Add(rule.replacement);
+            }
+
+            var game = TranslatorCore.CurrentGame;
+            return new ExportSource
+            {
+                Folder = TranslatorCore.ModFolder,
+                FontReferences = references,
+                Definitions = ImageReplacer.Definitions(),
+                GameName = game?.name ?? "",
+                ManifestGameName = game?.product_name ?? game?.name ?? "",
+                SteamId = game?.steam_id,
+                TargetLanguage = TranslatorCore.FileTargetLanguage,
+            };
+        }
+
+        /// <summary>The System fonts the translation uses, each with its file or why none — reads the disk: off the main thread.</summary>
+        public static List<SystemFontChoice> SystemFonts(ExportSource source) =>
+            AssetPackWriter.SystemFonts(source.FontReferences, source.Folder, CustomFontLoader.FindSystemTtfPath);
+
+        /// <summary>What an export would carry — reads the disk: off the main thread.</summary>
+        public static ExportPlan PlanExport(ExportSource source, IEnumerable<SystemFontChoice> systemFonts) =>
+            AssetPackWriter.Plan(source.Folder, source.FontReferences, source.Definitions,
+                systemFonts.Where(c => c.Includable).Select(c => new KeyValuePair<string, string>(c.Reference, c.Path)));
+
+        /// <summary>
+        /// Writes the export into packs/exported/, named after the game and the minute — off the main
+        /// thread. Returns the file written, or throws with the reason (the caller says it on screen).
+        ///
+        /// ⚠ Through a temporary file: a pack cut short by a full drive must not replace a good one of
+        /// the same minute.
+        /// </summary>
+        public static string Export(ExportSource source, IEnumerable<SystemFontChoice> systemFonts)
+        {
+            var plan = PlanExport(source, systemFonts);
+            if (plan.IsEmpty) throw new InvalidOperationException(AssetPackWriter.NothingToExport);
+
+            var folder = ExportFolder ?? throw new InvalidOperationException("The mod folder is not known yet.");
+            Directory.CreateDirectory(folder);
+
+            var destination = Path.Combine(folder, AssetPackWriter.FileName(source.GameName, DateTime.Now));
+            var temp = destination + ".tmp";
+
+            var manifest = AssetPackWriter.ManifestJson(source.ManifestGameName, source.SteamId,
+                                                        "UnityGameTranslator Mod " + PluginInfo.Version,
+                                                        source.TargetLanguage, plan.Images);
+            try
+            {
+                using (var output = File.Create(temp))
+                    AssetPackWriter.Write(output, plan.Files, manifest);
+
+                if (File.Exists(destination)) File.Delete(destination);
+                File.Move(temp, destination);
+                return destination;
+            }
+            finally
+            {
+                if (File.Exists(temp)) File.Delete(temp);
+            }
+        }
+
         /// <summary>Free bytes on the drive holding this folder — null when the system cannot say.</summary>
         private static long? FreeSpace(string folder)
         {

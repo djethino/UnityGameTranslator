@@ -197,6 +197,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _typewritingDetectionToggle = _screen.Toggle("TypewritingToggle");
             _concatDetectionToggle = _screen.Toggle("ConcatToggle");
             FetchPackPieces();   // the Asset Packs card, under Detection — TranslationParametersPanel.Packs.cs
+            FetchExportPieces(); // the Export card below it — TranslationParametersPanel.Export.cs
 
             // Exclusions
             _manualPatternInput = _screen.Field("PatternInput");
@@ -353,6 +354,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                 case "clearPacks": return ForgetPacks;
                 case "openPacksFolder": return OnOpenPacksFolderClicked;
                 case "refreshPacks": return RefreshPacksFolder;
+                case "exportSystemFontsChanged": return OnExportSystemFontsChanged;
+                case "exportPack": return OnExportClicked;
+                case "showExport": return OnShowExportClicked;
                 case "startInspector": return OnStartInspectorClicked;
                 case "addPattern": return OnAddManualPatternClicked;
                 case "findByValue": return OnFindByValueClicked;
@@ -2558,6 +2562,12 @@ namespace UnityGameTranslator.Core.UI.Panels
             ForgetPacks();
             RefreshPacksFolder();
 
+            // The Export card read again, its System fonts choice made again (never remembered), and
+            // the line about the last export gone with the window it belonged to.
+            _exportIncludeSystem = false;
+            if (_exportDoneRow != null) _exportDoneRow.Visible = false;
+            RefreshExport();
+
             // Debug toggles
             if (_enableFontReplacementToggle != null)
                 _enableFontReplacementToggle.IsOn = TranslatorCore.Config.enable_font_replacement;
@@ -2801,6 +2811,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                 RefreshFontsList();
                 RefreshExclusionsList();
                 RefreshFontOverridesList();
+
+                // What an export carries follows what was just applied (fonts, rules, images).
+                RefreshExport();
 
                 UpdateApplyButtonText();
 

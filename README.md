@@ -1,6 +1,6 @@
 # Universal Unity Game Translator (Beta)
 
-> **Install in a few clicks with [UnityGameTranslator Manager](https://github.com/djethino/unitygametranslator-manager)** (Windows) — [download](https://github.com/djethino/unitygametranslator-manager/releases/latest)
+> **Install in a few clicks with [UnityGameTranslator Manager](https://github.com/djethino/unitygametranslator-manager)** (Windows, Linux, SteamOS) — [download](https://github.com/djethino/unitygametranslator-manager/releases/latest)
 >
 > It finds the Unity games on your PC, tells you if each one is Mono or IL2CPP, installs the right
 > mod loader and the right build of this mod, and shows the community translations already
@@ -140,14 +140,15 @@ The full set of measures, and who sees each, is published at `/docs`.
 
 ### Recommended: UnityGameTranslator Manager
 
-Download the archive from the
-[UnityGameTranslator Manager releases](https://github.com/djethino/unitygametranslator-manager/releases/latest),
-unzip it anywhere and run `UnityGameTranslatorManager.exe`. Pick your game in the list and press
+Download it from the
+[UnityGameTranslator Manager releases](https://github.com/djethino/unitygametranslator-manager/releases/latest):
+the `.zip` for Windows (run `UnityGameTranslatorManager.exe`), the `.AppImage` for Linux, SteamOS
+and Bazzite (allow it to run as a program, then open it). Pick your game in the list and press
 **Install**: the mod loader and the matching build of this mod are set up for you.
 It never replaces a mod loader that is already there, and it refuses games that ship an anti-cheat.
 
-Windows only for now. On macOS or Linux, or if you want to control every file, follow the manual
-steps below.
+On Linux it also does the part a mod loader needs there — see [Linux and SteamOS](#linux-and-steamos).
+On macOS, or if you want to control every file, follow the manual steps below.
 
 ### Manual installation
 
@@ -160,7 +161,7 @@ steps below.
 | MelonLoader | Mono or IL2CPP | [GitHub](https://github.com/LavaGang/MelonLoader/releases) |
 
 **How to identify your game type:**
-- `GameAssembly.dll` in game folder → **IL2CPP**
+- `GameAssembly.dll` (Windows) or `GameAssembly.so` (Linux) in game folder → **IL2CPP**
 - `<Game>_Data/Managed/Assembly-CSharp.dll` → **Mono**
 
 > **Cross-platform:** The mod's DLLs are .NET assemblies that work on Windows, macOS, and Linux.
@@ -175,6 +176,25 @@ Download the release matching your mod loader from [GitHub Releases](https://git
 | MelonLoader | `<Game>/Mods/` (DLLs directly, **no subfolder**) | `<Game>/UserData/UnityGameTranslator/` |
 
 > **MelonLoader warning:** Do NOT place the DLLs inside `Mods/UnityGameTranslator/`. MelonLoader only scans the root `Mods/` folder and will not find mods inside subdirectories.
+
+### Linux and SteamOS
+
+A mod loader does not start by itself on Linux. UnityGameTranslator Manager sets this up for you;
+by hand, it is one Steam launch option (game → Properties → Launch options):
+
+| The game is | Mod loader | Launch option |
+|---|---|---|
+| a native Linux build | BepInEx | `./run_bepinex.sh %command%` (make `run_bepinex.sh` executable first) |
+| a native Linux build | MelonLoader | `LD_LIBRARY_PATH="<game folder>:$LD_LIBRARY_PATH" LD_PRELOAD="MelonLoader.Bootstrap.so:$LD_PRELOAD" %command%` |
+| a Windows build through Proton | BepInEx | `WINEDLLOVERRIDES="winhttp=n,b" %command%` |
+| a Windows build through Proton | MelonLoader | `WINEDLLOVERRIDES="version=n,b" %command%` |
+
+For a Windows build, install the Windows build of the mod loader. Outside Steam (Heroic, Lutris,
+Bottles), add `WINEDLLOVERRIDES` as an environment variable in the game's settings.
+
+**Steam Deck in Game Mode has no keyboard** to press the key that opens the mod (Shift+F10). Until
+the mod has a way of its own, bind a button to Shift + F10 in the game's controller settings in
+Steam — a back button works well, and Steam lets one button press two keys.
 
 ### First Launch
 

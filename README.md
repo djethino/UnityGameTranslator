@@ -194,7 +194,8 @@ Bottles), add `WINEDLLOVERRIDES` as an environment variable in the game's settin
 
 **Steam Deck in Game Mode has no keyboard** to press the key that opens the mod (Shift+F10). Until
 the mod has a way of its own, bind a button to Shift + F10 in the game's controller settings in
-Steam — a back button works well, and Steam lets one button press two keys.
+Steam — a back button works well, since games do not see them: set the button to Shift, then add
+F10 as an extra command with the gear icon. The on-screen keyboard (Steam + X) has no F keys.
 
 ### First Launch
 

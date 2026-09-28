@@ -2563,9 +2563,10 @@ namespace UnityGameTranslator.Core.UI.Panels
             RefreshPacksFolder();
 
             // The Export card read again, its System fonts choice made again (never remembered), and
-            // the line about the last export gone with the window it belonged to.
+            // the last export's outcome gone with the window it belonged to.
             _exportIncludeSystem = false;
-            if (_exportDoneRow != null) _exportDoneRow.Visible = false;
+            _lastExport = null;
+            if (_exportShowBtn != null) _exportShowBtn.Visible = false;
             RefreshExport();
 
             // Debug toggles

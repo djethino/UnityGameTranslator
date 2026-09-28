@@ -25,8 +25,8 @@ namespace UnityGameTranslator.Core.UI.Panels
         private ToggleHandle _exportSystemToggle;
         private LabelHandle _exportNotes;
         private ButtonHandle _exportBtn;
-        private Host _exportDoneRow;
-        private LabelHandle _exportStatus;
+        private LabelHandle _exportSummary;
+        private ButtonHandle _exportShowBtn;
 
         /// <summary>The System fonts the translation uses — read off the main thread, null until then.</summary>
         private List<SystemFontChoice> _exportSystemFonts;
@@ -49,8 +49,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             _exportSystemToggle = _screen.Toggle("ExportSystemFontsToggle");
             _exportNotes = _screen.Label("ExportNotes");
             _exportBtn = _screen.Button("ExportBtn");
-            _exportDoneRow = _screen.Host("ExportDoneRow");
-            _exportStatus = _screen.Label("ExportStatus");
+            _exportSummary = _screen.Label("ExportSummary");
+            _exportShowBtn = _screen.Button("ExportShowBtn");
 
             // The socle's words, read where the decision to share is taken — true of every file in a pack.
             _screen.Say("exportShareNotice", AssetPacks.ShareNotice);
@@ -116,11 +116,26 @@ namespace UnityGameTranslator.Core.UI.Panels
             _exportNotes.Visible = reasons.Count > 0;
 
             var plan = _exportIncludeSystem && includable.Count > 0 ? _exportPlanWith : _exportPlanWithout;
+            _exportSummary.Tone = Tone.Secondary;
             _screen.Say("exportSummary", plan.IsEmpty
                 ? "Nothing to export"
                 : Composition.Amount(plan.Fonts, "font", "fonts") + ", " + Composition.Amount(plan.ImageCount, "image", "images"));
 
             _exportBtn.Enabled = !plan.IsEmpty;
+        }
+
+        /// <summary>
+        /// The outcome, beside the button that was just pressed (user, 2026-09-28: said under it, the
+        /// line fell below the window's edge). It stays until the card changes again.
+        /// </summary>
+        private void SayExported(string written, string failure)
+        {
+            _exportSummary.Tone = written != null ? Tone.Success : Tone.Error;
+            _screen.Say("exportSummary", written != null
+                ? "Exported: " + Path.GetFileName(written)
+                : "Nothing was exported: " + failure);
+            _exportShowBtn.Visible = _lastExport != null;
+            _exportBtn.Enabled = true;
         }
 
         private void OnExportSystemFontsChanged()
@@ -155,22 +170,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                 TranslatorUIManager.RunOnMainThread(() =>
                 {
                     _exportBusy = false;
-                    _exportDoneRow.Visible = true;
-
-                    if (written != null)
-                    {
-                        _lastExport = written;
-                        _screen.Say("exportStatus", "Exported: " + Path.GetFileName(written));
-                        _exportStatus.Tone = Tone.Success;
-                    }
-                    else
-                    {
-                        _screen.Say("exportStatus", "Nothing was exported: " + failure);
-                        _exportStatus.Tone = Tone.Error;
-                    }
-
-                    _screen.Button("ExportShowBtn").Visible = written != null;
-                    ShowExport();
+                    if (written != null) _lastExport = written;
+                    SayExported(written, failure);
                 });
             });
         }
@@ -181,8 +182,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             var folder = _lastExport != null ? Path.GetDirectoryName(_lastExport) : AssetPackService.ExportFolder;
             if (!TranslatorCore.OpenFolderSafe(folder))
             {
-                _screen.Say("exportStatus", "Could not open the folder: " + folder);
-                _exportStatus.Tone = Tone.Warning;
+                _screen.Say("exportSummary", "Could not open the folder: " + folder);
+                _exportSummary.Tone = Tone.Warning;
             }
         }
     }

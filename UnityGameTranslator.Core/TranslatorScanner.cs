@@ -2591,8 +2591,12 @@ namespace UnityGameTranslator.Core
 
         #region Font Highlight (in-game identification)
 
-        // Stores original colors per instance ID for restore after highlight
-        private static readonly Dictionary<int, Color> _highlightOriginalColors = new Dictionary<int, Color>();
+        // What the highlight changed: each component it recoloured, with the colour it had before.
+        // 🔴 The ONLY source for putting colours back (2026-09-28). Restoring from what the scanner
+        // could see at clear time missed every text that appeared during the highlight — a screen
+        // opened while it was on — and those stayed grey for the rest of the session.
+        private static readonly Dictionary<int, KeyValuePair<object, Color>> _highlightOriginalColors =
+            new Dictionary<int, KeyValuePair<object, Color>>();
         private static string _highlightedFontName = null;
 
         // Highlight color for matching font, dim color for non-matching
@@ -2698,37 +2702,15 @@ namespace UnityGameTranslator.Core
         {
             if (_highlightedFontName == null && _highlightOriginalColors.Count == 0) return;
 
-            // Restore from scanner cache
-            foreach (var type in _registeredTypes)
+            // Every component the highlight recoloured, from the record kept as it did so.
+            foreach (var entry in _highlightOriginalColors.Values)
             {
-                if (type.CachedComponents == null) continue;
-                foreach (var obj in type.CachedComponents)
-                {
-                    if (obj == null) continue;
-                    try
-                    {
-                        object component = ResolveComponent(obj, type);
-                        if (component == null) continue;
-                        int id = TypeHelper.GetInstanceID(component);
-                        if (id == -1) continue;
-                        RestoreComponentColor(component, id);
-                    }
-                    // One component whose colour cannot be put back keeps the highlight; said.
-                    catch (Exception ex) { Faults.Say("Scanner.ClearHighlight", ex, type.Name); }
-                }
-            }
-
-            // Restore from patch-tracked components (not in scanner cache)
-            List<KeyValuePair<int, object>> clearSnapshot;
-            // Written by the text setters' prefixes, on the main thread, as this runs: a copy cannot
-            // meet a write in progress (it used to be caught, and read as "no component").
-            clearSnapshot = new List<KeyValuePair<int, object>>(TranslatorPatches.PatchedComponentRefs);
-            foreach (var kvp in clearSnapshot)
-            {
-                // Destroyed since the patch saw it: the reference outlives the object.
-                if (kvp.Value == null || (kvp.Value is UnityEngine.Object gone && gone == null)) continue;
-                try { RestoreComponentColor(kvp.Value, kvp.Key); }
-                catch (Exception ex) { Faults.Say("Scanner.ClearHighlight patch-seen", ex, kvp.Value.GetType().Name); }
+                var component = entry.Key;
+                // Destroyed since: the reference outlives the object, and there is nothing to restore.
+                if (component == null || (component is UnityEngine.Object gone && gone == null)) continue;
+                try { TypeHelper.SetTextColor(component, entry.Value); }
+                // One component whose colour cannot be put back keeps the highlight; said.
+                catch (Exception ex) { Faults.Say("Scanner.ClearHighlight", ex, component.GetType().Name); }
             }
 
             // The UI Toolkit half keeps its own record — no instance id to key one here.
@@ -2767,21 +2749,20 @@ namespace UnityGameTranslator.Core
                 }
             }
 
-            // Store original color
-            Color originalColor = TypeHelper.GetTextColor(component);
-            if (!_highlightOriginalColors.ContainsKey(id))
-                _highlightOriginalColors[id] = originalColor;
-
-            // Apply highlight or dim
-            TypeHelper.SetTextColor(component, matches ? HighlightColor : DimColor);
+            RecolourForHighlight(component, id, matches ? HighlightColor : DimColor);
         }
 
-        private static void RestoreComponentColor(object component, int id)
+        /// <summary>
+        /// The one way the highlight changes a colour: the component's own colour is recorded the
+        /// first time, so ClearHighlight can always put it back — whichever pass reached it.
+        /// </summary>
+        private static void RecolourForHighlight(object component, int id, Color target)
         {
-            if (_highlightOriginalColors.TryGetValue(id, out var originalColor))
-            {
-                TypeHelper.SetTextColor(component, originalColor);
-            }
+            if (!_highlightOriginalColors.ContainsKey(id))
+                _highlightOriginalColors[id] = new KeyValuePair<object, Color>(component, TypeHelper.GetTextColor(component));
+
+            if (TypeHelper.GetTextColor(component) != target)
+                TypeHelper.SetTextColor(component, target);
         }
 
         #endregion
@@ -3550,10 +3531,9 @@ namespace UnityGameTranslator.Core
                         if (hlComp != null && TranslatorCore.IsOwnUI(hlComp)) continue;
 
                         bool matches = string.Equals(settingsFontName, _highlightedFontName, StringComparison.OrdinalIgnoreCase);
-                        Color target = matches ? HighlightColor : DimColor;
-                        Color current = TypeHelper.GetTextColor(component);
-                        if (current != target)
-                            TypeHelper.SetTextColor(component, target);
+                        // Recorded on first touch: a text that appeared during the highlight was
+                        // recoloured here with no colour kept, and stayed grey after it (2026-09-28).
+                        RecolourForHighlight(component, id, matches ? HighlightColor : DimColor);
                     }
                 }
             }

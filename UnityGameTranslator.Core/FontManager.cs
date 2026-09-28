@@ -3815,9 +3815,9 @@ namespace UnityGameTranslator.Core
                     // own TMP fonts register) is normal; we just return and let the next
                     // EnsureFallbackApplied call retry. Blacklisting here would lock out
                     // the fallback forever and force the user to restart the game.
-                    if (CustomFontLoader.IsFontDeferred(settings.fallback))
+                    if (NotLoadedYet(settings.fallback))
                     {
-                        TranslatorCore.LogDebug($"[FontManager] Fallback '{settings.fallback}' deferred (clone source not yet available) — will retry");
+                        TranslatorCore.LogDebug($"[FontManager] Fallback '{settings.fallback}' not available yet — will retry");
                         return;
                     }
                     _failedFallbackFontNames.Add(settings.fallback);
@@ -4231,6 +4231,13 @@ namespace UnityGameTranslator.Core
             {
                 replacementFont = CreateUnityFontFromSystem(settings.fallback);
 
+                // 🔴 A game font the game has not loaded yet: nothing to do NOW, and nothing to
+                // remember as a failure — the next text that needs it asks again. Neither the
+                // fontNames trick below (it asks the OPERATING SYSTEM for that name, which has no
+                // such font) nor a blacklist entry (the fallback would never apply this session)
+                // fits a font that simply is not in memory yet (2026-09-28).
+                if (replacementFont == null && IsGameFontRef(settings.fallback)) return null;
+
                 // IL2CPP fallback: modify the ORIGINAL font's fontNames to point to the system font
                 // This avoids clone atlas sharing issues — Unity re-rasterizes using the new font
                 Font originalGameFont = null;
@@ -4398,7 +4405,10 @@ namespace UnityGameTranslator.Core
                     _unityFallbackFonts[originalFontName] = replacementFont;
                     // Don't add to _createdFallbackFontNames if it's the original game font
                     // (we modified its fontNames, not created a new font)
-                    if (originalGameFont == null || replacementFont != originalGameFont)
+                    // Nor when it IS a game font used as a fallback: marking the game's own font as
+                    // ours hid it from the game fonts ever after — "(incompatible)" (2026-09-28).
+                    if ((originalGameFont == null || replacementFont != originalGameFont)
+                        && !IsLoadedGameUnityFont(replacementFont))
                         _createdFallbackFontNames.Add(replacementFont.name);
                 }
                 else
@@ -4487,6 +4497,52 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// A fallback that may simply not be in memory yet: a custom font waiting for a game TMP
+        /// asset to clone from, or a game font the game has not loaded. Neither is a failure to
+        /// remember — the next text that needs it asks again.
+        /// </summary>
+        private static bool NotLoadedYet(string fallback) =>
+            CustomFontLoader.IsFontDeferred(fallback) || IsGameFontRef(fallback);
+
+        private static bool IsLoadedGameUnityFont(Font font) =>
+            font != null && _gameUnityFonts.TryGetValue(font.name, out var known) && known == font;
+
+        /// <summary>Frame of the last by-name search, per name — see FindLoadedGameUnityFont.</summary>
+        private static readonly Dictionary<string, int> _gameUnityFontLookupFrame =
+            new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// A game Unity font NAMED by the translation, found among the fonts in memory — or null.
+        ///
+        /// ⚠ By exact name, never a general scan: listing every Font picked up built-in and
+        /// OS-backed fonts and polluted the game font list (ScanGameFonts). A Unity font is
+        /// otherwise only learnt when a text uses it (RegisterUnityFontObject), and a game can load
+        /// one it uses nowhere on screen yet — the one somebody picked as a fallback.
+        ///
+        /// ⚠ At most once per frame and per name: it is asked from text setters while the font is
+        /// missing, and a new frame is when the game can have loaded it.
+        /// </summary>
+        private static Font FindLoadedGameUnityFont(string name)
+        {
+            int frame = Time.frameCount;
+            if (_gameUnityFontLookupFrame.TryGetValue(name, out int last) && last == frame) return null;
+            _gameUnityFontLookupFrame[name] = frame;
+
+            foreach (var obj in TypeHelper.FindAllAssetsOfType(typeof(Font)))
+            {
+                var font = obj as Font ?? TypeHelper.Il2CppCast(obj, typeof(Font)) as Font;
+                if (font == null || !string.Equals(font.name, name, StringComparison.OrdinalIgnoreCase)) continue;
+                if (IsClonedFont(font) || _createdFallbackFontNames.Contains(font.name)) continue;
+
+                _gameUnityFonts[font.name] = font;
+                TranslatorCore.LogDebug($"[FontManager] Found game Unity font by name: {font.name}");
+                return font;
+            }
+
+            return null;
+        }
+
+        /// <summary>
         /// Create a Unity Font from a system font name.
         /// </summary>
         private static Font CreateUnityFontFromSystem(string systemFontName)
@@ -4516,6 +4572,11 @@ namespace UnityGameTranslator.Core
                     return kvp.Value;
                 }
             }
+
+            // 🔴 "[Game] X" is the game's font or nothing (FontReferences): asking the OS for X
+            // returned the OS's stand-in (Arial, DejaVu) under the game font's name, which then
+            // drew the text and shut the real one out once the game loaded it (2026-09-28).
+            if (IsGameFontRef(systemFontName)) return FindLoadedGameUnityFont(cleanName);
 
             // Try a fresh OS-backed dynamic font (works on Mono, and on IL2CPP builds that kept it)
             var dynamicFont = CreateDynamicOSFont(cleanName);
@@ -4580,7 +4641,10 @@ namespace UnityGameTranslator.Core
                                 TranslatorCore.LogDebug($"[FontManager] Using game font as fallback: {cleanName}");
                                 return gameFont;
                             }
-                            break;
+
+                            // Not in memory yet — a fact about this moment, not a failure (NotLoadedYet).
+                            TranslatorCore.LogDebug($"[FontManager] Game font not loaded yet: {cleanName}");
+                            return null;
                         }
 
                         case UnityGameTranslator.Common.FontSource.System:

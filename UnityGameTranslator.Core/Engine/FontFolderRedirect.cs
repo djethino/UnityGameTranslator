@@ -27,8 +27,11 @@ namespace UnityGameTranslator.Core
     /// lists the folder a few seconds after the mod installs this (logged once, "engine lists the font
     /// folder"), so fonts/ is in its list; it does not list it again, so a font added while the game
     /// runs is seen at the next launch. Windows, and Proton (whose Wine provides the same calls).
+    ///
+    /// ⚠ Native Linux and macOS do the same with other folders and other calls — read in their
+    /// engines, not yet run anywhere (FontFolderRedirect.Unix.cs; analyse/polices-custom-ui-text.md).
     /// </summary>
-    internal static class FontFolderRedirect
+    internal static partial class FontFolderRedirect
     {
         // ── Win32 ────────────────────────────────────────────────────────────────────────────────
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] private static extern IntPtr GetModuleHandleW(string name);
@@ -59,7 +62,8 @@ namespace UnityGameTranslator.Core
         private static GetFileAttributesW_ _realGetAttributes; private static readonly GetFileAttributesW_ OurGetAttributes = GetAttributes;
         private static GetFileAttributesExW_ _realGetAttributesEx; private static readonly GetFileAttributesExW_ OurGetAttributesEx = GetAttributesEx;
 
-        private static string _systemFonts;                                   // "C:\Windows\Fonts", no trailing separator
+        private static string _systemFonts;                                   // the folder our files are shown in, no trailing separator
+        private static StringComparison _pathCase = StringComparison.OrdinalIgnoreCase;
         private static Dictionary<string, string> _ours;                      // file name → full path in fonts/
         private static readonly Dictionary<IntPtr, Queue<string>> Pending = new Dictionary<IntPtr, Queue<string>>();
         private static readonly object Gate = new object();
@@ -77,15 +81,48 @@ namespace UnityGameTranslator.Core
             return false;
         }
 
-        /// <summary>Changes UnityPlayer.dll's import table. Once; Windows only; says what it did.</summary>
+        private enum Os { Windows, Linux, Mac }
+
+        /// <summary>The system this game runs on, as far as the engine's font folders go; null when unknown.</summary>
+        private static Os? Current()
+        {
+            if (Environment.OSVersion.Platform == PlatformID.Win32NT) return Os.Windows;   // Proton included
+            if (Environment.OSVersion.Platform == PlatformID.MacOSX || File.Exists("/System/Library/CoreServices/SystemVersion.plist")) return Os.Mac;
+            if (Environment.OSVersion.Platform == PlatformID.Unix) return Os.Linux;
+            return null;
+        }
+
+        /// <summary>
+        /// Changes the engine's own imports so it sees fonts/ as installed fonts. Once; says what it did;
+        /// changes nothing when there is nothing to show or anything looks unexpected.
+        /// </summary>
         public static void Install(string fontsFolder)
         {
-            if (_installed || Environment.OSVersion.Platform != PlatformID.Win32NT) return;
+            if (_installed) return;
             _installed = true;
 
             try
             {
-                _systemFonts = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "Fonts").TrimEnd('\\');
+                var os = Current();
+                if (os == null) return;
+
+                // The folders the engine walks, read in UnityPlayer: Windows' own font folder; on Linux
+                // /usr/share/fonts; on macOS three, of which ours join the last.
+                string[] engineFolders;
+                switch (os.Value)
+                {
+                    case Os.Windows:
+                        engineFolders = new[] { Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "Fonts") };
+                        break;
+                    case Os.Linux:
+                        engineFolders = new[] { "/usr/share/fonts" };
+                        _pathCase = StringComparison.Ordinal;
+                        break;
+                    default:
+                        engineFolders = new[] { "/System/Library/Fonts/Supplemental", "/System/Library/Fonts", "/Library/Fonts" };
+                        break;
+                }
+                _systemFonts = engineFolders[engineFolders.Length - 1].TrimEnd('\\', '/');
 
                 _ours = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
                 if (Directory.Exists(fontsFolder))
@@ -94,7 +131,9 @@ namespace UnityGameTranslator.Core
                     {
                         var name = Path.GetFileName(file);
                         if (!UnityGameTranslator.Common.AssetPacks.IsFontFile(name)) continue;
-                        if (File.Exists(Path.Combine(_systemFonts, name))) continue;   // the installed one stays
+                        bool installed = false;
+                        foreach (var folder in engineFolders) installed |= File.Exists(Path.Combine(folder, name));
+                        if (installed) continue;   // the installed one stays
                         _ours[name] = file;
                     }
                 }
@@ -102,14 +141,30 @@ namespace UnityGameTranslator.Core
                 // Nothing to show: the engine is left exactly as it is.
                 if (_ours.Count == 0) return;
 
+                int patched = os == Os.Windows ? InstallWindows()
+                            : os == Os.Linux ? InstallLinux()
+                            : InstallMac();
+                if (patched <= 0) return;   // each says why
+
+                TranslatorCore.LogInfo($"[FontFolder] {patched} engine import(s) redirected ({os}); {_ours.Count} font file(s) shown in {_systemFonts}: {string.Join(", ", _ours.Keys)}");
+            }
+            catch (Exception ex)
+            {
+                // The boundary with the process's own code: an unexpected layout is said, never hidden.
+                TranslatorCore.LogWarning($"[FontFolder] Could not redirect the engine's font folder: {ex.GetType().Name}: {ex.Message}");
+            }
+        }
+
+        private static int InstallWindows()
+        {
                 var module = GetModuleHandleW("UnityPlayer.dll");
                 if (module == IntPtr.Zero)
                 {
                     TranslatorCore.LogInfo("[FontFolder] No UnityPlayer.dll in this process — nothing to redirect");
-                    return;
+                    return 0;
                 }
 
-                int patched = Patch(module, "kernel32.dll", new Dictionary<string, Func<IntPtr, IntPtr>>
+                return Patch(module, "kernel32.dll", new Dictionary<string, Func<IntPtr, IntPtr>>
                 {
                     ["FindFirstFileExW"] = real => { _realFindFirstEx = Marshal.GetDelegateForFunctionPointer<FindFirstFileExW_>(real); return Marshal.GetFunctionPointerForDelegate(OurFindFirstEx); },
                     ["FindFirstFileW"] = real => { _realFindFirst = Marshal.GetDelegateForFunctionPointer<FindFirstFileW_>(real); return Marshal.GetFunctionPointerForDelegate(OurFindFirst); },
@@ -119,14 +174,6 @@ namespace UnityGameTranslator.Core
                     ["GetFileAttributesW"] = real => { _realGetAttributes = Marshal.GetDelegateForFunctionPointer<GetFileAttributesW_>(real); return Marshal.GetFunctionPointerForDelegate(OurGetAttributes); },
                     ["GetFileAttributesExW"] = real => { _realGetAttributesEx = Marshal.GetDelegateForFunctionPointer<GetFileAttributesExW_>(real); return Marshal.GetFunctionPointerForDelegate(OurGetAttributesEx); },
                 });
-
-                TranslatorCore.LogInfo($"[FontFolder] {patched} engine import(s) redirected; {_ours.Count} font file(s) shown in {_systemFonts}: {string.Join(", ", _ours.Keys)}");
-            }
-            catch (Exception ex)
-            {
-                // The boundary with the process's own code: an unexpected layout is said, never hidden.
-                TranslatorCore.LogWarning($"[FontFolder] Could not redirect the engine's font folder: {ex.GetType().Name}: {ex.Message}");
-            }
         }
 
         /// <summary>Replaces, in a module's import table, the named functions of one DLL. Returns how many.</summary>
@@ -175,6 +222,8 @@ namespace UnityGameTranslator.Core
 
         private static void Write(IntPtr cell, IntPtr value)
         {
+            if (Current() != Os.Windows) { WriteUnix(cell, value); return; }
+
             var size = (UIntPtr)(uint)IntPtr.Size;
             VirtualProtect(cell, size, PAGE_READWRITE, out uint old);
             Marshal.WriteIntPtr(cell, value);
@@ -194,36 +243,45 @@ namespace UnityGameTranslator.Core
 
         // ── Answers ──────────────────────────────────────────────────────────────────────────────
 
-        /// <summary>The fonts/ file standing for a path in the system font folder, or null.</summary>
-        private static string OursFor(IntPtr namePtr)
+        /// <summary>The fonts/ file standing for a path in the folder ours are shown in, or null.</summary>
+        private static string OursForPath(string path)
         {
-            if (namePtr == IntPtr.Zero || _ours == null || _ours.Count == 0) return null;
-            var path = Marshal.PtrToStringUni(namePtr);
-            if (string.IsNullOrEmpty(path)) return null;
-
+            if (string.IsNullOrEmpty(path) || _ours == null || _ours.Count == 0) return null;
             var dir = Path.GetDirectoryName(path);
-            if (dir == null || !string.Equals(dir.TrimEnd('\\'), _systemFonts, StringComparison.OrdinalIgnoreCase)) return null;
+            if (dir == null || !string.Equals(dir.TrimEnd('\\', '/'), _systemFonts, _pathCase)) return null;
             return _ours.TryGetValue(Path.GetFileName(path), out var file) ? file : null;
         }
 
+        /// <summary>Whether a folder (or a Windows listing pattern inside it) is the one ours are shown in.</summary>
+        private static bool IsOurFolder(string folder)
+        {
+            if (string.IsNullOrEmpty(folder) || _ours == null) return false;
+            return string.Equals(folder.TrimEnd('\\', '/'), _systemFonts, _pathCase);
+        }
+
+        private static void SawListing(string what)
+        {
+            if (_sawListing) return;
+            _sawListing = true;
+            TranslatorCore.LogInfo($"[FontFolder] engine lists the font folder ({what}) — our {_ours.Count} file(s) added");
+        }
+
+        // Windows: the engine's strings are UTF-16.
+        private static string OursFor(IntPtr namePtr) =>
+            namePtr == IntPtr.Zero ? null : OursForPath(Marshal.PtrToStringUni(namePtr));
+
         private static bool IsFontFolderListing(IntPtr namePtr)
         {
-            if (namePtr == IntPtr.Zero || _ours == null) return false;
+            if (namePtr == IntPtr.Zero) return false;
             var pattern = Marshal.PtrToStringUni(namePtr);
-            var dir = pattern == null ? null : Path.GetDirectoryName(pattern);
-            return dir != null && string.Equals(dir.TrimEnd('\\'), _systemFonts, StringComparison.OrdinalIgnoreCase);
+            return pattern != null && IsOurFolder(Path.GetDirectoryName(pattern));
         }
 
         private static void Track(IntPtr handle, IntPtr pattern)
         {
             if (handle == InvalidHandle || !IsFontFolderListing(pattern)) return;
             lock (Gate) Pending[handle] = new Queue<string>(_ours.Keys);
-
-            if (!_sawListing)
-            {
-                _sawListing = true;
-                TranslatorCore.LogInfo($"[FontFolder] engine lists the font folder ({Marshal.PtrToStringUni(pattern)}) — our {_ours.Count} file(s) added");
-            }
+            SawListing(Marshal.PtrToStringUni(pattern));
         }
 
         private static IntPtr FindFirstEx(IntPtr name, int level, IntPtr data, int op, IntPtr filter, int flags)

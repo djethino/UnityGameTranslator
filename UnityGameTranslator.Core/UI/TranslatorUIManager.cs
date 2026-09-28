@@ -5785,11 +5785,15 @@ namespace UnityGameTranslator.Core.UI
             bool aiActive = TranslatorCore.Config.IsTranslationEnabled &&
                            (TranslatorCore.QueueCount > 0 || TranslatorCore.IsTranslating);
 
+            // A font converting in the background is shown with panels open too: it is usually
+            // the Fonts tab that started it, and the text it waits for is right there.
+            bool fontConverting = FontConversions.Current().Count > 0;
+
             // Other notifications only show when no panels are open
             // (mod update and sync are now shown in MainPanel)
             bool hasOtherContent = !panelsOpen && StatusOverlay.HasNotificationContent();
 
-            bool shouldShow = firstRunDone && (aiActive || hasOtherContent);
+            bool shouldShow = firstRunDone && (aiActive || fontConverting || hasOtherContent);
 
             if (shouldShow)
             {

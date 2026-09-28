@@ -2691,6 +2691,47 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// Applies the fonts whose background conversion ended since the last tick
+        /// (CustomFontLoader.PrepareInBackground). Main thread — called from the scanner's tick.
+        /// </summary>
+        public static void ApplyReadyCustomFonts()
+        {
+            while (CustomFontLoader.ReadyFonts.TryDequeue(out var fontName))
+                OnCustomFontReady(fontName);
+        }
+
+        /// <summary>
+        /// A custom font finished converting: every game font the translation replaces with it is
+        /// asked again, the way a change of setting is — the earlier attempts only found it "not
+        /// ready yet" and left the game's own font in place.
+        /// </summary>
+        private static void OnCustomFontReady(string fontName)
+        {
+            _failedFallbackFontNames.Remove(fontName);
+            _failedFallbackFontNames.Remove(UnityGameTranslator.Common.AssetPacks.CustomFontPrefix + fontName);
+
+            var users = new List<string>();
+            foreach (var kvp in TranslatorCore.FontSettingsMap)
+            {
+                var fallback = kvp.Value?.fallback;
+                if (string.IsNullOrEmpty(fallback)) continue;
+                if (!string.Equals(UnityGameTranslator.Common.FontReferences.Name(fallback), fontName, StringComparison.Ordinal)) continue;
+                users.Add(kvp.Key);
+            }
+
+            foreach (var gameFont in users)
+            {
+                _fallbackAppliedFonts.Remove(gameFont);
+                _fallbackAppliedFonts.Remove(gameFont + "_reverse");
+                TranslatorScanner.RefreshForFont(gameFont);
+            }
+
+            TranslatorScanner.ClearProcessedCache();
+            RequestPendingRefresh();
+            TranslatorCore.LogInfo($"[FontManager] Custom font '{fontName}' converted — applied to {users.Count} game font(s)");
+        }
+
+        /// <summary>
         /// Ensure the configured fallback font is added to the original font's fallback list.
         /// Called from Harmony patches on every text set — must be fast (cached check).
         /// Does NOT replace the font on the component. TMP uses fallback fonts automatically

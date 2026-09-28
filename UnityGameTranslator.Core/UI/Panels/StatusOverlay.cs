@@ -66,6 +66,9 @@ namespace UnityGameTranslator.Core.UI.Panels
         private readonly List<string> _webNotifShown = new List<string>();
 
         // UI elements - AI queue status
+        private Host _fontBox;
+        private LabelHandle _fontLabel;
+        private LabelHandle _fontProgress;
         private Host _aiBox;
         private LabelHandle _aiStatusLabel;
         private LabelHandle _aiQueueLabel;
@@ -353,6 +356,10 @@ namespace UnityGameTranslator.Core.UI.Panels
             _unreachableBox = _screen.Host("UnreachableBox");
             _unreachableCause = _screen.Label("UnreachableCause");
 
+            _fontBox = _screen.Host("FontConversionBox");
+            _fontLabel = _screen.Label("FontConversionLabel");
+            _fontProgress = _screen.Label("FontConversionProgress");
+
             _aiBox = _screen.Host("AIBox");
             _aiStatusLabel = _screen.Label("AIStatusLabel");
             _aiQueueLabel = _screen.Label("AIQueueLabel");
@@ -451,6 +458,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (_modUpdateBox != null) _modUpdateBox.Visible = false;
             if (_syncBox != null) _syncBox.Visible = false;
             if (_aiBox != null) _aiBox.Visible = false;
+            if (_fontBox != null) _fontBox.Visible = false;
             if (_unreachableBox != null) _unreachableBox.Visible = false;
             if (_connectionBox != null) _connectionBox.Visible = false;
         }
@@ -583,7 +591,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             bool showAI = aiEnabled && (queueCount > 0 || isTranslating);
             bool unreachable = aiEnabled && TranslatorCore.BackendUnreachable != ConnectionProblem.None;
 
-            return showModUpdate || showSyncNotification || showAI || unreachable;
+            return showModUpdate || showSyncNotification || showAI || unreachable || FontConversions.Current().Count > 0;
         }
 
         /// <summary>
@@ -752,6 +760,24 @@ namespace UnityGameTranslator.Core.UI.Panels
                 if (_failuresFixBtn != null) _failuresFixBtn.Label = $"Fix ({failed})";
             }
 
+            // 2c. A font being converted in the background: the game keeps running, and this says
+            // why the text has not changed font yet — and that it is moving.
+            var conversions = FontConversions.Current();
+            if (_fontBox != null) _fontBox.Visible = conversions.Count > 0;
+            if (conversions.Count > 0)
+            {
+                var c = conversions[0];
+                string more = conversions.Count > 1 ? $" (+{conversions.Count - 1})" : "";
+                _fontLabel?.Say($"Converting font: {c.FontName}{more}");
+                if (_fontLabel != null) _fontLabel.Waiting = true;
+
+                string where = c.Total > 0 && c.Done < c.Total
+                    ? $"{c.Done:N0} / {c.Total:N0} characters"
+                    : c.Step + "...";
+                _fontProgress?.Say($"{where} · {(int)c.Seconds} s");
+            }
+            else if (_fontLabel != null) _fontLabel.Waiting = false;
+
             // 3. AI queue status
             bool aiEnabled = TranslatorCore.Config.IsTranslationEnabled;
             int queueCount = TranslatorCore.QueueCount;
@@ -916,7 +942,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // 🔴 Every box of the stack, the site's notification included: left out of this list,
             // it was drawn without a height of its own, over the buttons of the box above it.
-            foreach (var box in new[] { _modUpdateBox, _syncBox, _webNotifBox, _failuresBox, _unreachableBox, _aiBox, _connectionBox, _toast?.Handle })
+            foreach (var box in new[] { _modUpdateBox, _syncBox, _webNotifBox, _failuresBox, _unreachableBox, _fontBox, _aiBox, _connectionBox, _toast?.Handle })
             {
                 if (box == null || !box.Visible) continue;
 
@@ -961,6 +987,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (_failuresBox != null && _failuresBox.Visible) height += 60;
             if (_unreachableBox != null && _unreachableBox.Visible) height += 80;
             if (_aiBox != null && _aiBox.Visible) height += 50;
+            if (_fontBox != null && _fontBox.Visible) height += 50;
             if (_connectionBox != null && _connectionBox.Visible) height += 20;
             if (_toast != null && _toast.Visible) height += 50;
             return height;

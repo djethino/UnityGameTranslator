@@ -97,9 +97,10 @@ namespace UnityGameTranslator.Core.Rasterizer
         /// Maximum atlas dimension (typically SystemInfo.maxTextureSize at runtime — 16384
         /// on modern PC GPUs). Pipeline never exceeds this size.
         /// </param>
+        /// <param name="progress">Where the letters drawn so far are reported, when a screen shows it.</param>
         public static PipelineResult ProcessTtfFont(string ttfPath,
             float renderSize = DefaultRenderSize, float distanceRange = DefaultDistanceRange,
-            int maxAtlasSize = 8192, int atlasBudget = 0)
+            int maxAtlasSize = 8192, int atlasBudget = 0, FontConversions.Conversion progress = null)
         {
             if (!File.Exists(ttfPath))
             {
@@ -174,8 +175,12 @@ namespace UnityGameTranslator.Core.Rasterizer
                 for (int u = 0; u < unmapped.Length; u++)
                     if (privateCodepoints[u] != 0) work.Add(new KeyValuePair<int, int>(privateCodepoints[u], unmapped[u]));
 
+                progress?.SetTotal(work.Count);
+                progress?.SetStep("Drawing letters");
+
                 for (int i = 0; i < work.Count; i++)
                 {
+                    progress?.SetDone(i);
                     int codepoint = work[i].Key;
                     GlyphOutline outline;
                     if (work[i].Value >= 0)
@@ -237,6 +242,8 @@ namespace UnityGameTranslator.Core.Rasterizer
                 // Step 5: Pack atlas(es). The packer returns one entry if everything fits,
                 // and N entries (multi-atlas) otherwise. Each RasterizedGlyph now carries
                 // an AtlasIndex pointing to its atlas in this list.
+                progress?.SetDone(work.Count);
+                progress?.SetStep("Packing");
                 TranslatorCore.LogInfo($"[TtfPipeline] Packing atlas (max {maxAtlasSize}x{maxAtlasSize})...");
                 // Inter-cell spacing must cover the SDF spread AND the drop-shadow OFFSET:
                 // TMP underlay effects sample OUTSIDE the glyph rect at a distance driven by

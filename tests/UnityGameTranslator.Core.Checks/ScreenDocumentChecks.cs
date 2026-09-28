@@ -181,8 +181,8 @@ namespace UnityGameTranslator.Core.Checks
             check(overlay.Body.Count == 1 && overlay.Body[0].Kind == "stack" && overlay.Body[0].Int("pad") != null && overlay.Body[0].Int("spacing") != null,
                 "one stack, whose spacing and padding the document states in pixels", "the code sizes the window from them — read there, never copied");
             check(overlay.Body[0].Children.All(b => !b.StartsVisible || b.Kind == "toast")
-                  && overlay.Body[0].Children.Count(b => b.Kind == "callout") == 6 && overlay.Nodes["ToastBox"].Kind == "toast",
-                "every box starts hidden: six callouts, a connection line, a toast", "the code shows each when its moment comes");
+                  && overlay.Body[0].Children.Count(b => b.Kind == "callout") == 7 && overlay.Nodes["ToastBox"].Kind == "toast",
+                "every box starts hidden: seven callouts (a font converting among them), a connection line, a toast", "the code shows each when its moment comes");
             check(overlay.Acts.Keys.OrderBy(k => k).SequenceEqual(new[] {
                       "failuresFix", "failuresIgnore", "modDownload", "modIgnore", "modManager", "syncAction", "syncBranch", "syncCompare", "syncFork",
                       "syncIgnore", "syncSettings", "unreachableIgnore", "unreachableSettings", "webNotifDismiss", "webNotifView" }),

@@ -3777,6 +3777,9 @@ namespace UnityGameTranslator.Core
                     string customFontName = FontManager.StripFontPrefix(fallbackName);
 
                     replacementAsset = CustomFontLoader.LoadCustomFont(customFontName);
+                    // Being prepared in the background: not a failure, applied when it is ready.
+                    if (replacementAsset == null && CustomFontLoader.IsFontDeferred(customFontName))
+                        return;
                     if (replacementAsset == null)
                     {
                         TranslatorCore.LogWarning($"[AlternateTMP] Failed to load custom font '{customFontName}'");

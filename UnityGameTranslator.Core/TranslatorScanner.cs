@@ -2992,6 +2992,10 @@ namespace UnityGameTranslator.Core
             // raise it, one cycle acts on it, nothing clears it but the act itself. That is also
             // what the old once-a-second limit was standing in for, with a clock.
 
+            // A font drawn in the background is ready: applied where the translation asks for it,
+            // which raises the pending refresh below. The event itself, not a clock.
+            FontManager.ApplyReadyCustomFonts();
+
             // After a font was created or new chars were added to a clone atlas: every component
             // re-rendered with the replacement / updated glyphs. First, being the larger redraw.
             if (_spread == null && FontManager.ConsumePendingRefresh())

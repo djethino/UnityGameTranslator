@@ -49,6 +49,9 @@
       returning at the first line. Nothing about that needs Unity, which is why it belongs here.
     -->
     <Compile Include="../../UnityGameTranslator.Core/Engine/ScanRound.cs" />
+    <!-- A replaced font's shadow and outline drawn like the game's: the arithmetic, with the numbers
+         two games logged. -->
+    <Compile Include="../../UnityGameTranslator.Core/Engine/DrawnWidths.cs" />
     <!--
       A typewriter reveal counted on the original, carried over to a longer translation — a ratio
       of two lengths, and the one guard that keeps a game counting on the shown text untouched.

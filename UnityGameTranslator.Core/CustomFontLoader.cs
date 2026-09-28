@@ -2164,6 +2164,49 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// The point size and scale of a LEGACY TMP asset (TMProOld): its m_fontInfo, a
+        /// TMPro.FaceInfo class with public PointSize / Scale — a field on Mono, a property on
+        /// IL2CPP interop, the same shapes <see cref="SetupFaceInfo"/> writes. False when the asset
+        /// carries neither (a modern asset: read <see cref="TryGetModernFaceInfo"/> first).
+        /// </summary>
+        internal static bool TryGetLegacyFaceInfo(object fontAsset, out float facePointSize, out float faceScale)
+        {
+            facePointSize = 0f;
+            faceScale = 1f;
+            if (fontAsset == null) return false;
+
+            try
+            {
+                var t = fontAsset.GetType();
+                const BindingFlags any = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
+
+                object info = t.GetProperty("m_fontInfo", BindingFlags.Public | BindingFlags.Instance)?.GetValue(fontAsset, null)
+                              ?? t.GetField("m_fontInfo", any)?.GetValue(fontAsset)
+                              ?? t.GetProperty("fontInfo", BindingFlags.Public | BindingFlags.Instance)?.GetValue(fontAsset, null);
+                if (info == null) return false;
+
+                var it = info.GetType();
+                object Read(string name) =>
+                    it.GetProperty(name, BindingFlags.Public | BindingFlags.Instance)?.GetValue(info, null)
+                    ?? it.GetField(name, BindingFlags.Public | BindingFlags.Instance)?.GetValue(info);
+
+                var ps = Read("PointSize");
+                if (ps == null) return false;
+                facePointSize = Convert.ToSingle(ps);
+
+                var sc = Read("Scale");
+                if (sc != null) faceScale = Convert.ToSingle(sc);
+
+                return facePointSize > 0f;
+            }
+            catch (Exception ex)
+            {
+                TranslatorCore.LogDebug($"[CustomFontLoader] Legacy fontInfo read failed: {ex.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>
         /// Rewrite the MODERN m_FaceInfo struct (UnityEngine.TextCore.FaceInfo) of a
         /// cloned asset with OUR font's metrics at the atlas point size, so the asset is
         /// fully native-consistent: glyph metrics at 48px, faceInfo pointSize=48/scale=1,

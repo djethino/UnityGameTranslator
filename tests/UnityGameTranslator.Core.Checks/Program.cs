@@ -224,6 +224,7 @@ namespace UnityGameTranslator.Core.Checks
         private static void WhenTheSweepHasBeenRound()
         {
             Section("One round of the sweep", ScanRoundChecks.Run);
+            Section("A replaced font's shadow and outline, drawn like the game's", DrawnWidthsChecks.Run);
             Section("A typewriter reveal carried over to the translation", RevealScaleChecks.Run);
             Section("What a reveal in flight is told", RevealDoorChecks.Run);
             Section("Texts a game writes, replayed in sequence (routing corpus)", RoutingCorpusChecks.Run);

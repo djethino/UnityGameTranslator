@@ -2361,19 +2361,16 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// Atlas pixels in one em of the glyph AS DRAWN: an atlas sampled at P points holds an em in
-        /// P pixels, and TMP draws that em at fontSize × faceInfo.scale — so relative to the drawn
-        /// glyph, a pixel is 1/P of it whatever the scale. NaN when the asset does not say (TMProOld).
-        ///
-        /// 🔴 Not P / scale (2026-09-28): the scale enlarges the glyph and its effects together, and
-        /// the mod already matches the replaced text's size to it (design-scale). Dividing by it
-        /// counted it twice — Frog's font (scale 1.7) got a shadow 1.7 times too far; Beacon Pines'
-        /// fonts, all at scale 1, never showed it.
+        /// Atlas pixels in one em of the glyph as drawn (<see cref="DrawnWidths.PointsPerEm"/>), read
+        /// from the modern faceInfo or, on TMProOld, from m_fontInfo. NaN when the asset says neither.
         /// </summary>
         private static float SamplingPoint(object fontAsset)
         {
-            if (fontAsset != null && CustomFontLoader.TryGetModernFaceInfo(fontAsset, out float ps, out _) && ps > 0f)
-                return ps;
+            if (fontAsset == null) return float.NaN;
+            if (CustomFontLoader.TryGetModernFaceInfo(fontAsset, out float ps, out float sc))
+                return DrawnWidths.PointsPerEm(ps, sc);
+            if (CustomFontLoader.TryGetLegacyFaceInfo(fontAsset, out float legacyPs, out float legacySc))
+                return DrawnWidths.PointsPerEm(legacyPs, legacySc);
             return float.NaN;
         }
 
@@ -2393,27 +2390,19 @@ namespace UnityGameTranslator.Core
             var game = present.Select(origMat.GetFloat).ToArray();
             if (game.All(w => Math.Abs(w) < 0.0001f)) return;
 
-            float gradRatio = (ourGrad > 0.0001f && !float.IsNaN(origGrad)) ? origGrad / ourGrad : 1f;
             float ratioGame = origMat.HasProperty(ratioName) ? origMat.GetFloat(ratioName) : 1f;
-            if (!(ratioGame > 0f)) ratioGame = 1f;
+            float target = DrawnWidths.Target(origGrad, ourGrad, emRatio, ratioGame);
 
-            // The target, in our atlas's terms: factor × ratioOurs = gradRatio × emRatio × ratioGame.
-            float target = gradRatio * emRatio * ratioGame;
-            float factor = target;
-            float ratioOurs = 1f;
-
-            for (int round = 0; round < 6; round++)
+            // Applies a factor to the dev's widths and answers with the ratio TMP computes for them.
+            float Apply(float f)
             {
-                for (int i = 0; i < present.Length; i++) adapted.SetFloat(present[i], game[i] * factor);
+                for (int i = 0; i < present.Length; i++) adapted.SetFloat(present[i], game[i] * f);
                 UpdateShaderRatios(adapted, replacementFont);
-
-                ratioOurs = adapted.HasProperty(ratioName) ? adapted.GetFloat(ratioName) : 1f;
-                if (!(ratioOurs > 0f)) break;
-
-                float next = target / ratioOurs;
-                if (Math.Abs(next - factor) < 0.0001f * Math.Max(1f, factor)) break;
-                factor = next;
+                return adapted.HasProperty(ratioName) ? adapted.GetFloat(ratioName) : 1f;
             }
+
+            float factor = DrawnWidths.Solve(target, Apply);
+            float ratioOurs = Apply(factor);
 
             TranslatorCore.LogDebug($"[FontReplace] '{origMat.name}' {string.Join("/", present)} ×{factor:F3} "
                                     + $"(grad {origGrad:F0}→{ourGrad:F0}, em ×{emRatio:F3}, {ratioName} {ratioGame:F3}→{ratioOurs:F3})");
@@ -2428,11 +2417,8 @@ namespace UnityGameTranslator.Core
         {
             float game = SamplingPoint(originalFont), ours = SamplingPoint(replacementFont);
             if (float.IsNaN(game) || float.IsNaN(ours))
-            {
                 TranslatorCore.LogDebug($"[FontReplace] '{materialName}': sampling size unknown (game {game}, ours {ours}) — widths converted by the grad ratio only");
-                return 1f;
-            }
-            return ours / game;
+            return DrawnWidths.EmRatio(game, ours);
         }
 
         // Stroke width of an atlas, in its own pixels, per texture — measured once (a GPU

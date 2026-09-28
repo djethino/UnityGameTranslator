@@ -4471,6 +4471,11 @@ namespace UnityGameTranslator.Core
         {
             string cleanName = StripFontPrefix(systemFontName);
 
+            // "[Custom] X" is fonts/X and nothing else (FontReferences): never a game font whose name
+            // resembles it — the fonts/ file reaches the engine by name (FontFolderRedirect).
+            bool custom = UnityGameTranslator.Common.FontReferences.Order(systemFontName)[0] == UnityGameTranslator.Common.FontSource.Custom;
+            if (custom) return CreateDynamicOSFont(ResolveSystemFontFamily(systemFontName, out _));
+
             // Try game fonts first — already loaded, works on IL2CPP without CreateDynamicFontFromOSFont
             if (!_gameFontsScanned) ScanGameFonts();
             if (_gameUnityFonts.TryGetValue(cleanName, out var gameFont))

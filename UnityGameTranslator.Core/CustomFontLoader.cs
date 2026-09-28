@@ -964,6 +964,9 @@ namespace UnityGameTranslator.Core
                     // raw cache (PrepareInBackground). Only the upload is left for this thread.
                     for (int ai = 0; ai < fontInfo.ReadyAlpha.Count; ai++)
                     {
+                        // Measured, always: what is left on the game's thread once the background
+                        // work is done — the one freeze this path can still cause.
+                        var uploadClock = System.Diagnostics.Stopwatch.StartNew();
                         var ready = fontInfo.ReadyAlpha[ai];
                         int w = ready.Width, h = ready.Height;
 
@@ -980,7 +983,7 @@ namespace UnityGameTranslator.Core
                         // TMP only samples the GPU copy at render time: the CPU mirror goes.
                         ApplyNonReadableSafe(atlasTex);
                         textures.Add(atlasTex);
-                        TranslatorCore.LogInfo($"[CustomFontLoader] Uploaded atlas {ai}: {w}x{h} Alpha8");
+                        TranslatorCore.LogInfo($"[CustomFontLoader] Uploaded atlas {ai}: {w}x{h} Alpha8 in {uploadClock.ElapsedMilliseconds} ms (main thread)");
                     }
 
                     // ~256 MB per 16384² atlas, on the GPU now.
@@ -1098,13 +1101,14 @@ namespace UnityGameTranslator.Core
                 // available to clone from (mod loaded before splash). We DO NOT mark the
                 // font as IsLoaded / set Error in that case — that would lock the cache to a
                 // null asset forever; instead we leave it pristine so the next call retries.
+                var assetClock = System.Diagnostics.Stopwatch.StartNew();
                 fontInfo.FontAsset = CreateFontAsset(fontInfo);
                 PerfLap("CreateFontAsset + TMP tables (main thread)");
 
                 if (fontInfo.FontAsset != null)
                 {
                     fontInfo.IsLoaded = true;
-                    TranslatorCore.LogInfo($"[CustomFontLoader] Successfully created font asset for {fontName}");
+                    TranslatorCore.LogInfo($"[CustomFontLoader] Successfully created font asset for {fontName} in {assetClock.ElapsedMilliseconds} ms (main thread)");
 
                     // Reclaim memory after a font load: rasterizing a CJK atlas allocates
                     // ~2–3 GB of transient Mono managed buffers (the rasterizer's RGBA byte
@@ -1119,11 +1123,12 @@ namespace UnityGameTranslator.Core
                     // a one-off step in the user flow.
                     try
                     {
+                        var sweepClock = System.Diagnostics.Stopwatch.StartNew();
                         UnityEngine.Resources.UnloadUnusedAssets();
                         GC.Collect();
                         GC.WaitForPendingFinalizers();
                         GC.Collect();
-                        TranslatorCore.LogInfo($"[CustomFontLoader] Released transient buffers after {fontName} load");
+                        TranslatorCore.LogInfo($"[CustomFontLoader] Released transient buffers after {fontName} load in {sweepClock.ElapsedMilliseconds} ms (main thread)");
                     }
                     catch (Exception ex)
                     {

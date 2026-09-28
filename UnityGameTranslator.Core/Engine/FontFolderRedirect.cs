@@ -23,8 +23,10 @@ namespace UnityGameTranslator.Core
     /// mod and the loader included, keeps the real functions. A file with the name of a real
     /// installed font is never shown: the installed one stays.
     ///
-    /// ⚠ TEST (2026-09-28): Windows only, and whether the engine walks the folder after the mod is
-    /// loaded is what this test measures ("[FontFolder] engine lists the font folder" in the log).
+    /// ⚠ Measured on screen the same day, on MelonLoader IL2CPP and BepInEx 6 Mono/IL2CPP: the engine
+    /// lists the folder a few seconds after the mod installs this (logged once, "engine lists the font
+    /// folder"), so fonts/ is in its list; it does not list it again, so a font added while the game
+    /// runs is seen at the next launch. Windows, and Proton (whose Wine provides the same calls).
     /// </summary>
     internal static class FontFolderRedirect
     {
@@ -61,7 +63,19 @@ namespace UnityGameTranslator.Core
         private static Dictionary<string, string> _ours;                      // file name → full path in fonts/
         private static readonly Dictionary<IntPtr, Queue<string>> Pending = new Dictionary<IntPtr, Queue<string>>();
         private static readonly object Gate = new object();
-        private static bool _installed, _sawListing, _sawInstalledOpen;
+        private static bool _installed, _sawListing;
+
+        /// <summary>
+        /// Whether the engine is shown a fonts/ file for this font name (the file's name without its
+        /// extension, exactly) — i.e. whether legacy text can be drawn from it in this session.
+        /// </summary>
+        public static bool Shows(string fontName)
+        {
+            if (string.IsNullOrEmpty(fontName) || _ours == null || Patched.Count == 0) return false;
+            foreach (var file in _ours.Keys)
+                if (UnityGameTranslator.Common.AssetPacks.IsFontFileFor(file, fontName)) return true;
+            return false;
+        }
 
         /// <summary>Changes UnityPlayer.dll's import table. Once; Windows only; says what it did.</summary>
         public static void Install(string fontsFolder)
@@ -274,37 +288,25 @@ namespace UnityGameTranslator.Core
             for (int i = 0; i < chars.Length && i < 259; i++) Marshal.WriteInt16(data, 44 + i * 2, chars[i]);
         }
 
-        private static readonly HashSet<string> Said = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-        /// <summary>TEST: each kind of engine request on one of our files, said once.</summary>
-        private static void SayOnce(string what, string ours, string result)
-        {
-            lock (Gate) { if (!Said.Add(what + "|" + ours)) return; }
-            TranslatorCore.LogInfo($"[FontFolder] engine {what} {Path.GetFileName(ours)} → {result}");
-        }
+        /// <summary>A file of ours the engine could not open, said once each — the one failure worth a line.</summary>
+        private static readonly HashSet<string> Refused = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         private static IntPtr CreateFile(IntPtr name, uint access, uint share, IntPtr security, uint disposition, uint flags, IntPtr template)
         {
             string ours = null;
-            try
-            {
-                ours = OursFor(name);
-                // TEST: whether the engine opens installed fonts through this call at all.
-                if (ours == null && !_sawInstalledOpen && IsFontFolderListing(name))
-                {
-                    _sawInstalledOpen = true;
-                    TranslatorCore.LogInfo($"[FontFolder] engine opens installed fonts through this call, e.g. {Path.GetFileName(Marshal.PtrToStringUni(name))}");
-                }
-            }
-            catch (Exception ex) { Faults.Say("FontFolderRedirect.CreateFile", ex); }
+            try { ours = OursFor(name); } catch (Exception ex) { Faults.Say("FontFolderRedirect.CreateFile", ex); }
             if (ours == null) return _realCreateFile(name, access, share, security, disposition, flags, template);
 
             var redirected = Marshal.StringToHGlobalUni(ours);
             try
             {
                 var handle = _realCreateFile(redirected, access, share, security, disposition, flags, template);
+                if (handle != InvalidHandle) return handle;
+
                 uint error = GetLastError();
-                SayOnce("opens", ours, handle == InvalidHandle ? $"failed ({error})" : "opened");
+                bool first;
+                lock (Gate) first = Refused.Add(ours);
+                if (first) TranslatorCore.LogWarning($"[FontFolder] The engine could not open {Path.GetFileName(ours)} (Windows error {error})");
                 SetLastError(error);
                 return handle;
             }
@@ -318,12 +320,7 @@ namespace UnityGameTranslator.Core
             if (ours == null) return _realGetAttributes(name);
 
             var redirected = Marshal.StringToHGlobalUni(ours);
-            try
-            {
-                var result = _realGetAttributes(redirected);
-                SayOnce("asks the attributes of", ours, result.ToString("X"));
-                return result;
-            }
+            try { return _realGetAttributes(redirected); }
             finally { Marshal.FreeHGlobal(redirected); }
         }
 
@@ -334,12 +331,7 @@ namespace UnityGameTranslator.Core
             if (ours == null) return _realGetAttributesEx(name, level, info);
 
             var redirected = Marshal.StringToHGlobalUni(ours);
-            try
-            {
-                var result = _realGetAttributesEx(redirected, level, info);
-                SayOnce("asks the attributes (ex) of", ours, result != 0 ? "ok" : "failed");
-                return result;
-            }
+            try { return _realGetAttributesEx(redirected, level, info); }
             finally { Marshal.FreeHGlobal(redirected); }
         }
     }

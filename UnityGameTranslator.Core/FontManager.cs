@@ -2292,16 +2292,20 @@ namespace UnityGameTranslator.Core
                     // text) — right only when both atlases are sampled at the same size. They rarely
                     // are: a game font at 139 points against ours at 48 made an outline 2.9 times too
                     // wide, enough to erase a whole menu.
+                    //
+                    // 🔴 And TMP scales every effect by a ratio it computes FROM the effect itself
+                    // (ShaderUtilities.UpdateShaderRatios: _ScaleRatioC for the underlay, _ScaleRatioA
+                    // for the outline), so the same numbers are not drawn the same on a spread of 21 and
+                    // one of 64. What is drawn is width × ratio × _GradientScale atlas pixels; that, over
+                    // the atlas pixels of an em, is what must match the game (2026-09-28: the fixed factor
+                    // made Frog's shadow 2.8 times too far once the sampling size joined it, while the
+                    // grad ratio alone had only looked right by chance). So the widths are solved for,
+                    // the game's ratio read from its material and ours recomputed each round.
                     float emRatio = SamplingPointRatio(originalFont, replacementFont, origMat.name);
-                    float gradRatio = (ourGrad > 0.0001f && !float.IsNaN(origGrad)) ? origGrad / ourGrad : 1f;
-                    float unitRatio = gradRatio * emRatio;
-                    if (Math.Abs(unitRatio - 1f) > 0.0001f)
-                    {
-                        foreach (var p in new[] { "_UnderlayOffsetX", "_UnderlayOffsetY", "_UnderlayDilate",
-                                                  "_UnderlaySoftness", "_OutlineWidth", "_OutlineSoftness" })
-                            if (adapted.HasProperty(p)) adapted.SetFloat(p, adapted.GetFloat(p) * unitRatio);
-                        TranslatorCore.LogDebug($"[FontReplace] '{origMat.name}' underlay/outline rescaled ×{unitRatio:F3} (grad {origGrad:F0}→{ourGrad:F0} ×{gradRatio:F3}, sampling size ×{emRatio:F3})");
-                    }
+                    MatchDrawnWidths(adapted, origMat, replacementFont, origGrad, ourGrad, emRatio, "_ScaleRatioC",
+                                     "_UnderlayOffsetX", "_UnderlayOffsetY", "_UnderlayDilate", "_UnderlaySoftness");
+                    MatchDrawnWidths(adapted, origMat, replacementFont, origGrad, ourGrad, emRatio, "_ScaleRatioA",
+                                     "_OutlineWidth", "_OutlineSoftness");
 
                     // 🔴 A TRANSPARENT outline is a thinning tool: an SDF outline is drawn across the
                     // glyph's edge, half of it eats into the face, and with no colour nothing is
@@ -2357,15 +2361,62 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// The size one atlas pixel stands for, as the text's em sees it: TMP scales a glyph by
-        /// fontSize × faceInfo.scale / faceInfo.pointSize, so an atlas sampled at P points with
-        /// scale s spends P / s pixels on an em. NaN when the asset does not say (TMProOld).
+        /// Atlas pixels in one em of the glyph AS DRAWN: an atlas sampled at P points holds an em in
+        /// P pixels, and TMP draws that em at fontSize × faceInfo.scale — so relative to the drawn
+        /// glyph, a pixel is 1/P of it whatever the scale. NaN when the asset does not say (TMProOld).
+        ///
+        /// 🔴 Not P / scale (2026-09-28): the scale enlarges the glyph and its effects together, and
+        /// the mod already matches the replaced text's size to it (design-scale). Dividing by it
+        /// counted it twice — Frog's font (scale 1.7) got a shadow 1.7 times too far; Beacon Pines'
+        /// fonts, all at scale 1, never showed it.
         /// </summary>
         private static float SamplingPoint(object fontAsset)
         {
-            if (fontAsset != null && CustomFontLoader.TryGetModernFaceInfo(fontAsset, out float ps, out float sc) && ps > 0f)
-                return ps / (sc > 0f ? sc : 1f);
+            if (fontAsset != null && CustomFontLoader.TryGetModernFaceInfo(fontAsset, out float ps, out _) && ps > 0f)
+                return ps;
             return float.NaN;
+        }
+
+        /// <summary>
+        /// Sets one effect's widths (the underlay's, or the outline's) on the adapted material so it is
+        /// DRAWN like the game's: width × ratio × _GradientScale ÷ atlas pixels per em, equal on both.
+        /// The widths keep the dev's proportions — one factor for all of them — and the factor is
+        /// corrected by the ratio TMP recomputes from the widths, a few rounds since each depends on
+        /// the other. Without the ratio on either side (RATIOS_OFF, a shader without it), the ratios
+        /// count as 1 and this is the plain unit conversion.
+        /// </summary>
+        private static void MatchDrawnWidths(Material adapted, Material origMat, object replacementFont,
+                                             float origGrad, float ourGrad, float emRatio, string ratioName,
+                                             params string[] widths)
+        {
+            var present = widths.Where(adapted.HasProperty).ToArray();
+            var game = present.Select(origMat.GetFloat).ToArray();
+            if (game.All(w => Math.Abs(w) < 0.0001f)) return;
+
+            float gradRatio = (ourGrad > 0.0001f && !float.IsNaN(origGrad)) ? origGrad / ourGrad : 1f;
+            float ratioGame = origMat.HasProperty(ratioName) ? origMat.GetFloat(ratioName) : 1f;
+            if (!(ratioGame > 0f)) ratioGame = 1f;
+
+            // The target, in our atlas's terms: factor × ratioOurs = gradRatio × emRatio × ratioGame.
+            float target = gradRatio * emRatio * ratioGame;
+            float factor = target;
+            float ratioOurs = 1f;
+
+            for (int round = 0; round < 6; round++)
+            {
+                for (int i = 0; i < present.Length; i++) adapted.SetFloat(present[i], game[i] * factor);
+                UpdateShaderRatios(adapted, replacementFont);
+
+                ratioOurs = adapted.HasProperty(ratioName) ? adapted.GetFloat(ratioName) : 1f;
+                if (!(ratioOurs > 0f)) break;
+
+                float next = target / ratioOurs;
+                if (Math.Abs(next - factor) < 0.0001f * Math.Max(1f, factor)) break;
+                factor = next;
+            }
+
+            TranslatorCore.LogDebug($"[FontReplace] '{origMat.name}' {string.Join("/", present)} ×{factor:F3} "
+                                    + $"(grad {origGrad:F0}→{ourGrad:F0}, em ×{emRatio:F3}, {ratioName} {ratioGame:F3}→{ratioOurs:F3})");
         }
 
         /// <summary>

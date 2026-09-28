@@ -69,6 +69,13 @@ namespace UnityGameTranslator.Core.UI.Panels
         private Host _fontBox;
         private LabelHandle _fontLabel;
         private LabelHandle _fontProgress;
+        private ProgressHandle _fontBar;
+        private ProgressHandle _aiQueueBar;
+
+        // The most lines the queue has held since it was last empty: what a burst of work amounts
+        // to, so the bar reads "this much of it is done" rather than tracking a number that only
+        // ever goes up and down.
+        private int _queuePeak;
         private Host _aiBox;
         private LabelHandle _aiStatusLabel;
         private LabelHandle _aiQueueLabel;
@@ -359,6 +366,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             _fontBox = _screen.Host("FontConversionBox");
             _fontLabel = _screen.Label("FontConversionLabel");
             _fontProgress = _screen.Label("FontConversionProgress");
+            _fontBar = _screen.Progress("FontConversionBar");
+            _aiQueueBar = _screen.Progress("AIQueueBar");
 
             _aiBox = _screen.Host("AIBox");
             _aiStatusLabel = _screen.Label("AIStatusLabel");
@@ -775,6 +784,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                     ? $"{c.Done:N0} / {c.Total:N0} characters"
                     : c.Step + "...";
                 _fontProgress?.Say($"{where} · {(int)c.Seconds} s");
+                // Full once the letters are drawn: packing and saving follow, said in words.
+                _fontBar?.Show(c.Done, c.Total);
             }
             else if (_fontLabel != null) _fontLabel.Waiting = false;
 
@@ -847,10 +858,24 @@ namespace UnityGameTranslator.Core.UI.Panels
                 {
                     _aiQueueLabel.Visible = false;
                 }
+
+                // How much of the current burst is done: the lines waiting plus the one being
+                // asked, against the most there were since the queue was last empty. A single
+                // line is no burst — the bar appears once there is something to measure.
+                int remaining = queueCount + (isTranslating ? 1 : 0);
+                if (remaining > _queuePeak) _queuePeak = remaining;
+                bool measurable = _queuePeak > 1;
+                if (_aiQueueBar != null)
+                {
+                    _aiQueueBar.Visible = measurable;
+                    if (measurable) _aiQueueBar.Show(_queuePeak - remaining, _queuePeak);
+                }
             }
             else
             {
                 if (_aiBox != null) _aiBox.Visible = false;
+                // The burst is over: the next one is measured from its own start.
+                _queuePeak = 0;
             }
 
             // 4. Where the link to the website stands.

@@ -600,7 +600,7 @@ namespace UnityGameTranslator.Core
         /// Returns candidates sorted by match strength then relevance.
         /// </summary>
         public static IEnumerator ScanForValue(string searchValue,
-                                               Action<string> progress,
+                                               Action<string, float> progress,
                                                Action<List<VariableCandidate>> done)
         {
             var results = new List<VariableCandidate>();
@@ -644,7 +644,8 @@ namespace UnityGameTranslator.Core
                     typesSeen++;
 
                     if (frame.Elapsed.TotalMilliseconds < budget) continue;
-                    progress?.Invoke($"Scanning code… {asmDone}/{assemblies.Length} • {results.Count} found");
+                    progress?.Invoke($"Scanning code… {asmDone}/{assemblies.Length} • {results.Count} found",
+                                     (float)asmDone / assemblies.Length);
                     yield return null;
                     frame.Restart();
                     budget = TranslatorScanner.DeliberateBudgetMs();
@@ -1113,7 +1114,7 @@ namespace UnityGameTranslator.Core
         /// spread instead, with a progress line, and can be called off.
         /// </summary>
         private static IEnumerator ScanInstancesUniverseLib(string searchValue, string[] skipPrefixes,
-            List<VariableCandidate> results, HashSet<string> seen, Action<string> progress)
+            List<VariableCandidate> results, HashSet<string> seen, Action<string, float> progress)
         {
             var sw = System.Diagnostics.Stopwatch.StartNew();
             var frame = System.Diagnostics.Stopwatch.StartNew();
@@ -1141,7 +1142,8 @@ namespace UnityGameTranslator.Core
                     else skipped++;
 
                     if (frame.Elapsed.TotalMilliseconds < budget) continue;
-                    progress?.Invoke($"Scanning objects… {read + skipped}/{total} • {results.Count} found");
+                    progress?.Invoke($"Scanning objects… {read + skipped}/{total} • {results.Count} found",
+                                     total > 0 ? (float)(read + skipped) / total : 0f);
                     yield return null;
                     frame.Restart();
                     budget = TranslatorScanner.DeliberateBudgetMs();

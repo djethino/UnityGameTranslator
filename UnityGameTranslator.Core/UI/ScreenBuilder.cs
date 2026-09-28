@@ -75,6 +75,9 @@ namespace UnityGameTranslator.Core.UI
         internal void Add(string name, ImageHandle picture) => _pictures[name] = picture;
         private readonly Dictionary<string, ImageHandle> _pictures = new Dictionary<string, ImageHandle>(StringComparer.Ordinal);
         public ImageHandle Picture(string name) => _pictures.TryGetValue(name, out var p) ? p : throw new ScreenDocumentException($"{_name}: no picture named '{name}'");
+        internal void Add(string name, ProgressHandle progress) => _progress[name] = progress;
+        private readonly Dictionary<string, ProgressHandle> _progress = new Dictionary<string, ProgressHandle>(StringComparer.Ordinal);
+        public ProgressHandle Progress(string name) => _progress.TryGetValue(name, out var p) ? p : throw new ScreenDocumentException($"{_name}: no progress bar named '{name}'");
         internal void Add(string name, TagChipHandle chip) => _chips[name] = chip;
         private readonly Dictionary<string, TagChipHandle> _chips = new Dictionary<string, TagChipHandle>(StringComparer.Ordinal);
         public TagChipHandle Chip(string name) => _chips.TryGetValue(name, out var c) ? c : throw new ScreenDocumentException($"{_name}: no chip named '{name}'");
@@ -362,6 +365,14 @@ namespace UnityGameTranslator.Core.UI
                     picture.Visible = node.StartsVisible;
                     built.Add(node.Name, picture);
                     Describe(site, node, picture);
+                    break;
+                }
+                case "progress":
+                {
+                    // The share is written by the code (Value); built empty.
+                    var progress = ProgressBars.Create(parent, node.Name, Enum(node.Word("tone"), Tone.Info));
+                    progress.Visible = node.StartsVisible;
+                    built.Add(node.Name, progress);
                     break;
                 }
                 case "chip":

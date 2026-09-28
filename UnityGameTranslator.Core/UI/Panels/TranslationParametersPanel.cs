@@ -135,6 +135,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         private ScrollList _scanResultsList;
         private bool _isScanning;
         private ButtonHandle _scanBtn;
+        private ProgressHandle _scanBar;
 
         // Apply button tracking
         private ButtonHandle _applyBtn;
@@ -272,6 +273,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Variables
             _scanValueInput = _screen.Field("ScanValueInput");
             _scanBtn = _screen.Button("ScanBtn");
+            _scanBar = _screen.Progress("ScanBar");
             _scanResultsList = _screen.List("ScanResultsScroll");
             _variablesList = _screen.List("VarsScroll");
             _variablesStatus = _screen.Label("VarsStatus");
@@ -2322,6 +2324,10 @@ namespace UnityGameTranslator.Core.UI.Panels
             // back to rest, whether the scan finished, failed or was called off.
             _variablesStatus.Waiting = true;
 
+            // The bar sits under the Scan button, where the eye is when it was pressed; it moves
+            // with each pass (the code, then the objects).
+            if (_scanBar != null) { _scanBar.Value = 0f; _scanBar.Visible = true; }
+
             // Show results container
             _scanResultsList.Visible = true;
 
@@ -2336,7 +2342,12 @@ namespace UnityGameTranslator.Core.UI.Panels
             // whatever was running. Cancelling is for the window closing, where nothing replaces it.
             RunOverFrames(VariableManager.ScanForValue(
                 value,
-                said => { _variablesStatus.Say(said); _variablesStatus.Tone = Tone.Secondary; },
+                (said, share) =>
+                {
+                    _variablesStatus.Say(said);
+                    _variablesStatus.Tone = Tone.Secondary;
+                    if (_scanBar != null) _scanBar.Value = share;
+                },
                 ShowScanResults));
         }
 
@@ -2398,6 +2409,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (_scanBtn != null) _scanBtn.Label = "Scan";
             // Before the early return below: a scan that ends with nothing to say still ends.
             _variablesStatus.Waiting = false;
+            if (_scanBar != null) _scanBar.Visible = false;
             if (said == null) return;
             _variablesStatus.Say(said);
             _variablesStatus.Tone = tone;

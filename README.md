@@ -1,5 +1,12 @@
 # Universal Unity Game Translator (Beta)
 
+> **Install in a few clicks with [UnityGameTranslator Manager](https://github.com/djethino/unitygametranslator-manager)** (Windows) — [download](https://github.com/djethino/unitygametranslator-manager/releases/latest)
+>
+> It finds the Unity games on your PC, tells you if each one is Mono or IL2CPP, installs the right
+> mod loader and the right build of this mod, and shows the community translations already
+> available for that game. No account needed. Uninstalling removes exactly what it installed,
+> nothing else. Prefer to do it by hand? See [Manual installation](#manual-installation).
+
 **Website:** [unitygametranslator.asymptomatikgames.com](https://unitygametranslator.asymptomatikgames.com) — [browse game translations](https://unitygametranslator.asymptomatikgames.com/games) · [user documentation](https://unitygametranslator.asymptomatikgames.com/docs)
 
 A mod that players install into any Unity game to play it in their language — the game doesn't need to support it, and the developer doesn't need to do anything. Use translations shared by the community, or translate live with your own AI: a free local server (Ollama, LM Studio — Vulkan covers NVIDIA, AMD and Intel GPUs) if your machine can run the game and the model together, or any OpenAI-compatible online provider (Groq, Gemini, OpenAI, OpenRouter…), Google Translate or DeepL with your own key. Fully offline with a local AI: no API key, no internet, no cost. Supports all writing systems and any language direction.
@@ -131,7 +138,20 @@ The full set of measures, and who sees each, is published at `/docs`.
 
 ## Installation
 
-### 1. Install a mod loader
+### Recommended: UnityGameTranslator Manager
+
+Download the archive from the
+[UnityGameTranslator Manager releases](https://github.com/djethino/unitygametranslator-manager/releases/latest),
+unzip it anywhere and run `UnityGameTranslatorManager.exe`. Pick your game in the list and press
+**Install**: the mod loader and the matching build of this mod are set up for you.
+It never replaces a mod loader that is already there, and it refuses games that ship an anti-cheat.
+
+Windows only for now. On macOS or Linux, or if you want to control every file, follow the manual
+steps below.
+
+### Manual installation
+
+#### 1. Install a mod loader
 
 | Mod Loader | Unity Type | Download |
 |------------|------------|----------|
@@ -145,7 +165,7 @@ The full set of measures, and who sees each, is published at `/docs`.
 
 > **Cross-platform:** The mod's DLLs are .NET assemblies that work on Windows, macOS, and Linux.
 
-### 2. Install UnityGameTranslator
+#### 2. Install UnityGameTranslator
 
 Download the release matching your mod loader from [GitHub Releases](https://github.com/djethino/UnityGameTranslator/releases) and extract to:
 
@@ -156,15 +176,16 @@ Download the release matching your mod loader from [GitHub Releases](https://git
 
 > **MelonLoader warning:** Do NOT place the DLLs inside `Mods/UnityGameTranslator/`. MelonLoader only scans the root `Mods/` folder and will not find mods inside subdirectories.
 
-### 3. First Launch
+### First Launch
 
-The mod displays a setup wizard:
+The mod displays a setup wizard. If you filled in your settings in UnityGameTranslator Manager
+before installing, it writes them into the game and the wizard is skipped.
 1. **Online mode** — enable community features or stay offline
 2. **Settings hotkey** — pick a key to open settings (default: F10)
 3. **Translation search** — search for existing community translations
 4. **AI setup** — configure translation backend and model (optional)
 
-### 4. Enable translation backend (optional)
+### Enable translation backend (optional)
 
 By default, the mod only uses cached/downloaded translations. To enable live translation:
 
@@ -200,8 +221,8 @@ The mod works with **any server that exposes the OpenAI-compatible API** (`/v1/c
 > The models we have measured, with what each one holds, how long it takes to load, and how much of
 > the mod's instructions it followed, are listed in
 > [the documentation](https://unitygametranslator.asymptomatikgames.com/docs#local-models).
-> The Manager can also put any model through those same instructions, on your machine and in your
-> language.
+> [UnityGameTranslator Manager](https://github.com/djethino/unitygametranslator-manager) can also
+> put any model through those same instructions, on your machine and in your language.
 
 ## Configuration
 

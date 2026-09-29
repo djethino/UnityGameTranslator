@@ -40,6 +40,9 @@ namespace UnityGameTranslator.Core
         private static MethodInfo _unmarshalSprite;
         private static bool _createSpriteNativeSearched;
 
+        // Before 2023.1, the same game shape: the interop's own public icall wrapper
+        private static MethodInfo _createSpriteInjectedManaged;
+
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
         private delegate IntPtr CreateSpriteInjected(IntPtr texture, IntPtr rect, IntPtr pivot, float pixelsPerUnit,
             uint extrude, int meshType, IntPtr border, byte generateFallbackPhysicsShape, IntPtr secondaryTextures);
@@ -1028,7 +1031,7 @@ namespace UnityGameTranslator.Core
         {
             if (texture == null) return null;
 
-            if (_createSpriteNative != null)
+            if (_createSpriteNative != null || _createSpriteInjectedManaged != null)
                 return CreateSpriteThroughNative(texture, rect, pivot, pixelsPerUnit, border);
 
             try
@@ -1103,17 +1106,38 @@ namespace UnityGameTranslator.Core
         /// and Vector4 by pointer, the secondary textures as an array (none here), and a GC handle
         /// back, turned into a Sprite by <c>Unmarshal.UnmarshalUnityObject</c>.
         ///
-        /// 🔴 Only on the 2023.1+ shape (<c>Unmarshal.UnmarshalUnityObject</c> and the texture
-        /// marshaller present): before it the same icall takes managed objects, and calling it with
-        /// this signature would kill the process.
+        /// 🔴 The raw icall only on the 2023.1+ shape (<c>Unmarshal.UnmarshalUnityObject</c> and the
+        /// texture marshaller present): before it the same icall takes managed objects, and calling
+        /// it with this signature would kill the process. Before 2023.1 the interop's own public
+        /// <c>CreateSprite_Injected</c> wrapper is called instead — tried first, see below.
         /// </summary>
         private static bool FindCreateSpriteNative()
         {
-            if (_createSpriteNativeSearched) return _createSpriteNative != null;
+            if (_createSpriteNativeSearched) return _createSpriteNative != null || _createSpriteInjectedManaged != null;
             _createSpriteNativeSearched = true;
 
             try
             {
+                // Before 2023.1 (2026-09-30, a 2020.3 game that stripped Sprite.Create): the interop
+                // keeps CreateSprite_Injected as a public wrapper that resolves the icall itself and
+                // takes the managed objects — (Texture2D, ref Rect, ref Vector2, float, uint,
+                // SpriteMeshType, ref Vector4, bool) → Sprite. Only Create's REBUILT body is broken
+                // there, so calling the wrapper is all it takes, with nothing resolved here.
+                foreach (var method in typeof(Sprite).GetMethods(BindingFlags.Public | BindingFlags.Static))
+                {
+                    if (method.Name != "CreateSprite_Injected" || !typeof(Sprite).IsAssignableFrom(method.ReturnType)) continue;
+                    var p = method.GetParameters();
+                    if (p.Length == 8 && IsTextureType(p[0].ParameterType) && p[1].ParameterType.IsByRef
+                        && p[2].ParameterType.IsByRef && p[3].ParameterType == typeof(float)
+                        && p[4].ParameterType == typeof(uint) && p[6].ParameterType.IsByRef
+                        && p[7].ParameterType == typeof(bool))
+                    {
+                        _createSpriteInjectedManaged = method;
+                        TranslatorCore.LogInfo("[TextureUtils] Sprite.Create is stripped in this game — using Sprite.CreateSprite_Injected");
+                        return true;
+                    }
+                }
+
                 if (!_loadImageMethodSearched)
                 {
                     _loadImageMethodSearched = true;
@@ -1172,6 +1196,21 @@ namespace UnityGameTranslator.Core
 
         private static object CreateSpriteThroughNative(Texture2D texture, Rect rect, Vector2 pivot, float pixelsPerUnit, Vector4 border)
         {
+            if (_createSpriteInjectedManaged != null)
+            {
+                try
+                {
+                    return _createSpriteInjectedManaged.Invoke(null, new object[] {
+                        texture, rect, pivot, pixelsPerUnit, 0u, SpriteMeshType.FullRect, border, false });
+                }
+                catch (Exception ex)
+                {
+                    var inner = ex.InnerException ?? ex;
+                    TranslatorCore.LogWarning($"[TextureUtils] Sprite.CreateSprite_Injected failed: {inner.GetType().Name}: {inner.Message}");
+                    return null;
+                }
+            }
+
             // Rect, Vector2, Vector4 as the engine lays them out: consecutive floats.
             var values = new float[] { rect.x, rect.y, rect.width, rect.height, pivot.x, pivot.y, border.x, border.y, border.z, border.w };
             var pinned = GCHandle.Alloc(values, GCHandleType.Pinned);

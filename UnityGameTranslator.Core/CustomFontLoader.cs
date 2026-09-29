@@ -840,7 +840,7 @@ namespace UnityGameTranslator.Core
                             File.WriteAllText(Path.Combine(cacheDir, fontName + ".gen.json"),
                                 JsonConvert.SerializeObject(drawn.AtlasData, Formatting.None));
                         }
-                        catch (Exception ex) { TranslatorCore.LogWarning($"[CustomFontLoader] Failed to save .gen.json: {ex.Message}"); }
+                        catch (Exception ex) { TranslatorCore.LogWarning($"[CustomFontLoader] Failed to save .gen.json: {ex}"); }
                     }
                     else if (!string.IsNullOrEmpty(cacheDir))
                         TranslatorCore.LogWarning($"[CustomFontLoader] Atlas cache not written for {fontName} — the next launch draws it again");

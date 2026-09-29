@@ -1433,6 +1433,9 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         private async void RefreshModels()
         {
+            // Said before the wait and ended after it, as in the wizard (ConnectionTests).
+            ConnectionTests.TellLoadingModels(_aiTestStatusLabel);
+
             string url = _aiUrlInput.Text;
             string apiKey = _aiApiKeyInput.Text;
 
@@ -1452,11 +1455,13 @@ namespace UnityGameTranslator.Core.UI.Panels
                             _modelDropdown.SelectedValue = currentSelection;
                         }
                     }
+                    ConnectionTests.TellModels(_aiTestStatusLabel, models.Length);
                 });
             }
             catch (Exception e)
             {
-                TranslatorCore.LogWarning($"[Options] Failed to refresh models: {e.Message}");
+                TranslatorCore.LogWarning($"[Options] Failed to refresh models: {e}");
+                TranslatorUIManager.RunOnMainThread(() => ConnectionTests.TellModels(_aiTestStatusLabel, 0));
             }
         }
 

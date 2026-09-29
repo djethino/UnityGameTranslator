@@ -2641,7 +2641,7 @@ namespace UnityGameTranslator.Core
             }
             catch (Exception e)
             {
-                Adapter.LogError($"Failed to load config: {e.Message}");
+                Adapter.LogError($"Failed to load config: {e}");
             }
         }
 
@@ -2737,7 +2737,7 @@ namespace UnityGameTranslator.Core
             }
             catch (Exception e)
             {
-                Adapter?.LogError($"Failed to save config: {e.Message}");
+                Adapter?.LogError($"Failed to save config: {e}");
             }
         }
 

@@ -804,12 +804,8 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             // 🔴 Said before the wait, not after it (2026-09-19). Fetching a model list crosses
             // the network with a timeout; without this the wizard looked frozen on the very first
-            // screen somebody ever sees. The Options screen said it, this one did not.
-            if (_aiStatusLabel != null)
-            {
-                _aiStatusLabel.Say("Loading models...");
-                _aiStatusLabel.Tone = Tone.Warning;
-            }
+            // screen somebody ever sees. And ended once the list is back (ConnectionTests.TellModels).
+            ConnectionTests.TellLoadingModels(_aiStatusLabel);
 
             string url = _aiUrl;
             string apiKey = _aiApiKey;
@@ -829,11 +825,13 @@ namespace UnityGameTranslator.Core.UI.Panels
                             _modelDropdown.SelectedValue = _aiModel;
                         }
                     }
+                    ConnectionTests.TellModels(_aiStatusLabel, models.Length);
                 });
             }
             catch (Exception e)
             {
-                TranslatorCore.LogWarning($"[Wizard] Failed to refresh models: {e.Message}");
+                TranslatorCore.LogWarning($"[Wizard] Failed to refresh models: {e}");
+                TranslatorUIManager.RunOnMainThread(() => ConnectionTests.TellModels(_aiStatusLabel, 0));
             }
         }
 

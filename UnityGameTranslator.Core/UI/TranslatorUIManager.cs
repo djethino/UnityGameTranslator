@@ -1399,6 +1399,10 @@ namespace UnityGameTranslator.Core.UI
                 // only at the end of a resize — stopped the lists following the handle at all.
                 panel.FollowBodySize();
 
+                // A window going back and forth between two layouts says so in the log — the
+                // next occurrence of a tremble nobody could reproduce names what fights what.
+                panel.WatchForTrembling();
+
                 // And the facts a screen shows that the engine changes on its own — a translation
                 // growing while its screen is open. A compare per open panel, a redraw on change.
                 panel.FollowFacts();

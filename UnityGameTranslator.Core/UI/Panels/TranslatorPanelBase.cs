@@ -474,6 +474,10 @@ namespace UnityGameTranslator.Core.UI.Panels
             // forgetting the last size makes the tick ask BodySized again on the first shown frame.
             if (active) _lastBodySize = Vector2.zero;
 
+            // The same for the tremble watch: what it saw before the window was hidden says
+            // nothing about the window shown now.
+            if (active) _tremble.Reset();
+
             // Dynamic sizing on FIRST SHOW - this is when Unity's layout is actually calculated
             if (active && _needsFirstShowSizing && UseDynamicSizing)
             {
@@ -625,6 +629,82 @@ namespace UnityGameTranslator.Core.UI.Panels
         }
 
         private Vector2 _lastBodySize;
+
+        /// <summary>
+        /// Watches the window for a tremble — a layout going back and forth between two states,
+        /// one frame after the other — and says so in the log, once per episode (Engine/Oscillation).
+        ///
+        /// ⚠ **A detector, not a fix** (2026-09-30). A window's whole content was seen alternating
+        /// « comme dédoublé » on the Tools tab, on a game nobody could name, and it would not come
+        /// back. Suspects, none proven: a game animating what is selected or under the pointer (the
+        /// selection one was closed in UniverseLib fa844e7, and it came back after), or the
+        /// scrollbar hiding itself and the content filling the viewport answering each other. The
+        /// line names the window, its tab, what moved between which values, and the sizes that
+        /// decide between those suspects.
+        ///
+        /// ⚠ **Every frame, like FollowBodySize beside it**: ten reads and ten compares, no
+        /// allocation while nothing trembles. Reset when the window is shown again.
+        /// </summary>
+        public void WatchForTrembling()
+        {
+            if (ContentRoot == null || Rect == null) return;
+
+            var scroll = ContentRoot.transform.Find("PanelScroll");
+            var scrollRect = scroll != null ? scroll.GetComponent<ScrollRect>() : null;
+            var content = scrollRect != null ? scrollRect.content : null;
+            var viewport = scrollRect != null ? scrollRect.viewport : null;
+
+            if (_trembleValues == null) _trembleValues = new float[TrembleChannels.Length];
+            _trembleValues[0] = Rect.anchoredPosition.x;
+            _trembleValues[1] = Rect.anchoredPosition.y;
+            _trembleValues[2] = Rect.rect.width;
+            _trembleValues[3] = Rect.rect.height;
+            _trembleValues[4] = Rect.localScale.x * 1000f;
+            _trembleValues[5] = content != null ? content.anchoredPosition.y : 0f;
+            _trembleValues[6] = content != null ? content.rect.height : 0f;
+            _trembleValues[7] = content != null ? content.localScale.x * 1000f : 0f;
+            _trembleValues[8] = viewport != null ? viewport.rect.width : 0f;
+            _trembleValues[9] = viewport != null ? viewport.rect.height : 0f;
+
+            var trembles = _tremble.Feed(_trembleValues);
+            if (trembles.Count == 0) return;
+
+            var which = new List<string>();
+            foreach (var t in trembles) which.Add($"{t.Channel} {t.A:0.#} <-> {t.B:0.#}");
+
+            string tab = ShownTab;
+            TranslatorCore.LogWarning(
+                $"[Tremble] {Name}{(string.IsNullOrEmpty(tab) ? "" : " / " + tab)}: {string.Join(", ", which.ToArray())} "
+                + $"every frame | screen {Screen.width}x{Screen.height}, window {Rect.rect.width:0}x{Rect.rect.height:0}, "
+                + $"content {(content != null ? content.rect.height : 0f):0}, viewport {(viewport != null ? viewport.rect.width : 0f):0}x{(viewport != null ? viewport.rect.height : 0f):0}, "
+                + $"selected {DescribeSelected()}");
+        }
+
+        /// <summary>The tab shown, for the tremble line — null for a window without tabs.</summary>
+        protected virtual string ShownTab => null;
+
+        /// <summary>
+        /// What the game's EventSystem holds as selected — a game animating its selection is one of
+        /// the suspects, so the line says whether it holds something, and whose.
+        /// </summary>
+        private string DescribeSelected()
+        {
+            var system = UnityEngine.EventSystems.EventSystem.current;
+            var selected = system != null ? system.currentSelectedGameObject : null;
+            if (selected == null) return "nothing";
+            bool ours = UIRoot != null && selected.transform.IsChildOf(UIRoot.transform.root);
+            return $"{selected.name} ({(ours ? "ours" : "the game's")})";
+        }
+
+        // ×1000 on the scales: the tolerance is half a unit, and a scale is a fraction.
+        private static readonly string[] TrembleChannels =
+        {
+            "window x", "window y", "window width", "window height", "window scale x1000",
+            "content y", "content height", "content scale x1000", "viewport width", "viewport height",
+        };
+
+        private readonly Engine.Oscillation _tremble = new Engine.Oscillation(TrembleChannels);
+        private float[] _trembleValues;
 
         /// <summary>How wide and tall the scrolling body is right now — see <see cref="BodyHeight"/>.</summary>
         private Vector2 BodySize

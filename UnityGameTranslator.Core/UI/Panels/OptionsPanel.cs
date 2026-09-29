@@ -28,6 +28,9 @@ namespace UnityGameTranslator.Core.UI.Panels
         // Tab system
         private TabBar _tabBar;
 
+        /// <inheritdoc/>
+        protected override string ShownTab => _tabBar?.SelectedName;
+
         // General section
         private ToggleHandle _enableTranslationsToggle;
         private ToggleHandle _translateModUIToggle;

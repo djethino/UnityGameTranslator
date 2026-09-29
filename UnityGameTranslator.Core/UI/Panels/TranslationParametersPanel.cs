@@ -37,6 +37,11 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         // Tab system
         private TabBar _tabBar;
+
+        /// <inheritdoc/>
+        protected override string ShownTab => _tabBar?.SelectedName == "Fonts" && _fontsSubTabBar != null
+            ? "Fonts / " + _fontsSubTabBar.SelectedName
+            : _tabBar?.SelectedName;
         private Components.HelpZone _helpZone;
 
         // Behavior section

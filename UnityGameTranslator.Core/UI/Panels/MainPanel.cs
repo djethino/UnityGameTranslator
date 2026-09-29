@@ -175,6 +175,9 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         // Tab system
         private TabBar _tabBar;
+
+        /// <inheritdoc/>
+        protected override string ShownTab => _tabBar?.SelectedName;
         // The words on the two tabs are the document's; the code names the pieces.
         private static string TAB_MY_TRANSLATION => Doc.Nodes["MyTranslationTab"].Text;
         private static string TAB_COMMUNITY => Doc.Nodes["CommunityTab"].Text;

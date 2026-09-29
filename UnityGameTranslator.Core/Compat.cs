@@ -88,23 +88,27 @@ namespace UnityGameTranslator.Core
 
             // The 6-arg one next: it keeps the format and the mip choice the 2-arg one would lose.
             // IL2CPP's interop exposes it on the games seen (a 2020.3 game that stripped the 2-arg
-            // one kept it), and UniverseLib's own texture helper has always built with it. On Mono
-            // it is internal and never reached: the 4-arg one is always there.
-            try
-            {
-                return NewTexture(width, height, format, mipmap ? -1 : 1);
-            }
-            catch (MissingMethodException ex)
-            {
-                // Last: the 2-arg one, used by the engine itself — RGBA32 with mipmaps.
-                Faults.Say("Compat.MakeTexture2D 6-arg", ex, "6-arg constructor missing, using the 2-arg one");
-                return NewTexture(width, height);
-            }
+            // one kept it), and UniverseLib's own texture helper has always built with it.
+            // ⚠ Found by reflection, never named: in the Mono UnityEngine this Core compiles against
+            // it is internal, so the compiler refuses it. On Mono it is never reached anyway — the
+            // 4-arg one is always there.
+            var sixArgs = SixArgConstructor;
+            if (sixArgs != null)
+                return (Texture2D)sixArgs.Invoke(new object[] { width, height, format, mipmap ? -1 : 1, false, IntPtr.Zero });
+
+            // Last: the 2-arg one, used by the engine itself — RGBA32 with mipmaps.
+            Faults.Say("Compat.MakeTexture2D 6-arg",
+                new MissingMethodException("UnityEngine.Texture2D", ".ctor(Int32, Int32, TextureFormat, Int32, Boolean, IntPtr)"),
+                "6-arg constructor missing, using the 2-arg one");
+            return NewTexture(width, height);
         }
 
-        [MethodImpl(MethodImplOptions.NoInlining)]
-        private static Texture2D NewTexture(int width, int height, TextureFormat format, int mipCount)
-            => new Texture2D(width, height, format, mipCount, false, IntPtr.Zero);
+        /// <summary>Texture2D(int, int, TextureFormat, int mipCount, bool linear, IntPtr nativeTex), where public.</summary>
+        private static System.Reflection.ConstructorInfo SixArgConstructor
+            => _sixArgs ?? (_sixArgs = typeof(Texture2D).GetConstructor(new[]
+                   { typeof(int), typeof(int), typeof(TextureFormat), typeof(int), typeof(bool), typeof(IntPtr) }));
+
+        private static System.Reflection.ConstructorInfo _sixArgs;
 
         [MethodImpl(MethodImplOptions.NoInlining)]
         private static Texture2D NewTexture(int width, int height, TextureFormat format, bool mipmap)

@@ -1907,6 +1907,15 @@ namespace UnityGameTranslator.Core
         /// runtime" indistinguishable, which is the difference between nothing to translate and
         /// the translation quietly not happening.
         /// </remarks>
+        /// <summary>
+        /// The overload IL2CPP's interop does not have (it takes an Il2CppSystem.Type), alone in
+        /// its method: named inside GetComponentByType, the runtime would refuse to compile that
+        /// whole method — the reflection path included — the way it refused Compat.MakeTexture2D
+        /// on a game (analyse/pieges-projet.md §9). The try is in the caller.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static Component GetComponentDirect(GameObject go, Type type) => go.GetComponent(type);
+
         public static Component GetComponentByType(GameObject go, Type type)
         {
             if (go == null || type == null) return null;
@@ -1915,7 +1924,7 @@ namespace UnityGameTranslator.Core
             {
                 try
                 {
-                    return go.GetComponent(type);
+                    return GetComponentDirect(go, type);
                 }
                 catch (MissingMethodException)
                 {

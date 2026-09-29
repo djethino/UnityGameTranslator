@@ -1,4 +1,5 @@
 using System;
+using System.Runtime.CompilerServices;
 using UnityEngine;
 using UnityEngine.UI;
 using UniverseLib.Runtime;
@@ -63,30 +64,39 @@ namespace UnityGameTranslator.Core
         /// where it's available (the vast majority), this is identical to
         /// calling <c>new Texture2D(w, h, fmt, mipmap)</c> directly. The
         /// fallback paths only run on stripped builds.
+        ///
+        /// 🔴 **Each constructor lives in a method of its own, and the try is HERE** (2026-09-30).
+        /// The runtime resolves a missing member when it compiles the method that NAMES it
+        /// (analyse/pieges-projet.md §9). Written inline, the 2-arg fallback made this whole
+        /// method uncompilable on a game that stripped the 2-arg constructor — while it kept the
+        /// 4-arg one this method tries first. The exception left before the try, through the first
+        /// flag of the wizard, and CreatePanels stopped there: an empty wizard over the whole
+        /// screen, on a game already set up. NoInlining keeps the JIT from folding the calls back.
+        /// ⚠ No 2x2 placeholder after them: it was the same 2-arg constructor again, so a game
+        /// without it failed twice and threw anyway. The caller gets the exception.
         /// </summary>
         public static Texture2D MakeTexture2D(int width, int height, TextureFormat format, bool mipmap)
         {
             try
             {
-                return new Texture2D(width, height, format, mipmap);
+                return NewTexture(width, height, format, mipmap);
             }
             catch (MissingMethodException ex)
             {
                 // A stripped game without the 4-arg constructor: said once, and the 2-arg one
                 // (used by the engine itself, so more universally preserved) takes over.
                 Faults.Say("Compat.MakeTexture2D", ex, "4-arg constructor missing, using the 2-arg one");
-                try
-                {
-                    return new Texture2D(width, height);
-                }
-                catch (Exception inner)
-                {
-                    // Last resort: tiny placeholder, caller will see a blank texture — said.
-                    Faults.Say("Compat.MakeTexture2D 2-arg", inner, "using a 2x2 placeholder");
-                    return new Texture2D(2, 2);
-                }
+                return NewTexture(width, height);
             }
         }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static Texture2D NewTexture(int width, int height, TextureFormat format, bool mipmap)
+            => new Texture2D(width, height, format, mipmap);
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static Texture2D NewTexture(int width, int height)
+            => new Texture2D(width, height);
 
         // Resolved once. Null member where the game's Unity predates it — SetValue is then a no-op.
         private static readonly AmbiguousMemberHandler<ColorBlock, Color> SelectedColorMember

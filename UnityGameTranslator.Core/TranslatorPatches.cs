@@ -142,14 +142,51 @@ namespace UnityGameTranslator.Core
         /// </summary>
         /// <param name="patcher">Function that takes (MethodInfo target, MethodInfo prefix, MethodInfo postfix) and applies the patch</param>
         /// <returns>Number of patches applied</returns>
-        public static int ApplyAll(Action<MethodInfo, MethodInfo, MethodInfo> patcher)
+        public static int ApplyAll(Action<MethodInfo, MethodInfo, MethodInfo> hook)
         {
             int patchCount = 0;
+            int hooked = 0;
+
+            // 🔴 **One hook that fails costs that hook, never the ones after it** (2026-09-30).
+            // Everything below sat in ONE try: a single target Harmony could not rewrite (seen on a
+            // Unity 2023.2 IL2CPP game: "IL Compile Error (unknown location)") dropped every hook
+            // further down the list — localisation, images, UI Toolkit, the component-appearance
+            // hook — in silence, with a count that looked healthy. Now a refusal NAMES its target,
+            // and each group below runs on its own: a failure costs the rest of its group, never
+            // the groups after it. Finding the types can throw as well, and is inside the groups.
+            //
+            // ⚠ **The refusal is still thrown after being named.** Callers set state on success —
+            // Graphic.OnEnable and UIDocument.OnEnable raise "discovered on arrival" flags right
+            // after the call, and one helper tries a target and falls back on the exception.
+            // Swallowing it here would raise those flags over a hook that is not there, and the
+            // components would never be found. The name `patcher` is kept so the groups read as before.
+            Action<MethodInfo, MethodInfo, MethodInfo> patcher = (target, prefix, postfix) =>
+            {
+                try
+                {
+                    hook(target, prefix, postfix);
+                    hooked++;
+                }
+                catch (Exception e)
+                {
+                    TranslatorCore.LogError($"[Patches] Could not hook {target?.DeclaringType?.FullName}.{target?.Name}: {e.GetType().Name}: {e.Message}");
+                    throw;
+                }
+            };
+
+            void Group(string name, Action body)
+            {
+                try { body(); }
+                catch (Exception e)
+                {
+                    TranslatorCore.LogError($"[Patches] {name}: the rest of this group was skipped ({e.GetType().Name}: {e.Message})");
+                }
+            }
 
             // On IL2CPP, TMP assemblies may be loaded after initial TypeHelper.Initialize()
             TypeHelper.TryResolveIfNeeded();
 
-            try
+            Group("TMP_Text", () =>
             {
                 // TMP_Text.text setter (resolved via TypeHelper to avoid IL2CPP TypeLoadException)
                 if (TypeHelper.TMP_TextType != null)
@@ -241,7 +278,10 @@ namespace UnityGameTranslator.Core
                 {
                     TranslatorCore.LogWarning("[Patches] TMP_Text type not found, skipping TMP patches");
                 }
+            });
 
+            Group("UI.Text", () =>
+            {
                 // UI.Text.text setter
                 if (TypeHelper.UI_TextType != null)
                 {
@@ -281,7 +321,10 @@ namespace UnityGameTranslator.Core
                 {
                     TranslatorCore.LogWarning("[Patches] UI.Text type not found, skipping UI patches");
                 }
+            });
 
+            Group("InputField right-to-left editing", () =>
+            {
                 // UI.InputField — right-to-left editing (RtlInputFields): the click → character
                 // index, and the two arrow keys. Each looked up by its exact signature, and a
                 // missing one SAID: the field then keeps Unity's own behaviour for that gesture.
@@ -313,7 +356,10 @@ namespace UnityGameTranslator.Core
                     if (click == null || left == null || right == null)
                         TranslatorCore.LogWarning($"[Patches] InputField right-to-left editing incomplete: click={(click != null)} left={(left != null)} right={(right != null)}");
                 }
+            });
 
+            Group("TMP_InputField right-to-left editing", () =>
+            {
                 // TMP_InputField — the same editing, TMP's way: its label keeps the typed order and
                 // only the glyphs are moved after layout (GenerateTextMesh), clicks and drags are
                 // re-placed from the map, the arrows follow the screen. Found by name, like every
@@ -341,7 +387,10 @@ namespace UnityGameTranslator.Core
                     if (generate == null || down == null || drag == null || left == null || right == null)
                         TranslatorCore.LogWarning($"[Patches] TMP_InputField right-to-left editing incomplete: layout={(generate != null)} click={(down != null)} drag={(drag != null)} left={(left != null)} right={(right != null)}");
                 }
+            });
 
+            Group("TextMesh", () =>
+            {
                 // TextMesh.text setter (legacy 3D text)
                 if (TypeHelper.TextMeshType != null)
                 {
@@ -352,16 +401,18 @@ namespace UnityGameTranslator.Core
                         patcher(textMeshProp.SetMethod, prefix, null);
                         patchCount++;
                     }
-
                 }
+            });
 
-                // Unity.Localization.StringTableEntry (optional)
+            Group("Unity.Localization StringTableEntry", () =>
+            {
                 Type stringTableEntryType = FindStringTableEntryType();
                 if (stringTableEntryType != null)
-                {
                     patchCount += PatchStringTableEntry(stringTableEntryType, patcher);
-                }
+            });
 
+            Group("2D Toolkit tk2dTextMesh", () =>
+            {
                 // tk2dTextMesh (2D Toolkit - used by many 2D games)
                 Type tk2dTextMeshType = FindTk2dTextMeshType();
                 if (tk2dTextMeshType != null)
@@ -369,63 +420,70 @@ namespace UnityGameTranslator.Core
                     _tk2dType = tk2dTextMeshType;
                     patchCount += PatchTk2dTextMesh(tk2dTextMeshType, patcher);
                 }
+            });
 
+            Group("alternate TMP", () =>
+            {
                 // Alternate TMP implementations (TMProOld, etc. - used by some games with bundled/older TMP)
                 // These are in different namespaces than the standard TMPro.TMP_Text we patch above
                 var alternateTMPTypes = FindAlternateTMPTypes();
                 _alternateTmpTypes = alternateTMPTypes;
                 foreach (var altTmpType in alternateTMPTypes)
-                {
                     patchCount += PatchAlternateTMPType(altTmpType, patcher);
-                }
+            });
 
+            Group("localization bridges", () =>
+            {
                 // Localization bridge components (MonoBehaviours that link LocalisedString to text components)
                 // These have font context, so font-based enable/disable works correctly
-                var bridgeComponents = FindLocalizationBridgeComponents();
-                foreach (var bridgeType in bridgeComponents)
-                {
+                foreach (var bridgeType in FindLocalizationBridgeComponents())
                     patchCount += PatchLocalizationBridge(bridgeType, patcher);
-                }
+            });
 
+            Group("generic text components", () =>
+            {
                 // Generic text component detection (NGUI UILabel, SuperTextMesh, etc.)
                 // Scans all loaded types for MonoBehaviours with a 'text' property
-                var genericTextTypes = FindGenericTextTypes();
-                foreach (var typeInfo in genericTextTypes)
-                {
+                foreach (var typeInfo in FindGenericTextTypes())
                     patchCount += PatchGenericTextType(typeInfo, patcher);
-                }
+            });
 
+            Group("custom localization types", () =>
+            {
                 // Generic localization system detection (FALLBACK - disabled by default)
                 // Finds custom localization types like LocalisedString, LocalizedText, I18nString, etc.
                 // Only patches ToString/op_Implicit - no font context available
-                var customLocalizationTypes = FindCustomLocalizationTypes();
-                foreach (var locType in customLocalizationTypes)
-                {
+                foreach (var locType in FindCustomLocalizationTypes())
                     patchCount += PatchCustomLocalizationType(locType, patcher);
-                }
+            });
 
+            Group("OnEnable", () =>
+            {
                 // Graphic.OnEnable postfix — detect when text components are activated
                 // and re-apply clone font + warm atlas (fixes transparent text on inactive→active)
                 patchCount += PatchGraphicOnEnable(patcher);
                 patchCount += PatchTmpOnEnable(patcher);
+            });
 
-                // Image replacement patches — intercept sprite/texture assignments
-                patchCount += PatchImageComponents(patcher);
+            // Image replacement patches — intercept sprite/texture assignments
+            Group("image replacement", () => patchCount += PatchImageComponents(patcher));
 
+            Group("UI Toolkit", () =>
+            {
                 // UI Toolkit — a whole framework whose text is not a Component and which none of
                 // the above can reach. One setter covers all of it; see UIToolkitSupport.
                 UIToolkitSupport.Initialize();
                 patchCount += UIToolkitSupport.ApplyPatches(patcher);
+            });
 
-                // uGUI components announce their arrival — see TranslatorScanner.HookComponentAppearance.
-                patchCount += TranslatorScanner.HookComponentAppearance(patcher);
-            }
-            catch (Exception e)
-            {
-                TranslatorCore.LogError($"Failed to apply patches: {e.Message}");
-            }
+            // uGUI components announce their arrival — see TranslatorScanner.HookComponentAppearance.
+            Group("component appearance", () => patchCount += TranslatorScanner.HookComponentAppearance(patcher));
 
-            return patchCount;
+            // What was asked against what took: the adapters log the second as "Applied N".
+            if (hooked < patchCount)
+                TranslatorCore.LogWarning($"[Patches] {patchCount - hooked} of {patchCount} hooks could not be placed (named above); the rest are in place");
+
+            return hooked;
         }
 
         #region Image Replacement Patches

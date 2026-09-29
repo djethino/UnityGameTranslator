@@ -83,12 +83,28 @@ namespace UnityGameTranslator.Core
             }
             catch (MissingMethodException ex)
             {
-                // A stripped game without the 4-arg constructor: said once, and the 2-arg one
-                // (used by the engine itself, so more universally preserved) takes over.
-                Faults.Say("Compat.MakeTexture2D", ex, "4-arg constructor missing, using the 2-arg one");
+                Faults.Say("Compat.MakeTexture2D", ex, "4-arg constructor missing, trying the 6-arg one");
+            }
+
+            // The 6-arg one next: it keeps the format and the mip choice the 2-arg one would lose.
+            // IL2CPP's interop exposes it on the games seen (a 2020.3 game that stripped the 2-arg
+            // one kept it), and UniverseLib's own texture helper has always built with it. On Mono
+            // it is internal and never reached: the 4-arg one is always there.
+            try
+            {
+                return NewTexture(width, height, format, mipmap ? -1 : 1);
+            }
+            catch (MissingMethodException ex)
+            {
+                // Last: the 2-arg one, used by the engine itself — RGBA32 with mipmaps.
+                Faults.Say("Compat.MakeTexture2D 6-arg", ex, "6-arg constructor missing, using the 2-arg one");
                 return NewTexture(width, height);
             }
         }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static Texture2D NewTexture(int width, int height, TextureFormat format, int mipCount)
+            => new Texture2D(width, height, format, mipCount, false, IntPtr.Zero);
 
         [MethodImpl(MethodImplOptions.NoInlining)]
         private static Texture2D NewTexture(int width, int height, TextureFormat format, bool mipmap)

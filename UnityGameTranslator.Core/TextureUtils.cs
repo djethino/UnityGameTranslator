@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using UnityEngine;
 
 namespace UnityGameTranslator.Core
@@ -16,6 +17,13 @@ namespace UnityGameTranslator.Core
         private static MethodInfo _loadImageMethod;
         private static bool _loadImageMethodSearched;
 
+        // Unity 2023.1+ on IL2CPP — see LoadImageThroughSpanWrapper
+        private static MethodInfo _loadImageInjected;
+        private static MethodInfo _marshalTexture;
+        private static Type _spanWrapperType;
+        private static FieldInfo _spanWrapperBegin;
+        private static FieldInfo _spanWrapperLength;
+
         // Cached for MakeReadableCopy
         private static MethodInfo _blitMethod;
         private static bool _blitMethodSearched;
@@ -26,6 +34,15 @@ namespace UnityGameTranslator.Core
         // Cached for CreateSpriteSafe
         private static MethodInfo _spriteCreateMethod;
         private static bool _spriteCreateMethodSearched;
+
+        // Unity 2023.1+ IL2CPP game that stripped Sprite.Create — see CreateSpriteThroughNative
+        private static CreateSpriteInjected _createSpriteNative;
+        private static MethodInfo _unmarshalSprite;
+        private static bool _createSpriteNativeSearched;
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate IntPtr CreateSpriteInjected(IntPtr texture, IntPtr rect, IntPtr pivot, float pixelsPerUnit,
+            uint extrude, int meshType, IntPtr border, byte generateFallbackPhysicsShape, IntPtr secondaryTextures);
 
         // Cached for ReadPixels
         private static MethodInfo _readPixelsMethod;
@@ -257,6 +274,9 @@ namespace UnityGameTranslator.Core
                 FindLoadImageMethod();
             }
 
+            if (_loadImageInjected != null)
+                return LoadImageThroughSpanWrapper(texture, data);
+
             if (_loadImageMethod == null)
                 return false;
 
@@ -283,6 +303,111 @@ namespace UnityGameTranslator.Core
             }
         }
 
+        /// <summary>
+        /// LoadImage on Unity 2023.1+ under IL2CPP: the native entry point, handed the pinned bytes.
+        ///
+        /// 🔴 **The public LoadImage must never be called there.** From 2023.1 Unity passes arrays to
+        /// native code as a <c>ManagedSpanWrapper</c> (pointer + length), so LoadImage has a managed
+        /// body. The interop rebuilds that body and wraps the array in an Il2CppSystem.Span (2023) or
+        /// ReadOnlySpan (6000) — a value type it treats as an object with no handle — and reading
+        /// it is an AccessViolationException: the process dies, no catch runs, the log stops. Every
+        /// such game died at startup once the About tab decoded a PNG while building its panels.
+        ///
+        /// What the rebuilt body meant to do is three lines: take the texture's native pointer,
+        /// point a wrapper at the bytes, call <c>LoadImage_Injected</c>. Done here the same way,
+        /// with the managed array pinned instead of copied into IL2CPP memory — native code reads
+        /// it once, synchronously, and keeps nothing.
+        /// </summary>
+        private static bool LoadImageThroughSpanWrapper(Texture2D texture, byte[] data)
+        {
+            var pinned = GCHandle.Alloc(data, GCHandleType.Pinned);
+            try
+            {
+                var nativeTexture = (IntPtr)_marshalTexture.Invoke(null, new object[] { texture });
+                if (nativeTexture == IntPtr.Zero)
+                {
+                    TranslatorCore.LogWarning("[TextureUtils] LoadImage: the texture has no native object");
+                    return false;
+                }
+
+                object wrapper = Activator.CreateInstance(_spanWrapperType);
+                _spanWrapperBegin.SetValue(wrapper, pinned.AddrOfPinnedObject());
+                _spanWrapperLength.SetValue(wrapper, data.Length);
+
+                var result = _loadImageInjected.Invoke(null, new object[] { nativeTexture, wrapper, false });
+                return result is bool b && b;
+            }
+            catch (Exception ex)
+            {
+                var inner = ex.InnerException ?? ex;
+                TranslatorCore.LogWarning($"[TextureUtils] LoadImage (native entry) failed: {inner.GetType().Name}: {inner.Message}");
+                return false;
+            }
+            finally
+            {
+                pinned.Free();
+            }
+        }
+
+        /// <summary>
+        /// The 2023.1+ IL2CPP shape: <c>ImageConversion.LoadImage_Injected(IntPtr, ref
+        /// ManagedSpanWrapper, bool)</c> made public by the interop, plus what it needs — the
+        /// texture's native pointer (<c>Object.MarshalledUnityObject.MarshalNotNull</c>, the call
+        /// the rebuilt body itself starts with) and the wrapper's two fields. All or nothing: a
+        /// shape found by halves falls back to nothing rather than to the body that kills the game.
+        /// On Mono the method is private and never matches; below 2023.1 it does not exist.
+        /// </summary>
+        private static bool FindLoadImageInjected(Type imageConvType)
+        {
+            MethodInfo injected = null;
+            foreach (var method in imageConvType.GetMethods(BindingFlags.Public | BindingFlags.Static))
+            {
+                if (method.Name != "LoadImage_Injected") continue;
+                var p = method.GetParameters();
+                if (p.Length == 3 && p[0].ParameterType == typeof(IntPtr) && p[1].ParameterType.IsByRef
+                    && p[1].ParameterType.GetElementType()?.Name == "ManagedSpanWrapper"
+                    && p[2].ParameterType == typeof(bool) && method.ReturnType == typeof(bool))
+                {
+                    injected = method;
+                    break;
+                }
+            }
+            if (injected == null) return false;
+
+            var wrapperType = injected.GetParameters()[1].ParameterType.GetElementType();
+            var begin = wrapperType.GetField("begin", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            var length = wrapperType.GetField("length", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+
+            MethodInfo marshal = null;
+            var marshaller = typeof(UnityEngine.Object).GetNestedType("MarshalledUnityObject", BindingFlags.Public | BindingFlags.NonPublic);
+            if (marshaller != null)
+            {
+                foreach (var method in marshaller.GetMethods(BindingFlags.Public | BindingFlags.Static))
+                {
+                    if (method.Name == "MarshalNotNull" && method.IsGenericMethodDefinition
+                        && method.GetParameters().Length == 1 && method.ReturnType == typeof(IntPtr))
+                    {
+                        marshal = method.MakeGenericMethod(typeof(Texture2D));
+                        break;
+                    }
+                }
+            }
+
+            if (begin == null || begin.FieldType != typeof(IntPtr) || length == null || length.FieldType != typeof(int) || marshal == null)
+            {
+                TranslatorCore.LogWarning($"[TextureUtils] LoadImage_Injected found without its parts (begin={begin != null}, length={length != null}, marshal={marshal != null}) — images will not load in this game");
+                return true;
+            }
+
+            _loadImageInjected = injected;
+            _marshalTexture = marshal;
+            _spanWrapperType = wrapperType;
+            _spanWrapperBegin = begin;
+            _spanWrapperLength = length;
+            TranslatorCore.LogInfo("[TextureUtils] Found ImageConversion.LoadImage_Injected (Unity 2023.1+ IL2CPP) — the public LoadImage is not used");
+            return true;
+        }
+
         private static void FindLoadImageMethod()
         {
             // Try ImageConversion.LoadImage first (newer Unity)
@@ -290,6 +415,9 @@ namespace UnityGameTranslator.Core
             {
                 var imageConvType = asm.GetType("UnityEngine.ImageConversion");
                 if (imageConvType == null) continue;
+
+                // Unity 2023.1+ IL2CPP: the native entry, or nothing — never the public LoadImage.
+                if (FindLoadImageInjected(imageConvType)) return;
 
                 foreach (var method in imageConvType.GetMethods(BindingFlags.Public | BindingFlags.Static))
                 {
@@ -900,6 +1028,9 @@ namespace UnityGameTranslator.Core
         {
             if (texture == null) return null;
 
+            if (_createSpriteNative != null)
+                return CreateSpriteThroughNative(texture, rect, pivot, pixelsPerUnit, border);
+
             try
             {
                 if (!_spriteCreateMethodSearched)
@@ -941,6 +1072,10 @@ namespace UnityGameTranslator.Core
             }
             catch (Exception ex)
             {
+                // The game stripped Sprite.Create: the engine still has it, reached natively.
+                if ((ex.InnerException ?? ex) is NotSupportedException && FindCreateSpriteNative())
+                    return CreateSpriteThroughNative(texture, rect, pivot, pixelsPerUnit, border);
+
                 TranslatorCore.LogWarning($"[TextureUtils] CreateSpriteSafe failed: {ex.Message}");
 
                 // Last resort direct call. Same rect as asked for — falling back to the whole
@@ -954,6 +1089,116 @@ namespace UnityGameTranslator.Core
                     TranslatorCore.LogWarning($"[TextureUtils] CreateSpriteSafe direct fallback also failed: {ex2.Message}");
                     return null;
                 }
+            }
+        }
+
+        /// <summary>
+        /// Sprite.Create on a Unity 2023.1+ IL2CPP game whose build stripped it.
+        ///
+        /// ⚠ A game that never makes a sprite out of a texture loses the whole managed chain —
+        /// every overload ends in « Method unstripping failed », and with it every picture this mod
+        /// draws (rounded shapes, icons, flags, logos). The engine keeps the native function
+        /// registered all the same: <c>UnityEngine.Sprite::CreateSprite_Injected</c>, whose shape is
+        /// the one the interop shows on games that kept it — native texture pointer, Rect, Vector2
+        /// and Vector4 by pointer, the secondary textures as an array (none here), and a GC handle
+        /// back, turned into a Sprite by <c>Unmarshal.UnmarshalUnityObject</c>.
+        ///
+        /// 🔴 Only on the 2023.1+ shape (<c>Unmarshal.UnmarshalUnityObject</c> and the texture
+        /// marshaller present): before it the same icall takes managed objects, and calling it with
+        /// this signature would kill the process.
+        /// </summary>
+        private static bool FindCreateSpriteNative()
+        {
+            if (_createSpriteNativeSearched) return _createSpriteNative != null;
+            _createSpriteNativeSearched = true;
+
+            try
+            {
+                if (!_loadImageMethodSearched)
+                {
+                    _loadImageMethodSearched = true;
+                    FindLoadImageMethod();
+                }
+                if (_marshalTexture == null)
+                {
+                    TranslatorCore.LogWarning("[TextureUtils] Sprite.Create is stripped and this runtime is not the 2023.1+ shape — pictures stay blank");
+                    return false;
+                }
+
+                var unmarshal = typeof(Sprite).Assembly.GetType("UnityEngine.Bindings.Unmarshal");
+                MethodInfo unmarshalSprite = null;
+                if (unmarshal != null)
+                {
+                    foreach (var method in unmarshal.GetMethods(BindingFlags.Public | BindingFlags.Static))
+                    {
+                        if (method.Name == "UnmarshalUnityObject" && method.IsGenericMethodDefinition
+                            && method.GetParameters().Length == 1 && method.GetParameters()[0].ParameterType == typeof(IntPtr))
+                        {
+                            unmarshalSprite = method.MakeGenericMethod(typeof(Sprite));
+                            break;
+                        }
+                    }
+                }
+
+                IntPtr icall = IntPtr.Zero;
+                Type il2cpp = null;
+                foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+                {
+                    il2cpp = asm.GetType("Il2CppInterop.Runtime.IL2CPP");
+                    if (il2cpp != null) break;
+                }
+                var resolve = il2cpp?.GetMethod("il2cpp_resolve_icall", BindingFlags.Public | BindingFlags.Static, null, new[] { typeof(string) }, null);
+                if (resolve != null)
+                    icall = (IntPtr)resolve.Invoke(null, new object[] { "UnityEngine.Sprite::CreateSprite_Injected" });
+
+                if (unmarshalSprite == null || icall == IntPtr.Zero)
+                {
+                    TranslatorCore.LogWarning($"[TextureUtils] Sprite.Create is stripped and cannot be reached natively (unmarshal={unmarshalSprite != null}, icall={icall != IntPtr.Zero}) — pictures stay blank");
+                    return false;
+                }
+
+                _unmarshalSprite = unmarshalSprite;
+                _createSpriteNative = (CreateSpriteInjected)Marshal.GetDelegateForFunctionPointer(icall, typeof(CreateSpriteInjected));
+                TranslatorCore.LogInfo("[TextureUtils] Sprite.Create is stripped in this game — using Sprite::CreateSprite_Injected");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                var inner = ex.InnerException ?? ex;
+                TranslatorCore.LogWarning($"[TextureUtils] Native Sprite.Create lookup failed: {inner.GetType().Name}: {inner.Message}");
+                return false;
+            }
+        }
+
+        private static object CreateSpriteThroughNative(Texture2D texture, Rect rect, Vector2 pivot, float pixelsPerUnit, Vector4 border)
+        {
+            // Rect, Vector2, Vector4 as the engine lays them out: consecutive floats.
+            var values = new float[] { rect.x, rect.y, rect.width, rect.height, pivot.x, pivot.y, border.x, border.y, border.z, border.w };
+            var pinned = GCHandle.Alloc(values, GCHandleType.Pinned);
+            try
+            {
+                var nativeTexture = (IntPtr)_marshalTexture.Invoke(null, new object[] { texture });
+                if (nativeTexture == IntPtr.Zero) return null;
+
+                IntPtr start = pinned.AddrOfPinnedObject();
+                IntPtr handle = _createSpriteNative(nativeTexture, start, start + 4 * sizeof(float), pixelsPerUnit,
+                    0u, (int)SpriteMeshType.FullRect, start + 6 * sizeof(float), 0, IntPtr.Zero);
+                if (handle == IntPtr.Zero)
+                {
+                    TranslatorCore.LogWarning("[TextureUtils] CreateSprite_Injected returned nothing");
+                    return null;
+                }
+                return _unmarshalSprite.Invoke(null, new object[] { handle });
+            }
+            catch (Exception ex)
+            {
+                var inner = ex.InnerException ?? ex;
+                TranslatorCore.LogWarning($"[TextureUtils] CreateSprite_Injected failed: {inner.GetType().Name}: {inner.Message}");
+                return null;
+            }
+            finally
+            {
+                pinned.Free();
             }
         }
 

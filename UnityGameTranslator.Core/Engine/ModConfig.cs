@@ -381,8 +381,11 @@ namespace UnityGameTranslator.Core
             return moved;
         }
 
-        /// <summary>Config schema version, bumped when a one-shot migration is added above.</summary>
-        private const int CurrentConfigVersion = 3;
+        /// <summary>
+        /// Config schema version, bumped (in common, the Manager stamps it too) when a one-shot
+        /// migration is added above.
+        /// </summary>
+        private const int CurrentConfigVersion = UnityGameTranslator.Common.ConfigVersion.Current;
 
         // 0 = written before migrations were versioned. Persisted so each migration runs once.
         public int config_version { get; set; } = 0;

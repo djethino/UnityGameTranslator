@@ -1949,6 +1949,10 @@ namespace UnityGameTranslator.Core
             // Every failure caught at a boundary is said in this log (Engine/Faults).
             Faults.AttachSink(line => adapter.LogWarning(line));
 
+            // Before anything reads or writes JSON: a runtime that refuses to emit methods would
+            // otherwise fail every object the config and the translation are made of (issue #29).
+            JsonRuntime.AdaptToRuntime(adapter.LogInfo, adapter.LogWarning);
+
             // The adapter is what names the loader, so the User-Agent can only be complete from
             // here — see ApiClient.RefreshUserAgent. Done before anything can make a call.
             ApiClient.RefreshUserAgent();

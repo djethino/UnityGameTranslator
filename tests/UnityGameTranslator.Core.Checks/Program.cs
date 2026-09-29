@@ -206,6 +206,7 @@ namespace UnityGameTranslator.Core.Checks
             Section("The text gate: exact, normalized, trimmed, pattern", TextGateChecks.Run);
             Section("Our own translations coming back, across a sequence", ReadbackIndexChecks.Run);
             Section("An old translation still on screen after a reload", StaleSnapshotChecks.Run);
+            Section("JSON on a runtime that refuses to emit methods", JsonRuntimeChecks.Run);
         }
 
         /// <summary>What a component's new text is, relative to the one it held a moment ago.</summary>

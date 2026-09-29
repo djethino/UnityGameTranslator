@@ -649,8 +649,16 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             if (ContentRoot == null || Rect == null) return;
 
-            var scroll = ContentRoot.transform.Find("PanelScroll");
-            var scrollRect = scroll != null ? scroll.GetComponent<ScrollRect>() : null;
+            // Found once, not every frame: a Find and a GetComponent cost more than everything
+            // else here together — on IL2CPP GetComponent crosses the interop. Unity's null
+            // answers true for a destroyed one, so a rebuilt body is found again.
+            if (_trembleScroll == null)
+            {
+                var scroll = ContentRoot.transform.Find("PanelScroll");
+                _trembleScroll = scroll != null ? scroll.GetComponent<ScrollRect>() : null;
+            }
+
+            var scrollRect = _trembleScroll;
             var content = scrollRect != null ? scrollRect.content : null;
             var viewport = scrollRect != null ? scrollRect.viewport : null;
 
@@ -705,6 +713,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         private readonly Engine.Oscillation _tremble = new Engine.Oscillation(TrembleChannels);
         private float[] _trembleValues;
+        private ScrollRect _trembleScroll;
 
         /// <summary>How wide and tall the scrolling body is right now — see <see cref="BodyHeight"/>.</summary>
         private Vector2 BodySize

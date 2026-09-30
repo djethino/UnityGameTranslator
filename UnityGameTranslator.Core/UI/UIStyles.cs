@@ -434,6 +434,8 @@ namespace UnityGameTranslator.Core.UI
         public static readonly Color SliderBackgroundColor = Of(Theme.SurfaceCard);
         public static readonly Color SliderFillColor = Of(Theme.Accent, 0.85f);
         public static readonly Color SliderHandleColor = Of(Theme.SurfaceHover);
+        /// <summary>The handle of a rail that holds the wheel — the hover colour buttons already use.</summary>
+        public static readonly Color SliderHandleHeld = Of(Theme.AccentEdge);
         public static readonly Color InputBorderColor = BorderStrong;                                // = the site's field edge
         public static readonly Color AccentPressed = Of(Theme.AccentDeep);
         public static readonly Color ButtonPressed = Of(Theme.SurfaceDeep);

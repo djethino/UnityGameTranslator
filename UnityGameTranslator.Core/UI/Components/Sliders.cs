@@ -106,12 +106,13 @@ namespace UnityGameTranslator.Core.UI.Components
         /// The wheel moves the rail under the pointer (user, 2026-09-30: « les curseurs … ne bougent
         /// pas quand on fait la molette »), once per frame from the single tick.
         ///
-        /// 🔴 **The rail takes the wheel only when the POINTER moved onto it.** Rails sit inside
+        /// 🔴 **The rail takes the wheel only when the POINTER was brought onto it.** Rails sit inside
         /// windows that scroll, and a rail that took the wheel whenever it passed under the pointer
-        /// would be changed by anybody scrolling past it — the classic trap. So: the pointer moved
-        /// and is over a rail → that rail holds the wheel, until the pointer leaves it; the page
-        /// scrolled a rail under a still pointer → the page keeps the wheel. An event (the pointer
-        /// moving), never a delay.
+        /// would be changed by anybody scrolling past it — the classic trap. So a rail takes it when
+        /// the pointer travelled a deliberate distance since the wheel last turned (IntentDistance —
+        /// a hand drifting while it scrolls does not), its list is not moving (Scrolling), and the
+        /// pointer is over it; it keeps it until the pointer leaves. Otherwise the page keeps the
+        /// wheel. Events (the pointer's way, the wheel's turn), never a delay.
         ///
         /// ⚠ **While a rail holds it, the area around it does not scroll too**: its sensitivity is
         /// set to zero and given back when the rail lets go. The wheel of the frame that took the
@@ -121,12 +122,21 @@ namespace UnityGameTranslator.Core.UI.Components
         public static void PollWheel()
         {
             Vector3 mouse = UniverseLib.Input.InputManager.MousePosition;
-            bool moved = (mouse - _lastMouse).sqrMagnitude > 0.01f;
+            float step0 = (mouse - _lastMouse).magnitude;
+            bool moved = step0 > 0.1f;
             _lastMouse = mouse;
             var point = new Vector2(mouse.x, mouse.y);
 
-            // Turns counted for the rail that held the wheel since the last frame.
-            float turns = UniverseLib.Input.InputManager.MouseScrollDelta.y;
+            // The way travelled since the wheel last turned — see IntentDistance.
+            _travel += step0;
+
+            // 🔴 FrameScrollDelta, never MouseScrollDelta: over a menu, UniverseLib resets every
+            // axis once it has seen the wheel (against click-through), so by the time this tick
+            // runs the plain reading is zero — measured 2026-09-30, a rail holding the wheel for a
+            // dozen turns counted none while the page scrolled fine. The value noted before that
+            // reset is the one this frame really had.
+            float turns = UniverseLib.Input.InputManager.FrameScrollDelta.y;
+            if (turns != 0f) _travel = 0f;
             if (_held != null && turns != 0f && Over(_held, point) && _held.Enabled)
             {
                 var slider = _held.Slider;
@@ -139,17 +149,39 @@ namespace UnityGameTranslator.Core.UI.Components
 
             // Who holds the wheel for the next frame.
             if (_held != null && !Over(_held, point)) Release();
-            if (_held == null && moved)
+            if (_held == null && moved && _travel >= IntentDistance)
             {
                 for (int i = Live.Count - 1; i >= 0; i--)
                 {
                     var handle = Live[i];
                     if (handle.Slider == null) { Live.RemoveAt(i); continue; }
-                    if (!handle.Enabled || !Over(handle, point)) continue;
+                    if (!handle.Enabled || !Over(handle, point) || Scrolling(handle)) continue;
                     Take(handle);
                     break;
                 }
             }
+        }
+
+        /// <summary>The way the pointer travelled since the wheel last turned, in screen pixels.</summary>
+        private static float _travel;
+
+        /// <summary>
+        /// How far the pointer has to go, with no turn of the wheel meanwhile, before a rail may take
+        /// the wheel — a hand reaching for a rail, not a hand drifting while it scrolls (user,
+        /// 2026-09-30, a list of fonts with a Size rail on every row « accrochait » the wheel
+        /// mid-scroll). Six pixels of a 1080-line screen, scaled to this one: the interface is laid
+        /// out for 1080 lines, so a larger screen must not make the gesture shorter.
+        /// </summary>
+        private static float IntentDistance => 6f * Math.Max(1f, Screen.height / 1080f);
+
+        /// <summary>
+        /// Whether the area holding this rail is still moving — the list scrolling under a still
+        /// pointer, momentum included. A rail moving under the pointer was not reached for.
+        /// </summary>
+        private static bool Scrolling(SliderHandle handle)
+        {
+            var area = handle.Slider.GetComponentInParent<ScrollRect>();
+            return area != null && area.velocity.sqrMagnitude > 1f;
         }
 
         private static bool Over(SliderHandle handle, Vector2 screen)
@@ -163,17 +195,34 @@ namespace UnityGameTranslator.Core.UI.Components
         private static void Take(SliderHandle handle)
         {
             _held = handle;
+
+            // Said on screen: the handle lights up while the rail holds the wheel, so a page that
+            // stopped scrolling under the pointer reads as "the rail has it", not as a fault.
+            Paint(handle, UIStyles.SliderHandleHeld);
+
             _silenced = handle.Slider.GetComponentInParent<ScrollRect>();
-            if (_silenced == null) return;
-            _silencedSensitivity = _silenced.scrollSensitivity;
-            _silenced.scrollSensitivity = 0f;
+            if (_silenced != null)
+            {
+                _silencedSensitivity = _silenced.scrollSensitivity;
+                _silenced.scrollSensitivity = 0f;
+            }
         }
 
         private static void Release()
         {
             if (_silenced != null) _silenced.scrollSensitivity = _silencedSensitivity;
+            if (_held != null) Paint(_held, UIStyles.SliderHandleColor);
             _silenced = null;
             _held = null;
+        }
+
+        /// <summary>The handle's colour — the rail's own knob, found where UIFactory puts it.</summary>
+        private static void Paint(SliderHandle handle, Color colour)
+        {
+            if (handle.Slider == null) return;
+            var knob = handle.Slider.handleRect;
+            var image = knob != null ? knob.GetComponent<Image>() : null;
+            if (image != null) image.color = colour;
         }
 
         /// <summary>The product's colours on the rail, the fill and the handle.</summary>

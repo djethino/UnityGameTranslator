@@ -158,6 +158,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                     _packPlan = plan;
                     Report("", Tone.Secondary);
                     RefreshPacks();
+                    // A pack just opened is another subject: its offers start at their first row.
+                    _packOffersList.ToTop();
                 });
             });
         }

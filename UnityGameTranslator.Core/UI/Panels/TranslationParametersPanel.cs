@@ -835,6 +835,9 @@ namespace UnityGameTranslator.Core.UI.Panels
             // The game text, in a scroll area of its own: raw, tags and placeholders as the model
             // has to keep them — rendered as rich text, a tag the model broke would swallow the rest.
             _sourceText.Text = line.Source ?? line.Key;
+            // Another line is another subject: its text starts at the top. The lines around it
+            // stay where they are (ListShares keeps a list somebody is reading).
+            _sourceText.Area?.ToTop();
 
             // The exclusion buttons need an element; the worker only knows one once the text has
             // been shown in this session, which a line failed at launch may not have been yet.
@@ -1319,7 +1322,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 row.Say("engine", kvp.Value);
             }
 
-            _findResultsList.Filled();
+            _findResultsList.Filled(anotherSubject: true);
             _exclusionsStatus.Say($"Found {found.Count} component(s)");
             _exclusionsStatus.Tone = Tone.Success;
         }
@@ -1543,7 +1546,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 row.Say("engine", kvp.Value);
             }
 
-            _fontOverrideFindResultsList.Filled();
+            _fontOverrideFindResultsList.Filled(anotherSubject: true);
             _fontOverrideStatus.Say($"Found {found.Count} component(s)");
             _fontOverrideStatus.Tone = Tone.Success;
         }
@@ -2399,7 +2402,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                         row.Say("label", display);
                     }
 
-                    _scanResultsList.Filled();
+                    _scanResultsList.Filled(anotherSubject: true);
 
                     _variablesStatus.Say($"Found {candidates.Count} candidate(s). Click + to add.");
                     _variablesStatus.Tone = Tone.Success;

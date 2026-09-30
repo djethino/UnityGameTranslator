@@ -462,7 +462,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 btn.Tone = ConfidenceTone(confidence);
             }
 
-            list.Filled();
+            list.Filled(anotherSubject: true);
         }
 
         private void OnGameSelected(GameApiInfo gameApi)

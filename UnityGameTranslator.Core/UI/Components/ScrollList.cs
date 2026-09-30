@@ -87,11 +87,21 @@ namespace UnityGameTranslator.Core.UI.Components
             if (_empty != null) _empty.Visible = true;
         }
 
-        /// <summary>Say that rows were added: the empty sentence goes.</summary>
-        public void Filled()
+        /// <summary>
+        /// Say that rows were added: the empty sentence goes.
+        ///
+        /// 🔴 **The view stays where the person left it** (user, 2026-09-30: « on ne fait pas sauter
+        /// la vue, sinon on ne sait plus où on est »). Nearly every refill is the SAME list redrawn
+        /// after an act — a font replacement applied, a line settled, an exclusion added — and it
+        /// used to jump back to its first row, losing the row somebody was working on in the
+        /// middle of a long list. Only a list that now shows ANOTHER subject — a new search, a new
+        /// scan, a pack just opened — asks for its top, by saying so.
+        /// </summary>
+        /// <param name="anotherSubject">True when the rows answer a new question, not the same one redrawn.</param>
+        public void Filled(bool anotherSubject = false)
         {
             if (_empty != null) _empty.Visible = false;
-            ToTop();
+            if (anotherSubject) ToTop();
         }
 
         /// <summary>

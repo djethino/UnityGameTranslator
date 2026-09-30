@@ -1318,6 +1318,17 @@ namespace UnityGameTranslator.Core.UI
                 Components.HelpZone.PollHover();
                 // The seams between shared scroll areas watch the mouse the same way (Splitters).
                 Components.Splitters.Tick();
+                // An open list folds at a click anywhere else, and the value on a rail follows
+                // the wheel — both polled for the same reason.
+                Components.SearchableDropdown.PollOutsideClick();
+                Components.Sliders.PollWheel();
+            }
+            else
+            {
+                // Every window hidden: a list left open over nothing is closed with them, and a
+                // rail that held the wheel lets it go (its scroll area gets its wheel back).
+                Components.SearchableDropdown.PollOutsideClick();
+                Components.Sliders.PollWheel();
             }
 
         }

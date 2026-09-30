@@ -309,7 +309,12 @@ namespace UnityGameTranslator.Core.UI.Components
         public void OpenPopup()
         {
             if (_isOpen) return;
+
+            // One list open at a time, as everywhere else: opening this one closes the other.
+            if (_openOne != null && _openOne != this) _openOne.ClosePopup();
+
             _isOpen = true;
+            _openOne = this;
 
             CreatePopup();
             RefreshList();
@@ -323,8 +328,53 @@ namespace UnityGameTranslator.Core.UI.Components
         {
             if (!_isOpen) return;
             _isOpen = false;
+            if (_openOne == this) _openOne = null;
 
             DestroyPopup();
+        }
+
+        /// <summary>The list whose popup is open, if any — there is never more than one.</summary>
+        private static SearchableDropdown _openOne;
+
+        /// <summary>
+        /// Closes the open list when somebody clicks anywhere but on it (user, 2026-09-30: « ça
+        /// devrait se replier dès qu'on click n'importe où d'autre que sur la liste »), and when the
+        /// window holding it is gone. What every list in every program does; this one could only
+        /// be closed by its own title.
+        ///
+        /// ⚠ **Polled from the single tick, never an event**: pointer events injected into our
+        /// components are mute on IL2CPP — the help bar's hover and the splitters watch the mouse
+        /// the same way (HelpZone.PollHover, Splitters.Tick). The press is what counts, either
+        /// button, as for any list: a click on the list's own title is left to its toggle, and a
+        /// click inside the popup to its rows.
+        /// </summary>
+        public static void PollOutsideClick()
+        {
+            var open = _openOne;
+            if (open == null) return;
+
+            if (open._popupRoot == null || open._rootObject == null || !open._rootObject.activeInHierarchy)
+            {
+                open.ClosePopup();
+                return;
+            }
+
+            if (!UniverseLib.Input.InputManager.GetMouseButtonDown(0)
+                && !UniverseLib.Input.InputManager.GetMouseButtonDown(1)) return;
+
+            Vector3 mouse = UniverseLib.Input.InputManager.MousePosition;
+            var point = new Vector2(mouse.x, mouse.y);
+            if (Holds(open._popupRoot, point) || Holds(open._rootObject, point)) return;
+
+            open.ClosePopup();
+        }
+
+        private static bool Holds(GameObject obj, Vector2 screen)
+        {
+            var rect = obj.GetComponent<RectTransform>();
+            if (rect == null) return false;
+            var canvas = rect.GetComponentInParent<Canvas>();
+            return UIHelpers.ContainsScreenPoint(rect, canvas != null ? canvas.rootCanvas : null, screen);
         }
 
         private void CreatePopup()

@@ -51,9 +51,6 @@ namespace UnityGameTranslator.Core.UI.Components
 
         private readonly List<Slice> _slices = new List<Slice>();
 
-        /// <summary>Whether the lists have been given their height since they were registered.</summary>
-        private bool _shared;
-
         /// <summary>A bar between two of the lists, and what the person moved it by.</summary>
         private sealed class Handle
         {
@@ -86,7 +83,6 @@ namespace UnityGameTranslator.Core.UI.Components
         public void Forget(bool handlesToo = false)
         {
             _slices.Clear();
-            _shared = false;
             if (handlesToo) _handles.Clear();
         }
 
@@ -217,17 +213,19 @@ namespace UnityGameTranslator.Core.UI.Components
             for (var i = 0; i < _slices.Count; i++)
             {
                 // 🔴 **A list nobody has scrolled stays at its first row; one somebody is reading
-                // is left alone.** Read before the height is posed, and put back after: a rebuilt
-                // list is put back whatever it showed, since it is not the same list.
+                // is left alone** — rebuilt or not (2026-09-30). A list re-registered after an act
+                // (a line settled, a proposal used) used to be put back at its top « since it is
+                // not the same list »; it is the same list to the person reading it, and the view
+                // jumping under them is exactly what the user refuses. A screen that shows ANOTHER
+                // subject asks for the top itself (ScrollList.Filled).
                 var atTop = _slices[i].List.AtTop;
 
                 _slices[i].Given = (int)Math.Max(0, heights[i]);
                 _slices[i].List.SetHeight(_slices[i].Given, fill: false);
 
-                if (!_shared || atTop) _slices[i].List.ToTop();
+                if (atTop) _slices[i].List.ToTop();
             }
 
-            _shared = true;
             return true;
         }
     }

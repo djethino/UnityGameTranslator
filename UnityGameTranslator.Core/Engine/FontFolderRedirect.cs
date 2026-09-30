@@ -25,8 +25,9 @@ namespace UnityGameTranslator.Core
     ///
     /// ⚠ Measured on screen the same day, on MelonLoader IL2CPP and BepInEx 6 Mono/IL2CPP: the engine
     /// lists the folder a few seconds after the mod installs this (logged once, "engine lists the font
-    /// folder"), so fonts/ is in its list; it does not list it again, so a font added while the game
-    /// runs is seen at the next launch. Windows, and Proton (whose Wine provides the same calls).
+    /// folder"), so fonts/ is in its list; it does not list it again — a font added while the game
+    /// runs reaches it under a name of the pool listed at start (FontPool, DerivedFonts.LateCopy).
+    /// Windows, and Proton (whose Wine provides the same calls).
     ///
     /// ⚠ Native Linux and macOS do the same with other folders and other calls — read in their
     /// engines, not yet run anywhere (FontFolderRedirect.Unix.cs; analyse/polices-custom-ui-text.md).
@@ -97,7 +98,8 @@ namespace UnityGameTranslator.Core
         /// <summary>
         /// When legacy text can be drawn from this fonts/ file (<paramref name="fontFile"/>, null for an
         /// atlas font): the engine finds a font by name only in the list it made at start (see the
-        /// class summary), so a file added while the game runs waits for the next launch.
+        /// class summary), so a file added while the game runs is not in it — FontManager.LegacyReach
+        /// adds what the pool listed at start can still show.
         ///
         /// ⚠ NextLaunch when nothing was shown at start is what the mod WILL do, not something measured
         /// in this session — there was nothing to redirect. If the next launch cannot redirect, its own
@@ -200,7 +202,14 @@ namespace UnityGameTranslator.Core
                             : InstallMac();
                 if (patched <= 0) return;   // each says why
 
-                TranslatorCore.LogInfo($"[FontFolder] {patched} engine import(s) redirected ({os}); {_ours.Count} font file(s) shown in {_systemFonts}: {string.Join(", ", _ours.Keys)}");
+                // The pool's names are counted, not listed: a thousand file names would bury the rest.
+                var named = new List<string>();
+                int pool = 0;
+                foreach (var name in _ours.Keys)
+                    if (name.StartsWith(FontPool.FilePrefix, StringComparison.OrdinalIgnoreCase)) pool++;
+                    else named.Add(name);
+                TranslatorCore.LogInfo($"[FontFolder] {patched} engine import(s) redirected ({os}); {_ours.Count} font file(s) shown in {_systemFonts}: "
+                    + (named.Count > 0 ? string.Join(", ", named) : "none of fonts/") + $" + {pool} pool name(s)");
             }
             catch (Exception ex)
             {

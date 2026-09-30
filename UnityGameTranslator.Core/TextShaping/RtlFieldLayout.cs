@@ -69,6 +69,16 @@ namespace UnityGameTranslator.Core.TextShaping
             internal int[] Cps;                 // shaped codepoints (tokens as sentinels)
             internal List<string> Tokens;
             internal HashSet<int> UnitTokens = new HashSet<int>();   // tokens that are shaped units (glyphs), not typed text
+            // Units of a right-to-left script (Hebrew, Adlam…): their private codepoints say no
+            // direction, so the bidi is told (strong R) and their glyphs are written reversed.
+            internal HashSet<int> RtlUnitTokens = new HashSet<int>();
+
+            /// <summary>Whether a shaped codepoint is the sentinel of a right-to-left unit.</summary>
+            internal bool IsRtlUnit(int cp)
+            {
+                int t = cp - SentinelBase;
+                return t >= 0 && t < Tokens.Count && RtlUnitTokens.Contains(t);
+            }
             internal int[] CpOfLogical;         // logical UTF-16 → shaped codepoint
             internal int[] OffsetInCp;          // logical UTF-16 → offset inside a token (0 otherwise)
             internal int[] MeasureStartOfCp;    // shaped codepoint → UTF-16 start in MeasureText
@@ -172,6 +182,7 @@ namespace UnityGameTranslator.Core.TextShaping
             var unitAt = new Dictionary<int, OpenTypeText.ShapedUnit>();
             if (hasUnits) foreach (var u in shapedUnits) if (u.Length > 0) unitAt[u.Start] = u;
             var unitTokens = new HashSet<int>();
+            var rtlUnitTokens = new HashSet<int>();
 
             // 1. Tokens → sentinels, remembering which logical span each sentinel stands for.
             var tokens = new List<string>();
@@ -186,6 +197,8 @@ namespace UnityGameTranslator.Core.TextShaping
                     // offset 0: the caret sees one place, as for a ligature.
                     for (int k = i; k < i + unit.Length && k < logical.Length; k++) { sentinelizedOfLogical[k] = sb.Length; offsetInToken[k] = 0; }
                     unitTokens.Add(tokens.Count);
+                    if (OpenTypeText.IsRightToLeftRun(logical.Substring(i, Math.Min(unit.Length, logical.Length - i))))
+                        rtlUnitTokens.Add(tokens.Count);
                     sb.Append((char)(SentinelBase + tokens.Count));
                     tokens.Add(unit.Glyphs);
                     i += unit.Length;
@@ -228,6 +241,7 @@ namespace UnityGameTranslator.Core.TextShaping
                 Cps = cps.ToArray(),
                 Tokens = tokens,
                 UnitTokens = unitTokens,
+                RtlUnitTokens = rtlUnitTokens,
                 CpOfLogical = new int[logical.Length],
                 OffsetInCp = offsetInToken,
             };
@@ -330,11 +344,14 @@ namespace UnityGameTranslator.Core.TextShaping
                     var slice = new int[len];
                     Array.Copy(p.Cps, paraStart, slice, 0, len);
                     _bidiData.Init(new Slice<int>(slice), 2);   // 2: first strong decides (P2/P3)
+                    bool rtlUnit = false;
+                    for (int k = 0; k < len; k++)
+                        if (p.IsRtlUnit(slice[k])) { _bidiData.Types[k] = Directionality.R; rtlUnit = true; }
                     _bidi.Process(_bidiData);
                     var resolved = _bidi.ResolvedLevels;
                     for (int k = 0; k < len; k++) levels[paraStart + k] = resolved[k];
                     // A paragraph with no strong character keeps the direction of the one before.
-                    if (HasStrong(slice)) rtl = (_bidi.ResolvedParagraphEmbeddingLevel & 1) == 1;
+                    if (rtlUnit || HasStrong(slice)) rtl = (_bidi.ResolvedParagraphEmbeddingLevel & 1) == 1;
                 }
                 for (int k = paraStart; k <= i && k <= n; k++) paraRtlOfCp[k] = rtl;
                 if (i < n) levels[i] = (sbyte)(rtl ? 1 : 0);
@@ -402,7 +419,14 @@ namespace UnityGameTranslator.Core.TextShaping
                 {
                     dispOfCp[orig[k]] = display.Length;
                     int before = display.Length;
-                    AppendCp(display, cps[k], p.Tokens);
+                    if ((lv[k] & 1) == 1 && p.IsRtlUnit(cps[k]))
+                    {
+                        // Shaped in logical order, its marks placed for the reversed pen (the
+                        // composer's rule): drawn left to right, its glyphs go last to first.
+                        string glyphs = p.Tokens[cps[k] - SentinelBase];
+                        for (int g = glyphs.Length - 1; g >= 0; g--) display.Append(glyphs[g]);
+                    }
+                    else AppendCp(display, cps[k], p.Tokens);
                     for (int u = before; u < display.Length; u++) cpOfDisplay.Add(orig[k]);
                 }
                 lineDispEnd[L] = display.Length;
@@ -443,7 +467,7 @@ namespace UnityGameTranslator.Core.TextShaping
                 _dispOfLogical[i] = isToken ? d + p.OffsetInCp[i] : d;
                 _unitLenOfLogical[i] = isUnit ? p.Tokens[p.Cps[cp] - SentinelBase].Length
                                      : d < Display.Length && char.IsHighSurrogate(Display[d]) ? 2 : 1;
-                _rtlOfLogical[i] = cp < n && (levels[cp] & 1) == 1 && !isToken;
+                _rtlOfLogical[i] = cp < n && (levels[cp] & 1) == 1 && (!isToken || p.IsRtlUnit(p.Cps[cp]));
                 _lineOfLogical[i] = cp < n ? cpLine[cp] : lineCount - 1;
             }
 

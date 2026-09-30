@@ -179,7 +179,13 @@ namespace UnityGameTranslator.Core
             // ever belongs to the interface.
             _game.Readback.TryAdd(n, 0);
             if (!string.IsNullOrEmpty(logical) && !string.Equals(presented, logical, StringComparison.Ordinal))
-                _presentedToLogical[n] = logical;
+            {
+                // Two stages in a row (shaped by a font's tables, THEN turned right-to-left): the
+                // "logical" handed here is the first stage's output, itself registered — the
+                // readback must reach the translation's own text, never a stage in between.
+                string deeper = PresentedLogical(logical);
+                _presentedToLogical[n] = deeper ?? logical;
+            }
         }
 
         /// <summary>The logical string behind a presented one, or null when the text is not ours.</summary>

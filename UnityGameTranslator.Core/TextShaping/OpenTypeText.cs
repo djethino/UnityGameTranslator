@@ -55,7 +55,16 @@ namespace UnityGameTranslator.Core.TextShaping
                 if (shaped == null || shaped == run) continue;
                 if (sb == null) sb = new StringBuilder(text.Length + 16);
                 sb.Append(text, copied, start - copied);
+                // A right-to-left run (Hebrew, Adlam…) is shaped in logical order, its marks placed
+                // for the other pen direction (ResolveAttachments): the RTL composer reverses it.
+                // Named by private codepoints, it no longer SAYS it is right-to-left — they are
+                // left-to-right letters to the bidi algorithm, and the line read backwards (probe 3,
+                // 2026-10-01). The override marks carry the direction through; the composer applies
+                // them and drops them (X9).
+                bool rightToLeft = IsRightToLeftRun(run);
+                if (rightToLeft) sb.Append(RightToLeftOverride);
                 sb.Append(shaped);
+                if (rightToLeft) sb.Append(PopDirectionalFormatting);
                 copied = i;
             }
             if (sb == null) return text;
@@ -160,6 +169,21 @@ namespace UnityGameTranslator.Core.TextShaping
         /// circle, and the combining marks of any block (they belong to the letter before them).
         /// A space ends a run: a font's rules never cross one, and it keeps runs short.
         /// </summary>
+        internal const char RightToLeftOverride = '\u202E', PopDirectionalFormatting = '\u202C';
+
+        /// <summary>A run's direction: its first character of a real script (marks and joiners say nothing).</summary>
+        internal static bool IsRightToLeftRun(string run)
+        {
+            for (int i = 0; i < run.Length;)
+            {
+                int script = ShapingCommon.ScriptOf(CodePointAt(run, i, out int width));
+                i += width;
+                if (script == ShapingTables.Script.Inherited || script == ShapingTables.Script.Common || script == ShapingTables.Script.Unknown) continue;
+                return ShapingCommon.IsRightToLeft(script);
+            }
+            return false;
+        }
+
         private static bool InRun(int cp)
         {
             if (cp == 0x200C || cp == 0x200D || cp == 0x25CC) return true;

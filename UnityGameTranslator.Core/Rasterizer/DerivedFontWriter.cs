@@ -189,6 +189,79 @@ namespace UnityGameTranslator.Core.Rasterizer
             return Assemble(output);
         }
 
+        /// <summary>
+        /// The smallest valid TrueType font of a family: one empty .notdef, no character — a POOL name
+        /// (FontPool) the engine lists at start and that is written with a real font only when one is
+        /// needed under it. Proven on the probe bench: listed empty, filled later, drawn (Unity 2018.4,
+        /// 2021.3, 6000.6; Mono and IL2CPP paths — analyse/ecritures-complexes-etat-reel.md, the pool).
+        /// </summary>
+        internal static byte[] Placeholder(string family)
+        {
+            const int upem = 1000, ascent = 800, descent = -200, advance = 500;
+            var head = new byte[54];
+            WriteUInt32At(head, 0, 0x00010000);                                // version
+            WriteUInt32At(head, 4, 0x00010000);                                // fontRevision
+            WriteUInt32At(head, 12, 0x5F0F3CF5);                               // magicNumber
+            WriteUInt16At(head, 16, 0x000B);                                   // flags: baseline at 0, lsb at 0, integer ppem
+            WriteUInt16At(head, 18, upem);
+            WriteUInt16At(head, 46, 8);                                        // lowestRecPPEM
+            WriteUInt16At(head, 48, 2);                                        // fontDirectionHint
+            WriteUInt16At(head, 50, 1);                                        // indexToLocFormat: long
+
+            var hhea = new byte[36];
+            WriteUInt32At(hhea, 0, 0x00010000);
+            WriteUInt16At(hhea, 4, ascent);
+            WriteUInt16At(hhea, 6, descent & 0xFFFF);
+            WriteUInt16At(hhea, 10, advance);                                  // advanceWidthMax
+            WriteUInt16At(hhea, 18, 1);                                        // caretSlopeRise
+            WriteUInt16At(hhea, 34, 1);                                        // numberOfHMetrics
+
+            var maxp = new byte[32];                                           // version 1.0: TrueType outlines
+            WriteUInt32At(maxp, 0, 0x00010000);
+            WriteUInt16At(maxp, 4, 1);                                         // numGlyphs
+            WriteUInt16At(maxp, 14, 2);                                        // maxZones
+
+            var os2 = new byte[96];                                            // version 4
+            WriteUInt16At(os2, 0, 4);
+            WriteUInt16At(os2, 2, advance);                                    // xAvgCharWidth
+            WriteUInt16At(os2, 4, 400);                                        // usWeightClass: regular
+            WriteUInt16At(os2, 6, 5);                                          // usWidthClass: medium
+            Encoding.ASCII.GetBytes("UGT ", 0, 4, os2, 58);                    // achVendID
+            WriteUInt16At(os2, 62, 0x0040);                                    // fsSelection: REGULAR
+            WriteUInt16At(os2, 64, 0xFFFF);                                    // usFirstCharIndex: no character
+            WriteUInt16At(os2, 68, ascent);
+            WriteUInt16At(os2, 70, descent & 0xFFFF);
+            WriteUInt16At(os2, 74, ascent);                                    // usWinAscent
+            WriteUInt16At(os2, 76, -descent);                                  // usWinDescent
+            WriteUInt32At(os2, 78, 1);                                         // ulCodePageRange1: Latin 1
+            WriteUInt16At(os2, 92, 32);                                        // usBreakChar
+
+            var hmtx = new byte[4];
+            WriteUInt16At(hmtx, 0, advance);
+
+            var post = new byte[32];
+            WriteUInt32At(post, 0, 0x00030000);                                // format 3: no glyph names
+
+            var records = new List<Tuple<int, int, int, int, byte[]>>(OurRecords(family))
+            {
+                Tuple.Create(3, 1, 0x409, 2, Encoding.BigEndianUnicode.GetBytes("Regular")),
+            };
+
+            return Assemble(new SortedDictionary<string, byte[]>(StringComparer.Ordinal)
+            {
+                ["head"] = head,
+                ["hhea"] = hhea,
+                ["maxp"] = maxp,
+                ["OS/2"] = os2,
+                ["hmtx"] = hmtx,
+                ["cmap"] = BuildCmap(new SortedDictionary<int, int>()),
+                ["loca"] = new byte[8],                                        // .notdef starts and ends at 0: empty
+                ["glyf"] = new byte[0],
+                ["name"] = BuildNameTable(records),
+                ["post"] = post,
+            });
+        }
+
         // ─────────────────────────── CFF → TrueType ───────────────────────────
 
         /// <summary>

@@ -178,6 +178,16 @@ namespace UnityGameTranslator.Core.Checks
                 "and null for a text that is not ours",
                 "a caller reads null as 'resolve the displayed text as it is'");
 
+            // Two stages in a row: a font's shaping, then the right-to-left pass on its output.
+            var chain = new ReadbackIndex();
+            string stage1 = glyphs + " logical";
+            string stage2 = "visual " + glyphs;
+            chain.RegisterPresented(stage1, "the translation's text");
+            chain.RegisterPresented(stage2, stage1);
+            check(chain.PresentedLogical(stage2) == "the translation's text",
+                "two stages in a row lead back to the translation's text, never to the stage between",
+                "the in-between string is itself a display form: resolved to it, a shaped Hebrew line was looked up as its own key");
+
             var same = new ReadbackIndex();
             same.RegisterPresented("plain text", "plain text");
             check(same.PresentedLogical("plain text") == null && same.IsReadback("plain text", false),

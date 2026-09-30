@@ -1424,6 +1424,17 @@ namespace UnityGameTranslator.Core
                         ttfPath = derived.CurrentFile;
                         return derived.CurrentFamily;
                     }
+                    // A fonts/ file added while the game runs: the engine did not list it — shown
+                    // under a pool name (DerivedFonts.LateCopy).
+                    if (FontFolderRedirect.ReachOf(clean, custom.TtfPath) == FontFolderRedirect.Reach.NextLaunch)
+                    {
+                        var lent = DerivedFonts.LateCopy(clean, custom.TtfPath);
+                        if (lent != null)
+                        {
+                            ttfPath = lent.Value.File;
+                            return lent.Value.Family;
+                        }
+                    }
                     ttfPath = custom.TtfPath;
                 }
 
@@ -2591,10 +2602,13 @@ namespace UnityGameTranslator.Core
             return served == null ? null : ShownDerived(name, served.Value);
         }
 
-        /// <summary>The derived copy of a font from this origin, when the engine was shown it at start.</summary>
+        /// <summary>
+        /// The derived copy of a font from this origin, when the engine is shown it — made now, under a
+        /// pool name, for a font that needs one and had none at start (DerivedFonts.Ensure).
+        /// </summary>
         private static DerivedFonts.Entry ShownDerived(string name, UnityGameTranslator.Common.FontSource origin)
         {
-            var derived = DerivedFonts.Get(name, origin);
+            var derived = DerivedFonts.Ensure(name, origin);
             return derived != null && FontFolderRedirect.ShowsFile(System.IO.Path.GetFileName(derived.CurrentFile)) ? derived : null;
         }
 
@@ -4354,7 +4368,7 @@ namespace UnityGameTranslator.Core
 
         /// <summary>
         /// "[Custom] X" draws legacy text only when the engine can open its file by name in this
-        /// session (FontFolderRedirect.ReachOf): the engine asked for a family it has no file for
+        /// session (<see cref="LegacyReach"/>): the engine asked for a family it has no file for
         /// draws another font under our name — never ours. The game's own font is kept instead.
         /// </summary>
         private static bool CustomNotDrawableYet(string fontRef)
@@ -4365,8 +4379,21 @@ namespace UnityGameTranslator.Core
             string name = StripFontPrefix(fontRef);
             var derived = DerivedFonts.Get(name);
             if (derived != null && FontFolderRedirect.ShowsFile(System.IO.Path.GetFileName(derived.CurrentFile))) return false;
-            CustomFontLoader.CustomFonts.TryGetValue(name, out var info);
-            return FontFolderRedirect.ReachOf(name, info?.TtfPath) != FontFolderRedirect.Reach.Now;
+            return LegacyReach(name) != FontFolderRedirect.Reach.Now;
+        }
+
+        /// <summary>
+        /// When legacy text can be drawn from the fonts/ file of this name: the engine's list made at
+        /// start (FontFolderRedirect.ReachOf) — and in this session too for a file added since, while
+        /// the pool has a name for it (DerivedFonts.CanLend). Asks, writes nothing.
+        /// </summary>
+        internal static FontFolderRedirect.Reach LegacyReach(string customFont)
+        {
+            CustomFontLoader.CustomFonts.TryGetValue(customFont, out var info);
+            var reach = FontFolderRedirect.ReachOf(customFont, info?.TtfPath);
+            return reach == FontFolderRedirect.Reach.NextLaunch && DerivedFonts.CanLend(customFont)
+                ? FontFolderRedirect.Reach.Now
+                : reach;
         }
 
         /// <summary>
@@ -5564,8 +5591,8 @@ namespace UnityGameTranslator.Core
         public const string FromFontsFolderMarker = " (from fonts folder)";
 
         /// <summary>
-        /// Suffix marking, for legacy text, a fonts/ file added while the game runs: the engine lists
-        /// its font folder once, at start (FontFolderRedirect.ReachOf).
+        /// Suffix marking, for legacy text, a fonts/ file added while the game runs when the pool
+        /// listed at start has no name left for it (FontManager.LegacyReach).
         /// </summary>
         public const string AfterRestartMarker = " (after restart)";
 

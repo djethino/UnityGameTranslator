@@ -493,9 +493,9 @@ namespace UnityGameTranslator.Core
         /// offered, a file removed is no longer offered. A font already known is left as it is — its
         /// atlas may be in use on screen. Returns how many were added and removed.
         ///
-        /// ⚠ What is offered is not what legacy text can draw yet: the engine lists its font folder
-        /// once, at start (FontFolderRedirect.ReachOf) — TextMeshPro, which reads the file itself,
-        /// can use a new font at once.
+        /// ⚠ Legacy text reaches a new file through a name of the pool the engine listed at start
+        /// (FontManager.LegacyReach) — at the next launch only once the pool is spent. TextMeshPro,
+        /// which reads the file itself, can use a new font at once.
         /// </summary>
         public static (int Added, int Removed) Rescan()
         {

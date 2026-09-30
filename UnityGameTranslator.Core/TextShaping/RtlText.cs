@@ -27,7 +27,9 @@ namespace UnityGameTranslator.Core.TextShaping
         {
             if (string.IsNullOrEmpty(text)) return false;
             for (int i = 0; i < text.Length; i++)
-                if (IsStrongRtl(text[i])) return true;
+                // A right-to-left override counts: a shaped RTL run is named by private codepoints
+                // that carry no direction of their own, and the override is what says it (OpenTypeText).
+                if (IsStrongRtl(text[i]) || text[i] == OpenTypeText.RightToLeftOverride) return true;
             return false;
         }
 

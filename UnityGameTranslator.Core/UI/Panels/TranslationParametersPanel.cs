@@ -1953,13 +1953,6 @@ namespace UnityGameTranslator.Core.UI.Panels
             finally { _fillingRows = false; }
         }
 
-        /// <summary>When legacy text can be drawn from the fonts/ file of this name.</summary>
-        private static FontFolderRedirect.Reach LegacyReach(string customFont)
-        {
-            CustomFontLoader.CustomFonts.TryGetValue(customFont, out var info);
-            return FontFolderRedirect.ReachOf(customFont, info?.TtfPath);
-        }
-
         /// <summary>
         /// The fallback picker of one font: the game's fonts first, then the system's, then the
         /// custom ones — grouped by origin — with the configured fallback found among them.
@@ -2035,11 +2028,12 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // Add custom fonts (user-provided fonts from fonts/ folder). TextMeshPro reads the file
             // itself; legacy text only through the engine's list of fonts, made once at start — a
-            // file added since waits for the next launch, an atlas font never gets there.
+            // file added since takes a name of the pool listed then (FontManager.LegacyReach), and
+            // waits for the next launch only when the pool is spent; an atlas font never gets there.
             var customOptions = new List<string>();
             foreach (var customFont in FontManager.GetCustomFontNames())
             {
-                var reach = isTMPFont ? FontFolderRedirect.Reach.Now : LegacyReach(customFont);
+                var reach = isTMPFont ? FontFolderRedirect.Reach.Now : FontManager.LegacyReach(customFont);
                 if (reach == FontFolderRedirect.Reach.Never) continue;
                 customOptions.Add(AssetPacks.CustomFontPrefix + customFont
                     + (reach == FontFolderRedirect.Reach.NextLaunch ? FontManager.AfterRestartMarker : ""));
@@ -2080,14 +2074,14 @@ namespace UnityGameTranslator.Core.UI.Panels
                     // lacks is still served by a copy of it in the fonts folder — "incompatible"
                     // there would be untrue. TextMeshPro reads the copy itself; legacy text reads it
                     // when the engine is shown the fonts folder (FontFolderRedirect, from the start
-                    // of the game — a copy added since is seen at the next launch).
+                    // of the game — a copy added since through the pool, FontManager.LegacyReach).
                     string name = FontReferences.Name(fontInfo.FallbackFont);
                     var served = FontReferences.Serving(fontInfo.FallbackFont,
                         gameHas: FontManager.IsGameFont(name),
                         customHas: CustomFontLoader.CustomFonts.ContainsKey(name),
                         systemHas: AssetAvailability.IsSystemFontAvailable(name));
 
-                    var copyReach = isTMPFont ? FontFolderRedirect.Reach.Now : LegacyReach(name);
+                    var copyReach = isTMPFont ? FontFolderRedirect.Reach.Now : FontManager.LegacyReach(name);
                     match = fontInfo.FallbackFont + (served != FontSource.Custom || copyReach == FontFolderRedirect.Reach.Never
                         ? FontManager.IncompatibleMarker
                         : copyReach == FontFolderRedirect.Reach.NextLaunch

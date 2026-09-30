@@ -22,6 +22,9 @@ namespace UnityGameTranslator.Core.Checks
             One(check, Path.Combine(fonts, "NotoSansDevanagari.ttf"), "किताब क्षमा हिन्दी");
             One(check, Path.Combine(fonts, "NotoSansBengali.ttf"), "কোথায় বাংলা");
             One(check, Path.Combine(fonts, "NotoSansKhmer.ttf"), "ភាសាខ្មែរ ស្រី");
+            // Right to left: units named by private codepoints still read right to left (a Hebrew
+            // field showed its line backwards, probe 3, 2026-10-01).
+            One(check, Path.Combine(fonts, "NotoSansHebrew.ttf"), "שָׁלוֹם עוֹלָם");
         }
 
         private static void One(Action<bool, string, string> check, string fontPath, string text)
@@ -45,15 +48,19 @@ namespace UnityGameTranslator.Core.Checks
             check(prep != null, $"{name}: a field with shaped text is presented", "");
             if (prep == null) return;
             var layout = prep.Lay(null);
+            // What a label shows: the shaped text, and — right to left — the composer's visual order.
             string label = OpenTypeText.Shape(text, font, namer);
+            if (RtlText.NeedsPresentation(label)) label = RtlComposer.Compose(label, RtlOutput.VisualOrder);
             check(layout.Display == label, $"{name}: the field shows what a label shows", $"field {Codes(layout.Display)} · label {Codes(label)}");
 
-            // Every place the right arrow stops, from the start to the end.
+            // Every place the arrow toward the text's end stops (right, or left in a right-to-left text).
+            bool rtl = layout.IsRtl(0);
+            check(rtl == RtlText.NeedsPresentation(OpenTypeText.Shape(text, font, namer)), $"{name}: the field reads in the script's direction", rtl ? "right to left" : "left to right");
             var stops = new List<int> { 0 };
             int caret = 0;
             for (int guard = 0; guard <= text.Length; guard++)
             {
-                int n = layout.VisualStep(caret, toRight: true);
+                int n = layout.VisualStep(caret, toRight: !rtl);
                 if (n == caret) break;
                 stops.Add(n);
                 caret = n;

@@ -15,29 +15,32 @@ namespace UnityGameTranslator.Core
     /// 6000.6, Mono and IL2CPP (analyse/ecritures-complexes-etat-reel.md, probes 1 and 2).
     ///
     /// How a copy reaches the engine: like any fonts/ file, by NAME — FontFolderRedirect shows it in
-    /// the system's font folder, which the engine lists ONCE at start. So the copies exist before the
-    /// redirect is installed (<see cref="Prepare"/>), under names chosen then:
-    /// - Mono: one name. A name handed out since the file was written → the file is rewritten under
-    ///   the same name and a new Font object is created (the engine reads the new content — probe 2 B);
+    /// the system's font folder, which the engine lists ONCE at start. So the copies known then exist
+    /// before the redirect is installed (<see cref="Prepare"/>), each under a name of its own; what
+    /// comes later takes a name of the POOL (FontPool: listed at start, empty, filled when needed):
+    /// - Mono: a name handed out since the file was written → the file is rewritten under the same
+    ///   name and a new Font object is created (the engine reads the new content — probe 2 B);
     /// - IL2CPP: CreateDynamicFontFromOSFont is stripped, the mod rewrites the GAME font's fontNames,
-    ///   and the engine keeps a family it has opened in memory (probe 2 N_B) → a RESERVE of names,
-    ///   each rewrite takes one never opened (probe 2 N_C). Spent, the reserve is said, and the runs
-    ///   needing a new name keep showing as they did until the next launch.
-    /// The names handed out are kept next to the copies: the next launch writes them all at once.
+    ///   and the engine keeps a family it has opened in memory (probe 2 N_B) → each rewrite takes a
+    ///   pool name never opened (probe 2 N_C);
+    /// - a font that needs a copy only during the session (a fonts/ file added, an installed font or
+    ///   an interface font chosen) is derived then, into a pool name (<see cref="Ensure"/>); a fonts/
+    ///   file added during the session that needs no copy is shown the same way (<see cref="LateCopy"/>).
+    /// The pool spent, it is said, and what needs a new name shows at the next launch — whose pool is
+    /// larger. The names handed out are kept next to the copies: the next launch writes them at once.
     ///
     /// Two origins, the two a translation can name with a file behind it (FontReferences): every
     /// fonts/ font, and every INSTALLED font the translation replaces a game font with (a bare name
-    /// in `_fonts`) — a copy kept in the game's folder, never shared: the translation names the font,
-    /// each player's machine derives its own (user, 2026-09-30). One face of a collection (.ttc) is
-    /// taken out first (FontCollection). An installed font chosen during the session has no copy
-    /// until the next launch, when the translation names it.
+    /// in `_fonts`) or the interface font names — a copy kept in the game's folder, never shared: the
+    /// translation names the font, each player's machine derives its own (user, 2026-09-30). One face
+    /// of a collection (.ttc) is taken out first (FontCollection).
     ///
     /// ⚠ Main thread only (the shapers' buffers). Engine side: never names the interface.
     /// </summary>
     internal static class DerivedFonts
     {
         internal const string Folder = ".ugt-derived";
-        private const int Il2CppReserve = 8;
+        private const string PoolFolder = "pool";
 
         internal sealed class Entry
         {
@@ -49,20 +52,27 @@ namespace UnityGameTranslator.Core
             internal string BaseFamily;        // "UGT <source family>"
             internal TtfShapingFont Font;
             internal DerivedGlyphs Namer;
-            internal List<string> Files = new List<string>();   // the names shown to the engine, in reserve order
-            internal int Current;              // the file the engine draws from now
+            // [0]: the name the copy was first written under — its own file shown at start, or a pool
+            // name for a copy made during the session; then the pool names IL2CPP rewrites took.
+            internal List<FontPool.Slot> Slots = new List<FontPool.Slot>();
+            internal int Current;              // the slot the engine draws from now
             internal int Version;              // bumped at each rewrite: replacement fonts made before are stale
-            internal bool Spent;               // IL2CPP reserve used up (said once)
-            internal string NamesPath => Path.Combine(Path.GetDirectoryName(Files[0]), Key + ".names");
-            internal string Family(int k) => Files.Count == 1 ? BaseFamily : BaseFamily + " " + k;
-            internal string CurrentFamily => Family(Current);
-            internal string CurrentFile => Files[Current];
+            internal string NamesPath => Path.Combine(_folder, Key + ".names");
+            internal string CurrentFamily => Slots[Current].Family;
+            internal string CurrentFile => Slots[Current].File;
         }
 
         private static readonly Dictionary<string, Entry> _byName = new Dictionary<string, Entry>(StringComparer.OrdinalIgnoreCase);
         private static readonly Dictionary<string, Entry> _installedByName = new Dictionary<string, Entry>(StringComparer.OrdinalIgnoreCase);
-        private static string _translationsPath;
+        private static string _translationsPath, _folder;
+        private static bool _il2cpp;
+        private static FontPool _pool;
+        private static bool _poolSpentSaid;
         private static readonly List<Entry> _pending = new List<Entry>();
+        // Fonts tried during the session that got no copy (no shaped script, unreadable): tried once.
+        private static readonly HashSet<string> _refused = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        // fonts/ files added during the session, shown under a pool name: font name → its slot.
+        private static readonly Dictionary<string, FontPool.Slot> _lent = new Dictionary<string, FontPool.Slot>(StringComparer.OrdinalIgnoreCase);
 
         /// <summary>Whether a fonts/ font has a derived copy the engine was shown at start.</summary>
         internal static bool Has(string fontName) => !string.IsNullOrEmpty(fontName) && _byName.ContainsKey(fontName);
@@ -90,11 +100,26 @@ namespace UnityGameTranslator.Core
                                              string configPath = null, string interfacePath = null)
         {
             _translationsPath = translationsPath;
+            _il2cpp = il2cpp;
             var shown = new List<string>();
             if (string.IsNullOrEmpty(fontsFolder) || !Directory.Exists(fontsFolder)) return shown;
             string folder = Path.Combine(fontsFolder, Folder);
-            int reserve = il2cpp ? Il2CppReserve : 1;
+            _folder = folder;
             var translation = ReadTranslation();
+
+            try
+            {
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                _pool = new FontPool(Path.Combine(folder, PoolFolder));
+                shown.AddRange(_pool.Files);
+                TranslatorCore.LogInfo($"[DerivedFonts] pool: {_pool.Size} font name(s) for this session ({_pool.UsedLastSession} used in the previous one), ready in {sw.ElapsedMilliseconds} ms");
+            }
+            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
+            {
+                // No pool: what comes during the session waits for the next launch, and is said so.
+                Faults.Say("DerivedFonts.Prepare pool", ex, Sanitize.Path(folder));
+                _pool = null;
+            }
 
             foreach (var extension in UnityGameTranslator.Common.AssetPacks.FontExtensions)
             {
@@ -107,10 +132,10 @@ namespace UnityGameTranslator.Core
                     try { bytes = File.ReadAllBytes(path); }
                     catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException) { Faults.Say("DerivedFonts.Prepare", ex, Sanitize.Path(path)); continue; }
                     string name = Path.GetFileNameWithoutExtension(path);
-                    var entry = Build(name, UnityGameTranslator.Common.FontSource.Custom, Sanitized(name), path, bytes, folder, reserve, translation);
-                    if (entry == null) continue;
+                    var entry = Build(name, UnityGameTranslator.Common.FontSource.Custom, Sanitized(name), path, bytes, OwnSlot(Sanitized(name)), translation);
+                    if (entry == null) { _refused.Add(Sanitized(name)); continue; }   // not tried again (Ensure)
                     _byName[entry.Name] = entry;
-                    shown.AddRange(entry.Files);
+                    shown.Add(entry.CurrentFile);
                 }
             }
 
@@ -127,12 +152,117 @@ namespace UnityGameTranslator.Core
             {
                 byte[] bytes = InstalledFont(name, folder, out string path);
                 if (bytes == null) continue;
-                var entry = Build(name, UnityGameTranslator.Common.FontSource.System, "sys-" + Sanitized(name), path, bytes, folder, reserve, translation);
-                if (entry == null) continue;
+                var entry = Build(name, UnityGameTranslator.Common.FontSource.System, "sys-" + Sanitized(name), path, bytes, OwnSlot("sys-" + Sanitized(name)), translation);
+                if (entry == null) { _refused.Add("sys-" + Sanitized(name)); continue; }
                 _installedByName[entry.Name] = entry;
-                shown.AddRange(entry.Files);
+                shown.Add(entry.CurrentFile);
             }
             return shown;
+        }
+
+        /// <summary>The name a copy known at start is shown under: its own file, of its own family.</summary>
+        private static Func<string, FontPool.Slot?> OwnSlot(string key) =>
+            family => new FontPool.Slot { File = Path.Combine(_folder, $"ugt-{key}.ttf"), Family = family };
+
+        /// <summary>Whether the engine was shown the pool at start (FontFolderRedirect).</summary>
+        private static bool PoolShown => _pool != null && _pool.Size > 0
+            && FontFolderRedirect.ShowsFile(Path.GetFileName(_pool.Files[0]));
+
+        /// <summary>A pool name for <paramref name="forWhat"/>, or null: the pool not shown, or spent (said once).</summary>
+        private static FontPool.Slot? TakeFromPool(string forWhat)
+        {
+            if (!PoolShown) return null;
+            var slot = _pool.Take();
+            if (slot == null && !_poolSpentSaid)
+            {
+                _poolSpentSaid = true;
+                TranslatorCore.LogWarning($"[DerivedFonts] {forWhat}: all {_pool.Size} font names of this session are used — what needs a new one shows at the next launch, whose pool is larger");
+            }
+            return slot;
+        }
+
+        /// <summary>Whether a fonts/ file added during the session can reach legacy text now (<see cref="LateCopy"/>).</summary>
+        internal static bool CanLend(string fontName) =>
+            !string.IsNullOrEmpty(fontName)
+            && (_lent.ContainsKey(fontName) || (!_refused.Contains(LateKey(fontName)) && PoolShown && !_pool.Spent));
+
+        private static string LateKey(string fontName) => "late|" + fontName;
+
+        /// <summary>
+        /// A fonts/ file added while the game runs, which needs no derived copy: the engine did not
+        /// list it, so it is shown under a pool name — the file with the slot's family
+        /// (DerivedFontWriter.Write, nothing added). Once per font; null when it cannot be (said).
+        /// </summary>
+        internal static FontPool.Slot? LateCopy(string fontName, string fontFile)
+        {
+            if (string.IsNullOrEmpty(fontName)) return null;
+            if (_lent.TryGetValue(fontName, out var lent)) return lent;
+            if (string.IsNullOrEmpty(fontFile) || _refused.Contains(LateKey(fontName))) return null;
+            var slot = TakeFromPool(fontName);
+            if (slot == null) return null;
+            _refused.Add(LateKey(fontName));   // one try; taken back below when it worked
+            try
+            {
+                byte[] copy = DerivedFontWriter.Write(File.ReadAllBytes(fontFile), slot.Value.Family, new DerivedFontWriter.Added[0], out string refusal);
+                if (copy == null)
+                {
+                    TranslatorCore.LogWarning($"[DerivedFonts] {fontName}: added during the session, shown to legacy text from the next launch — {refusal}");
+                    return null;
+                }
+                File.WriteAllBytes(slot.Value.File, copy);
+            }
+            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException || ex is InvalidDataException)
+            {
+                Faults.Say("DerivedFonts.LateCopy", ex, Sanitize.Path(fontFile));
+                return null;
+            }
+            _refused.Remove(LateKey(fontName));
+            _lent[fontName] = slot.Value;
+            TranslatorCore.LogInfo($"[DerivedFonts] {fontName}: added during the session — shown as '{slot.Value.Family}'");
+            return slot;
+        }
+
+        /// <summary>
+        /// The copy of a font from this origin — made now, into a pool name, when the font needs one
+        /// and had none at start (a fonts/ file added, an installed or interface font chosen during the
+        /// session). Main thread: derives the font (a CFF merge reads every glyph), once per font.
+        /// </summary>
+        internal static Entry Ensure(string fontName, UnityGameTranslator.Common.FontSource origin)
+        {
+            var known = Get(fontName, origin);
+            if (known != null || string.IsNullOrEmpty(fontName) || _folder == null) return known;
+            bool custom = origin == UnityGameTranslator.Common.FontSource.Custom;
+            if (!custom && origin != UnityGameTranslator.Common.FontSource.System) return null;
+            string key = (custom ? "" : "sys-") + Sanitized(fontName);
+            if (_refused.Contains(key) || !PoolShown || _pool.Spent) return null;
+
+            byte[] bytes;
+            string path;
+            if (custom)
+            {
+                if (!CustomFontLoader.CustomFonts.TryGetValue(fontName, out var info) || string.IsNullOrEmpty(info.TtfPath)) return null;
+                path = info.TtfPath;
+                try { bytes = File.ReadAllBytes(path); }
+                catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
+                {
+                    _refused.Add(key);
+                    Faults.Say("DerivedFonts.Ensure", ex, Sanitize.Path(path));
+                    return null;
+                }
+            }
+            else
+            {
+                bytes = InstalledFont(fontName, _folder, out path);
+                if (bytes == null) { _refused.Add(key); return null; }
+            }
+
+            _refused.Add(key);   // one try: a font with no shaped script stays without a copy
+            var entry = Build(fontName, origin, key, path, bytes, _ => TakeFromPool(fontName), ReadTranslation());
+            if (entry == null) return null;
+            _refused.Remove(key);
+            (custom ? _byName : _installedByName)[entry.Name] = entry;
+            TranslatorCore.LogInfo($"[DerivedFonts] {fontName}: derived during the session");
+            return entry;
         }
 
         /// <summary>One string of a JSON file read before the mod loads it; null when absent or unreadable (the loader says why).</summary>
@@ -228,8 +358,13 @@ namespace UnityGameTranslator.Core
         /// </summary>
         internal static string SourcePathOfInstalled(string fontName) => GetInstalled(fontName)?.SourcePath;
 
+        /// <summary>
+        /// The derived copy of a font, written under the name <paramref name="slotFor"/> gives for its
+        /// family ("UGT X") — asked only once the font is known to need a copy, so a Latin font never
+        /// spends a pool name. Null, and said, when the font gets none.
+        /// </summary>
         private static Entry Build(string name, UnityGameTranslator.Common.FontSource origin, string key, string path, byte[] bytes,
-                                   string folder, int reserve, Newtonsoft.Json.Linq.JObject translation)
+                                   Func<string, FontPool.Slot?> slotFor, Newtonsoft.Json.Linq.JObject translation)
         {
             TtfParser parser;
             try { parser = new TtfParser(bytes); }
@@ -269,37 +404,33 @@ namespace UnityGameTranslator.Core
                 Namer = new DerivedGlyphs(font, parser.GlyphCount),
             };
             entry.Namer.OnExhausted = why => TranslatorCore.LogWarning($"[DerivedFonts] {name}: {why}");
-            for (int k = 0; k < reserve; k++)
-                entry.Files.Add(Path.Combine(folder, $"ugt-{key}-{k}.ttf"));
 
             try
             {
-                Directory.CreateDirectory(folder);
+                Directory.CreateDirectory(_folder);
                 if (File.Exists(entry.NamesPath))
                 {
                     int refused = entry.Namer.Load(File.ReadAllText(entry.NamesPath));
                     if (refused > 0) TranslatorCore.LogWarning($"[DerivedFonts] {name}: {refused} saved name(s) did not fit this font and were left out");
                 }
                 PreName(entry, translation);
-                if (reserve > 1) PreNameNatural(entry, parser.GlyphCount);
-                // Every file of the reserve is a valid font of its own family from the start: the
-                // engine reads the names when it lists the folder. The first holds everything known.
-                for (int k = 0; k < entry.Files.Count; k++)
+                if (_il2cpp) PreNameNatural(entry, parser.GlyphCount);
+                var slot = slotFor(entry.BaseFamily);
+                if (slot == null) return null;   // no pool name: said by TakeFromPool
+                entry.Slots.Add(slot.Value);
+                byte[] derived = DerivedFontWriter.Write(bytes, entry.CurrentFamily, entry.Namer.Added, out string refusal);
+                if (derived == null)
                 {
-                    byte[] derived = DerivedFontWriter.Write(bytes, entry.Family(k), entry.Namer.Added, out string refusal);
-                    if (derived == null)
-                    {
-                        TranslatorCore.LogWarning($"[DerivedFonts] {name}: no derived copy — {refusal}");
-                        return null;
-                    }
-                    File.WriteAllBytes(entry.Files[k], derived);
+                    TranslatorCore.LogWarning($"[DerivedFonts] {name}: no derived copy — {refusal}");
+                    return null;
                 }
+                File.WriteAllBytes(entry.CurrentFile, derived);
                 entry.Namer.MarkWritten();
-                TranslatorCore.LogInfo($"[DerivedFonts] {name}: derived copy ready ({entry.Namer.Added.Count} shaped glyph(s) known, {entry.Files.Count} name(s) shown)");
+                TranslatorCore.LogInfo($"[DerivedFonts] {name}: derived copy ready ({entry.Namer.Added.Count} shaped glyph(s) known) as '{entry.CurrentFamily}'");
             }
             catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
             {
-                Faults.Say("DerivedFonts.Build", ex, Sanitize.Path(folder));
+                Faults.Say("DerivedFonts.Build", ex, Sanitize.Path(_folder));
                 return null;
             }
             return entry;
@@ -307,7 +438,7 @@ namespace UnityGameTranslator.Core
 
         /// <summary>
         /// Names, before the copy is written, every glyph the KNOWN translation will show — so the
-        /// first scene does not spend the IL2CPP reserve one line at a time. Only when the translation
+        /// first scene does not rewrite the copy one line at a time. Only when the translation
         /// changed since the names were last saved (a relaunch with the same file does nothing), and
         /// timed in the log: this is main-thread work while the game starts.
         /// </summary>
@@ -333,9 +464,9 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// IL2CPP: every rewrite of the copy takes one of the session's few names, and a line that
-        /// arrives while the game runs (a live translation, a typed text) needs a rewrite only for
-        /// glyphs never named. Most glyphs a line needs are drawn where they stand — measured on the
+        /// IL2CPP: every rewrite of the copy takes a pool name and makes the fonts it replaces draw
+        /// their glyphs again, and a line that arrives while the game runs (a live translation, a
+        /// typed text) needs a rewrite only for glyphs never named. Most glyphs a line needs are drawn where they stand — measured on the
         /// Hindi probe corpus: 101 of 133 — so every glyph of the font is named at its natural place
         /// once, at start, and the names left serve the positioned marks. Not for a font so large
         /// its glyphs would take more than half the private codepoints.
@@ -381,8 +512,8 @@ namespace UnityGameTranslator.Core
 
         /// <summary>
         /// Rewrites every queued copy and returns the fonts/ names whose copy changed — the caller
-        /// hands their components the new copy. Mono rewrites the same file; IL2CPP takes the next
-        /// name of the reserve (a family the engine has not opened).
+        /// hands their components the new copy. Mono rewrites the same file; IL2CPP takes a pool name
+        /// (a family the engine has not opened).
         /// </summary>
         internal static List<string> ProcessPending(bool il2cpp)
         {
@@ -395,18 +526,13 @@ namespace UnityGameTranslator.Core
                 int target = entry.Current;
                 if (il2cpp)
                 {
-                    if (entry.Current + 1 >= entry.Files.Count)
-                    {
-                        if (!entry.Spent)
-                        {
-                            entry.Spent = true;
-                            TranslatorCore.LogWarning($"[DerivedFonts] {entry.Name}: all {entry.Files.Count} font names of this session are used — shaped text written from now on shows its new glyphs after a relaunch");
-                        }
-                        continue;
-                    }
-                    target = entry.Current + 1;
+                    var slot = TakeFromPool(entry.Name);
+                    if (slot == null) continue;   // said once; the new glyphs show at the next launch
+                    entry.Slots.Add(slot.Value);
+                    target = entry.Slots.Count - 1;
                 }
-                byte[] derived = DerivedFontWriter.Write(entry.Source, entry.Family(target), entry.Namer.Added, out string refusal);
+                var into = entry.Slots[target];
+                byte[] derived = DerivedFontWriter.Write(entry.Source, into.Family, entry.Namer.Added, out string refusal);
                 if (derived == null)
                 {
                     TranslatorCore.LogWarning($"[DerivedFonts] {entry.Name}: the derived copy could not be rewritten — {refusal}");
@@ -414,12 +540,12 @@ namespace UnityGameTranslator.Core
                 }
                 try
                 {
-                    File.WriteAllBytes(entry.Files[target], derived);
+                    File.WriteAllBytes(into.File, derived);
                     File.WriteAllText(entry.NamesPath, entry.Namer.Save());
                 }
                 catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
                 {
-                    Faults.Say("DerivedFonts.ProcessPending", ex, Sanitize.Path(entry.Files[target]));
+                    Faults.Say("DerivedFonts.ProcessPending", ex, Sanitize.Path(into.File));
                     continue;
                 }
                 entry.Namer.MarkWritten();

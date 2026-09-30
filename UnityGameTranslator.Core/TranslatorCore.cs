@@ -1990,8 +1990,11 @@ namespace UnityGameTranslator.Core
             }
 
             // As early as the mod exists: the engine lists the system font folder once, and fonts/
-            // must already be in that list for legacy text to find its files by name.
-            FontFolderRedirect.Install(Path.Combine(ModFolder, UnityGameTranslator.Common.AssetPacks.FontsFolder));
+            // must already be in that list for legacy text to find its files by name — the derived
+            // copies too (DerivedFonts: complex scripts in the engines that draw by codepoint).
+            string fontsFolder = Path.Combine(ModFolder, UnityGameTranslator.Common.AssetPacks.FontsFolder);
+            FontFolderRedirect.Install(fontsFolder, DerivedFonts.Prepare(fontsFolder, adapter.IsIL2CPP,
+                Path.Combine(ModFolder, "translations.json")));
 
             CachePath = Path.Combine(ModFolder, "translations.json");
             ModUiCachePath = Path.Combine(ModFolder, ModUi.FileName);
@@ -2148,6 +2151,8 @@ namespace UnityGameTranslator.Core
             // The engine gets its real file functions back before this code goes away: it still opens
             // files while the game closes.
             try { FontFolderRedirect.Uninstall(); } catch (Exception e) { Faults.Say("Shutdown font folder", e); }
+            // The glyph names handed out this session: the next launch writes them into its copies.
+            try { DerivedFonts.SaveNames(); } catch (Exception e) { Faults.Say("Shutdown derived font names", e); }
 
             // The host stops its streams and ends the live edit session server-side (bounded
             // wait) — closing the game is one of the two legitimate session-end events, and it

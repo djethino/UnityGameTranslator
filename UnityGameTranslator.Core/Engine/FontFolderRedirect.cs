@@ -136,11 +136,17 @@ namespace UnityGameTranslator.Core
             return null;
         }
 
+        /// <summary>Whether the engine is shown this exact file name (a derived copy, DerivedFonts).</summary>
+        public static bool ShowsFile(string fileName) =>
+            !string.IsNullOrEmpty(fileName) && _ours != null && Patched.Count > 0 && _ours.ContainsKey(fileName);
+
         /// <summary>
         /// Changes the engine's own imports so it sees fonts/ as installed fonts. Once; says what it did;
         /// changes nothing when there is nothing to show or anything looks unexpected.
+        /// <paramref name="alsoShown"/>: files outside fonts/ shown the same way — the derived copies
+        /// (DerivedFonts), written before this is called since the engine lists its folder once.
         /// </summary>
-        public static void Install(string fontsFolder)
+        public static void Install(string fontsFolder, IList<string> alsoShown = null)
         {
             if (_installed) return;
             _installed = true;
@@ -182,6 +188,9 @@ namespace UnityGameTranslator.Core
                         _ours[name] = file;
                     }
                 }
+                if (alsoShown != null)
+                    foreach (var file in alsoShown)
+                        if (File.Exists(file)) _ours[Path.GetFileName(file)] = file;
 
                 // Nothing to show: the engine is left exactly as it is.
                 if (_ours.Count == 0) return;

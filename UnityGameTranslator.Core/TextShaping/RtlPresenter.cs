@@ -357,6 +357,16 @@ namespace UnityGameTranslator.Core.TextShaping
         /// idempotent: a moved sign sits after the previous syllable's consonant exactly like
         /// an unmoved one would, so an echo re-read would move it again. Asked once, first.
         /// </summary>
+        /// <summary>
+        /// A component the mod re-fonts with a UnityEngine.Font — uGUI Text, and a UI Toolkit text
+        /// element on its standard generator (the ATG case never reaches here) — the two that take a
+        /// derived copy (FontManager.GetUnityReplacementFont). TextMesh, tk2d, NGUI do not.
+        /// </summary>
+        private static bool DrawsFromLegacyFont(object instance) =>
+            instance != null
+            && ((TypeHelper.UI_TextType != null && TypeHelper.UI_TextType.IsInstanceOfType(instance))
+                || UIToolkitSupport.IsTextElementInstance(instance));
+
         private static void PresentSyllabic(object instance, long compId, ref string value, string settingsFontName)
         {
             bool needsBreak = WordBreaker.NeedsBreaking(value);
@@ -384,9 +394,12 @@ namespace UnityGameTranslator.Core.TextShaping
             // font designed them. 🔴 Never followed by the codepoint reorder: a shaped run
             // already carries its pre-base signs in visual order, and the reorder would move
             // one from the syllable it belongs to into the one before it (कि + क: the sign now
-            // sits AFTER a consonant that is not its own). Every other engine — UI.Text on an
-            // OS font, UI Toolkit, a game font we do not control — keeps stage C's reorder,
-            // the most a font we cannot read can take.
+            // sits AFTER a consonant that is not its own). UI.Text and UI Toolkit replaced by a
+            // fonts/ font get the same, through that font's DERIVED copy (DerivedFonts): every
+            // glyph named by a private codepoint the copy maps to a composite placed as shaped.
+            // Every other case — an OS font, a game font we do not control, an engine the mod
+            // does not re-font (TextMesh) — keeps stage C's reorder, the most a font we cannot
+            // read can take.
             bool shaped = false;
             if (needsShape && TypeHelper.TMP_TextType != null && TypeHelper.TMP_TextType.IsInstanceOfType(instance))
             {
@@ -395,6 +408,16 @@ namespace UnityGameTranslator.Core.TextShaping
                 {
                     string s = OpenTypeText.Shape(working, asset.Font, asset);
                     if (!ReferenceEquals(s, working)) { working = s; shaped = true; }
+                }
+            }
+            else if (needsShape && DrawsFromLegacyFont(instance))
+            {
+                var derived = FontManager.DerivedForSettings(settingsFontName);
+                if (derived != null)
+                {
+                    string s = OpenTypeText.Shape(working, derived.Font, derived.Namer);
+                    if (!ReferenceEquals(s, working)) { working = s; shaped = true; }
+                    DerivedFonts.NoteNamed(derived);   // new names → the copy is rewritten this tick
                 }
             }
             if (needsReorder && !shaped)

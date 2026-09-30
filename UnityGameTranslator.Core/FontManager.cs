@@ -1620,7 +1620,19 @@ namespace UnityGameTranslator.Core
                 else if (source == UnityGameTranslator.Common.FontSource.Custom
                          && CustomFontLoader.CustomFonts.TryGetValue(clean, out var custom)
                          && !string.IsNullOrEmpty(custom.TtfPath))
+                {
+                    // A fonts/ font carrying a script that needs shaping is drawn from its DERIVED copy
+                    // (DerivedFonts) — the same glyphs and mappings, plus the shaped ones — when the
+                    // engine was shown it. Every legacy path resolves here: a new font by name (Mono),
+                    // the game font's fontNames (IL2CPP), the mod's interface font.
+                    var derived = DerivedFonts.Get(clean);
+                    if (derived != null && FontFolderRedirect.ShowsFile(System.IO.Path.GetFileName(derived.CurrentFile)))
+                    {
+                        ttfPath = derived.CurrentFile;
+                        return derived.CurrentFamily;
+                    }
                     ttfPath = custom.TtfPath;
+                }
 
                 if (ttfPath != null) break;
             }
@@ -2749,6 +2761,66 @@ namespace UnityGameTranslator.Core
             TranslatorScanner.ClearProcessedCache();
             RequestPendingRefresh();
             TranslatorCore.LogInfo($"[FontManager] Custom font '{fontName}' added — asked again for {users} game font(s)");
+        }
+
+        /// <summary>
+        /// The derived copy a legacy component draws from, when its game font is replaced by a fonts/
+        /// font that has one (DerivedFonts) — the same conditions GetUnityReplacementFont applies, and
+        /// the copy shown to the engine. Null otherwise: the text then keeps the codepoint path, never a
+        /// private-codepoint string on a font that cannot draw it.
+        /// </summary>
+        internal static DerivedFonts.Entry DerivedForSettings(string settingsFontName)
+        {
+            if (string.IsNullOrEmpty(settingsFontName) || !TranslatorCore.FontReplacementActive) return null;
+            if (!TranslatorCore.FontSettingsMap.TryGetValue(settingsFontName, out var settings)) return null;
+            string fallback = settings.fallback;
+            if (string.IsNullOrEmpty(fallback) || IsGameFontRef(fallback) || _failedFallbackFontNames.Contains(fallback)) return null;
+            string name = StripFontPrefix(fallback);
+            var derived = DerivedFonts.Get(name);
+            if (derived == null || !FontFolderRedirect.ShowsFile(System.IO.Path.GetFileName(derived.CurrentFile))) return null;
+            // The same origin rule as ResolveSystemFontFamily: "[Custom] X" is fonts/X; a bare name is
+            // the installed font first — its fonts/ copy only when the system lacks it.
+            var served = UnityGameTranslator.Common.FontReferences.Serving(fallback,
+                gameHas: IsGameFont(name), customHas: CustomFontLoader.CustomFonts.ContainsKey(name),
+                systemHas: AssetAvailability.IsSystemFontAvailable(name));
+            return served == UnityGameTranslator.Common.FontSource.Custom ? derived : null;
+        }
+
+        /// <summary>
+        /// Rewrites the derived copies that were given new names since the last pass, and hands the
+        /// new copy to every game font replaced by it. Main thread — called from the scanner's tick,
+        /// right after the names were handed out (no timer).
+        /// </summary>
+        public static void ApplyDerivedFontRewrites()
+        {
+            foreach (var name in DerivedFonts.ProcessPending(TranslatorCore.Adapter?.IsIL2CPP ?? false))
+                OnDerivedFontRewritten(name);
+        }
+
+        /// <summary>
+        /// A derived copy was rewritten: the replacement fonts made from the previous one hold its old
+        /// glyphs. Each game font replaced by it drops its replacement (made again, from the new copy,
+        /// at its next text) and the atlas bookkeeping of the old one, then is asked again.
+        /// </summary>
+        private static void OnDerivedFontRewritten(string fontName)
+        {
+            foreach (var kvp in TranslatorCore.FontSettingsMap)
+            {
+                var fallback = kvp.Value?.fallback;
+                if (string.IsNullOrEmpty(fallback)) continue;
+                if (!string.Equals(UnityGameTranslator.Common.FontReferences.Name(fallback), fontName, StringComparison.Ordinal)) continue;
+                string gameFont = kvp.Key;
+                _unityFallbackFonts.Remove(gameFont);
+                _knownCharsPerClone.Remove(gameFont);
+                _knownCharsStringCache.Remove(gameFont);
+                _preWarmedClones.Remove(gameFont);
+                _excludedCharsPerClone.Remove(gameFont);
+                _cloneSupportedChars.Remove(gameFont);
+            }
+            int users = AskUsersAgain(fontName);
+            TranslatorScanner.ClearProcessedCache();
+            RequestPendingRefresh();
+            TranslatorCore.LogDebug($"[FontManager] Derived copy of '{fontName}' rewritten — {users} game font(s) take it");
         }
 
         /// <summary>
@@ -4583,7 +4655,17 @@ namespace UnityGameTranslator.Core
             // "[Custom] X" is fonts/X and nothing else (FontReferences): never a game font whose name
             // resembles it — the fonts/ file reaches the engine by name (FontFolderRedirect).
             bool custom = UnityGameTranslator.Common.FontReferences.Order(systemFontName)[0] == UnityGameTranslator.Common.FontSource.Custom;
-            if (custom) return CustomNotDrawableYet(systemFontName) ? null : CreateDynamicOSFont(ResolveSystemFontFamily(systemFontName, out _));
+            if (custom)
+            {
+                if (CustomNotDrawableYet(systemFontName)) return null;
+                var created = CreateDynamicOSFont(ResolveSystemFontFamily(systemFontName, out _));
+                // A derived copy rewritten under the same name (Mono, DerivedFonts) is a NEW font object
+                // each time — named apart, since a component is given a font whose name differs from
+                // the one it wears (TryApplyUnityClone), and the old object holds the old glyphs.
+                var derived = DerivedFonts.Get(cleanName);
+                if (created != null && derived != null) created.name = derived.CurrentFamily + " #" + derived.Version;
+                return created;
+            }
 
             // Try game fonts first — already loaded, works on IL2CPP without CreateDynamicFontFromOSFont
             if (!_gameFontsScanned) ScanGameFonts();
@@ -4629,6 +4711,8 @@ namespace UnityGameTranslator.Core
                 return false;
 
             string name = StripFontPrefix(fontRef);
+            var derived = DerivedFonts.Get(name);
+            if (derived != null && FontFolderRedirect.ShowsFile(System.IO.Path.GetFileName(derived.CurrentFile))) return false;
             CustomFontLoader.CustomFonts.TryGetValue(name, out var info);
             return FontFolderRedirect.ReachOf(name, info?.TtfPath) != FontFolderRedirect.Reach.Now;
         }

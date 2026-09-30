@@ -2977,6 +2977,10 @@ namespace UnityGameTranslator.Core
             // which raises the pending refresh below. The event itself, not a clock.
             FontManager.ApplyReadyCustomFonts();
 
+            // Shaped text handed out new glyph names since the last pass: the derived copy is
+            // rewritten and its game fonts take it (DerivedFonts) — the naming is the event.
+            FontManager.ApplyDerivedFontRewrites();
+
             // After a font was created or new chars were added to a clone atlas: every component
             // re-rendered with the replacement / updated glyphs. First, being the larger redraw.
             if (_spread == null && FontManager.ConsumePendingRefresh())

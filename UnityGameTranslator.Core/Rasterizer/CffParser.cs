@@ -700,8 +700,8 @@ namespace UnityGameTranslator.Core.Rasterizer
 
         private void EmitFlex(int flexOp, List<float> stack, List<ContourPoint> contour, ref float x, ref float y)
         {
-            // All flex operators produce 2 cubic curves (6 points total from args)
-            // Simplified: treat as two rrcurveto sequences
+            // Every flex operator draws two cubic curves (Type 2 charstring spec, §4.1 "flex"); the
+            // flex depth argument is a hinting threshold, which outlines ignore.
             if (flexOp == 35 && stack.Count >= 12) // flex: dx1..dy6 + fd
             {
                 for (int pass = 0; pass < 2; pass++)
@@ -731,7 +731,48 @@ namespace UnityGameTranslator.Core.Rasterizer
                 contour.Add(new ContourPoint(c2x, c2y, false, true));
                 contour.Add(new ContourPoint(x, y, true));
             }
-            // hflex1, flex1: simplified — just consume stack
+            else if (flexOp == 36 && stack.Count >= 9) // hflex1: dx1 dy1 dx2 dy2 dx3 dx4 dx5 dy5 dx6 — ends at the starting height
+            {
+                // ⚠ Both used to be skipped ("simplified — just consume stack"): the pen stayed where
+                // it was and the glyph's next curves were drawn from the wrong place (Adobe Devanagari
+                // ल्ख, found by the CFF merge's comparison with FreeType, 2026-09-30).
+                float y0 = y;
+                float c1x = x + stack[0], c1y = y + stack[1];
+                float c2x = c1x + stack[2], c2y = c1y + stack[3];
+                float ex = c2x + stack[4];
+                contour.Add(new ContourPoint(c1x, c1y, false, true));
+                contour.Add(new ContourPoint(c2x, c2y, false, true));
+                contour.Add(new ContourPoint(ex, c2y, true));
+
+                float d1x = ex + stack[5], d1y = c2y;
+                float d2x = d1x + stack[6], d2y = d1y + stack[7];
+                x = d2x + stack[8]; y = y0;
+                contour.Add(new ContourPoint(d1x, d1y, false, true));
+                contour.Add(new ContourPoint(d2x, d2y, false, true));
+                contour.Add(new ContourPoint(x, y, true));
+            }
+            else if (flexOp == 37 && stack.Count >= 11) // flex1: dx1 dy1 … dx5 dy5 d6 — d6 runs along the longer way
+            {
+                float x0 = x, y0 = y;
+                var p = new float[10];
+                float px = x, py = y;
+                for (int k = 0; k < 5; k++)
+                {
+                    px += stack[k * 2]; py += stack[k * 2 + 1];
+                    p[k * 2] = px; p[k * 2 + 1] = py;
+                }
+                float dx = px - x0, dy = py - y0;
+                float ex, ey;
+                if (Math.Abs(dx) > Math.Abs(dy)) { ex = px + stack[10]; ey = y0; }
+                else { ex = x0; ey = py + stack[10]; }
+                contour.Add(new ContourPoint(p[0], p[1], false, true));
+                contour.Add(new ContourPoint(p[2], p[3], false, true));
+                contour.Add(new ContourPoint(p[4], p[5], true));
+                contour.Add(new ContourPoint(p[6], p[7], false, true));
+                contour.Add(new ContourPoint(p[8], p[9], false, true));
+                contour.Add(new ContourPoint(ex, ey, true));
+                x = ex; y = ey;
+            }
         }
 
         #endregion

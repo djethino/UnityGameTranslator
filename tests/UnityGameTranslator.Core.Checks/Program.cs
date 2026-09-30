@@ -304,6 +304,8 @@ namespace UnityGameTranslator.Core.Checks
 
             Section("Derived font (added glyphs vs the source font)", DerivedFontChecks.Run);
 
+            Section("Derived font pipeline (shape, name, write, draw — against HarfBuzz)", DerivedPipelineChecks.Run);
+
             Section("Indic shaper (against HarfBuzz, word by word)", IndicShaperChecks.Run);
 
             Section("OpenType text (runs and glyph naming)", OpenTypeTextChecks.Run);

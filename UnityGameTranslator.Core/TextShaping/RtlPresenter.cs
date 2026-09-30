@@ -362,9 +362,10 @@ namespace UnityGameTranslator.Core.TextShaping
         /// an unmoved one would, so an echo re-read would move it again. Asked once, first.
         /// </summary>
         /// <summary>
-        /// A component the mod re-fonts with a UnityEngine.Font — uGUI Text, and a UI Toolkit text
-        /// element on its standard generator (the ATG case never reaches here) — the two that take a
-        /// derived copy (FontManager.GetUnityReplacementFont). TextMesh, tk2d, NGUI do not.
+        /// A component the mod re-fonts with a UnityEngine.Font — uGUI Text, TextMesh, and a UI Toolkit
+        /// text element on its standard generator (the ATG case never reaches here) — the ones that
+        /// take a derived copy (FontManager.GetUnityReplacementFont). tk2d and NGUI do not: the mod
+        /// replaces neither's font (analyse/ecritures-complexes-etat-reel.md, tk2d / NGUI).
         /// </summary>
         private static bool DrawsFromLegacyFont(object instance) =>
             instance != null

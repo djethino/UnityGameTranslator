@@ -15,7 +15,7 @@ namespace UnityGameTranslator.Core.Checks
     /// </summary>
     internal static class ShapingCoverageChecks
     {
-        private enum Engine { Tmp, TmpOld, UiText, UiToolkit, UiToolkitAtg, TextMesh, Tk2d, Ngui }
+        private enum Engine { Tmp, TmpOld, UiText, UiToolkit, UiToolkitAtg, TextMesh, Tk2d, NguiDynamic, NguiBitmap }
         // An installed font is a .ttf/.otf or one face of a collection (.ttc) — the same two kinds once taken out.
         private enum FontOrigin { FontsFolderTtf, FontsFolderCff, SystemTtf, SystemCff, Game }
 
@@ -32,11 +32,12 @@ namespace UnityGameTranslator.Core.Checks
             ["Tk2d/SystemTtf"] = "as Tk2d/FontsFolderTtf",
             ["Tk2d/SystemCff"] = "as Tk2d/FontsFolderTtf",
             ["Tk2d/Game"] = "as Tk2d/FontsFolderTtf",
-            ["Ngui/FontsFolderTtf"] = "the mod replaces no NGUI font (UILabel.trueTypeFont or UIFont): studied, not written — same analysis",
-            ["Ngui/FontsFolderCff"] = "as Ngui/FontsFolderTtf",
-            ["Ngui/SystemTtf"] = "as Ngui/FontsFolderTtf",
-            ["Ngui/SystemCff"] = "as Ngui/FontsFolderTtf",
-            ["Ngui/Game"] = "as Ngui/FontsFolderTtf",
+            ["NguiDynamic/Game"] = "as UiText/Game",
+            ["NguiBitmap/FontsFolderTtf"] = "the mod does not replace NGUI's bitmap UIFont (only its dynamic trueTypeFont) — same analysis",
+            ["NguiBitmap/FontsFolderCff"] = "as NguiBitmap/FontsFolderTtf",
+            ["NguiBitmap/SystemTtf"] = "as NguiBitmap/FontsFolderTtf",
+            ["NguiBitmap/SystemCff"] = "as NguiBitmap/FontsFolderTtf",
+            ["NguiBitmap/Game"] = "as NguiBitmap/FontsFolderTtf",
         };
 
         public static void Run(Action<bool, string, string> check)
@@ -68,8 +69,9 @@ namespace UnityGameTranslator.Core.Checks
             // installed one too when it needs shaping (FontManager.CreateFallbackFromSystem).
             bool ourAsset = isTmp && hasFile;
             // Re-fonted with a UnityEngine.Font by the mod: uGUI Text, TextMesh (its renderer's material
-            // following the font) and UI Toolkit.
-            bool legacy = engine == Engine.UiText || engine == Engine.UiToolkit || engine == Engine.TextMesh;
+            // following the font), UI Toolkit, and an NGUI label on its dynamic trueTypeFont.
+            bool legacy = engine == Engine.UiText || engine == Engine.UiToolkit || engine == Engine.TextMesh
+                          || engine == Engine.NguiDynamic;
             // A derived copy exists for any font file, fonts/ or installed — CFF outlines are merged into
             // TrueType ones first (DerivedFontWriter.WithTrueTypeOutlines).
             bool derived = legacy && hasFile;

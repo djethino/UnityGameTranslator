@@ -5796,23 +5796,13 @@ namespace UnityGameTranslator.Core.UI
                 return;
             }
 
-            // Determine what should be shown
+            // Determine what should be shown — the overlay's own answer, the one its boxes are
+            // shown by (StatusOverlay.HasSomethingToSay): live work always, the rest with no
+            // window of the mod open.
             bool panelsOpen = AnyPanelVisible();
             bool firstRunDone = TranslatorCore.Config.first_run_completed;
 
-            // AI queue is ALWAYS visible when translating (even with panels open)
-            bool aiActive = TranslatorCore.Config.IsTranslationEnabled &&
-                           (TranslatorCore.QueueCount > 0 || TranslatorCore.IsTranslating);
-
-            // A font converting in the background is shown with panels open too: it is usually
-            // the Fonts tab that started it, and the text it waits for is right there.
-            bool fontConverting = FontConversions.Current().Count > 0;
-
-            // Other notifications only show when no panels are open
-            // (mod update and sync are now shown in MainPanel)
-            bool hasOtherContent = !panelsOpen && StatusOverlay.HasNotificationContent();
-
-            bool shouldShow = firstRunDone && (aiActive || fontConverting || hasOtherContent);
+            bool shouldShow = firstRunDone && StatusOverlay.HasSomethingToSay(panelsOpen);
 
             if (shouldShow)
             {

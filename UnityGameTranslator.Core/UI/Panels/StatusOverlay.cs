@@ -279,20 +279,48 @@ namespace UnityGameTranslator.Core.UI.Panels
         }
 
         /// <summary>
-        /// Returns true if there's notification content (mod update or sync) to display.
-        /// Does NOT include AI queue (which is handled separately).
+        /// Whether this corner has something to say — THE answer, read by the window's visibility
+        /// (TranslatorUIManager.UpdateStatusOverlay) and made of the same predicates the boxes are
+        /// shown by in <see cref="RefreshOverlay"/>.
+        ///
+        /// 🔴 **One inventory, not three** (2026-09-30). The window was shown on its own list — the
+        /// queue, a font, a mod update, the sync notice — while the boxes had a longer one, and a
+        /// third copy (HasContentToShow) was read by nobody. A box outside the window's list could
+        /// only appear while something else held the window open: without an account or a
+        /// published translation, nothing else did, so "lines could not be translated" came and
+        /// went with the translation queue — reported by the user, who may fix them like anybody.
+        ///
+        /// ⚠ With a window of the mod open, the corner speaks of live work only — the queue, a
+        /// server that cannot be reached, a font converting. The rest is on the main screen, which
+        /// has its own line for each; showing it here too would make it come and go with the queue.
         /// </summary>
-        public bool HasNotificationContent()
+        public bool HasSomethingToSay(bool panelsOpen)
         {
-            // Mod update notification
-            bool showModUpdate = TranslatorUIManager.HasModUpdate && !TranslatorUIManager.ModUpdateDismissed;
+            bool aiEnabled = TranslatorCore.Config.IsTranslationEnabled;
+            bool live = aiEnabled && (TranslatorCore.QueueCount > 0 || TranslatorCore.IsTranslating
+                                      || TranslatorCore.BackendUnreachable != ConnectionProblem.None)
+                        || FontConversions.Current().Count > 0;
+            if (live) return true;
+            if (panelsOpen) return false;
 
-            // Translation sync notification
-            var pending = PendingSyncWork.Current();
-            bool showSyncNotification = pending.Any && !TranslatorUIManager.NotificationDismissed;
-
-            return showModUpdate || showSyncNotification;
+            return ShowsModUpdate(false) || ShowsSync(false) || _webNotifWanted || ShowsFailures(false);
         }
+
+        private static bool ShowsModUpdate(bool panelsOpen)
+            => !panelsOpen && TranslatorUIManager.HasModUpdate && !TranslatorUIManager.ModUpdateDismissed;
+
+        private static bool ShowsSync(bool panelsOpen)
+            => !panelsOpen && PendingSyncWork.Current().Any && !TranslatorUIManager.NotificationDismissed;
+
+        /// <summary>Lines the AI gave up on, not ignored at this count — for anybody, signed in or not, published or not.</summary>
+        private bool ShowsFailures(bool panelsOpen)
+        {
+            int failed = TranslatorCore.Failures.Count;
+            return !panelsOpen && failed > 0 && failed != _failuresIgnoredAt;
+        }
+
+        /// <summary>What the last website poll left for this corner (RefreshNotificationsBox).</summary>
+        private bool _webNotifWanted;
 
         public override void SetDefaultSizeAndPosition()
         {
@@ -529,7 +557,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
 
             bool show = !TranslatorUIManager.WebsiteNotificationsDismissed && first != null;
-            _webNotifBox.Visible = show;
+            _webNotifWanted = show;
+            _webNotifBox.Visible = show && !_panelsOpenMode;
             if (show)
             {
                 // Comes from the website, so it may carry line breaks — same one-line rule
@@ -577,30 +606,8 @@ namespace UnityGameTranslator.Core.UI.Panels
         private void OnWebNotifDismissClicked()
         {
             TranslatorUIManager.MarkWebsiteNotificationsRead(new List<string>(_webNotifShown));
+            _webNotifWanted = false;
             if (_webNotifBox != null) _webNotifBox.Visible = false;
-        }
-
-        /// <summary>
-        /// Returns true if the overlay has any content to display.
-        /// Used by TranslatorUIManager to decide whether to show the overlay.
-        /// </summary>
-        public bool HasContentToShow()
-        {
-            // 1. Mod update notification
-            bool showModUpdate = TranslatorUIManager.HasModUpdate && !TranslatorUIManager.ModUpdateDismissed;
-
-            // 2. Translation sync notification
-            var pending = PendingSyncWork.Current();
-            bool showSyncNotification = pending.Any && !TranslatorUIManager.NotificationDismissed;
-
-            // 3. AI queue status
-            bool aiEnabled = TranslatorCore.Config.IsTranslationEnabled;
-            int queueCount = TranslatorCore.QueueCount;
-            bool isTranslating = TranslatorCore.IsTranslating;
-            bool showAI = aiEnabled && (queueCount > 0 || isTranslating);
-            bool unreachable = aiEnabled && TranslatorCore.BackendUnreachable != ConnectionProblem.None;
-
-            return showModUpdate || showSyncNotification || showAI || unreachable || FontConversions.Current().Count > 0;
         }
 
         /// <summary>
@@ -617,9 +624,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             // When panels are closed, show all notifications
 
             // 1. Mod update notification (hidden when panels open - shown in MainPanel instead)
-            bool showModUpdate = !_panelsOpenMode &&
-                                 TranslatorUIManager.HasModUpdate &&
-                                 !TranslatorUIManager.ModUpdateDismissed;
+            bool showModUpdate = ShowsModUpdate(_panelsOpenMode);
             if (showModUpdate && _modUpdateBox != null)
             {
                 _modUpdateBox.Visible = true;
@@ -648,8 +653,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             // 2. Translation sync notification (hidden when panels open - shown in MainPanel instead)
             var pending = PendingSyncWork.Current();
 
-            bool showSyncNotification = !_panelsOpenMode && pending.Any &&
-                                        !TranslatorUIManager.NotificationDismissed;
+            bool showSyncNotification = ShowsSync(_panelsOpenMode);
 
             if (showSyncNotification && _syncBox != null)
             {
@@ -760,9 +764,13 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // 2b. Lines the AI could not translate this session — the fact and the verb, like
             // every other box; they are settled in Translation Tools, on the Failures tab.
+            // Same predicates as HasSomethingToSay, which decides whether this window is up at all.
             int failed = TranslatorCore.Failures.Count;
-            bool showFailures = failed > 0 && failed != _failuresIgnoredAt;
+            bool showFailures = ShowsFailures(_panelsOpenMode);
             if (_failuresBox != null) _failuresBox.Visible = showFailures;
+
+            // The site's notification follows the same rule: waiting while a window of the mod is open.
+            if (_webNotifBox != null) _webNotifBox.Visible = _webNotifWanted && !_panelsOpenMode;
             if (showFailures)
             {
                 _failuresLabel?.Show(Tr(failed == 1 ? "1 line could not be translated" : $"{failed} lines could not be translated"));

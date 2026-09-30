@@ -306,6 +306,8 @@ namespace UnityGameTranslator.Core.Checks
 
             Section("Derived font pipeline (shape, name, write, draw — against HarfBuzz)", DerivedPipelineChecks.Run);
 
+            Section("Shaping coverage (engine × font origin, from the mod's own decision)", ShapingCoverageChecks.Run);
+
             Section("Indic shaper (against HarfBuzz, word by word)", IndicShaperChecks.Run);
 
             Section("OpenType text (runs and glyph naming)", OpenTypeTextChecks.Run);

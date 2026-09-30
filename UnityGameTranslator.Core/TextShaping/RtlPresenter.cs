@@ -401,23 +401,28 @@ namespace UnityGameTranslator.Core.TextShaping
             // does not re-font (TextMesh) — keeps stage C's reorder, the most a font we cannot
             // read can take.
             bool shaped = false;
-            if (needsShape && TypeHelper.TMP_TextType != null && TypeHelper.TMP_TextType.IsInstanceOfType(instance))
+            if (needsShape)
             {
-                var asset = ShapingFontAsset.ForSettings(settingsFontName);
-                if (asset != null)
+                // The route is decided in one place (ShapingRoute), the one the coverage checks walk.
+                bool isTmp = TypeHelper.TMP_TextType != null && TypeHelper.TMP_TextType.IsInstanceOfType(instance);
+                bool legacy = !isTmp && DrawsFromLegacyFont(instance);
+                var asset = isTmp ? ShapingFontAsset.ForSettings(settingsFontName) : null;
+                var derived = legacy ? FontManager.DerivedForSettings(settingsFontName) : null;
+                switch (ShapingRoute.Decide(isTmp, asset != null, legacy, derived != null, engineShapes: false))
                 {
-                    string s = OpenTypeText.Shape(working, asset.Font, asset);
-                    if (!ReferenceEquals(s, working)) { working = s; shaped = true; }
-                }
-            }
-            else if (needsShape && DrawsFromLegacyFont(instance))
-            {
-                var derived = FontManager.DerivedForSettings(settingsFontName);
-                if (derived != null)
-                {
-                    string s = OpenTypeText.Shape(working, derived.Font, derived.Namer);
-                    if (!ReferenceEquals(s, working)) { working = s; shaped = true; }
-                    DerivedFonts.NoteNamed(derived);   // new names → the copy is rewritten this tick
+                    case ShapingRoute.Route.OurTmpAsset:
+                    {
+                        string s = OpenTypeText.Shape(working, asset.Font, asset);
+                        if (!ReferenceEquals(s, working)) { working = s; shaped = true; }
+                        break;
+                    }
+                    case ShapingRoute.Route.DerivedFont:
+                    {
+                        string s = OpenTypeText.Shape(working, derived.Font, derived.Namer);
+                        if (!ReferenceEquals(s, working)) { working = s; shaped = true; }
+                        DerivedFonts.NoteNamed(derived);   // new names → the copy is rewritten this tick
+                        break;
+                    }
                 }
             }
             if (needsReorder && !shaped)

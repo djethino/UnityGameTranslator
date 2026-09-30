@@ -1626,7 +1626,11 @@ namespace UnityGameTranslator.Core
 
         /// <summary>
         /// Whether that object sits in a loaded scene — including the DontDestroyOnLoad one. A prefab
-        /// or any other asset belongs to none: its scene handle is 0.
+        /// or any other asset belongs to none: its scene is not valid.
+        ///
+        /// ⚠ Asked through <c>Scene.IsValid()</c>, not <c>Scene.handle</c>: recent Unity 6 changed the
+        /// type of <c>handle</c>, and a mod built against the int getter met a MissingMethodException
+        /// on 6000.6 — every prefab then counted as shown (found by the probe bench, 2026-09-30).
         ///
         /// ⚠ A method of its own, guarded by its caller: IL2CPP resolves a member the game lacks when
         /// it compiles the method that NAMES it, so a guard written inside would never run.
@@ -1643,7 +1647,7 @@ namespace UnityGameTranslator.Core
                 if (comp == null) return true; // not a component after all: nothing to decide, kept
                 go = comp.gameObject;
             }
-            return go != null && go.scene.handle != 0;
+            return go != null && go.scene.IsValid();
         }
 
         /// <summary>Forgets which objects were seen in a scene — called when a scene unloads.</summary>

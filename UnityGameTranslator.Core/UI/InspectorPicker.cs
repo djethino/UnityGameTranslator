@@ -175,8 +175,9 @@ namespace UnityGameTranslator.Core.UI
         /// <summary>Set once a rebuild has been spent on the current run of empty hovers.</summary>
         private bool _rebuiltOnMiss;
 
-        /// <summary>Which scene the lists describe. A different one makes them meaningless.</summary>
-        private static int _cacheScene = -1;
+        /// <summary>Which scene the lists describe. A different one makes them meaningless. (The
+        /// default Scene is invalid, so the first look always takes the lists.)</summary>
+        private static UnityEngine.SceneManagement.Scene _cacheScene;
 
         /// <summary>
         /// Every text this mod reaches in the scene, as components — for the pass that finds a text
@@ -198,12 +199,16 @@ namespace UnityGameTranslator.Core.UI
         ///
         /// ⚠ **Checked here rather than hooked into TranslatorCore.OnSceneChanged**, where the
         /// other modules hang: that method belongs to the engine, and the engine never names the
-        /// interface (EngineFrontierChecks). Reading the active scene's handle is O(1) and keeps
-        /// the cache's validity the cache's own business.
+        /// interface (EngineFrontierChecks). Comparing the active scene is O(1) and keeps the
+        /// cache's validity the cache's own business.
+        ///
+        /// ⚠ Compared as a Scene (its own ==), never through <c>Scene.handle</c>: recent Unity 6
+        /// changed that property's type, and a mod built against the int getter throws on 6000.6
+        /// (TypeHelper.ReadInScene met it first — found by the probe bench, 2026-09-30).
         /// </summary>
         private static void DropIfSceneChanged()
         {
-            int scene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().handle;
+            var scene = UnityEngine.SceneManagement.SceneManager.GetActiveScene();
             if (scene == _cacheScene) return;
             _cacheScene = scene;
             DropSceneCaches();

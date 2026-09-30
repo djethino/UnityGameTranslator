@@ -858,10 +858,11 @@ namespace UnityGameTranslator.Core.Rasterizer
             /// <summary>True for a combining mark when the font has no GDEF (Unicode category, set by the shaper).</summary>
             public bool UnicodeMark;
 
-            public int XOffset, YOffset;      // placement, font units
+            // Placement, font units. For an attached mark, relative to its anchor until resolved:
+            // the anchor difference (base − mark) the attachment SET, plus what later lookups added.
+            public int XOffset, YOffset;
             public int XAdvance;              // advance, font units — starts at the font's, GPOS adjusts it
             public int AttachedTo = -1;       // index of the glyph this mark is anchored to, -1 when free
-            public int AttachX, AttachY;      // anchor difference (base anchor − mark anchor), resolved at the end
 
             public int LigatureId;            // 0 = not from a ligature
             public int LigatureComponent;     // 1-based component a mark followed inside a ligature; 0 = none
@@ -922,8 +923,8 @@ namespace UnityGameTranslator.Core.Rasterizer
                 if (j < 0 || j >= Glyphs.Count || depth > 8) return;
                 var parent = Glyphs[j];
                 if (parent.AttachedTo >= 0) Resolve(j, depth + 1, rightToLeft);
-                int x = g.AttachX + parent.XOffset;
-                int y = g.AttachY + parent.YOffset;
+                int x = g.XOffset + parent.XOffset;
+                int y = g.YOffset + parent.YOffset;
                 if (!rightToLeft)
                 {
                     if (j < i) for (int k = j; k < i; k++) x -= Glyphs[k].XAdvance;
@@ -1302,11 +1303,18 @@ namespace UnityGameTranslator.Core.Rasterizer
             g.XAdvance += v.XAdvance;
         }
 
+        /// <summary>
+        /// HarfBuzz's model (MarkArray::apply, propagate_attachment_offsets): the attachment SETS the
+        /// mark's offset to the anchor difference — what an earlier lookup placed is replaced — and a
+        /// later adjustment ADDS to it; the parent's offset and the advances between are added at the
+        /// end. Keeping the difference apart and assigning it at the end lost the later adjustments
+        /// (a subjoined Khmer consonant 200 units off in Leelawadee UI).
+        /// </summary>
         private static void Attach(ShapedGlyph mark, int baseIndex, Anchor baseAnchor, Anchor markAnchor)
         {
             mark.AttachedTo = baseIndex;
-            mark.AttachX = baseAnchor.X - markAnchor.X;
-            mark.AttachY = baseAnchor.Y - markAnchor.Y;
+            mark.XOffset = baseAnchor.X - markAnchor.X;
+            mark.YOffset = baseAnchor.Y - markAnchor.Y;
         }
 
         /// <summary>
@@ -1393,7 +1401,11 @@ namespace UnityGameTranslator.Core.Rasterizer
                 if (at < 0 || at >= buf.Count) continue;
                 int before = buf.Count;
                 var nested = table.Lookups[rec.LookupIndex];
-                if (IsIgnored(nested, buf[at])) continue;
+                // ⚠ The nested lookup's flags govern what IT skips while matching, never whether it
+                // applies at the position the rule named: HarfBuzz recurses without testing the glyph
+                // there (hb_ot_apply_context_t::recurse). A font relies on it — a subjoined consonant,
+                // a mark outside the nested lookup's filtering set, moved by it all the same
+                // (Leelawadee UI, Khmer ខ្ញុំ: 200 units off, found by the harness's compare).
                 if (ApplyAt(table, nested, buf, at, uint.MaxValue, depth + 1) == 0) continue;
                 int delta = buf.Count - before;
                 if (delta != 0)

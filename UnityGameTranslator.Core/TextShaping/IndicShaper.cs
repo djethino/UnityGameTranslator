@@ -142,6 +142,11 @@ namespace UnityGameTranslator.Core.TextShaping
         private static readonly string[] PreFeatures = { "ccmp", "locl" };
         private static readonly string[] BasicFeatures = { "nukt", "akhn", "rphf", "rkrf", "pref", "blwf", "abvf", "half", "pstf", "vatu", "cjct" };
         private static readonly string[] PresentationFeatures = { "init", "pres", "abvs", "blws", "psts", "haln", "calt", "clig" };
+        // The common features the presentation stage has not already run: a feature named twice runs
+        // ONCE, at its earliest stage (ShapingCommon.CommonGsubFeatures). Run again, a font's 'calt'
+        // took apart a conjunct its first pass had just rebuilt (Nirmala UI, Bengali ন্ত্র্).
+        private static readonly string[] CommonAfterPresentation =
+            Array.FindAll(ShapingCommon.CommonGsubFeatures, f => Array.IndexOf(PresentationFeatures, f) < 0);
         private static readonly string[] PositioningFeatures = { "kern", "dist", "abvm", "blwm", "mark", "mkmk" };
 
         private const uint MaskRphf = 1u << 0, MaskPref = 1u << 1, MaskBlwf = 1u << 2, MaskAbvf = 1u << 3, MaskHalf = 1u << 4,
@@ -419,7 +424,7 @@ namespace UnityGameTranslator.Core.TextShaping
             for (int i = 0; i < buf.Count; i++) buf[i].Syllable = 0;
             ApplyStage(layout, layout.Gsub, buf, plans, PresentationFeatures, gsub: true);
             // The common features last, on the whole run (HarfBuzz collects them after the shaper's).
-            ApplyStage(layout, layout.Gsub, buf, plans, ShapingCommon.CommonGsubFeatures, gsub: true);
+            ApplyStage(layout, layout.Gsub, buf, plans, CommonAfterPresentation, gsub: true);
 
             // 4. Positioning.
             bool zeroMarks = false;
@@ -487,7 +492,11 @@ namespace UnityGameTranslator.Core.TextShaping
                         masks[li] = masks.TryGetValue(li, out uint m) ? (m | mask) : mask;
                 }
             }
-            foreach (var kv in masks) layout.ApplyLookup(table, kv.Key, buf, kv.Value);
+            foreach (var kv in masks)
+            {
+                bool changed = layout.ApplyLookup(table, kv.Key, buf, kv.Value);
+                if (ShapingCommon.Trace != null && changed) ShapingCommon.Trace($"  lookup {kv.Key} mask {kv.Value:X}: {ShapingCommon.Dump(buf)}");
+            }
         }
 
         /// <summary>

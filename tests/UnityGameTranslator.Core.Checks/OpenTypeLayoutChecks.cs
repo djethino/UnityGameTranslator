@@ -92,11 +92,20 @@ namespace UnityGameTranslator.Core.Checks
             // ── mark-to-base: ं on क ──
             buf = Buffer(Ka, Anusvara);
             bool attached = layout.ApplyLookup(layout.Gpos, 14, buf);
-            check(attached && buf[1].AttachedTo == 0 && buf[1].AttachX == 547 && buf[1].AttachY == 0,
-                "abvm lookup 14 anchors ं on क (377 − (−170), 622 − 622)", $"attached={buf[1].AttachedTo} dx={buf[1].AttachX} dy={buf[1].AttachY}");
+            check(attached && buf[1].AttachedTo == 0 && buf[1].XOffset == 547 && buf[1].YOffset == 0,
+                "abvm lookup 14 anchors ं on क (377 − (−170), 622 − 622)", $"attached={buf[1].AttachedTo} dx={buf[1].XOffset} dy={buf[1].YOffset}");
             buf.ResolveAttachments();
             check(buf[1].XOffset == 547 - 768 && buf[1].YOffset == 0 && buf[1].AttachedTo == -1,
                 "resolved: mark offset = anchor difference − base advance", $"x={buf[1].XOffset} y={buf[1].YOffset}");
+
+            // A later lookup moving an attached mark (a contextual single adjustment) ADDS to where
+            // the attachment put it — HarfBuzz's model; resolving used to drop it (Leelawadee UI, Khmer).
+            buf = Buffer(Ka, Anusvara);
+            layout.ApplyLookup(layout.Gpos, 14, buf);
+            buf[1].XOffset += 200; buf[1].YOffset -= 30;
+            buf.ResolveAttachments();
+            check(buf[1].XOffset == 547 + 200 - 768 && buf[1].YOffset == -30,
+                "an attached mark moved afterwards keeps the move", $"x={buf[1].XOffset} y={buf[1].YOffset}");
 
             // ── the whole dev2 GSUB feature list applied in order on क्ष: still one glyph ──
             buf = Buffer(Ka, Virama, Ssa);

@@ -2729,6 +2729,34 @@ namespace UnityGameTranslator.Core
         /// </summary>
         private static void OnCustomFontReady(string fontName)
         {
+            int users = AskUsersAgain(fontName);
+
+            TranslatorScanner.ClearProcessedCache();
+            RequestPendingRefresh();
+            TranslatorCore.LogInfo($"[FontManager] Custom font '{fontName}' converted — applied to {users} game font(s)");
+        }
+
+        /// <summary>
+        /// A fonts/ file registered while the game runs (Refresh List, an asset pack): the game fonts
+        /// the translation already replaces with it are asked again — the earlier attempts found no
+        /// such font and were remembered as failed. Main thread.
+        /// </summary>
+        public static void OnCustomFontAdded(string fontName)
+        {
+            int users = AskUsersAgain(fontName);
+            if (users == 0) return;
+
+            TranslatorScanner.ClearProcessedCache();
+            RequestPendingRefresh();
+            TranslatorCore.LogInfo($"[FontManager] Custom font '{fontName}' added — asked again for {users} game font(s)");
+        }
+
+        /// <summary>
+        /// Forgets the failures of a fallback font and refreshes every game font the translation
+        /// replaces with it. Returns how many game fonts that is.
+        /// </summary>
+        private static int AskUsersAgain(string fontName)
+        {
             _failedFallbackFontNames.Remove(fontName);
             _failedFallbackFontNames.Remove(UnityGameTranslator.Common.AssetPacks.CustomFontPrefix + fontName);
 
@@ -2748,9 +2776,7 @@ namespace UnityGameTranslator.Core
                 TranslatorScanner.RefreshForFont(gameFont);
             }
 
-            TranslatorScanner.ClearProcessedCache();
-            RequestPendingRefresh();
-            TranslatorCore.LogInfo($"[FontManager] Custom font '{fontName}' converted — applied to {users.Count} game font(s)");
+            return users.Count;
         }
 
         /// <summary>
@@ -4238,6 +4264,11 @@ namespace UnityGameTranslator.Core
                 // fits a font that simply is not in memory yet (2026-09-28).
                 if (replacementFont == null && IsGameFontRef(settings.fallback)) return null;
 
+                // A fonts/ file the engine cannot open by name in this session: neither a new font
+                // nor the fontNames trick can draw it, and it is not a failure to remember — the same
+                // font may serve TextMeshPro now, and legacy text from the next launch.
+                if (replacementFont == null && CustomNotDrawableYet(settings.fallback)) return null;
+
                 // IL2CPP fallback: modify the ORIGINAL font's fontNames to point to the system font
                 // This avoids clone atlas sharing issues — Unity re-rasterizes using the new font
                 Font originalGameFont = null;
@@ -4552,7 +4583,7 @@ namespace UnityGameTranslator.Core
             // "[Custom] X" is fonts/X and nothing else (FontReferences): never a game font whose name
             // resembles it — the fonts/ file reaches the engine by name (FontFolderRedirect).
             bool custom = UnityGameTranslator.Common.FontReferences.Order(systemFontName)[0] == UnityGameTranslator.Common.FontSource.Custom;
-            if (custom) return CreateDynamicOSFont(ResolveSystemFontFamily(systemFontName, out _));
+            if (custom) return CustomNotDrawableYet(systemFontName) ? null : CreateDynamicOSFont(ResolveSystemFontFamily(systemFontName, out _));
 
             // Try game fonts first — already loaded, works on IL2CPP without CreateDynamicFontFromOSFont
             if (!_gameFontsScanned) ScanGameFonts();
@@ -4585,6 +4616,21 @@ namespace UnityGameTranslator.Core
             // On IL2CPP, CreateDynamicFontFromOSFont is stripped.
             // Return null here — GetUnityReplacementFont will modify the original font's fontNames instead.
             return null;
+        }
+
+        /// <summary>
+        /// "[Custom] X" draws legacy text only when the engine can open its file by name in this
+        /// session (FontFolderRedirect.ReachOf): the engine asked for a family it has no file for
+        /// draws another font under our name — never ours. The game's own font is kept instead.
+        /// </summary>
+        private static bool CustomNotDrawableYet(string fontRef)
+        {
+            if (UnityGameTranslator.Common.FontReferences.Order(fontRef)[0] != UnityGameTranslator.Common.FontSource.Custom)
+                return false;
+
+            string name = StripFontPrefix(fontRef);
+            CustomFontLoader.CustomFonts.TryGetValue(name, out var info);
+            return FontFolderRedirect.ReachOf(name, info?.TtfPath) != FontFolderRedirect.Reach.Now;
         }
 
         /// <summary>
@@ -5723,6 +5769,12 @@ namespace UnityGameTranslator.Core
         public const string FromFontsFolderMarker = " (from fonts folder)";
 
         /// <summary>
+        /// Suffix marking, for legacy text, a fonts/ file added while the game runs: the engine lists
+        /// its font folder once, at start (FontFolderRedirect.ReachOf).
+        /// </summary>
+        public const string AfterRestartMarker = " (after restart)";
+
+        /// <summary>
         /// Remove the display-only suffix a picker entry may carry. Only strips a KNOWN marker at
         /// the very end — font names do contain parentheses, and cutting on any of them would
         /// silently rename the font the user picked.
@@ -5738,6 +5790,8 @@ namespace UnityGameTranslator.Core
                 return entry.Substring(0, entry.Length - IncompatibleMarker.Length);
             if (entry.EndsWith(FromFontsFolderMarker, StringComparison.Ordinal))
                 return entry.Substring(0, entry.Length - FromFontsFolderMarker.Length);
+            if (entry.EndsWith(AfterRestartMarker, StringComparison.Ordinal))
+                return entry.Substring(0, entry.Length - AfterRestartMarker.Length);
             return entry;
         }
 

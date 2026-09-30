@@ -63,8 +63,10 @@ namespace UnityGameTranslator.Core
         private static GetFileAttributesExW_ _realGetAttributesEx; private static readonly GetFileAttributesExW_ OurGetAttributesEx = GetAttributesEx;
 
         private static string _systemFonts;                                   // the folder our files are shown in, no trailing separator
+        private static string[] _engineFolders;                               // every folder the engine walks for fonts
         private static StringComparison _pathCase = StringComparison.OrdinalIgnoreCase;
         private static Dictionary<string, string> _ours;                      // file name → full path in fonts/
+        private static readonly Dictionary<string, Reach> Reached = new Dictionary<string, Reach>(StringComparer.OrdinalIgnoreCase);
         private static readonly Dictionary<IntPtr, Queue<string>> Pending = new Dictionary<IntPtr, Queue<string>>();
         private static readonly object Gate = new object();
         private static bool _installed, _sawListing;
@@ -79,6 +81,45 @@ namespace UnityGameTranslator.Core
             foreach (var file in _ours.Keys)
                 if (UnityGameTranslator.Common.AssetPacks.IsFontFileFor(file, fontName)) return true;
             return false;
+        }
+
+        /// <summary>When legacy text can be drawn from a fonts/ file.</summary>
+        public enum Reach
+        {
+            /// <summary>In this session: the engine is shown the file, or an installed file of the same name.</summary>
+            Now,
+            /// <summary>From the next launch: the file came after the engine listed its font folder, which it does once.</summary>
+            NextLaunch,
+            /// <summary>Not in this game: no font file (an atlas font), or the engine's imports could not be changed.</summary>
+            Never
+        }
+
+        /// <summary>
+        /// When legacy text can be drawn from this fonts/ file (<paramref name="fontFile"/>, null for an
+        /// atlas font): the engine finds a font by name only in the list it made at start (see the
+        /// class summary), so a file added while the game runs waits for the next launch.
+        ///
+        /// ⚠ NextLaunch when nothing was shown at start is what the mod WILL do, not something measured
+        /// in this session — there was nothing to redirect. If the next launch cannot redirect, its own
+        /// answer is Never and says so.
+        /// </summary>
+        public static Reach ReachOf(string fontName, string fontFile)
+        {
+            if (Shows(fontName)) return Reach.Now;
+            if (string.IsNullOrEmpty(fontFile) || _engineFolders == null) return Reach.Never;
+
+            var file = Path.GetFileName(fontFile);
+            if (Reached.TryGetValue(file, out var known)) return known;
+
+            // A file named like an installed one is never shown (Install): the engine opens the installed one.
+            var reach = Reach.NextLaunch;
+            foreach (var folder in _engineFolders)
+                if (File.Exists(Path.Combine(folder, file))) reach = Reach.Now;
+            if (reach == Reach.NextLaunch && Patched.Count == 0 && (_ours == null || _ours.Count > 0))
+                reach = Reach.Never;   // there were files to show and the engine could not be changed
+
+            Reached[file] = reach;
+            return reach;
         }
 
         internal enum Os { Windows, Linux, Mac }
@@ -126,6 +167,7 @@ namespace UnityGameTranslator.Core
                         break;
                 }
                 _systemFonts = engineFolders[engineFolders.Length - 1].TrimEnd('\\', '/');
+                _engineFolders = engineFolders;
 
                 _ours = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
                 if (Directory.Exists(fontsFolder))

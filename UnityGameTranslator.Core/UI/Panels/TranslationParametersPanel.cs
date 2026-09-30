@@ -375,8 +375,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                 case "useAttempt": return OnUseAttemptClicked;
                 case "fontReplacementChanged": return OnEnableFontReplacementChanged;
                 case "sharpnessChanged": return OnFontSharpnessChanged;
-                // Explicit user request: this is the one place the ranking is allowed to re-rank.
-                case "refreshFonts": return () => { InvalidateFontOrder(); RefreshFontsList(); };
+                // Explicit user request: this is the one place the ranking is allowed to re-rank —
+                // and the fonts folder is read again, so a file dropped in it while the game runs is offered.
+                case "refreshFonts": return () => { CustomFontLoader.Rescan(); InvalidateFontOrder(); RefreshFontsList(); };
                 case "overrideInspector": return OnStartFontOverrideInspector;
                 case "findOverride": return OnFindForFontOverride;
                 case "addOverride": return OnAddManualFontOverride;
@@ -1930,6 +1931,13 @@ namespace UnityGameTranslator.Core.UI.Panels
             finally { _fillingRows = false; }
         }
 
+        /// <summary>When legacy text can be drawn from the fonts/ file of this name.</summary>
+        private static FontFolderRedirect.Reach LegacyReach(string customFont)
+        {
+            CustomFontLoader.CustomFonts.TryGetValue(customFont, out var info);
+            return FontFolderRedirect.ReachOf(customFont, info?.TtfPath);
+        }
+
         /// <summary>
         /// The fallback picker of one font: the game's fonts first, then the system's, then the
         /// custom ones — grouped by origin — with the configured fallback found among them.
@@ -2003,14 +2011,22 @@ namespace UnityGameTranslator.Core.UI.Panels
                 options.AddRange(availableFonts);
             }
 
-            // Add custom fonts (user-provided fonts from fonts/ folder)
-            string[] customFonts = FontManager.GetCustomFontNames();
-            if (customFonts != null && customFonts.Length > 0)
+            // Add custom fonts (user-provided fonts from fonts/ folder). TextMeshPro reads the file
+            // itself; legacy text only through the engine's list of fonts, made once at start — a
+            // file added since waits for the next launch, an atlas font never gets there.
+            var customOptions = new List<string>();
+            foreach (var customFont in FontManager.GetCustomFontNames())
+            {
+                var reach = isTMPFont ? FontFolderRedirect.Reach.Now : LegacyReach(customFont);
+                if (reach == FontFolderRedirect.Reach.Never) continue;
+                customOptions.Add(AssetPacks.CustomFontPrefix + customFont
+                    + (reach == FontFolderRedirect.Reach.NextLaunch ? FontManager.AfterRestartMarker : ""));
+            }
+            if (customOptions.Count > 0)
             {
                 if (options.Count > 1)
                     options.Add("--- Custom Fonts ---");
-                foreach (var customFont in customFonts)
-                    options.Add(AssetPacks.CustomFontPrefix + customFont);
+                options.AddRange(customOptions);
             }
 
             var dropdown = row.Dropdown("Fallback");
@@ -2049,10 +2065,12 @@ namespace UnityGameTranslator.Core.UI.Panels
                         customHas: CustomFontLoader.CustomFonts.ContainsKey(name),
                         systemHas: AssetAvailability.IsSystemFontAvailable(name));
 
-                    bool copyReadable = isTMPFont || FontFolderRedirect.Shows(name);
-                    match = fontInfo.FallbackFont + (copyReadable && served == FontSource.Custom
-                        ? FontManager.FromFontsFolderMarker
-                        : FontManager.IncompatibleMarker);
+                    var copyReach = isTMPFont ? FontFolderRedirect.Reach.Now : LegacyReach(name);
+                    match = fontInfo.FallbackFont + (served != FontSource.Custom || copyReach == FontFolderRedirect.Reach.Never
+                        ? FontManager.IncompatibleMarker
+                        : copyReach == FontFolderRedirect.Reach.NextLaunch
+                            ? FontManager.AfterRestartMarker
+                            : FontManager.FromFontsFolderMarker);
                     options.Add(match);
                 }
 

@@ -443,6 +443,13 @@ namespace UnityGameTranslator.Core
         {
             if (string.IsNullOrEmpty(fontPath) || !UnityGameTranslator.Common.AssetPacks.IsFontFile(fontPath)) return;
 
+            RegisterFontFile(fontPath, "added from an asset pack");
+            FontManager.OnCustomFontAdded(Path.GetFileNameWithoutExtension(fontPath));
+        }
+
+        /// <summary>A .ttf/.otf of the fonts folder, by its file name — rasterised on demand.</summary>
+        private static void RegisterFontFile(string fontPath, string how)
+        {
             var fileName = Path.GetFileNameWithoutExtension(fontPath);
             _customFonts[fileName] = new CustomFontInfo
             {
@@ -451,7 +458,7 @@ namespace UnityGameTranslator.Core
                 Source = "custom"
             };
 
-            TranslatorCore.LogInfo($"[CustomFontLoader] Registered TTF: {fileName} (added from an asset pack)");
+            TranslatorCore.LogInfo($"[CustomFontLoader] Registered TTF: {fileName} ({how})");
         }
 
         /// <summary>
@@ -461,7 +468,6 @@ namespace UnityGameTranslator.Core
         {
             var fontsFolder = Path.Combine(pluginFolder, UnityGameTranslator.Common.AssetPacks.FontsFolder);
             _cacheFolderPath = fontsFolder;
-            int loadedCount = 0;
 
             if (!Directory.Exists(fontsFolder))
             {
@@ -478,6 +484,52 @@ namespace UnityGameTranslator.Core
             // CJK fonts cached from a previous version.
             PurgeLegacyRasterCache(fontsFolder);
 
+            var found = ScanFolder(fontsFolder, "will rasterize on demand");
+            TranslatorCore.LogInfo($"[CustomFontLoader] Found {found.Count} custom font(s)");
+        }
+
+        /// <summary>
+        /// Reads the fonts folder again, while the game runs (Refresh List): a file added since is
+        /// offered, a file removed is no longer offered. A font already known is left as it is — its
+        /// atlas may be in use on screen. Returns how many were added and removed.
+        ///
+        /// ⚠ What is offered is not what legacy text can draw yet: the engine lists its font folder
+        /// once, at start (FontFolderRedirect.ReachOf) — TextMeshPro, which reads the file itself,
+        /// can use a new font at once.
+        /// </summary>
+        public static (int Added, int Removed) Rescan()
+        {
+            var fontsFolder = _cacheFolderPath;
+            if (string.IsNullOrEmpty(fontsFolder)) return (0, 0);
+
+            // Removed from the folder: no longer offered. A system font we rasterised is not the
+            // folder's, and an atlas already on screen stays until the next launch.
+            var gone = _customFonts
+                .Where(kvp => kvp.Value.Source != "system")
+                .Where(kvp => !File.Exists(kvp.Value.TtfPath ?? kvp.Value.JsonPath ?? ""))
+                .Select(kvp => kvp.Key)
+                .ToList();
+            foreach (var name in gone)
+            {
+                _customFonts.Remove(name);
+                TranslatorCore.LogInfo($"[CustomFontLoader] {name}: file removed from the fonts folder — no longer offered");
+            }
+
+            var added = Directory.Exists(fontsFolder) ? ScanFolder(fontsFolder, "added while the game runs") : new List<string>();
+            foreach (var name in added) FontManager.OnCustomFontAdded(name);
+
+            return (added.Count, gone.Count);
+        }
+
+        /// <summary>
+        /// Registers the fonts of the folder not known yet — atlas fonts (JSON + PNG) first, so an
+        /// atlas font and a .ttf of the same name give the atlas. Returns the names registered
+        /// without error.
+        /// </summary>
+        private static List<string> ScanFolder(string fontsFolder, string how)
+        {
+            var found = new List<string>();
+
             // Find all JSON files (skip .gen.json — those are the compressed runtime cache)
             var jsonFiles = Directory.GetFiles(fontsFolder, "*.json");
 
@@ -487,6 +539,8 @@ namespace UnityGameTranslator.Core
 
                 // Skip generated cache files (from TTF rasterizer)
                 if (fileName.EndsWith(".cache") || fileName.EndsWith(".gen"))
+                    continue;
+                if (_customFonts.ContainsKey(fileName))
                     continue;
 
                 // Parse JSON first so we know how many atlases to look for. Multi-atlas
@@ -542,7 +596,7 @@ namespace UnityGameTranslator.Core
                 {
                     TranslatorCore.LogInfo($"[CustomFontLoader] Found {fileName}: {fontInfo.AtlasData.glyphs.Count} glyphs, " +
                         $"{expectedAtlases} atlas{(expectedAtlases > 1 ? "es" : "")} of {fontInfo.AtlasData.atlas.width}x{fontInfo.AtlasData.atlas.height}");
-                    loadedCount++;
+                    found.Add(fileName);
                 }
 
                 _customFonts[fileName] = fontInfo;
@@ -554,7 +608,7 @@ namespace UnityGameTranslator.Core
             {
                 string[] fontFiles;
                 try { fontFiles = Directory.GetFiles(fontsFolder, "*" + extension); }
-                catch (Exception ex) { Faults.Say("CustomFontLoader.Initialize", ex); continue; }
+                catch (Exception ex) { Faults.Say("CustomFontLoader.ScanFolder", ex); continue; }
 
                 foreach (var fontPath in fontFiles)
                 {
@@ -562,18 +616,12 @@ namespace UnityGameTranslator.Core
                     if (_customFonts.ContainsKey(fileName))
                         continue;
 
-                    _customFonts[fileName] = new CustomFontInfo
-                    {
-                        Name = fileName,
-                        TtfPath = fontPath,
-                        Source = "custom"
-                    };
-                    loadedCount++;
-                    TranslatorCore.LogInfo($"[CustomFontLoader] Registered TTF: {fileName} (will rasterize on demand)");
+                    RegisterFontFile(fontPath, how);
+                    found.Add(fileName);
                 }
             }
 
-            TranslatorCore.LogInfo($"[CustomFontLoader] Found {loadedCount} custom font(s)");
+            return found;
         }
 
         /// <summary>

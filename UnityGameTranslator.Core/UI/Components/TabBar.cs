@@ -212,6 +212,11 @@ namespace UnityGameTranslator.Core.UI.Components
             newTab.Content.SetActive(true);
             StyleTabButton(newTab, true);
 
+            // The page arrives rather than blinking in — the gesture every appearance in this mod
+            // makes (Appearances), and the one the Manager plays on a tab's page (Motion.Arrive).
+            // ⚠ Here only, never in MeasureMaxContentHeight, which switches every tab on to measure.
+            Appearances.Block(newTab.Content);
+
             // Contents hosted in a scroll area: each tab starts at the top
             if (_contentScrollRect != null)
                 _contentScrollRect.verticalNormalizedPosition = 1f;

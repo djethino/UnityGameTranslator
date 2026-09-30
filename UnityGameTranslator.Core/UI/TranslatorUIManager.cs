@@ -1322,6 +1322,8 @@ namespace UnityGameTranslator.Core.UI
                 // the wheel — both polled for the same reason.
                 Components.SearchableDropdown.PollOutsideClick();
                 Components.Sliders.PollWheel();
+                // After the rails: a rail holding the wheel has silenced its area, which then gives nothing.
+                Components.ScrollGive.Tick();
             }
             else
             {
@@ -1329,6 +1331,8 @@ namespace UnityGameTranslator.Core.UI
                 // rail that held the wheel lets it go (its scroll area gets its wheel back).
                 Components.SearchableDropdown.PollOutsideClick();
                 Components.Sliders.PollWheel();
+                // And any end left open is handed back, so a window reopens whole.
+                Components.ScrollGive.Tick();
             }
 
         }

@@ -718,12 +718,10 @@ namespace UnityGameTranslator.Core.UI
         /// The spring then pulls while the wheel is still pushing, which is the ping-pong this
         /// project spent a day removing from the other two products.
         ///
-        /// ⚠ **So the mod has no give at the end, for now, and that is the honest state.** Doing it
-        /// properly means displacing the content ourselves — and the content's position belongs to
-        /// the ScrollRect, which rewrites it. That needs either a component injected into the
-        /// runtime (impossible: this assembly is built ONCE for Mono and IL2CPP — see ButtonStates)
-        /// or a transform of its own between viewport and content, which changes how every panel is
-        /// built. A chantier, not a line.
+        /// ✅ **The give is drawn by <see cref="Components.ScrollGive"/> (2026-09-30)**, which moves
+        /// the viewport together with the content — the content's position belongs to the
+        /// ScrollRect, which rewrites it, but the two moved together never leave its bounds. Every
+        /// scroll area of the mod comes through here, so every one gets it.
         /// </summary>
         public static void GiveScrollAnEdge(GameObject scrollObj)
         {
@@ -731,6 +729,7 @@ namespace UnityGameTranslator.Core.UI
             if (scroll == null) return;
 
             scroll.movementType = ScrollRect.MovementType.Clamped;
+            Components.ScrollGive.Watch(scrollObj);
         }
 
         /// <summary>

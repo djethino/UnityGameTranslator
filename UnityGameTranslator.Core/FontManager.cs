@@ -3209,6 +3209,37 @@ namespace UnityGameTranslator.Core
             finally { Perf.Stop(Perf.FontScene, tPerf); }
         }
 
+        private static bool IsTextMesh(object component) =>
+            component != null && TypeHelper.TextMeshType != null && TypeHelper.TextMeshType.IsInstanceOfType(component);
+
+        /// <summary>A TextMesh's renderer drawing <paramref name="font"/>'s atlas; its original material remembered once.</summary>
+        private static void SetTextMeshMaterial(object component, int instanceId, Font font)
+        {
+            var renderer = (component as Component)?.GetComponent<Renderer>();
+            if (renderer == null || font == null || font.material == null) return;
+            if (instanceId != -1 && !_originalMaterialsPerComponent.ContainsKey(instanceId))
+                _originalMaterialsPerComponent[instanceId] = renderer.sharedMaterial;
+            // The game's material may carry its own shader or colour: kept, only the atlas changes.
+            var original = renderer.sharedMaterial;
+            if (original != null && original != font.material && original.mainTexture != null)
+            {
+                var copy = new Material(original) { mainTexture = font.material.mainTexture };
+                renderer.sharedMaterial = copy;
+            }
+            else renderer.sharedMaterial = font.material;
+        }
+
+        /// <summary>The TextMesh's own material back — the one it had, or its font's.</summary>
+        private static void RestoreTextMeshMaterial(object component, int instanceId, Font originalFont)
+        {
+            var renderer = (component as Component)?.GetComponent<Renderer>();
+            if (renderer == null) return;
+            if (_originalMaterialsPerComponent.TryGetValue(instanceId, out var original) && original is Material m && m != null)
+                renderer.sharedMaterial = m;
+            else if (originalFont != null && originalFont.material != null)
+                renderer.sharedMaterial = originalFont.material;
+        }
+
         /// <summary>
         /// Put the UI.Text clone on a component when the clone can render its text.
         /// Single implementation shared by the set_text prefix and the direct scene pass below, so
@@ -3250,6 +3281,13 @@ namespace UnityGameTranslator.Core
             {
                 TypeHelper.SetFont(component, replacementFont);
                 PreWarmCloneAtlas(settingsFontName, replacementFont);
+                // A TextMesh draws with its renderer's material, which carries the font's atlas: the
+                // new font's material, or it keeps drawing the old atlas (its original kept to restore).
+                if (IsTextMesh(component))
+                {
+                    SetTextMeshMaterial(component, instanceId, replacementFont);
+                    return replacementFont;
+                }
                 TypeHelper.SetAllDirty(component);
 
                 // Toggle enabled to rebind CanvasRenderer to clone texture, but ONLY if atlas is
@@ -3429,6 +3467,11 @@ namespace UnityGameTranslator.Core
                         }
                     }
                     catch (Exception _e) { TranslatorCore.LogDebug($"[FontReplace] material restore failed: {_e.Message}"); }
+                }
+                if (!materialRestored && IsTextMesh(component))
+                {
+                    RestoreTextMeshMaterial(component, instanceId, originalFont as Font);
+                    materialRestored = true;
                 }
                 if (!materialRestored)
                     SetFontSharedMaterial(component, originalFont);

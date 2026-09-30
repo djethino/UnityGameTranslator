@@ -369,6 +369,7 @@ namespace UnityGameTranslator.Core.TextShaping
         private static bool DrawsFromLegacyFont(object instance) =>
             instance != null
             && ((TypeHelper.UI_TextType != null && TypeHelper.UI_TextType.IsInstanceOfType(instance))
+                || (TypeHelper.TextMeshType != null && TypeHelper.TextMeshType.IsInstanceOfType(instance))
                 || UIToolkitSupport.IsTextElementInstance(instance));
 
         private static void PresentSyllabic(object instance, long compId, ref string value, string settingsFontName, bool ownUi)

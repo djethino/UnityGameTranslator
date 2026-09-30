@@ -26,11 +26,7 @@ namespace UnityGameTranslator.Core.Checks
             ["TmpOld/Game"] = "as Tmp/Game",
             ["UiText/Game"] = "the game's font has no file — said on the Fonts tab: a fonts/ or installed font must be chosen",
             ["UiToolkit/Game"] = "as UiText/Game",
-            ["TextMesh/FontsFolderTtf"] = "the mod does not re-font TextMesh at all (parity gap; the engine draws a derived copy — probe 1)",
-            ["TextMesh/FontsFolderCff"] = "as TextMesh/FontsFolderTtf",
-            ["TextMesh/SystemTtf"] = "as TextMesh/FontsFolderTtf",
-            ["TextMesh/SystemCff"] = "as TextMesh/FontsFolderTtf",
-            ["TextMesh/Game"] = "as TextMesh/FontsFolderTtf",
+            ["TextMesh/Game"] = "as UiText/Game",
             ["Tk2d/FontsFolderTtf"] = "tk2d draws a bitmap font of its own: to be studied",
             ["Tk2d/FontsFolderCff"] = "as Tk2d/FontsFolderTtf",
             ["Tk2d/SystemTtf"] = "as Tk2d/FontsFolderTtf",
@@ -71,8 +67,9 @@ namespace UnityGameTranslator.Core.Checks
             // Our rasterizer builds a TMP asset from any font file (TrueType or CFF: CffParser) — an
             // installed one too when it needs shaping (FontManager.CreateFallbackFromSystem).
             bool ourAsset = isTmp && hasFile;
-            // Re-fonted with a UnityEngine.Font by the mod: uGUI Text and UI Toolkit only.
-            bool legacy = engine == Engine.UiText || engine == Engine.UiToolkit;
+            // Re-fonted with a UnityEngine.Font by the mod: uGUI Text, TextMesh (its renderer's material
+            // following the font) and UI Toolkit.
+            bool legacy = engine == Engine.UiText || engine == Engine.UiToolkit || engine == Engine.TextMesh;
             // A derived copy exists for any font file, fonts/ or installed — CFF outlines are merged into
             // TrueType ones first (DerivedFontWriter.WithTrueTypeOutlines).
             bool derived = legacy && hasFile;

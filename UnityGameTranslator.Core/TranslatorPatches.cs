@@ -3093,8 +3093,10 @@ namespace UnityGameTranslator.Core
                             FontManager.ApplyFontReplacement(__instance, fontObj, settingsFontName);
                         }
                     }
-                    else if (componentType == "Unity")
+                    else if (componentType == "Unity" || componentType == "TextMesh")
                     {
+                        // TextMesh wears a UnityEngine.Font like uGUI Text: the same replacement,
+                        // its renderer's material following the font (TryApplyUnityClone).
                         if (fontObj == null) fontObj = TypeHelper.GetFont(__instance);
 
                         // Single implementation, shared with the direct UI.Text scene pass

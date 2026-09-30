@@ -750,8 +750,9 @@ namespace UnityGameTranslator.Core
             if (_customFonts.TryGetValue(fontName, out fontInfo) && fontInfo.IsLoaded && fontInfo.FontAsset != null)
                 return fontInfo.FontAsset;
 
-            // Find the .ttf file path — FontManager has the name→path mapping
-            var ttfPath = FontManager.GetSystemFontPath(fontName);
+            // The file its derived copy was made from when it has one (a face taken out of a
+            // collection is a single font there); else FontManager's name→path mapping.
+            var ttfPath = DerivedFonts.SourcePathOfInstalled(fontName) ?? FontManager.GetSystemFontPath(fontName);
             if (ttfPath == null)
             {
                 TranslatorCore.LogWarning($"[CustomFontLoader] System TTF not found: {fontName}");

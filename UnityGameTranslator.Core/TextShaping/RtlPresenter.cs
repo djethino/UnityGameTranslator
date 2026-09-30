@@ -395,11 +395,11 @@ namespace UnityGameTranslator.Core.TextShaping
             // already carries its pre-base signs in visual order, and the reorder would move
             // one from the syllable it belongs to into the one before it (कि + क: the sign now
             // sits AFTER a consonant that is not its own). UI.Text and UI Toolkit replaced by a
-            // fonts/ font get the same, through that font's DERIVED copy (DerivedFonts): every
-            // glyph named by a private codepoint the copy maps to a composite placed as shaped.
-            // Every other case — an OS font, a game font we do not control, an engine the mod
-            // does not re-font (TextMesh) — keeps stage C's reorder, the most a font we cannot
-            // read can take.
+            // fonts/ or an installed font get the same, through that font's DERIVED copy
+            // (DerivedFonts): every glyph named by a private codepoint the copy maps to a
+            // composite placed as shaped. Every other case — a game font we have no file for, an
+            // engine the mod does not re-font (TextMesh) — keeps stage C's reorder, the most a
+            // font we cannot read can take (ShapingCoverageChecks lists them).
             bool shaped = false;
             if (needsShape)
             {

@@ -16,32 +16,34 @@ namespace UnityGameTranslator.Core.Checks
     internal static class ShapingCoverageChecks
     {
         private enum Engine { Tmp, TmpOld, UiText, UiToolkit, UiToolkitAtg, TextMesh, Tk2d, Ngui }
-        private enum FontOrigin { FontsFolderTtf, FontsFolderCff, System, Game }
+        // An installed font is a .ttf/.otf or one face of a collection (.ttc) — the same two kinds once taken out.
+        private enum FontOrigin { FontsFolderTtf, FontsFolderCff, SystemTtf, SystemCff, Game }
 
         // The open gaps: known, said, planned — never silent (analyse/ecritures-complexes-etat-reel.md).
         private static readonly Dictionary<string, string> OpenGaps = new Dictionary<string, string>
         {
-            ["Tmp/System"] = "an installed font is built by Unity (CreateFontAsset), not by our rasterizer — its tables are not read; a proprietary font is not derived",
-            ["Tmp/Game"] = "the game's font has no file to read — a fonts/ font must be chosen",
-            ["TmpOld/System"] = "as Tmp/System",
+            ["Tmp/Game"] = "the game's font has no file to read — said on the Fonts tab: a fonts/ or installed font must be chosen",
             ["TmpOld/Game"] = "as Tmp/Game",
-            ["UiText/FontsFolderCff"] = "CFF outlines cannot take composite glyphs — decision pending (merge the outlines, or refuse and say it)",
-            ["UiText/System"] = "a proprietary installed font is not derived — a fonts/ font must be chosen",
-            ["UiText/Game"] = "the game's font has no file — a fonts/ font must be chosen",
+            ["UiText/FontsFolderCff"] = "CFF outlines cannot take composite glyphs — lot 7: merge the outlines into the copy",
+            ["UiText/SystemCff"] = "as UiText/FontsFolderCff",
+            ["UiText/Game"] = "the game's font has no file — said on the Fonts tab: a fonts/ or installed font must be chosen",
             ["UiToolkit/FontsFolderCff"] = "as UiText/FontsFolderCff",
-            ["UiToolkit/System"] = "as UiText/System",
+            ["UiToolkit/SystemCff"] = "as UiText/FontsFolderCff",
             ["UiToolkit/Game"] = "as UiText/Game",
             ["TextMesh/FontsFolderTtf"] = "the mod does not re-font TextMesh at all (parity gap; the engine draws a derived copy — probe 1)",
             ["TextMesh/FontsFolderCff"] = "as TextMesh/FontsFolderTtf",
-            ["TextMesh/System"] = "as TextMesh/FontsFolderTtf",
+            ["TextMesh/SystemTtf"] = "as TextMesh/FontsFolderTtf",
+            ["TextMesh/SystemCff"] = "as TextMesh/FontsFolderTtf",
             ["TextMesh/Game"] = "as TextMesh/FontsFolderTtf",
             ["Tk2d/FontsFolderTtf"] = "tk2d draws a bitmap font of its own: to be studied",
             ["Tk2d/FontsFolderCff"] = "as Tk2d/FontsFolderTtf",
-            ["Tk2d/System"] = "as Tk2d/FontsFolderTtf",
+            ["Tk2d/SystemTtf"] = "as Tk2d/FontsFolderTtf",
+            ["Tk2d/SystemCff"] = "as Tk2d/FontsFolderTtf",
             ["Tk2d/Game"] = "as Tk2d/FontsFolderTtf",
             ["Ngui/FontsFolderTtf"] = "NGUI draws its own fonts: to be studied",
             ["Ngui/FontsFolderCff"] = "as Ngui/FontsFolderTtf",
-            ["Ngui/System"] = "as Ngui/FontsFolderTtf",
+            ["Ngui/SystemTtf"] = "as Ngui/FontsFolderTtf",
+            ["Ngui/SystemCff"] = "as Ngui/FontsFolderTtf",
             ["Ngui/Game"] = "as Ngui/FontsFolderTtf",
         };
 
@@ -69,12 +71,15 @@ namespace UnityGameTranslator.Core.Checks
         private static Route Decide(Engine engine, FontOrigin origin)
         {
             bool isTmp = engine == Engine.Tmp || engine == Engine.TmpOld;
-            // Our rasterizer builds a TMP asset from any fonts/ file (TrueType or CFF: CffParser).
-            bool ourAsset = isTmp && (origin == FontOrigin.FontsFolderTtf || origin == FontOrigin.FontsFolderCff);
+            bool hasFile = origin != FontOrigin.Game;
+            bool trueType = origin == FontOrigin.FontsFolderTtf || origin == FontOrigin.SystemTtf;
+            // Our rasterizer builds a TMP asset from any font file (TrueType or CFF: CffParser) — an
+            // installed one too when it needs shaping (FontManager.CreateFallbackFromSystem).
+            bool ourAsset = isTmp && hasFile;
             // Re-fonted with a UnityEngine.Font by the mod: uGUI Text and UI Toolkit only.
             bool legacy = engine == Engine.UiText || engine == Engine.UiToolkit;
-            // A derived copy exists for a fonts/ TrueType font only (DerivedFontWriter refuses CFF).
-            bool derived = legacy && origin == FontOrigin.FontsFolderTtf;
+            // A derived copy exists for a TrueType font, fonts/ or installed (DerivedFontWriter refuses CFF).
+            bool derived = legacy && trueType;
             return ShapingRoute.Decide(isTmp, ourAsset, legacy, derived, engineShapes: engine == Engine.UiToolkitAtg);
         }
     }

@@ -1616,7 +1616,17 @@ namespace UnityGameTranslator.Core
             foreach (var source in UnityGameTranslator.Common.FontReferences.Order(fontName))
             {
                 if (source == UnityGameTranslator.Common.FontSource.System)
+                {
+                    // An installed font the translation names is drawn from its derived copy too,
+                    // when it carries a script that needs shaping (DerivedFonts, 2026-09-30).
+                    var derivedInstalled = ShownDerived(clean, source);
+                    if (derivedInstalled != null)
+                    {
+                        ttfPath = derivedInstalled.CurrentFile;
+                        return derivedInstalled.CurrentFamily;
+                    }
                     ttfPath = CustomFontLoader.FindSystemTtfPath(clean);
+                }
                 else if (source == UnityGameTranslator.Common.FontSource.Custom
                          && CustomFontLoader.CustomFonts.TryGetValue(clean, out var custom)
                          && !string.IsNullOrEmpty(custom.TtfPath))
@@ -1625,8 +1635,8 @@ namespace UnityGameTranslator.Core
                     // (DerivedFonts) — the same glyphs and mappings, plus the shaped ones — when the
                     // engine was shown it. Every legacy path resolves here: a new font by name (Mono),
                     // the game font's fontNames (IL2CPP), the mod's interface font.
-                    var derived = DerivedFonts.Get(clean);
-                    if (derived != null && FontFolderRedirect.ShowsFile(System.IO.Path.GetFileName(derived.CurrentFile)))
+                    var derived = ShownDerived(clean, source);
+                    if (derived != null)
                     {
                         ttfPath = derived.CurrentFile;
                         return derived.CurrentFamily;
@@ -2776,14 +2786,20 @@ namespace UnityGameTranslator.Core
             string fallback = settings.fallback;
             if (string.IsNullOrEmpty(fallback) || IsGameFontRef(fallback) || _failedFallbackFontNames.Contains(fallback)) return null;
             string name = StripFontPrefix(fallback);
-            var derived = DerivedFonts.Get(name);
-            if (derived == null || !FontFolderRedirect.ShowsFile(System.IO.Path.GetFileName(derived.CurrentFile))) return null;
             // The same origin rule as ResolveSystemFontFamily: "[Custom] X" is fonts/X; a bare name is
-            // the installed font first — its fonts/ copy only when the system lacks it.
+            // the installed font first — its fonts/ copy only when the system lacks it. Each origin
+            // has its own copy.
             var served = UnityGameTranslator.Common.FontReferences.Serving(fallback,
                 gameHas: IsGameFont(name), customHas: CustomFontLoader.CustomFonts.ContainsKey(name),
                 systemHas: AssetAvailability.IsSystemFontAvailable(name));
-            return served == UnityGameTranslator.Common.FontSource.Custom ? derived : null;
+            return served == null ? null : ShownDerived(name, served.Value);
+        }
+
+        /// <summary>The derived copy of a font from this origin, when the engine was shown it at start.</summary>
+        private static DerivedFonts.Entry ShownDerived(string name, UnityGameTranslator.Common.FontSource origin)
+        {
+            var derived = DerivedFonts.Get(name, origin);
+            return derived != null && FontFolderRedirect.ShowsFile(System.IO.Path.GetFileName(derived.CurrentFile)) ? derived : null;
         }
 
         /// <summary>
@@ -4667,6 +4683,22 @@ namespace UnityGameTranslator.Core
                 return created;
             }
 
+            // An installed font with a derived copy (named by the translation at start): the copy,
+            // under the same naming rule as a fonts/ one. Not when the reference is a game font's.
+            if (!IsGameFontRef(systemFontName))
+            {
+                var installed = ShownDerived(cleanName, UnityGameTranslator.Common.FontSource.System);
+                if (installed != null)
+                {
+                    var created = CreateDynamicOSFont(installed.CurrentFamily);
+                    if (created != null)
+                    {
+                        created.name = installed.CurrentFamily + " #" + installed.Version;
+                        return created;
+                    }
+                }
+            }
+
             // Try game fonts first — already loaded, works on IL2CPP without CreateDynamicFontFromOSFont
             if (!_gameFontsScanned) ScanGameFonts();
             if (_gameUnityFonts.TryGetValue(cleanName, out var gameFont))
@@ -4805,6 +4837,23 @@ namespace UnityGameTranslator.Core
             // Not installed at all: nothing to try, and nothing to warn about — the next source answers.
             if (!SystemFonts.Contains(cleanName) && CustomFontLoader.FindSystemTtfPath(cleanName) == null)
                 return null;
+
+            // An installed font carrying a script that needs shaping — the translation named it at
+            // start and it has a derived copy: TMP text is drawn by our rasterizer from its file, as a
+            // fonts/ font's, so its OpenType tables shape the text (ShapingFontAsset). A Unity-built
+            // asset would leave conjuncts apart. Not ready yet (drawn in the background) is not a
+            // failure: asked again when it is, like a fonts/ font.
+            if (DerivedFonts.SourcePathOfInstalled(cleanName) != null)
+            {
+                var ours = CustomFontLoader.LoadSystemTtfFont(cleanName);
+                if (ours != null)
+                {
+                    if (ours is UnityEngine.Object created) _createdFallbackFontNames.Add(created.name);
+                    return ours;
+                }
+                if (CustomFontLoader.IsFontDeferred(cleanName)) return null;
+                TranslatorCore.LogWarning($"[FontManager] '{cleanName}': our atlas could not be built — TMP text in it keeps Unity's, unshaped");
+            }
 
             // Create a Unity Font from system font name
             Font unityFont = SystemFonts.Contains(cleanName) ? CreateUnityFont(cleanName) : null;

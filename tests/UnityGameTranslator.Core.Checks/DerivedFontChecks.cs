@@ -24,6 +24,56 @@ namespace UnityGameTranslator.Core.Checks
                 if (!File.Exists(path)) { check(false, $"{file} present", path); continue; }
                 One(check, file, File.ReadAllBytes(path));
             }
+            Collection(check, File.ReadAllBytes(Path.Combine(fonts, "NotoSansDevanagari.ttf")), File.ReadAllBytes(Path.Combine(fonts, "NotoSansKhmer.ttf")));
+        }
+
+        /// <summary>
+        /// An installed font may be one face of a collection (FontCollection). The collection is built
+        /// HERE, from two real fonts, each at its own place with its table offsets moved — so the face
+        /// taken out is checked against the font that went in, never against the extractor.
+        /// </summary>
+        private static void Collection(Action<bool, string, string> check, byte[] a, byte[] b)
+        {
+            int header = 12 + 2 * 4;
+            int atA = header, atB = header + ((a.Length + 3) & ~3);
+            var ttc = new byte[atB + b.Length];
+            Put32(ttc, 0, 0x74746366); Put32(ttc, 4, 0x00010000); Put32(ttc, 8, 2);
+            Put32(ttc, 12, (uint)atA); Put32(ttc, 16, (uint)atB);
+            foreach (var (font, at) in new[] { (a, atA), (b, atB) })
+            {
+                Array.Copy(font, 0, ttc, at, font.Length);
+                int tables = font[4] << 8 | font[5];
+                for (int t = 0; t < tables; t++)
+                {
+                    int r = at + 12 + t * 16 + 8;
+                    Put32(ttc, r, (uint)((ttc[r] << 24 | ttc[r + 1] << 16 | ttc[r + 2] << 8 | ttc[r + 3]) + at));
+                }
+            }
+
+            var khmer = new TtfParser(b);
+            using (var stream = new MemoryStream(ttc))
+            {
+                check(FontCollection.FindFace(stream, khmer.Metrics.FontName) == 1, "collection: the face named like the second font is found", khmer.Metrics.FontName);
+                check(FontCollection.FindFace(stream, "No Such Font") == -1, "collection: an absent name finds no face", "");
+            }
+            using (var single = new MemoryStream(b))
+                check(FontCollection.FindFace(single, khmer.Metrics.FontName) == -1, "collection: a single font is not searched as a collection", "");
+            check(ReferenceEquals(FontCollection.Face(b, 0), b), "collection: a single font is its own face", "");
+
+            var face = new TtfParser(FontCollection.Face(ttc, 1));
+            bool same = face.GlyphCount == khmer.GlyphCount && face.Metrics.FontName == khmer.Metrics.FontName;
+            int differ = 0;
+            for (int g = 1; g < khmer.GlyphCount && same; g++)
+                if (!SameOutlineMoved(khmer.GetGlyphOutlineByIndex(g), face.GetGlyphOutlineByIndex(g), 0, 0, out _)) differ++;
+            foreach (int cp in khmer.GetSupportedCodepoints())
+                if (cp != 0 && face.GetGlyphIndex(cp) != khmer.GetGlyphIndex(cp)) differ++;
+            check(same && differ == 0, "collection: the face taken out is the font that went in (names, glyphs, outlines, mappings)",
+                $"glyphs {face.GlyphCount}/{khmer.GlyphCount}, {differ} difference(s)");
+        }
+
+        private static void Put32(byte[] b, int o, uint v)
+        {
+            b[o] = (byte)(v >> 24); b[o + 1] = (byte)(v >> 16); b[o + 2] = (byte)(v >> 8); b[o + 3] = (byte)v;
         }
 
         private static void One(Action<bool, string, string> check, string file, byte[] bytes)

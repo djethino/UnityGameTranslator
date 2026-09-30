@@ -1,14 +1,15 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using UnityGameTranslator.Core.Rasterizer;
 using UnityGameTranslator.Core.TextShaping;
 
 namespace UnityGameTranslator.Core
 {
     /// <summary>
-    /// The DERIVED copies of the fonts/ fonts that carry a script needing shaping (Devanagari, Khmer,
-    /// Thai…), for the engines that draw by codepoint — UI.Text, TextMesh, UI Toolkit: every glyph of
+    /// The DERIVED copies of the fonts that carry a script needing shaping (Devanagari, Khmer, Thai…),
+    /// for the engines that draw by codepoint — UI.Text, TextMesh, UI Toolkit: every glyph of
     /// a shaped run is named by a private codepoint (DerivedGlyphs) that the copy maps to a composite
     /// placed as the shaper decided (DerivedFontWriter). Proven on the probe bench, Unity 2018.4 →
     /// 6000.6, Mono and IL2CPP (analyse/ecritures-complexes-etat-reel.md, probes 1 and 2).
@@ -24,6 +25,13 @@ namespace UnityGameTranslator.Core
     ///   needing a new name keep showing as they did until the next launch.
     /// The names handed out are kept next to the copies: the next launch writes them all at once.
     ///
+    /// Two origins, the two a translation can name with a file behind it (FontReferences): every
+    /// fonts/ font, and every INSTALLED font the translation replaces a game font with (a bare name
+    /// in `_fonts`) — a copy kept in the game's folder, never shared: the translation names the font,
+    /// each player's machine derives its own (user, 2026-09-30). One face of a collection (.ttc) is
+    /// taken out first (FontCollection). An installed font chosen during the session has no copy
+    /// until the next launch, when the translation names it.
+    ///
     /// ⚠ Main thread only (the shapers' buffers). Engine side: never names the interface.
     /// </summary>
     internal static class DerivedFonts
@@ -33,8 +41,10 @@ namespace UnityGameTranslator.Core
 
         internal sealed class Entry
         {
-            internal string Name;              // the fonts/ font, by file name (its [Custom] reference)
-            internal string SourcePath;
+            internal string Name;              // the font's reference without its mark: fonts/ file name, or installed family
+            internal UnityGameTranslator.Common.FontSource Origin;
+            internal string Key;               // what its files are named after: unique across both origins
+            internal string SourcePath;        // a single font: the file itself, or the face taken out of a collection
             internal byte[] Source;
             internal string BaseFamily;        // "UGT <source family>"
             internal TtfShapingFont Font;
@@ -43,13 +53,14 @@ namespace UnityGameTranslator.Core
             internal int Current;              // the file the engine draws from now
             internal int Version;              // bumped at each rewrite: replacement fonts made before are stale
             internal bool Spent;               // IL2CPP reserve used up (said once)
-            internal string NamesPath => Path.Combine(Path.GetDirectoryName(Files[0]), Path.GetFileNameWithoutExtension(SourcePath) + ".names");
+            internal string NamesPath => Path.Combine(Path.GetDirectoryName(Files[0]), Key + ".names");
             internal string Family(int k) => Files.Count == 1 ? BaseFamily : BaseFamily + " " + k;
             internal string CurrentFamily => Family(Current);
             internal string CurrentFile => Files[Current];
         }
 
         private static readonly Dictionary<string, Entry> _byName = new Dictionary<string, Entry>(StringComparer.OrdinalIgnoreCase);
+        private static readonly Dictionary<string, Entry> _installedByName = new Dictionary<string, Entry>(StringComparer.OrdinalIgnoreCase);
         private static string _translationsPath;
         private static readonly List<Entry> _pending = new List<Entry>();
 
@@ -58,11 +69,22 @@ namespace UnityGameTranslator.Core
 
         internal static Entry Get(string fontName) => fontName != null && _byName.TryGetValue(fontName, out var e) ? e : null;
 
+        /// <summary>The derived copy of an INSTALLED font, when the translation named it at start.</summary>
+        internal static Entry GetInstalled(string fontName) => fontName != null && _installedByName.TryGetValue(fontName, out var e) ? e : null;
+
+        /// <summary>The copy of a font as the origin serving it: fonts/X, or the installed X.</summary>
+        internal static Entry Get(string fontName, UnityGameTranslator.Common.FontSource origin)
+            => origin == UnityGameTranslator.Common.FontSource.Custom ? Get(fontName)
+             : origin == UnityGameTranslator.Common.FontSource.System ? GetInstalled(fontName)
+             : null;
+
+        private static IEnumerable<Entry> All() => _byName.Values.Concat(_installedByName.Values);
+
         /// <summary>
-        /// Writes the copies of the fonts/ fonts that need them and returns the files to show the
-        /// engine (FontFolderRedirect.Install). Called BEFORE the redirect is installed. A font that
-        /// cannot be derived (CFF outlines, unreadable) is said and left out: its text keeps the
-        /// codepoint path it had.
+        /// Writes the copies of the fonts that need them and returns the files to show the engine
+        /// (FontFolderRedirect.Install). Called BEFORE the redirect is installed — so nothing here
+        /// asks the ENGINE for its font list, which it builds once: installed fonts are found on disk.
+        /// A font that cannot be derived is said and left out: its text keeps the codepoint path.
         /// </summary>
         internal static List<string> Prepare(string fontsFolder, bool il2cpp, string translationsPath = null)
         {
@@ -70,6 +92,8 @@ namespace UnityGameTranslator.Core
             var shown = new List<string>();
             if (string.IsNullOrEmpty(fontsFolder) || !Directory.Exists(fontsFolder)) return shown;
             string folder = Path.Combine(fontsFolder, Folder);
+            int reserve = il2cpp ? Il2CppReserve : 1;
+            var translation = ReadTranslation();
 
             foreach (var extension in UnityGameTranslator.Common.AssetPacks.FontExtensions)
             {
@@ -78,48 +102,137 @@ namespace UnityGameTranslator.Core
                 catch (Exception ex) { Faults.Say("DerivedFonts.Prepare", ex, Sanitize.Path(fontsFolder)); continue; }
                 foreach (var path in files)
                 {
-                    var entry = Build(path, folder, il2cpp ? Il2CppReserve : 1);
+                    byte[] bytes;
+                    try { bytes = File.ReadAllBytes(path); }
+                    catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException) { Faults.Say("DerivedFonts.Prepare", ex, Sanitize.Path(path)); continue; }
+                    string name = Path.GetFileNameWithoutExtension(path);
+                    var entry = Build(name, UnityGameTranslator.Common.FontSource.Custom, Sanitized(name), path, bytes, folder, reserve, translation);
                     if (entry == null) continue;
                     _byName[entry.Name] = entry;
                     shown.AddRange(entry.Files);
                 }
             }
+
+            foreach (var name in InstalledFontsNamed(translation))
+            {
+                byte[] bytes = InstalledFont(name, folder, out string path);
+                if (bytes == null) continue;
+                var entry = Build(name, UnityGameTranslator.Common.FontSource.System, "sys-" + Sanitized(name), path, bytes, folder, reserve, translation);
+                if (entry == null) continue;
+                _installedByName[entry.Name] = entry;
+                shown.AddRange(entry.Files);
+            }
             return shown;
         }
 
-        private static Entry Build(string path, string folder, int reserve)
+        private static Newtonsoft.Json.Linq.JObject ReadTranslation()
         {
-            byte[] bytes;
-            TtfParser parser;
+            if (string.IsNullOrEmpty(_translationsPath) || !File.Exists(_translationsPath)) return null;
+            try { return Newtonsoft.Json.Linq.JObject.Parse(File.ReadAllText(_translationsPath)); }
+            catch (Exception ex) when (ex is IOException || ex is Newtonsoft.Json.JsonException)
+            {
+                // The translation is read again, properly, by the loader — which says what is wrong with it.
+                Faults.Say("DerivedFonts.ReadTranslation", ex, Sanitize.Path(_translationsPath));
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// The installed fonts the translation replaces a game font with: a bare name in `_fonts`
+        /// (FontReferences — "[Custom] X" is fonts/, "[Game] X" has no file). Read from the file:
+        /// this runs before the translation is loaded.
+        /// </summary>
+        private static List<string> InstalledFontsNamed(Newtonsoft.Json.Linq.JObject translation)
+        {
+            var names = new List<string>();
+            if (!(translation?[UnityGameTranslator.Common.SettingsSections.FontsKey] is Newtonsoft.Json.Linq.JObject fonts)) return names;
+            foreach (var property in fonts.Properties())
+            {
+                var fallbackToken = (property.Value as Newtonsoft.Json.Linq.JObject)?["fallback"];
+                if (fallbackToken == null || fallbackToken.Type != Newtonsoft.Json.Linq.JTokenType.String) continue;
+                string fallback = (string)fallbackToken;
+                if (string.IsNullOrEmpty(fallback)) continue;
+                if (UnityGameTranslator.Common.FontReferences.Order(fallback)[0] != UnityGameTranslator.Common.FontSource.System) continue;
+                string name = UnityGameTranslator.Common.FontReferences.Name(fallback);
+                if (!names.Contains(name, StringComparer.OrdinalIgnoreCase)) names.Add(name);
+            }
+            return names;
+        }
+
+        /// <summary>
+        /// An installed font's bytes, as a single font: its .ttf/.otf (CustomFontLoader's search), or
+        /// its face in a collection of the system's font folders — taken out and kept in the copies'
+        /// folder, since the rasterizer of TMP text reads a single font from a path
+        /// (<see cref="SourcePathOfInstalled"/>). Null, and said, when not found.
+        /// </summary>
+        private static byte[] InstalledFont(string name, string folder, out string path)
+        {
+            path = CustomFontLoader.FindSystemTtfPath(name);
             try
             {
-                bytes = File.ReadAllBytes(path);
-                parser = new TtfParser(bytes);
+                if (path != null) return File.ReadAllBytes(path);
+                foreach (var dir in CustomFontLoader.SystemFontDirectories())
+                    foreach (var file in Directory.GetFiles(dir, "*.ttc", SearchOption.AllDirectories))
+                    {
+                        int face;
+                        using (var stream = File.OpenRead(file)) face = FontCollection.FindFace(stream, name);
+                        if (face < 0) continue;
+                        byte[] bytes = FontCollection.Face(File.ReadAllBytes(file), face);
+                        Directory.CreateDirectory(folder);
+                        path = Path.Combine(folder, "sys-" + Sanitized(name) + ".ttf");
+                        File.WriteAllBytes(path, bytes);
+                        return bytes;
+                    }
             }
+            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException || ex is InvalidDataException || ex is ArgumentException)
+            {
+                Faults.Say("DerivedFonts.InstalledFont", ex, Sanitize.Path(path ?? name));
+                path = null;
+                return null;
+            }
+            TranslatorCore.LogInfo($"[DerivedFonts] installed font '{name}' named by the translation: no file found — no derived copy");
+            return null;
+        }
+
+        /// <summary>
+        /// The single-font file an installed font was derived from — the one the rasterizer builds a
+        /// TMP asset from, so TMP text in that font is shaped by its tables as a fonts/ font's is.
+        /// Null when the translation did not name it at start.
+        /// </summary>
+        internal static string SourcePathOfInstalled(string fontName) => GetInstalled(fontName)?.SourcePath;
+
+        private static Entry Build(string name, UnityGameTranslator.Common.FontSource origin, string key, string path, byte[] bytes,
+                                   string folder, int reserve, Newtonsoft.Json.Linq.JObject translation)
+        {
+            TtfParser parser;
+            try { parser = new TtfParser(bytes); }
             catch (Exception ex) { Faults.Say("DerivedFonts.Build", ex, Sanitize.Path(path)); return null; }
 
             // Only a font carrying a script the shapers act on: a Latin font needs no copy.
             if (!CoversShapedScript(parser)) return null;
             if (!parser.TryGetTable("glyf", out _, out _))
             {
-                TranslatorCore.LogWarning($"[DerivedFonts] {Path.GetFileName(path)}: CFF outlines — no derived copy, its shaped scripts keep the codepoint path in legacy text");
+                TranslatorCore.LogWarning($"[DerivedFonts] {name}: CFF outlines — no derived copy, its shaped scripts keep the codepoint path in legacy text");
                 return null;
             }
 
-            string name = Path.GetFileNameWithoutExtension(path);
             var font = new TtfShapingFont(parser);
             var entry = new Entry
             {
                 Name = name,
+                Origin = origin,
+                Key = key,
                 SourcePath = path,
                 Source = bytes,
-                BaseFamily = "UGT " + (parser.Metrics?.FontName ?? name),
+                // Apart per origin: fonts/ may hold a copy of the very font installed on the machine,
+                // and two copies under one family would let the engine open either.
+                BaseFamily = (origin == UnityGameTranslator.Common.FontSource.System ? "UGT Sys " : "UGT ") + (parser.Metrics?.FontName ?? name),
                 Font = font,
                 Namer = new DerivedGlyphs(font, parser.GlyphCount),
             };
             entry.Namer.OnExhausted = why => TranslatorCore.LogWarning($"[DerivedFonts] {name}: {why}");
             for (int k = 0; k < reserve; k++)
-                entry.Files.Add(Path.Combine(folder, $"ugt-{Sanitized(name)}-{k}.ttf"));
+                entry.Files.Add(Path.Combine(folder, $"ugt-{key}-{k}.ttf"));
 
             try
             {
@@ -129,7 +242,7 @@ namespace UnityGameTranslator.Core
                     int refused = entry.Namer.Load(File.ReadAllText(entry.NamesPath));
                     if (refused > 0) TranslatorCore.LogWarning($"[DerivedFonts] {name}: {refused} saved name(s) did not fit this font and were left out");
                 }
-                PreName(entry);
+                PreName(entry, translation);
                 // Every file of the reserve is a valid font of its own family from the start: the
                 // engine reads the names when it lists the folder. The first holds everything known.
                 for (int k = 0; k < entry.Files.Count; k++)
@@ -159,21 +272,13 @@ namespace UnityGameTranslator.Core
         /// changed since the names were last saved (a relaunch with the same file does nothing), and
         /// timed in the log: this is main-thread work while the game starts.
         /// </summary>
-        private static void PreName(Entry entry)
+        private static void PreName(Entry entry, Newtonsoft.Json.Linq.JObject file)
         {
-            if (string.IsNullOrEmpty(_translationsPath) || !File.Exists(_translationsPath)) return;
+            if (file == null) return;
             if (File.Exists(entry.NamesPath) && File.GetLastWriteTimeUtc(entry.NamesPath) >= File.GetLastWriteTimeUtc(_translationsPath)) return;
 
             var sw = System.Diagnostics.Stopwatch.StartNew();
             int before = entry.Namer.Added.Count, lines = 0;
-            Newtonsoft.Json.Linq.JObject file;
-            try { file = Newtonsoft.Json.Linq.JObject.Parse(File.ReadAllText(_translationsPath)); }
-            catch (Exception ex) when (ex is IOException || ex is Newtonsoft.Json.JsonException)
-            {
-                // The translation is read again, properly, by the loader — which says what is wrong with it.
-                Faults.Say("DerivedFonts.PreName", ex, Sanitize.Path(_translationsPath));
-                return;
-            }
             foreach (var property in file.Properties())
             {
                 if (property.Name.StartsWith("_")) continue;
@@ -268,7 +373,7 @@ namespace UnityGameTranslator.Core
         /// <summary>The names handed out, kept for the next launch — when the game closes.</summary>
         internal static void SaveNames()
         {
-            foreach (var entry in _byName.Values)
+            foreach (var entry in All())
             {
                 try { File.WriteAllText(entry.NamesPath, entry.Namer.Save()); }
                 catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)

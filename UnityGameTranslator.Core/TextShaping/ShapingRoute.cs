@@ -13,7 +13,7 @@ namespace UnityGameTranslator.Core.TextShaping
         {
             /// <summary>The font's OpenType tables, through a TMP font asset of ours (FontShaping).</summary>
             OurTmpAsset,
-            /// <summary>The font's OpenType tables, through the fonts/ font's derived copy (DerivedFonts).</summary>
+            /// <summary>The font's OpenType tables, through its derived copy — a fonts/ or an installed font (DerivedFonts).</summary>
             DerivedFont,
             /// <summary>The engine shapes by itself (UI Toolkit's Advanced Text Generator): the logical text goes as is.</summary>
             Native,
@@ -22,9 +22,9 @@ namespace UnityGameTranslator.Core.TextShaping
         }
 
         /// <param name="isTmp">a TextMesh Pro component (modern or TMProOld)</param>
-        /// <param name="hasOurTmpAsset">its font is replaced by a TMP asset our rasterizer built from a fonts/ TTF</param>
+        /// <param name="hasOurTmpAsset">its font is replaced by a TMP asset our rasterizer built from a font file (fonts/, or an installed font that needs shaping)</param>
         /// <param name="drawsLegacyFont">uGUI Text, or UI Toolkit on its standard generator — re-fonted with a UnityEngine.Font</param>
-        /// <param name="hasDerivedFont">that Font comes from a fonts/ font with a derived copy shown to the engine</param>
+        /// <param name="hasDerivedFont">that Font comes from a font with a derived copy shown to the engine (fonts/ or installed)</param>
         /// <param name="engineShapes">UI Toolkit rendering through its Advanced Text Generator</param>
         internal static Route Decide(bool isTmp, bool hasOurTmpAsset, bool drawsLegacyFont, bool hasDerivedFont, bool engineShapes)
         {

@@ -1377,6 +1377,24 @@ namespace UnityGameTranslator.Core
             catch (Exception ex) { Faults.Say("TypeHelper.SetAllDirty", ex, component.GetType().Name); }
         }
 
+        private static readonly ConcurrentDictionary<string, ConcurrentDictionary<Type, MethodInfo>> _noArgByName =
+            new ConcurrentDictionary<string, ConcurrentDictionary<Type, MethodInfo>>(StringComparer.Ordinal);
+
+        /// <summary>
+        /// Call a component's public no-argument method by name when its type has one (NGUI's
+        /// MarkAsChanged after its font changed) — looked up once per type, like SetAllDirty.
+        /// </summary>
+        public static void InvokeNoArg(object component, string methodName)
+        {
+            if (!IsUnityObjectAlive(component)) return;
+            try
+            {
+                var memo = _noArgByName.GetOrAdd(methodName, _ => new ConcurrentDictionary<Type, MethodInfo>());
+                NoArgMethodOf(memo, component.GetType(), methodName)?.Invoke(component, null);
+            }
+            catch (Exception ex) { Faults.Say("TypeHelper.InvokeNoArg", ex, component.GetType().Name + "." + methodName); }
+        }
+
         // Canvas.ForceUpdateCanvases() — static, resolved once.
         private static MethodInfo _forceUpdateCanvasesMethod;
         private static bool _forceUpdateCanvasesResolved;

@@ -3248,7 +3248,10 @@ namespace UnityGameTranslator.Core
         /// callers use it to decide whether the per-font scale is due (a component left on the game
         /// font must keep the game size).
         /// </summary>
-        public static Font TryApplyUnityClone(object component, object fontObj, string settingsFontName, string text)
+        /// <param name="setFont">how a component that is neither uGUI Text nor TextMesh takes a Font (NGUI's
+        /// trueTypeFont and its MarkAsChanged); null for those two</param>
+        public static Font TryApplyUnityClone(object component, object fontObj, string settingsFontName, string text,
+                                              Action<Font> setFont = null)
         {
             if (component == null || string.IsNullOrEmpty(settingsFontName)) return null;
             // A template keeps the game's font: a copy made from it with our clone is taken for a
@@ -3279,6 +3282,12 @@ namespace UnityGameTranslator.Core
 
             if (applyClone && !string.Equals(currentName, replaceName, StringComparison.OrdinalIgnoreCase))
             {
+                if (setFont != null)
+                {
+                    setFont(replacementFont);
+                    PreWarmCloneAtlas(settingsFontName, replacementFont);
+                    return replacementFont;
+                }
                 TypeHelper.SetFont(component, replacementFont);
                 PreWarmCloneAtlas(settingsFontName, replacementFont);
                 // A TextMesh draws with its renderer's material, which carries the font's atlas: the

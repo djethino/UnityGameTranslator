@@ -364,14 +364,33 @@ namespace UnityGameTranslator.Core.TextShaping
         /// <summary>
         /// A component the mod re-fonts with a UnityEngine.Font — uGUI Text, TextMesh, and a UI Toolkit
         /// text element on its standard generator (the ATG case never reaches here) — the ones that
-        /// take a derived copy (FontManager.GetUnityReplacementFont). tk2d and NGUI do not: the mod
-        /// replaces neither's font (analyse/ecritures-complexes-etat-reel.md, tk2d / NGUI).
+        /// take a derived copy (FontManager.GetUnityReplacementFont) — and an NGUI label drawing a
+        /// dynamic font (trueTypeFont). tk2d and NGUI's bitmap UIFont do not: the mod replaces
+        /// neither (analyse/ecritures-complexes-etat-reel.md, tk2d / NGUI).
         /// </summary>
         private static bool DrawsFromLegacyFont(object instance) =>
             instance != null
             && ((TypeHelper.UI_TextType != null && TypeHelper.UI_TextType.IsInstanceOfType(instance))
                 || (TypeHelper.TextMeshType != null && TypeHelper.TextMeshType.IsInstanceOfType(instance))
-                || UIToolkitSupport.IsTextElementInstance(instance));
+                || UIToolkitSupport.IsTextElementInstance(instance)
+                || DrawsDynamicFont(instance));
+
+        private static readonly Dictionary<Type, System.Reflection.PropertyInfo> _trueTypeFontProps = new Dictionary<Type, System.Reflection.PropertyInfo>();
+
+        /// <summary>A component drawing with a dynamic UnityEngine.Font of its own (NGUI's trueTypeFont) — re-fonted by the mod like uGUI Text.</summary>
+        private static bool DrawsDynamicFont(object instance)
+        {
+            var type = instance.GetType();
+            if (!_trueTypeFontProps.TryGetValue(type, out var prop))
+            {
+                prop = type.GetProperty("trueTypeFont", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+                if (prop != null && !typeof(UnityEngine.Font).IsAssignableFrom(prop.PropertyType)) prop = null;
+                _trueTypeFontProps[type] = prop;
+            }
+            if (prop == null) return false;
+            try { return prop.GetValue(instance, null) is UnityEngine.Font f && f != null; }
+            catch (Exception ex) { Faults.Say("RtlPresenter.DrawsDynamicFont", ex, type.Name); return false; }
+        }
 
         private static void PresentSyllabic(object instance, long compId, ref string value, string settingsFontName, bool ownUi)
         {

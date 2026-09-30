@@ -18,6 +18,9 @@ namespace UnityGameTranslator.Core
         public Type ComponentType { get; set; }
         public PropertyInfo TextProp { get; set; }          // .text (string get/set)
         public PropertyInfo FontProp { get; set; }          // .font or .trueTypeFont (Font)
+        // A writable UnityEngine.Font the component draws with when it has one — NGUI's UILabel
+        // `trueTypeFont` (its `font` is the bitmap UIFont): the one the mod can replace.
+        public PropertyInfo TrueTypeFontProp { get; set; }
         public PropertyInfo FontSizeProp { get; set; }      // .fontSize (int or float)
         public PropertyInfo ColorProp { get; set; }         // .color (Color)
         public string FontTypeName { get; set; }            // For FontManager registration
@@ -652,6 +655,13 @@ namespace UnityGameTranslator.Core
 
         // Common font property names to check (in priority order)
         private static readonly string[] FontPropertyNames = { "font", "trueTypeFont", "fontAsset" };
+
+        /// <summary>A readable and writable `trueTypeFont` of type UnityEngine.Font (NGUI's dynamic font), or null.</summary>
+        private static PropertyInfo TrueTypeFontPropertyOf(Type type)
+        {
+            var p = type.GetProperty("trueTypeFont", BindingFlags.Public | BindingFlags.Instance);
+            return p != null && p.CanRead && p.CanWrite && typeof(Font).IsAssignableFrom(p.PropertyType) ? p : null;
+        }
         private static readonly string[] FontSizePropertyNames = { "fontSize", "size", "fontsize" };
 
         /// <summary>
@@ -781,6 +791,7 @@ namespace UnityGameTranslator.Core
                             ComponentType = type,
                             TextProp = textProp,
                             FontProp = fontProp,
+                            TrueTypeFontProp = TrueTypeFontPropertyOf(type),
                             FontSizeProp = fontSizeProp,
                             ColorProp = colorProp,
                             FontTypeName = framework == "NGUI" ? "NGUI" : $"Custom ({cleanName})",
@@ -911,12 +922,19 @@ namespace UnityGameTranslator.Core
                 // skip font detection/registration for own UI while still translating it.
                 bool isOwnUI = TranslatorCore.IsOwnUITranslatable(component);
 
-                // Get font name if available
-                if (typeInfo?.FontProp != null && !isOwnUI)
+                // Get font name if available. A component drawing with a dynamic UnityEngine.Font
+                // (NGUI's trueTypeFont) is known by that font: the one the mod can replace.
+                Font dynamicFont = null;
+                if (typeInfo?.TrueTypeFontProp != null && !isOwnUI)
+                {
+                    try { dynamicFont = typeInfo.TrueTypeFontProp.GetValue(__instance, null) as Font; }
+                    catch (Exception ex) { Faults.Say("Patches.GenericText_SetText trueTypeFont", ex, typeInfo.Name); }
+                }
+                if ((dynamicFont != null || typeInfo?.FontProp != null) && !isOwnUI)
                 {
                     try
                     {
-                        var fontObj = typeInfo.FontProp.GetValue(__instance, null);
+                        var fontObj = dynamicFont != null ? dynamicFont : typeInfo.FontProp.GetValue(__instance, null);
                         if (fontObj is UnityEngine.Object uobj && !string.IsNullOrEmpty(uobj.name))
                         {
                             fontName = uobj.name;
@@ -958,6 +976,15 @@ namespace UnityGameTranslator.Core
                     genericOverride = TranslatorCore.FindFontOverride(gid, goPath, settingsFontName ?? fontName, gameText);
                     FontManager.ApplyRuleScale((int)gid, genericOverride);
                 }
+                // A dynamic font replaced like uGUI Text's (FontManager.TryApplyUnityClone): the same
+                // replacement, derived copy included, set through the component's own property.
+                if (dynamicFont != null && settingsFontName != null)
+                {
+                    var prop = typeInfo.TrueTypeFontProp;
+                    FontManager.TryApplyUnityClone(__instance, dynamicFont, settingsFontName, value,
+                        font => { prop.SetValue(__instance, font, null); TypeHelper.InvokeNoArg(__instance, "MarkAsChanged"); });
+                }
+
                 TextShaping.RtlPresenter.Present(__instance, TypeHelper.GetInstanceID(__instance), ref value,
                                                  settingsFontName ?? fontName, genericOverride);
 

@@ -13,7 +13,7 @@ namespace UnityGameTranslator.Core
     /// Settings are stored in translations.json (_fonts) for sharing with translations.
     /// All font references use object to avoid direct TMPro/UI type dependencies (IL2CPP compat).
     /// </summary>
-    public static class FontManager
+    public static partial class FontManager
     {
         // Detected fonts from the game (runtime detection) - keyed by font name
         private static readonly HashSet<string> _detectedTMPFontNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);

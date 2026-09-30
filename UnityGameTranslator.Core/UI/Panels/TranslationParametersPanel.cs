@@ -1190,6 +1190,14 @@ namespace UnityGameTranslator.Core.UI.Panels
             Window.ToBack();
         }
 
+        public void OpenOnFontsTab()
+        {
+            SetActive(true);
+            _tabBar?.SelectTab("Fonts");
+            _fontsSubTabBar?.SelectTab("Global");
+            Window.ToBack();
+        }
+
         public void OpenOnFontOverridesTab()
         {
             SetActive(true);
@@ -1878,6 +1886,20 @@ namespace UnityGameTranslator.Core.UI.Panels
                     row.Say("sceneCount", $"{fontInfo.SceneCount} " + Tr("in scene"));
                     count.Tone = fontInfo.SceneCount > 0 ? Tone.Secondary : Tone.Muted;
                     count.Visible = true;
+                }
+
+                // What the translation wrote with this font and the font cannot display — characters it
+                // lacks, or text it cannot shape — measured, any language (FontManager.Coverage); the
+                // corner says it too. The way out is the fallback picker of this same row.
+                var problem = FontManager.ProblemOf(capturedFontName);
+                if (problem != null)
+                {
+                    string language = TranslatorCore.EffectiveTargetLanguage;
+                    string what = string.IsNullOrEmpty(language) ? "this translation" : language;
+                    row.Say("missingChars", problem.Value.Missing > 0
+                        ? $"Missing {problem.Value.Missing} characters of {what}."
+                        : $"Cannot display {what} correctly. Choose a System or Custom font.");
+                    row.Label("MissingChars").Visible = true;
                 }
 
                 // Enable toggle

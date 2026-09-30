@@ -92,6 +92,12 @@ namespace UnityGameTranslator.Core.UI.Panels
         private ButtonHandle _failuresFixBtn;
         private int _failuresIgnoredAt = -1;   // the count Ignore was pressed at; another failure shows the box again
 
+        // Game fonts that cannot display the translation correctly — characters they lack, or text
+        // they cannot shape (FontManager.Coverage): the fact, and the way to the Fonts tab.
+        private Host _fontCoverageBox;
+        private LabelHandle _fontCoverageLabel;
+        private int _fontCoverageIgnoredAt;    // the weight Ignore was pressed at (MissingWeight); more shows the box again
+
         // UI elements - SSE connection indicator
         private Host _connectionBox;
         private LabelHandle _connectionLabel;
@@ -303,7 +309,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (live) return true;
             if (panelsOpen) return false;
 
-            return ShowsModUpdate(false) || ShowsSync(false) || _webNotifWanted || ShowsFailures(false);
+            return ShowsModUpdate(false) || ShowsSync(false) || _webNotifWanted || ShowsFailures(false) || ShowsFontCoverage(false);
         }
 
         private static bool ShowsModUpdate(bool panelsOpen)
@@ -317,6 +323,27 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             int failed = TranslatorCore.Failures.Count;
             return !panelsOpen && failed > 0 && failed != _failuresIgnoredAt;
+        }
+
+        /// <summary>
+        /// A game font that cannot display the translation correctly — any font, any language (user,
+        /// 2026-09-30) — not ignored at this weight. Only what was measured (FontManager.Coverage): a
+        /// font nothing can speak for is never reported.
+        /// </summary>
+        private bool ShowsFontCoverage(bool panelsOpen)
+        {
+            if (panelsOpen) return false;
+            int weight = MissingWeight(out _);
+            return weight > 0 && weight > _fontCoverageIgnoredAt;
+        }
+
+        /// <summary>Characters missing over every game font, plus one per font that cannot shape: more of either shows the box again after Ignore.</summary>
+        private static int MissingWeight(out List<FontManager.FontProblem> fonts)
+        {
+            fonts = FontManager.FontProblems();
+            int weight = 0;
+            foreach (var f in fonts) weight += f.Missing + (f.Unshaped ? 1 : 0);
+            return weight;
         }
 
         /// <summary>What the last website poll left for this corner (RefreshNotificationsBox).</summary>
@@ -376,6 +403,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             _failuresBox = _screen.Host("FailuresBox");
             _failuresLabel = _screen.Label("FailuresLabel");
             _failuresFixBtn = _screen.Button("FailuresFixBtn");
+            _fontCoverageBox = _screen.Host("FontCoverageBox");
+            _fontCoverageLabel = _screen.Label("FontCoverageLabel");
             TranslatorCore.Failures.Changed += () => TranslatorUIManager.RunOnMainThread(RefreshOverlay);
             _syncLabel = _screen.Label("SyncLabel");
             _syncBranchBtn = _screen.Button("SyncBranchBtn");
@@ -429,6 +458,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                 case "webNotifDismiss": return OnWebNotifDismissClicked;
                 case "failuresFix": return OnFailuresFixClicked;
                 case "failuresIgnore": return OnFailuresIgnoreClicked;
+                case "fontCoverageFix": return () => Intents.OpenTranslationParameters(ParametersTab.Fonts);
+                case "fontCoverageIgnore": return OnFontCoverageIgnoreClicked;
                 case "unreachableSettings": return Intents.OpenTranslationSettings;
                 case "unreachableIgnore": return Intents.PauseLiveTranslation;
                 default: return null;
@@ -777,6 +808,20 @@ namespace UnityGameTranslator.Core.UI.Panels
                 if (_failuresFixBtn != null) _failuresFixBtn.Label = $"Fix ({failed})";
             }
 
+            // 2b bis. Game fonts that cannot display what the translation wrote with them. One box for
+            // all of them: the Fonts tab names each, on its own row.
+            bool showCoverage = ShowsFontCoverage(_panelsOpenMode);
+            if (_fontCoverageBox != null) _fontCoverageBox.Visible = showCoverage;
+            if (showCoverage)
+            {
+                MissingWeight(out var fonts);
+                string language = TranslatorCore.EffectiveTargetLanguage;
+                string what = string.IsNullOrEmpty(language) ? "this translation" : language;
+                _fontCoverageLabel?.Show(fonts.Count == 1
+                    ? $"Font \"{fonts[0].Font}\" cannot display {what} correctly"
+                    : $"{fonts.Count} fonts cannot display {what} correctly");
+            }
+
             // 2c. A font being converted in the background: the game keeps running, and this says
             // why the text has not changed font yet — and that it is moving.
             var conversions = FontConversions.Current();
@@ -975,7 +1020,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // 🔴 Every box of the stack, the site's notification included: left out of this list,
             // it was drawn without a height of its own, over the buttons of the box above it.
-            foreach (var box in new[] { _modUpdateBox, _syncBox, _webNotifBox, _failuresBox, _unreachableBox, _fontBox, _aiBox, _connectionBox, _toast?.Handle })
+            foreach (var box in new[] { _modUpdateBox, _syncBox, _webNotifBox, _failuresBox, _fontCoverageBox, _unreachableBox, _fontBox, _aiBox, _connectionBox, _toast?.Handle })
             {
                 if (box == null || !box.Visible) continue;
 
@@ -1018,6 +1063,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (_syncBox != null && _syncBox.Visible) height += 60;
             if (_webNotifBox != null && _webNotifBox.Visible) height += 60;
             if (_failuresBox != null && _failuresBox.Visible) height += 60;
+            if (_fontCoverageBox != null && _fontCoverageBox.Visible) height += 60;
             if (_unreachableBox != null && _unreachableBox.Visible) height += 80;
             if (_aiBox != null && _aiBox.Visible) height += 50;
             if (_fontBox != null && _fontBox.Visible) height += 50;
@@ -1165,6 +1211,12 @@ namespace UnityGameTranslator.Core.UI.Panels
         private void OnFailuresIgnoreClicked()
         {
             _failuresIgnoredAt = TranslatorCore.Failures.Count;
+            RefreshOverlay();
+        }
+
+        private void OnFontCoverageIgnoreClicked()
+        {
+            _fontCoverageIgnoredAt = MissingWeight(out _);
             RefreshOverlay();
         }
 

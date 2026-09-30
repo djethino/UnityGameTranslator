@@ -116,6 +116,10 @@ namespace UnityGameTranslator.Core.TextShaping
             if (!TranslatorCore.IsMainThread) return;
             PresentCount++;
 
+            // Every game text goes out through here, with its font and still logical: the account
+            // of what each font must be able to draw (FontManager.Coverage).
+            FontManager.NoteTextDrawn(settingsFontName, value);
+
             long tPerf = Perf.Start();
             try
             {
@@ -423,6 +427,11 @@ namespace UnityGameTranslator.Core.TextShaping
                         DerivedFonts.NoteNamed(derived);   // new names → the copy is rewritten this tick
                         break;
                     }
+                    case ShapingRoute.Route.ReorderOnly:
+                        // Shown without its shaping: said on the Fonts tab and in the corner, for a
+                        // text of the translation (FontManager.Coverage).
+                        if (TranslatorCore.IsAlreadyTargetText(logical)) FontManager.NoteUnshaped(settingsFontName);
+                        break;
                 }
             }
             if (needsReorder && !shaped)

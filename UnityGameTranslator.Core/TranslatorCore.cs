@@ -2769,6 +2769,9 @@ namespace UnityGameTranslator.Core
             // a download that resolves the disagreement must not leave the old one standing.
             _languages.Reset();
 
+            // Which characters each font has drawn is an account of THIS translation's texts.
+            FontManager.Coverage.Clear();
+
             // The mod's own interface lives in its own file and is read first: the game file below
             // may still carry interface lines (written before the split, or arrived with somebody
             // else's translation) and what happens to them depends on what this already holds.

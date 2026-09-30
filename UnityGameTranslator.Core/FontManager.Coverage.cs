@@ -1,0 +1,256 @@
+using System;
+using System.Collections.Generic;
+using System.Reflection;
+using UnityEngine;
+
+namespace UnityGameTranslator.Core
+{
+    /// <summary>
+    /// "This font cannot display the translation" — for any game font and any language (user,
+    /// 2026-09-30: no list of scripts; say the current font seems to lack the target language's
+    /// characters, with a way to the font replacement and an Ignore). The characters are those the
+    /// translation actually wrote with the font (FontCoverage, fed by the text hooks); whether the
+    /// font that draws them has them is answered here, from what can be PROVED:
+    /// - a replacement with a file (fonts/, or installed): the file's character map;
+    /// - the game's TextMesh Pro asset: its own HasCharacter, fallbacks included, adding the
+    ///   character when the asset is dynamic — what drawing it would do;
+    /// - the game's legacy Font: Font.HasCharacter, the probe the clone rule already trusts.
+    /// A font none of these can speak for (UI Toolkit, tk2d, NGUI, a probe the runtime stripped) is
+    /// never reported: a message must be provable.
+    /// Main thread (Unity objects).
+    /// </summary>
+    public static partial class FontManager
+    {
+        internal static readonly FontCoverage Coverage = new FontCoverage();
+
+        /// <summary>
+        /// Accounts for a translated text drawn with a game font. Called by the text hooks
+        /// (RtlPresenter.Present) before any shaping, with the logical text. Only our translations
+        /// count: the game's own texts are its font's business.
+        /// </summary>
+        internal static void NoteTextDrawn(string settingsFontName, string text)
+        {
+            if (string.IsNullOrEmpty(settingsFontName) || string.IsNullOrEmpty(text)) return;
+            if (Coverage.Seen(settingsFontName, text)) return;
+            if (!TranslatorCore.IsAlreadyTargetText(text))
+            {
+                // Remembered as read: a text that is not ours now is the source of one, a different string.
+                Coverage.Record(settingsFontName, "");
+                return;
+            }
+            Coverage.Record(settingsFontName, text);
+        }
+
+        // ── the answers, cached until something they depend on changes ──
+
+        private static int _missingAtVersion = -1;
+        private static int _missingAtSettings;
+        private static readonly Dictionary<string, List<int>> _missingByFont = new Dictionary<string, List<int>>(StringComparer.Ordinal);
+        private static readonly Dictionary<string, HashSet<int>> _cmapByPath = new Dictionary<string, HashSet<int>>(StringComparer.OrdinalIgnoreCase);
+        private static readonly Dictionary<string, string> _installedPathByName = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// What the answers depend on besides the texts: the replacements chosen, whether replacing is
+        /// on, the fonts/ files known and the game fonts loaded. Read at every ask — a handful of
+        /// entries — so no change of setting, file or scene has to remember to say it (the answers
+        /// follow the state, not the events that changed it).
+        /// </summary>
+        private static int SettingsSignature()
+        {
+            unchecked
+            {
+                int h = TranslatorCore.FontReplacementActive ? 1 : 2;
+                h = h * 31 + CustomFontLoader.CustomFonts.Count;
+                h = h * 31 + _detectedTMPFontObjects.Count;
+                h = h * 31 + _gameUnityFonts.Count;
+                foreach (var kv in TranslatorCore.FontSettingsMap)
+                    h = h * 31 + (kv.Key.GetHashCode() ^ (kv.Value?.fallback ?? "").GetHashCode());
+                return h;
+            }
+        }
+
+        /// <summary>A game font that cannot display the translation correctly: characters it lacks, or text it cannot shape.</summary>
+        internal struct FontProblem
+        {
+            public string Font;
+            public int Missing;       // characters of the translation the drawing font lacks
+            public bool Unshaped;     // a text needing shaping (joined letters, conjuncts) shown without it
+        }
+
+        /// <summary>Every game font that cannot display what the translation wrote with it, by name.</summary>
+        internal static List<FontProblem> FontProblems()
+        {
+            Refresh();
+            var list = new List<FontProblem>();
+            foreach (var font in Coverage.Fonts)
+            {
+                _missingByFont.TryGetValue(font, out var missing);
+                int count = missing?.Count ?? 0;
+                bool unshaped = Coverage.IsUnshaped(font);
+                if (count > 0 || unshaped) list.Add(new FontProblem { Font = font, Missing = count, Unshaped = unshaped });
+            }
+            list.Sort((a, b) => string.CompareOrdinal(a.Font, b.Font));
+            return list;
+        }
+
+        /// <summary>This game font's problem, or null when it displays the translation (or nothing can tell).</summary>
+        internal static FontProblem? ProblemOf(string settingsFontName)
+        {
+            foreach (var p in FontProblems())
+                if (string.Equals(p.Font, settingsFontName, StringComparison.Ordinal)) return p;
+            return null;
+        }
+
+        /// <summary>
+        /// A text drawn with this game font needed shaping its font could not give (ShapingRoute said
+        /// "reorder only"): every character may be there, and the text is still wrong on screen.
+        /// </summary>
+        internal static void NoteUnshaped(string settingsFontName)
+        {
+            if (Coverage.NoteUnshaped(settingsFontName))
+                TranslatorCore.LogInfo($"[FontManager] '{settingsFontName}' draws text that needs shaping without it — a font file (Custom or System) shapes it");
+        }
+
+        private static void Refresh()
+        {
+            int signature = SettingsSignature();
+            if (_missingAtVersion == Coverage.Version && _missingAtSettings == signature) return;
+            if (_missingAtSettings != signature)
+            {
+                _installedPathByName.Clear();
+                _cmapByPath.Clear();
+                // Another replacement may shape what the last one could not: learned again from the
+                // texts drawn next (a change of font setting re-sets every text).
+                if (_missingAtVersion != -1) Coverage.ForgetUnshaped();
+            }
+            _missingAtVersion = Coverage.Version;
+            _missingAtSettings = signature;
+            var before = new Dictionary<string, int>(StringComparer.Ordinal);
+            foreach (var kv in _missingByFont) before[kv.Key] = kv.Value.Count;
+            _missingByFont.Clear();
+            foreach (var font in Coverage.Fonts)
+            {
+                var sources = CoverageSources(font);
+                if (sources.Count == 0) continue;
+                _missingByFont[font] = Coverage.Missing(font, cp =>
+                {
+                    bool known = false;
+                    foreach (var source in sources)
+                    {
+                        bool? has = source(cp);
+                        if (has == true) return true;
+                        if (has == false) known = true;
+                    }
+                    return known ? false : (bool?)null;
+                });
+            }
+            // Said in the log when it changes — the first thing to read when the corner speaks of it.
+            foreach (var kv in _missingByFont)
+            {
+                before.TryGetValue(kv.Key, out int was);
+                if (kv.Value.Count == was) continue;
+                var sample = new System.Text.StringBuilder();
+                for (int i = 0; i < kv.Value.Count && i < 12; i++) sample.Append($" U+{kv.Value[i]:X4}");
+                TranslatorCore.LogInfo($"[FontManager] '{kv.Key}' cannot display {kv.Value.Count} character(s) of the translation:{sample}{(kv.Value.Count > 12 ? " …" : "")}");
+            }
+        }
+
+        /// <summary>
+        /// What draws this game font's text: its replacement when one is set and active, and the
+        /// game's font (TextMesh Pro takes the replacement as a FALLBACK of it; legacy text keeps the
+        /// game font for a text the replacement cannot cover). A character is displayed when ANY of
+        /// them has it.
+        /// </summary>
+        private static List<Func<int, bool?>> CoverageSources(string settingsFontName)
+        {
+            var sources = new List<Func<int, bool?>>();
+            TranslatorCore.FontSettingsMap.TryGetValue(settingsFontName, out var settings);
+            string fallback = settings?.fallback;
+            if (TranslatorCore.FontReplacementActive && !string.IsNullOrEmpty(fallback))
+            {
+                string name = UnityGameTranslator.Common.FontReferences.Name(fallback);
+                var served = UnityGameTranslator.Common.FontReferences.Serving(fallback,
+                    gameHas: IsGameFont(name), customHas: CustomFontLoader.CustomFonts.ContainsKey(name),
+                    systemHas: AssetAvailability.IsSystemFontAvailable(name));
+                string path = null;
+                if (served == UnityGameTranslator.Common.FontSource.Custom
+                    && CustomFontLoader.CustomFonts.TryGetValue(name, out var info)) path = info?.TtfPath;
+                else if (served == UnityGameTranslator.Common.FontSource.System) path = InstalledFontPath(name);
+                var cmap = CharacterMap(path);
+                if (cmap != null) sources.Add(cp => cmap.Contains(cp));
+                else if (served == UnityGameTranslator.Common.FontSource.Game)
+                {
+                    var own = ObjectCoverage(GetGameFont(name) ?? (object)FindLoadedGameUnityFont(name));
+                    if (own != null) sources.Add(own);
+                }
+            }
+            object gameFont = null;
+            if (_detectedTMPFontObjects.TryGetValue(settingsFontName, out var tmp)) gameFont = tmp;
+            else if (_gameUnityFonts.TryGetValue(settingsFontName, out var legacy)) gameFont = legacy;
+            var game = ObjectCoverage(gameFont);
+            if (game != null) sources.Add(game);
+            return sources;
+        }
+
+        private static string InstalledFontPath(string name)
+        {
+            if (_installedPathByName.TryGetValue(name, out var path)) return path;
+            path = DerivedFonts.SourcePathOfInstalled(name) ?? CustomFontLoader.FindSystemTtfPath(name);
+            _installedPathByName[name] = path;
+            return path;
+        }
+
+        /// <summary>A font file's characters, read once per file. Null when there is no file or it cannot be read (then nothing is claimed).</summary>
+        private static HashSet<int> CharacterMap(string path)
+        {
+            if (string.IsNullOrEmpty(path)) return null;
+            if (_cmapByPath.TryGetValue(path, out var cmap)) return cmap;
+            try
+            {
+                cmap = new HashSet<int>(new Rasterizer.TtfParser(System.IO.File.ReadAllBytes(path)).GetSupportedCodepoints());
+            }
+            catch (Exception ex) when (ex is System.IO.IOException || ex is UnauthorizedAccessException || ex is System.IO.InvalidDataException || ex is ArgumentException || ex is IndexOutOfRangeException)
+            {
+                Faults.Say("FontManager.CharacterMap", ex, Sanitize.Path(path));
+                cmap = null;
+            }
+            _cmapByPath[path] = cmap;
+            return cmap;
+        }
+
+        /// <summary>
+        /// A loaded font object's own answer: TextMesh Pro's HasCharacter (fallbacks searched, the
+        /// character added when the asset is dynamic — as drawing it would), or Font.HasCharacter.
+        /// Null when the object or its probe is not there.
+        /// </summary>
+        private static Func<int, bool?> ObjectCoverage(object font)
+        {
+            if (font == null) return null;
+            if (font is Font legacy)
+            {
+                var probe = FontHasCharacterMethod;
+                if (probe == null) return null;
+                return cp => cp > 0xFFFF ? (bool?)null : Invoke(probe, legacy, (char)cp);
+            }
+            var type = font.GetType();
+            var full = type.GetMethod("HasCharacter", BindingFlags.Public | BindingFlags.Instance, null, new[] { typeof(char), typeof(bool), typeof(bool) }, null);
+            if (full != null) return cp => cp > 0xFFFF ? (bool?)null : Invoke(full, font, (char)cp, true, true);
+            var plain = type.GetMethod("HasCharacter", BindingFlags.Public | BindingFlags.Instance, null, new[] { typeof(char) }, null);
+            if (plain != null) return cp => cp > 0xFFFF ? (bool?)null : Invoke(plain, font, (char)cp);
+            var byInt = type.GetMethod("HasCharacter", BindingFlags.Public | BindingFlags.Instance, null, new[] { typeof(int) }, null);
+            if (byInt != null) return cp => Invoke(byInt, font, cp);
+            return null;
+        }
+
+        private static bool? Invoke(MethodInfo method, object target, params object[] args)
+        {
+            try { return (bool)method.Invoke(target, args); }
+            catch (Exception ex)
+            {
+                // A probe that fails says nothing — never "missing".
+                TranslatorCore.LogDebug($"[FontManager] coverage probe {method.DeclaringType?.Name}.HasCharacter failed: {ex.GetBaseException().Message}");
+                return null;
+            }
+        }
+    }
+}

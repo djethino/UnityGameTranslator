@@ -212,8 +212,19 @@ namespace UnityGameTranslator.Core
             if (!CoversShapedScript(parser)) return null;
             if (!parser.TryGetTable("glyf", out _, out _))
             {
-                TranslatorCore.LogWarning($"[DerivedFonts] {name}: CFF outlines — no derived copy, its shaped scripts keep the codepoint path in legacy text");
-                return null;
+                // CFF outlines (a PostScript .otf): merged into TrueType ones once, here — every copy
+                // is written from the merged font (the merge reads every glyph).
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                byte[] merged = DerivedFontWriter.WithTrueTypeOutlines(bytes, out string why);
+                if (merged == null)
+                {
+                    TranslatorCore.LogWarning($"[DerivedFonts] {name}: no derived copy — {why}");
+                    return null;
+                }
+                bytes = merged;
+                try { parser = new TtfParser(bytes); }
+                catch (Exception ex) { Faults.Say("DerivedFonts.Build merged", ex, Sanitize.Path(path)); return null; }
+                TranslatorCore.LogInfo($"[DerivedFonts] {name}: CFF outlines merged into TrueType ones ({parser.GlyphCount} glyphs, {sw.ElapsedMilliseconds} ms)");
             }
 
             var font = new TtfShapingFont(parser);

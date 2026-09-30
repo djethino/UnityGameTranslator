@@ -106,6 +106,16 @@ namespace UnityGameTranslator.Core.Rasterizer
         }
 
         /// <summary>
+        /// Any glyph's outline, .notdef (0) included — for rewriting a whole font (DerivedFontWriter's
+        /// CFF merge), where every glyph must come across. Null out of range.
+        /// </summary>
+        internal GlyphOutline OutlineOfAnyGlyph(int glyphIndex)
+        {
+            if (glyphIndex < 0 || glyphIndex >= _numGlyphs) return null;
+            return GetGlyphByIndex(glyphIndex);
+        }
+
+        /// <summary>
         /// Every glyph no codepoint maps to, in index order, .notdef excluded — the glyphs only
         /// OpenType shaping reaches (conjuncts, half forms, ligatures, contextual variants).
         /// </summary>

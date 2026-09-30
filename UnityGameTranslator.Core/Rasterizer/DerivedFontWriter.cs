@@ -17,6 +17,9 @@ namespace UnityGameTranslator.Core.Rasterizer
     /// glyph in the string is positioned a second time (probe 1, Unity 6000.0). A glyph added here is
     /// in no layout table: nothing can move it again.
     ///
+    /// A CFF (PostScript-outline .otf) font is first merged into TrueType outlines (TrueTypeFromCff):
+    /// a composite can only reference a TrueType glyph.
+    ///
     /// What changes in the file: cmap (a format 4 and a format 12 subtable, the source's mappings plus
     /// the new ones), glyf + loca (long offsets), hmtx + hhea (one metric per glyph), maxp, name (another
     /// family — the derived file must never pass for the original; notices kept), post (format 3: no
@@ -53,12 +56,11 @@ namespace UnityGameTranslator.Core.Rasterizer
         internal static byte[] Write(byte[] source, string family, IList<Added> added, out string refusal)
         {
             refusal = null;
+            // A composite cannot reference a CFF glyph: the outlines are merged into TrueType ones first
+            // (user, 2026-09-30), then the copy is made from that as from any TrueType font.
+            source = WithTrueTypeOutlines(source, out refusal);
+            if (source == null) return null;
             var tables = ReadDirectory(source);
-            if (!tables.ContainsKey("glyf") || !tables.ContainsKey("loca"))
-            {
-                refusal = "no TrueType outlines (CFF): a composite glyph cannot reference its glyphs";
-                return null;
-            }
             foreach (var need in new[] { "head", "hhea", "hmtx", "maxp", "cmap" })
                 if (!tables.ContainsKey(need)) { refusal = $"the '{need}' table is missing"; return null; }
 
@@ -185,6 +187,225 @@ namespace UnityGameTranslator.Core.Rasterizer
             output["name"] = nameNew;
             if (output.ContainsKey("OS/2")) output["OS/2"] = WidenCharRange(output["OS/2"], cmap);
             return Assemble(output);
+        }
+
+        // ─────────────────────────── CFF → TrueType ───────────────────────────
+
+        /// <summary>
+        /// The font with TrueType outlines: itself when it has them, its CFF outlines merged otherwise
+        /// (null, with the refusal, when it has neither). Done once by a caller that writes the copy
+        /// again and again (DerivedFonts): the merge reads every glyph.
+        /// </summary>
+        internal static byte[] WithTrueTypeOutlines(byte[] source, out string refusal)
+        {
+            refusal = null;
+            var tables = ReadDirectory(source);
+            if (tables.ContainsKey("glyf") && tables.ContainsKey("loca")) return source;
+            if (tables.ContainsKey("CFF ")) return TrueTypeFromCff(source, tables, out refusal);
+            refusal = tables.ContainsKey("CFF2")
+                ? "CFF2 outlines (a variable PostScript font) are not read"
+                : "no outlines this writer reads (neither TrueType nor CFF)";
+            return null;
+        }
+
+        /// <summary>
+        /// The same font with its CFF outlines turned into TrueType ones — every glyph, same ids, same
+        /// advances; each cubic curve approximated by quadratic ones within a tolerance of a thousandth
+        /// of the em (the tolerance fontTools' otf2ttf uses). The layout tables name glyph ids, which
+        /// do not move. Hints are not carried over: TrueType hinting is instructions, and no engine the
+        /// copy serves asks for them.
+        /// </summary>
+        private static byte[] TrueTypeFromCff(byte[] source, Dictionary<string, Entry> tables, out string refusal)
+        {
+            refusal = null;
+            foreach (var need in new[] { "head", "hhea", "hmtx", "maxp" })
+                if (!tables.ContainsKey(need)) { refusal = $"the '{need}' table is missing"; return null; }
+            var parser = new TtfParser(source);
+            int numGlyphs = parser.GlyphCount;
+            byte[] head = Slice(source, tables["head"]);
+            byte[] hhea = Slice(source, tables["hhea"]);
+            int upem = ReadUInt16(head, 18);
+            double tolerance = Math.Max(0.5, upem / 1000.0);
+
+            var glyf = new MemoryStream();
+            var loca = new MemoryStream();
+            var hmtx = new MemoryStream();
+            int maxPoints = 0, maxContours = 0;
+            for (int g = 0; g < numGlyphs; g++)
+            {
+                WriteUInt32(loca, (uint)glyf.Length);
+                var contours = new List<List<QuadPoint>>();
+                var outline = parser.OutlineOfAnyGlyph(g);
+                if (outline != null && !outline.IsEmpty && outline.Contours != null)
+                    foreach (var c in outline.Contours)
+                    {
+                        var q = Quadratic(c.Points, tolerance);
+                        if (q.Count >= 2) contours.Add(q);
+                    }
+                int xMin = 0;
+                if (contours.Count > 0)
+                {
+                    xMin = WriteSimpleGlyph(glyf, contours, out int points);
+                    maxPoints = Math.Max(maxPoints, points);
+                    maxContours = Math.Max(maxContours, contours.Count);
+                }
+                // The left side bearing IS the outline's left edge in TrueType: an engine places the
+                // outline from it.
+                WriteUInt16(hmtx, parser.GetAdvanceWidth(g)); WriteInt16(hmtx, xMin);
+            }
+            WriteUInt32(loca, (uint)glyf.Length);
+
+            var maxp = new byte[32];
+            WriteUInt32At(maxp, 0, 0x00010000);                                // version 1.0: TrueType outlines
+            WriteUInt16At(maxp, 4, numGlyphs);
+            WriteUInt16At(maxp, 6, maxPoints);
+            WriteUInt16At(maxp, 8, maxContours);
+            WriteUInt16At(maxp, 14, 2);                                        // maxZones
+            WriteUInt16At(hhea, 34, numGlyphs);                                // one metric per glyph
+            WriteUInt16At(head, 50, 1);                                        // indexToLocFormat: long
+            WriteUInt16At(head, 52, 0);                                        // glyphDataFormat
+            WriteUInt32At(head, 8, 0);                                         // checkSumAdjustment, set by Assemble
+
+            var output = new SortedDictionary<string, byte[]>(StringComparer.Ordinal);
+            foreach (var t in tables)
+            {
+                if (t.Key == "CFF " || t.Key == "VORG") continue;               // the PostScript outlines and their vertical origins
+                output[t.Key] = Slice(source, t.Value);
+            }
+            output["glyf"] = glyf.ToArray();
+            output["loca"] = loca.ToArray();
+            output["hmtx"] = hmtx.ToArray();
+            output["hhea"] = hhea;
+            output["maxp"] = maxp;
+            output["head"] = head;
+            return Assemble(output);
+        }
+
+        internal struct QuadPoint { public int X, Y; public bool On; }
+
+        /// <summary>
+        /// A CFF contour (on-curve points, and pairs of cubic control points before an on-curve one) as
+        /// a TrueType one: lines kept, each cubic replaced by quadratic pieces with explicit on-curve
+        /// points between them. The closing point that repeats the first is dropped: a TrueType contour
+        /// closes by itself.
+        /// </summary>
+        internal static List<QuadPoint> Quadratic(ContourPoint[] points, double tolerance)
+        {
+            var output = new List<QuadPoint>();
+            if (points == null || points.Length == 0) return output;
+            double px = points[0].X, py = points[0].Y;
+            Add(output, px, py, true);
+            for (int i = 1; i < points.Length; i++)
+            {
+                var p = points[i];
+                if (p.OnCurve) { Add(output, p.X, p.Y, true); px = p.X; py = p.Y; continue; }
+                if (p.IsCubic && i + 2 < points.Length && !points[i + 1].OnCurve && points[i + 2].OnCurve)
+                {
+                    var c2 = points[i + 1]; var end = points[i + 2];
+                    CubicToQuadratics(px, py, p.X, p.Y, c2.X, c2.Y, end.X, end.Y, tolerance, output);
+                    px = end.X; py = end.Y;
+                    i += 2;
+                    continue;
+                }
+                Add(output, p.X, p.Y, false);                                  // already quadratic
+            }
+            var first = output[0];
+            var last = output[output.Count - 1];
+            if (output.Count > 1 && last.On && last.X == first.X && last.Y == first.Y) output.RemoveAt(output.Count - 1);
+            return output;
+        }
+
+        private static void Add(List<QuadPoint> output, double x, double y, bool on)
+        {
+            var q = new QuadPoint { X = (int)Math.Round(x), Y = (int)Math.Round(y), On = on };
+            // Two on-curve points at the same place are one (a zero-length line).
+            if (on && output.Count > 0)
+            {
+                var prev = output[output.Count - 1];
+                if (prev.On && prev.X == q.X && prev.Y == q.Y) return;
+            }
+            output.Add(q);
+        }
+
+        /// <summary>
+        /// One cubic as the fewest quadratic pieces (1 to 16, equal steps of t) whose distance to it,
+        /// sampled along each piece, stays within the tolerance. Each piece's control point is the
+        /// classic mid-point estimate (3·(c1 + c2) − (p0 + p3)) / 4 of its sub-cubic.
+        /// </summary>
+        internal static void CubicToQuadratics(double x0, double y0, double x1, double y1, double x2, double y2, double x3, double y3,
+                                               double tolerance, List<QuadPoint> output)
+        {
+            const int MaxPieces = 16;
+            for (int n = 1; n <= MaxPieces; n++)
+            {
+                var pieces = new double[n][];
+                bool fits = true;
+                for (int k = 0; k < n && fits; k++)
+                {
+                    var s = SubCubic(x0, y0, x1, y1, x2, y2, x3, y3, (double)k / n, (double)(k + 1) / n);
+                    double qx = (3 * (s[2] + s[4]) - (s[0] + s[6])) / 4, qy = (3 * (s[3] + s[5]) - (s[1] + s[7])) / 4;
+                    pieces[k] = new[] { qx, qy, s[6], s[7] };
+                    for (int j = 1; j < 8 && fits; j++)
+                    {
+                        double t = j / 8.0, u = 1 - t;
+                        double cx = u * u * u * s[0] + 3 * u * u * t * s[2] + 3 * u * t * t * s[4] + t * t * t * s[6];
+                        double cy = u * u * u * s[1] + 3 * u * u * t * s[3] + 3 * u * t * t * s[5] + t * t * t * s[7];
+                        double ax = u * u * s[0] + 2 * u * t * qx + t * t * s[6];
+                        double ay = u * u * s[1] + 2 * u * t * qy + t * t * s[7];
+                        if ((cx - ax) * (cx - ax) + (cy - ay) * (cy - ay) > tolerance * tolerance) fits = false;
+                    }
+                }
+                if (!fits && n < MaxPieces) continue;
+                foreach (var p in pieces) { Add(output, p[0], p[1], false); Add(output, p[2], p[3], true); }
+                return;
+            }
+        }
+
+        /// <summary>The part of a cubic between t0 and t1, as its 8 coordinates (de Casteljau).</summary>
+        private static double[] SubCubic(double x0, double y0, double x1, double y1, double x2, double y2, double x3, double y3, double t0, double t1)
+        {
+            double[] P(double t)
+            {
+                double u = 1 - t;
+                return new[] { u * u * u * x0 + 3 * u * u * t * x1 + 3 * u * t * t * x2 + t * t * t * x3,
+                               u * u * u * y0 + 3 * u * u * t * y1 + 3 * u * t * t * y2 + t * t * t * y3 };
+            }
+            double[] D(double t)
+            {
+                double u = 1 - t;
+                return new[] { 3 * u * u * (x1 - x0) + 6 * u * t * (x2 - x1) + 3 * t * t * (x3 - x2),
+                               3 * u * u * (y1 - y0) + 6 * u * t * (y2 - y1) + 3 * t * t * (y3 - y2) };
+            }
+            // A sub-cubic's control points from the end points and the derivatives, scaled by its span.
+            double h = (t1 - t0) / 3;
+            var a = P(t0); var b = P(t1); var da = D(t0); var db = D(t1);
+            return new[] { a[0], a[1], a[0] + h * da[0], a[1] + h * da[1], b[0] - h * db[0], b[1] - h * db[1], b[0], b[1] };
+        }
+
+        /// <summary>A TrueType simple glyph, coordinates as 16-bit deltas. Returns its xMin.</summary>
+        private static int WriteSimpleGlyph(MemoryStream glyf, List<List<QuadPoint>> contours, out int points)
+        {
+            int xMin = int.MaxValue, yMin = int.MaxValue, xMax = int.MinValue, yMax = int.MinValue;
+            points = 0;
+            foreach (var c in contours)
+                foreach (var p in c)
+                {
+                    xMin = Math.Min(xMin, p.X); yMin = Math.Min(yMin, p.Y);
+                    xMax = Math.Max(xMax, p.X); yMax = Math.Max(yMax, p.Y);
+                    points++;
+                }
+            WriteInt16(glyf, contours.Count);
+            WriteInt16(glyf, xMin); WriteInt16(glyf, yMin); WriteInt16(glyf, xMax); WriteInt16(glyf, yMax);
+            int end = -1;
+            foreach (var c in contours) { end += c.Count; WriteUInt16(glyf, end); }
+            WriteUInt16(glyf, 0);                                              // no instructions
+            foreach (var c in contours) foreach (var p in c) glyf.WriteByte((byte)(p.On ? 1 : 0));
+            int prev = 0;
+            foreach (var c in contours) foreach (var p in c) { WriteInt16(glyf, p.X - prev); prev = p.X; }
+            prev = 0;
+            foreach (var c in contours) foreach (var p in c) { WriteInt16(glyf, p.Y - prev); prev = p.Y; }
+            while (glyf.Length % 4 != 0) glyf.WriteByte(0);
+            return xMin;
         }
 
         // ─────────────────────────────── cmap ───────────────────────────────

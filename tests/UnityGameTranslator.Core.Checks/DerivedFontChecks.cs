@@ -25,6 +25,172 @@ namespace UnityGameTranslator.Core.Checks
                 One(check, file, File.ReadAllBytes(path));
             }
             Collection(check, File.ReadAllBytes(Path.Combine(fonts, "NotoSansDevanagari.ttf")), File.ReadAllBytes(Path.Combine(fonts, "NotoSansKhmer.ttf")));
+            foreach (var pair in new[] { ("NotoSansDevanagari-cff.otf", "NotoSansDevanagari.ttf"), ("NotoSansKhmer-cff.otf", "NotoSansKhmer.ttf") })
+            {
+                string cff = Path.Combine(fonts, pair.Item1);
+                if (!File.Exists(cff)) { check(false, $"{pair.Item1} present", "tools/shaping-oracle/harfbuzz-expectations.py derive"); continue; }
+                Cff(check, pair.Item1, File.ReadAllBytes(cff), File.ReadAllBytes(Path.Combine(fonts, pair.Item2)));
+            }
+        }
+
+        /// <summary>
+        /// A PostScript-outline font (CFF) has its outlines merged into TrueType ones before the copy is
+        /// made. The test font is a CFF copy of a TrueType one, drawn from it with its runs of quadratic
+        /// pieces joined into genuine cubics within 1 unit (fontTools'
+        /// qu2cu, tools/shaping-oracle), so the TRUETYPE ORIGINAL is the oracle — neither the CFF reader
+        /// nor the merge is asked what the shape should be: every merged outline must lie within 3 font
+        /// units of the original and the original within 3 of it (qu2cu's 1, the merge's 1, roundings),
+        /// every advance and mapping identical. Then the whole copy is made from the CFF file like any other.
+        /// </summary>
+        private static void Cff(Action<bool, string, string> check, string file, byte[] cff, byte[] original)
+        {
+            byte[] merged = DerivedFontWriter.WithTrueTypeOutlines(cff, out string refusal);
+            check(merged != null, $"{file}: CFF outlines merged", refusal ?? "");
+            if (merged == null) return;
+            var m = new TtfParser(merged);
+            var o = new TtfParser(original);
+            check(m.TryGetTable("glyf", out _, out _) && !m.TryGetTable("CFF ", out _, out _), $"{file}: TrueType outlines, no CFF left", "");
+
+            int n = o.GlyphCount, far = 0, advances = 0, mappings = 0;
+            double worst = 0; string worstAt = "";
+            for (int g = 0; g < n; g++)
+            {
+                if (m.GetAdvanceWidth(g) != o.GetAdvanceWidth(g)) advances++;
+                double d = Hausdorff(o.OutlineOfAnyGlyph(g), m.OutlineOfAnyGlyph(g));
+                if (d > worst) { worst = d; worstAt = $"glyph {g}"; }
+                if (d > 3.0) far++;
+            }
+            foreach (int cp in o.GetSupportedCodepoints())
+                if (cp != 0 && m.GetGlyphIndex(cp) != o.GetGlyphIndex(cp)) mappings++;
+            check(m.GlyphCount == n && far == 0 && advances == 0 && mappings == 0,
+                $"{file}: every merged glyph is the original's shape (within 3 units), advance and mapping",
+                $"glyphs {m.GlyphCount}/{n}, {far} off, worst {worst:0.00} at {worstAt}, {advances} advances, {mappings} mappings");
+
+            One(check, file + " (merged)", merged);
+            byte[] direct = DerivedFontWriter.Write(cff, "UGT Check Cff", new[] { new DerivedFontWriter.Added { Codepoint = 0xE000, Glyph = 1, Advance = 500 } }, out string why);
+            check(direct != null && new TtfParser(direct).GetGlyphIndex(0xE000) == n, $"{file}: the copy is written from the CFF file itself", why ?? "");
+        }
+
+        /// <summary>
+        /// Symmetric distance between two outlines, in font units: each drawn as short segments
+        /// (TrueType implied on-curve points, cubic or quadratic curves cut in 16), every vertex of one
+        /// measured to the nearest segment of the other. Empty against empty is 0; empty against drawn
+        /// is infinite.
+        /// </summary>
+        private static double Hausdorff(GlyphOutline a, GlyphOutline b)
+        {
+            var sa = Segments(a); var sb = Segments(b);
+            if (sa.Count == 0 || sb.Count == 0) return sa.Count == sb.Count ? 0 : double.PositiveInfinity;
+            return Math.Max(Directed(sa, sb), Directed(sb, sa));
+        }
+
+        private static double Directed(List<double[]> from, List<double[]> to)
+        {
+            const double Cell = 32;
+            var grid = new Dictionary<long, List<double[]>>();
+            long Key(int cx, int cy) => ((long)cx << 32) ^ (uint)cy;
+            foreach (var s in to)
+            {
+                int x0 = (int)Math.Floor(Math.Min(s[0], s[2]) / Cell), x1 = (int)Math.Floor(Math.Max(s[0], s[2]) / Cell);
+                int y0 = (int)Math.Floor(Math.Min(s[1], s[3]) / Cell), y1 = (int)Math.Floor(Math.Max(s[1], s[3]) / Cell);
+                for (int cx = x0; cx <= x1; cx++)
+                    for (int cy = y0; cy <= y1; cy++)
+                    {
+                        if (!grid.TryGetValue(Key(cx, cy), out var list)) grid[Key(cx, cy)] = list = new List<double[]>();
+                        list.Add(s);
+                    }
+            }
+            double worst = 0;
+            foreach (var s in from)
+                foreach (var p in new[] { (s[0], s[1]), ((s[0] + s[2]) / 2, (s[1] + s[3]) / 2) })
+                {
+                    int cx = (int)Math.Floor(p.Item1 / Cell), cy = (int)Math.Floor(p.Item2 / Cell);
+                    double best = double.PositiveInfinity;
+                    for (int dx = -1; dx <= 1; dx++)
+                        for (int dy = -1; dy <= 1; dy++)
+                            if (grid.TryGetValue(Key(cx + dx, cy + dy), out var list))
+                                foreach (var t in list) best = Math.Min(best, PointToSegment(p.Item1, p.Item2, t));
+                    worst = Math.Max(worst, Math.Min(best, Cell));   // beyond a cell: far, and reported as such
+                }
+            return worst;
+        }
+
+        private static double PointToSegment(double px, double py, double[] s)
+        {
+            double vx = s[2] - s[0], vy = s[3] - s[1];
+            double len = vx * vx + vy * vy;
+            double t = len == 0 ? 0 : Math.Max(0, Math.Min(1, ((px - s[0]) * vx + (py - s[1]) * vy) / len));
+            double dx = s[0] + t * vx - px, dy = s[1] + t * vy - py;
+            return Math.Sqrt(dx * dx + dy * dy);
+        }
+
+        /// <summary>An outline as straight segments {x0, y0, x1, y1}.</summary>
+        private static List<double[]> Segments(GlyphOutline outline)
+        {
+            var segs = new List<double[]>();
+            if (outline?.Contours == null) return segs;
+            foreach (var c in outline.Contours)
+            {
+                var pts = c.Points;
+                if (pts == null || pts.Length < 2) continue;
+                // Every point once, with TrueType's implied on-curve point between two quadratic
+                // off-curve ones; then the ring starts on an on-curve point and closes on it.
+                var full = new List<ContourPoint>();
+                for (int i = 0; i < pts.Length; i++)
+                {
+                    var p = pts[i]; var q = pts[(i + 1) % pts.Length];
+                    full.Add(p);
+                    if (!p.OnCurve && !p.IsCubic && !q.OnCurve && !q.IsCubic)
+                        full.Add(new ContourPoint((p.X + q.X) / 2, (p.Y + q.Y) / 2, true));
+                }
+                int start = full.FindIndex(q => q.OnCurve);
+                if (start < 0) continue;
+                var ring = new List<ContourPoint>();
+                for (int i = 0; i <= full.Count; i++) ring.Add(full[(start + i) % full.Count]);
+                var on = ring[0];
+                int k = 1;
+                while (k < ring.Count)
+                {
+                    var p = ring[k];
+                    var from = on;
+                    if (p.OnCurve) { segs.Add(new double[] { from.X, from.Y, p.X, p.Y }); on = p; k++; continue; }
+                    if (p.IsCubic && k + 2 < ring.Count)
+                    {
+                        var c2 = ring[k + 1]; var end = ring[k + 2];
+                        Flatten(segs, t => Cubic(from, p, c2, end, t));
+                        on = end; k += 3; continue;
+                    }
+                    if (k + 1 >= ring.Count) break;
+                    var to = ring[k + 1];
+                    Flatten(segs, t => Quad(from, p, to, t));
+                    on = to; k += 2;
+                }
+            }
+            return segs;
+        }
+
+        private static void Flatten(List<double[]> segs, Func<double, (double, double)> at)
+        {
+            var prev = at(0);
+            for (int i = 1; i <= 16; i++)
+            {
+                var p = at(i / 16.0);
+                segs.Add(new[] { prev.Item1, prev.Item2, p.Item1, p.Item2 });
+                prev = p;
+            }
+        }
+
+        private static (double, double) Quad(ContourPoint a, ContourPoint b, ContourPoint c, double t)
+        {
+            double u = 1 - t;
+            return (u * u * a.X + 2 * u * t * b.X + t * t * c.X, u * u * a.Y + 2 * u * t * b.Y + t * t * c.Y);
+        }
+
+        private static (double, double) Cubic(ContourPoint a, ContourPoint b, ContourPoint c, ContourPoint d, double t)
+        {
+            double u = 1 - t;
+            return (u * u * u * a.X + 3 * u * u * t * b.X + 3 * u * t * t * c.X + t * t * t * d.X,
+                    u * u * u * a.Y + 3 * u * u * t * b.Y + 3 * u * t * t * c.Y + t * t * t * d.Y);
         }
 
         /// <summary>

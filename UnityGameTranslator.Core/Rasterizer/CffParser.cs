@@ -34,6 +34,14 @@ namespace UnityGameTranslator.Core.Rasterizer
         private float _defaultWidthX;
         private float _nominalWidthX;
 
+        // CID-keyed fonts (CJK .otf, the Top DICT's ROS): each glyph belongs to one Font DICT of the
+        // FDArray (FDSelect says which), and each Font DICT has its own Private DICT — its own local
+        // subroutines. Null for an ordinary font: one Private DICT for every glyph.
+        private LocalSubrs[] _fdSubrs;
+        private byte[] _fdOfGlyph;
+
+        private struct LocalSubrs { public int[] Offsets; public int DataOffset; public int Count; public int Bias; }
+
         public CffParser(byte[] fontData, int cffTableOffset, int cffTableLength)
         {
             _data = fontData;
@@ -53,6 +61,17 @@ namespace UnityGameTranslator.Core.Rasterizer
             var charstring = GetCharstringData(glyphIndex);
             if (charstring == null || charstring.Length == 0)
                 return new GlyphOutline { Contours = new GlyphContour[0], IsEmpty = true };
+
+            // A CID-keyed glyph calls the local subroutines of ITS Font DICT: reading them from the
+            // top-level Private DICT drew CJK glyphs from other glyphs' pieces (found by the CFF
+            // merge's comparison with FreeType, 2026-09-30).
+            if (_fdSubrs != null)
+            {
+                int fd = _fdOfGlyph != null && glyphIndex < _fdOfGlyph.Length ? _fdOfGlyph[glyphIndex] : 0;
+                var subrs = fd < _fdSubrs.Length ? _fdSubrs[fd] : default(LocalSubrs);
+                _lsubrOffsets = subrs.Offsets; _lsubrDataOffset = subrs.DataOffset;
+                _lsubrCount = subrs.Count; _lsubrBias = subrs.Bias;
+            }
 
             try
             {
@@ -117,8 +136,9 @@ namespace UnityGameTranslator.Core.Rasterizer
             int charstringsOff = 0;
             int privateDictOff = 0;
             int privateDictSize = 0;
+            int fdArrayOff = 0, fdSelectOff = 0;
             if (topDictData != null)
-                ParseTopDict(topDictData, ref charstringsOff, ref privateDictOff, ref privateDictSize);
+                ParseTopDict(topDictData, ref charstringsOff, ref privateDictOff, ref privateDictSize, ref fdArrayOff, ref fdSelectOff);
 
             // Charstrings INDEX
             if (charstringsOff > 0)
@@ -137,6 +157,8 @@ namespace UnityGameTranslator.Core.Rasterizer
                     }
                 }
             }
+
+            if (fdArrayOff > 0) ParseFdArray(fdArrayOff, fdSelectOff);
 
             // Private DICT → Local Subr INDEX
             _lsubrCount = 0;
@@ -184,7 +206,8 @@ namespace UnityGameTranslator.Core.Rasterizer
             return result;
         }
 
-        private void ParseTopDict(byte[] data, ref int charstringsOff, ref int privateDictOff, ref int privateDictSize)
+        private void ParseTopDict(byte[] data, ref int charstringsOff, ref int privateDictOff, ref int privateDictSize,
+                                  ref int fdArrayOff, ref int fdSelectOff)
         {
             var stack = new List<float>();
             int pos = 0;
@@ -217,8 +240,62 @@ namespace UnityGameTranslator.Core.Rasterizer
                                 privateDictOff = (int)stack[stack.Count - 1];
                             }
                             break;
+                        case 0x0C24: // FDArray
+                            if (stack.Count > 0) fdArrayOff = (int)stack[stack.Count - 1];
+                            break;
+                        case 0x0C25: // FDSelect
+                            if (stack.Count > 0) fdSelectOff = (int)stack[stack.Count - 1];
+                            break;
                     }
                     stack.Clear();
+                }
+            }
+        }
+
+        /// <summary>
+        /// A CID-keyed font's Font DICTs, each with its Private DICT's local subroutines, and the
+        /// Font DICT of every glyph (FDSelect format 0: one byte per glyph; format 3: ranges).
+        /// </summary>
+        private void ParseFdArray(int fdArrayOff, int fdSelectOff)
+        {
+            int indexPos = _cffOffset + fdArrayOff;
+            if (indexPos + 2 >= _data.Length) return;
+            int count = ReadUInt16BE(indexPos);
+            _fdSubrs = new LocalSubrs[count];
+            for (int fd = 0; fd < count; fd++)
+            {
+                byte[] dict = ReadIndexEntry(indexPos, fd);
+                if (dict == null) continue;
+                int cs = 0, privOff = 0, privSize = 0, a = 0, b = 0;
+                ParseTopDict(dict, ref cs, ref privOff, ref privSize, ref a, ref b);
+                if (privSize <= 0 || privOff <= 0) continue;
+                int privPos = _cffOffset + privOff;
+                if (privPos + privSize > _data.Length) continue;
+                int localSubrOff = ParsePrivateDict(privPos, privSize);
+                if (localSubrOff <= 0) continue;
+                ParseSubrIndex(privPos + localSubrOff, out var offsets, out int dataOffset, out int subrCount);
+                _fdSubrs[fd] = new LocalSubrs { Offsets = offsets, DataOffset = dataOffset, Count = subrCount, Bias = CalcSubrBias(subrCount) };
+            }
+
+            if (fdSelectOff <= 0 || _charstringsCount <= 0) return;
+            int p = _cffOffset + fdSelectOff;
+            if (p >= _data.Length) return;
+            _fdOfGlyph = new byte[_charstringsCount];
+            int format = _data[p];
+            if (format == 0)
+            {
+                for (int g = 0; g < _charstringsCount && p + 1 + g < _data.Length; g++) _fdOfGlyph[g] = _data[p + 1 + g];
+            }
+            else if (format == 3)
+            {
+                int ranges = ReadUInt16BE(p + 1);
+                int r = p + 3;
+                for (int i = 0; i < ranges; i++, r += 3)
+                {
+                    int first = ReadUInt16BE(r);
+                    byte fd = r + 2 < _data.Length ? _data[r + 2] : (byte)0;
+                    int next = ReadUInt16BE(r + 3);   // the next range's first glyph, or the sentinel
+                    for (int g = first; g < next && g < _charstringsCount; g++) _fdOfGlyph[g] = fd;
                 }
             }
         }

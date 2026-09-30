@@ -32,6 +32,44 @@ namespace UnityGameTranslator.Core.Checks
                 Cff(check, pair.Item1, File.ReadAllBytes(cff), File.ReadAllBytes(Path.Combine(fonts, pair.Item2)));
             }
             Flex(check, Path.Combine(fonts, "UgtCffFlex.otf"));
+            CidKeyed(check, Path.Combine(fonts, "NotoSansJP-cid-subset.otf"), Path.Combine(fonts, "NotoSansJP-cid-subset.points.json"));
+        }
+
+        /// <summary>
+        /// A CID-keyed CFF font — how CJK .otf fonts are built: glyphs spread over several Font DICTs,
+        /// each with its own local subroutines. Every glyph read by the mod's CFF reader must give the
+        /// points fontTools decodes (the .points.json written beside the font by
+        /// tools/shaping-oracle, derive-cid). Until 2026-09-30 the reader took every glyph's local
+        /// subroutines from the top-level Private DICT, and CJK glyphs came out of other glyphs' pieces.
+        /// </summary>
+        private static void CidKeyed(Action<bool, string, string> check, string fontPath, string pointsPath)
+        {
+            if (!File.Exists(fontPath) || !File.Exists(pointsPath)) { check(false, "NotoSansJP-cid-subset present", "tools/shaping-oracle/harfbuzz-expectations.py derive-cid"); return; }
+            var expected = Newtonsoft.Json.Linq.JObject.Parse(File.ReadAllText(pointsPath));
+            var font = new TtfParser(File.ReadAllBytes(fontPath));
+            int wrong = 0; string first = "";
+            foreach (var kv in expected)
+            {
+                int g = int.Parse(kv.Key);
+                var want = new List<(double, double)>();
+                foreach (var p in (Newtonsoft.Json.Linq.JArray)kv.Value) want.Add(((double)p[0], (double)p[1]));
+                var got = new List<(double, double)>();
+                var outline = font.OutlineOfAnyGlyph(g);
+                if (outline?.Contours != null)
+                    foreach (var c in outline.Contours)
+                    {
+                        foreach (var p in c.Points) got.Add((p.X, p.Y));
+                        // fontTools does not repeat a contour's first point to close it; the reader may.
+                        int start = got.Count - c.Points.Length;
+                        if (c.Points.Length > 1 && got.Count > start + 1 && got[got.Count - 1] == got[start]
+                            && want.Count < got.Count) got.RemoveAt(got.Count - 1);
+                    }
+                bool same = got.Count == want.Count;
+                for (int i = 0; same && i < got.Count; i++)
+                    same = Math.Abs(got[i].Item1 - want[i].Item1) < 0.02 && Math.Abs(got[i].Item2 - want[i].Item2) < 0.02;
+                if (!same && wrong++ == 0) first = $" — first: glyph {g}, {got.Count} points vs {want.Count}";
+            }
+            check(wrong == 0, $"CID-keyed CFF: {expected.Count} glyphs over several Font DICTs, drawn as fontTools decodes them", $"{wrong} differ{first}");
         }
 
         /// <summary>

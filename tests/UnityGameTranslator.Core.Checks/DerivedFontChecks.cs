@@ -31,6 +31,40 @@ namespace UnityGameTranslator.Core.Checks
                 if (!File.Exists(cff)) { check(false, $"{pair.Item1} present", "tools/shaping-oracle/harfbuzz-expectations.py derive"); continue; }
                 Cff(check, pair.Item1, File.ReadAllBytes(cff), File.ReadAllBytes(Path.Combine(fonts, pair.Item2)));
             }
+            Flex(check, Path.Combine(fonts, "UgtCffFlex.otf"));
+        }
+
+        /// <summary>
+        /// The flex operators of CFF charstrings, which no converted font contains: one glyph each in
+        /// UgtCffFlex.otf (tools/shaping-oracle, derive_cff_flex), read by the mod's CFF reader against
+        /// the points fontTools decodes from the same file — written here as it printed them. hflex1 and
+        /// flex1 were skipped until 2026-09-30, leaving the pen where it stood.
+        /// </summary>
+        private static void Flex(Action<bool, string, string> check, string path)
+        {
+            if (!File.Exists(path)) { check(false, "UgtCffFlex.otf present", "tools/shaping-oracle/harfbuzz-expectations.py derive"); return; }
+            var expected = new[]
+            {
+                ("flex",   new[] { 100, 100, 150, 120, 190, 150, 250, 160, 320, 150, 360, 120, 410, 100, 10, 100 }),
+                ("hflex",  new[] { 100, 100, 160, 100, 200, 130, 270, 130, 350, 130, 400, 100, 460, 100, 60, 100 }),
+                ("hflex1", new[] { 100, 100, 160, 110, 200, 140, 270, 140, 350, 140, 400, 105, 460, 100, 60, 100 }),
+                ("flex1 (horizontal)", new[] { 100, 100, 160, 110, 200, 140, 270, 145, 350, 140, 400, 105, 460, 100, 60, 100 }),
+                ("flex1 (vertical)",   new[] { 100, 100, 110, 160, 140, 200, 145, 270, 140, 350, 105, 400, 100, 460, 100, 60 }),
+            };
+            var font = new TtfParser(File.ReadAllBytes(path));
+            for (int g = 1; g <= expected.Length; g++)
+            {
+                var (name, want) = expected[g - 1];
+                var outline = font.OutlineOfAnyGlyph(g);
+                var got = new List<int>();
+                if (outline?.Contours != null)
+                    foreach (var c in outline.Contours)
+                        foreach (var p in c.Points) { got.Add((int)Math.Round(p.X)); got.Add((int)Math.Round(p.Y)); }
+                // The reader may close the contour on its first point; fontTools does not.
+                if (got.Count == want.Length + 2 && got[got.Count - 2] == want[0] && got[got.Count - 1] == want[1]) got.RemoveRange(got.Count - 2, 2);
+                check(string.Join(",", got) == string.Join(",", want), $"CFF {name}: drawn as fontTools decodes it",
+                      $"got {string.Join(",", got)}");
+            }
         }
 
         /// <summary>

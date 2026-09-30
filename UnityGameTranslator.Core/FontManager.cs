@@ -4764,6 +4764,47 @@ namespace UnityGameTranslator.Core
         /// on the TMP path; writing a second creator would have meant proving them twice and
         /// letting the two drift.
         /// </summary>
+        private const int SdfSampling = 48, SdfPadding = 48;
+
+        /// <summary>
+        /// The smallest atlas side that holds <paramref name="glyphs"/> glyphs (user, 2026-09-30:
+        /// "le auto devra prendre en compte le minimum possible"): a power of two from 512, never
+        /// above what the GPU takes (SystemInfo.maxTextureSize). A TMP without multi-atlas support
+        /// (TMP 1.x, the Unity 2018–2019 games) draws only from its first atlas: there it must hold
+        /// everything, or the rest shows as boxes. With multi-atlas, one atlas stops at 2048 and the
+        /// next ones take the rest — the memory stays that of the glyphs, not of a huge first page.
+        /// </summary>
+        internal static int AtlasFloor(int glyphs, int sampling, int padding, bool multiAtlas)
+        {
+            float cell = sampling * 1.3f + 2f * padding;
+            double needed = Math.Ceiling(Math.Sqrt(Math.Max(1, glyphs))) * cell;
+            int side = 512;
+            while (side < needed && side < 1 << 14) side <<= 1;
+            int cap = GetMaxTextureSize();
+            if (multiAtlas) cap = Math.Min(cap, 2048);
+            if (side > cap)
+            {
+                if (!multiAtlas)
+                    TranslatorCore.LogWarning($"[FontManager] {glyphs} characters need a {side}px atlas, the GPU takes {cap}: some may show as boxes (this TextMesh Pro has one atlas per font)");
+                side = cap;
+            }
+            return side;
+        }
+
+        /// <summary>How many different characters the translation shows — what an atlas built for it will receive (at least the printable ASCII).</summary>
+        private static int ExpectedGlyphCount()
+        {
+            var chars = new HashSet<char>();
+            foreach (var entry in TranslatorCore.TranslationLines())
+            {
+                string v = entry.Value?.Value;
+                if (v == null) continue;
+                foreach (char c in v) if (!char.IsWhiteSpace(c) && !char.IsControl(c)) chars.Add(c);
+            }
+            for (char c = '!'; c <= '~'; c++) chars.Add(c);
+            return chars.Count;
+        }
+
         internal static object CreateSdfFontAsset(Font font, Type fontAssetType)
         {
             if (font == null || fontAssetType == null) return null;
@@ -4817,6 +4858,9 @@ namespace UnityGameTranslator.Core
                             // Build args array matching the exact parameter list
                             var args = new object[parameters.Length];
                             args[0] = font;
+                            bool multiAtlas = false;
+                            foreach (var p in parameters) if (p.ParameterType == typeof(bool)) multiAtlas = true;
+                            int atlasSide = AtlasFloor(ExpectedGlyphCount(), SdfSampling, SdfPadding, multiAtlas);
 
                             for (int i = 1; i < parameters.Length; i++)
                             {
@@ -4837,8 +4881,8 @@ namespace UnityGameTranslator.Core
                                 {
                                     // Int params: samplingPointSize, atlasPadding, atlasWidth, atlasHeight
                                     // For 9-param version: extra int is samplingPointSize (index 1)
-                                    if (i <= 3) args[i] = 48; // sampling point size / padding
-                                    else args[i] = 512; // atlas width/height
+                                    if (i <= 3) args[i] = i == 1 ? SdfSampling : SdfPadding; // sampling point size / padding
+                                    else args[i] = atlasSide; // atlas width/height
                                 }
                                 else if (pType == typeof(bool))
                                 {

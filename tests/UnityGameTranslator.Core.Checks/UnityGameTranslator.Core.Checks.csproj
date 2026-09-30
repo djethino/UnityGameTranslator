@@ -287,6 +287,7 @@
     <Compile Include="../../UnityGameTranslator.Core/Engine/Faults.cs" />
     <Compile Include="../../UnityGameTranslator.Core/Rasterizer/GlyphData.cs" />
     <Compile Include="../../UnityGameTranslator.Core/Rasterizer/OpenTypeLayout.cs" />
+    <Compile Include="../../UnityGameTranslator.Core/Rasterizer/DerivedFontWriter.cs" />
     <!-- The Unicode conformance suite, gzipped (15 MB of text otherwise) — data from the
          Unicode Consortium, not derived from the code under test — and one real font (OFL, see
          TestData/Fonts/LICENSE-*) the layout reader is checked against. -->

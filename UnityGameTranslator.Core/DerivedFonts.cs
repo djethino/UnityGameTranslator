@@ -86,7 +86,8 @@ namespace UnityGameTranslator.Core
         /// asks the ENGINE for its font list, which it builds once: installed fonts are found on disk.
         /// A font that cannot be derived is said and left out: its text keeps the codepoint path.
         /// </summary>
-        internal static List<string> Prepare(string fontsFolder, bool il2cpp, string translationsPath = null)
+        internal static List<string> Prepare(string fontsFolder, bool il2cpp, string translationsPath = null,
+                                             string configPath = null, string interfacePath = null)
         {
             _translationsPath = translationsPath;
             var shown = new List<string>();
@@ -113,7 +114,16 @@ namespace UnityGameTranslator.Core
                 }
             }
 
-            foreach (var name in InstalledFontsNamed(translation))
+            var installed = InstalledFontsNamed(translation);
+            // The mod's own interface font too: its window shows translation values and takes typed
+            // text, in any script (config.json's interface_font wins over the interface file's).
+            foreach (var reference in new[] { ReadString(configPath, "interface_font"), ReadString(interfacePath, "_settings", "ui_font") })
+                if (!string.IsNullOrEmpty(reference)
+                    && UnityGameTranslator.Common.FontReferences.Order(reference)[0] == UnityGameTranslator.Common.FontSource.System
+                    && !installed.Contains(UnityGameTranslator.Common.FontReferences.Name(reference), StringComparer.OrdinalIgnoreCase))
+                    installed.Add(UnityGameTranslator.Common.FontReferences.Name(reference));
+
+            foreach (var name in installed)
             {
                 byte[] bytes = InstalledFont(name, folder, out string path);
                 if (bytes == null) continue;
@@ -123,6 +133,23 @@ namespace UnityGameTranslator.Core
                 shown.AddRange(entry.Files);
             }
             return shown;
+        }
+
+        /// <summary>One string of a JSON file read before the mod loads it; null when absent or unreadable (the loader says why).</summary>
+        private static string ReadString(string path, params string[] keys)
+        {
+            if (string.IsNullOrEmpty(path) || !File.Exists(path)) return null;
+            try
+            {
+                Newtonsoft.Json.Linq.JToken token = Newtonsoft.Json.Linq.JObject.Parse(File.ReadAllText(path));
+                foreach (var key in keys) token = (token as Newtonsoft.Json.Linq.JObject)?[key];
+                return token != null && token.Type == Newtonsoft.Json.Linq.JTokenType.String ? (string)token : null;
+            }
+            catch (Exception ex) when (ex is IOException || ex is Newtonsoft.Json.JsonException)
+            {
+                Faults.Say("DerivedFonts.ReadString", ex, Sanitize.Path(path));
+                return null;
+            }
         }
 
         private static Newtonsoft.Json.Linq.JObject ReadTranslation()

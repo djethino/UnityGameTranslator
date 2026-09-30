@@ -8,9 +8,15 @@ using UnityGameTranslator.Common;
 namespace UnityGameTranslator.Core.TextShaping
 {
     /// <summary>
-    /// A right-to-left text somebody is EDITING: what the field shows, and where every typed
-    /// character landed on screen — so a caret addressing the typed text can be drawn, a click
-    /// can be turned back into a position in it, and the arrow keys can follow the screen.
+    /// A right-to-left text — or a text of a script that needs shaping (Devanagari, Khmer, Thai…)
+    /// — somebody is EDITING: what the field shows, and where every typed character landed on
+    /// screen — so a caret addressing the typed text can be drawn, a click can be turned back into
+    /// a position in it, and the arrow keys can follow the screen.
+    ///
+    /// A shaped syllable is one UNIT: its glyphs are drawn together (a sign before its consonant,
+    /// a conjunct), so a caret stands before or after it, never inside — the arrows, the click and
+    /// the selection step over it whole, Backspace still takes one character (the field's own
+    /// editing; user's decision, 2026-09-30, the platforms' norm).
     ///
     /// 🔴 **The typed text is never changed.** Unity's two input fields store and edit the logical
     /// string and draw it as it is — no shaping, no reordering, on any version (none of them knows
@@ -51,6 +57,9 @@ namespace UnityGameTranslator.Core.TextShaping
         {
             internal string Logical;
 
+            /// <summary>Whether <see cref="PaddedShaped"/> can keep one label character per typed character.</summary>
+            internal bool Paddable;
+
             /// <summary>
             /// The shaped text in LOGICAL order, tokens written out — the string an engine must
             /// wrap: the glyphs it will draw, in the order the lines are cut in.
@@ -59,6 +68,7 @@ namespace UnityGameTranslator.Core.TextShaping
 
             internal int[] Cps;                 // shaped codepoints (tokens as sentinels)
             internal List<string> Tokens;
+            internal HashSet<int> UnitTokens = new HashSet<int>();   // tokens that are shaped units (glyphs), not typed text
             internal int[] CpOfLogical;         // logical UTF-16 → shaped codepoint
             internal int[] OffsetInCp;          // logical UTF-16 → offset inside a token (0 otherwise)
             internal int[] MeasureStartOfCp;    // shaped codepoint → UTF-16 start in MeasureText
@@ -103,12 +113,25 @@ namespace UnityGameTranslator.Core.TextShaping
             /// </summary>
             internal string PaddedShaped()
             {
+                if (!Paddable) return null;
                 var sb = new StringBuilder(Logical.Length);
                 int lastCp = -1;
                 for (int i = 0; i < Logical.Length;)
                 {
                     int cp = CpOfLogical[i];
-                    bool isToken = Cps[cp] - SentinelBase >= 0 && Cps[cp] - SentinelBase < Tokens.Count;
+                    int t = Cps[cp] - SentinelBase;
+                    bool isToken = t >= 0 && t < Tokens.Count;
+                    if (isToken && UnitTokens.Contains(t))
+                    {
+                        // A unit: its glyphs, then one zero-width space per typed character left.
+                        int typed = 0;
+                        while (i + typed < Logical.Length && CpOfLogical[i + typed] == cp) typed++;
+                        sb.Append(Tokens[t]);
+                        for (int k = Tokens[t].Length; k < typed; k++) sb.Append(ZeroWidthSpace);
+                        i += typed;
+                        lastCp = cp;
+                        continue;
+                    }
                     if (isToken) { sb.Append(Logical[i]); i++; lastCp = cp; continue; }
 
                     int width = char.IsHighSurrogate(Logical[i]) && i + 1 < Logical.Length ? 2 : 1;
@@ -136,11 +159,19 @@ namespace UnityGameTranslator.Core.TextShaping
 
         /// <summary>
         /// Shape the text and protect its tokens. Null when there is nothing to present (no
-        /// strong right-to-left character) or when the shaper's map could not be trusted.
+        /// strong right-to-left character and no shaped unit) or when the shaper's map could not
+        /// be trusted. <paramref name="units"/> cuts the text's shaped runs into units (the font's
+        /// own shaping, OpenTypeText.ShapeUnits); null when the field's font cannot shape.
         /// </summary>
-        internal static Prepared Prepare(string logical)
+        internal static Prepared Prepare(string logical, Func<string, List<OpenTypeText.ShapedUnit>> units = null)
         {
-            if (string.IsNullOrEmpty(logical) || !RtlText.ContainsStrongRtl(logical)) return null;
+            if (string.IsNullOrEmpty(logical)) return null;
+            var shapedUnits = units != null && OpenTypeText.NeedsShaping(logical) ? units(logical) : null;
+            bool hasUnits = shapedUnits != null && shapedUnits.Count > 0;
+            if (!hasUnits && !RtlText.ContainsStrongRtl(logical)) return null;
+            var unitAt = new Dictionary<int, OpenTypeText.ShapedUnit>();
+            if (hasUnits) foreach (var u in shapedUnits) if (u.Length > 0) unitAt[u.Start] = u;
+            var unitTokens = new HashSet<int>();
 
             // 1. Tokens → sentinels, remembering which logical span each sentinel stands for.
             var tokens = new List<string>();
@@ -149,6 +180,17 @@ namespace UnityGameTranslator.Core.TextShaping
             var offsetInToken = new int[logical.Length];
             for (int i = 0; i < logical.Length;)
             {
+                if (unitAt.TryGetValue(i, out var unit) && tokens.Count < SentinelMax)
+                {
+                    // Every typed character of the unit stands on the unit's one sentinel, at
+                    // offset 0: the caret sees one place, as for a ligature.
+                    for (int k = i; k < i + unit.Length && k < logical.Length; k++) { sentinelizedOfLogical[k] = sb.Length; offsetInToken[k] = 0; }
+                    unitTokens.Add(tokens.Count);
+                    sb.Append((char)(SentinelBase + tokens.Count));
+                    tokens.Add(unit.Glyphs);
+                    i += unit.Length;
+                    continue;
+                }
                 int end = TokenEnd(logical, i);
                 if (end > i && tokens.Count < SentinelMax)
                 {
@@ -185,6 +227,7 @@ namespace UnityGameTranslator.Core.TextShaping
                 Logical = logical,
                 Cps = cps.ToArray(),
                 Tokens = tokens,
+                UnitTokens = unitTokens,
                 CpOfLogical = new int[logical.Length],
                 OffsetInCp = offsetInToken,
             };
@@ -205,6 +248,18 @@ namespace UnityGameTranslator.Core.TextShaping
             prep.MeasureStartOfCp[prep.Cps.Length] = measure.Length;
             prep.MeasureText = measure.ToString();
             prep.CpOfMeasure = cpOfMeasure.ToArray();
+            // One label character per typed one is possible only when no unit draws more glyphs
+            // than it has typed characters (a split vowel drawn in two places can).
+            prep.Paddable = true;
+            for (int i = 0; i < logical.Length;)
+            {
+                int cp = prep.CpOfLogical[i];
+                int t = prep.Cps[cp] - SentinelBase;
+                int typed = 1;
+                while (i + typed < logical.Length && prep.CpOfLogical[i + typed] == cp) typed++;
+                if (t >= 0 && t < tokens.Count && unitTokens.Contains(t) && tokens[t].Length > typed) prep.Paddable = false;
+                i += typed;
+            }
             return prep;
         }
 
@@ -244,6 +299,7 @@ namespace UnityGameTranslator.Core.TextShaping
         private readonly int[] _lineDispStart, _lineDispEnd;   // display range of each line, '\n' excluded
         private readonly bool[] _lineParaRtl;
         private readonly int[] _logicalOfDisplay;              // display UTF-16 → first logical index shown there (-1: a line separator)
+        private readonly int[] _unitLenOfLogical;              // UTF-16 length of what shows a logical character (a unit: all its glyphs)
 
         private RtlFieldLayout(Prepared p, IList<int> softWrapsInMeasure)
         {
@@ -368,6 +424,7 @@ namespace UnityGameTranslator.Core.TextShaping
             // Logical-level tables.
             int len2 = _logical.Length;
             _dispOfLogical = new int[len2];
+            _unitLenOfLogical = new int[len2];
             _rtlOfLogical = new bool[len2];
             _lineOfLogical = new int[len2];
             // The line each codepoint sits on; a hard break belongs to the line it closes.
@@ -382,7 +439,10 @@ namespace UnityGameTranslator.Core.TextShaping
                 int cp = p.CpOfLogical[i];
                 int d = cp < n ? dispOfCp[cp] : Display.Length;
                 bool isToken = p.Cps.Length > cp && cp < n && p.Cps[cp] - SentinelBase >= 0 && p.Cps[cp] - SentinelBase < p.Tokens.Count;
+                bool isUnit = isToken && p.UnitTokens.Contains(p.Cps[cp] - SentinelBase);
                 _dispOfLogical[i] = isToken ? d + p.OffsetInCp[i] : d;
+                _unitLenOfLogical[i] = isUnit ? p.Tokens[p.Cps[cp] - SentinelBase].Length
+                                     : d < Display.Length && char.IsHighSurrogate(Display[d]) ? 2 : 1;
                 _rtlOfLogical[i] = cp < n && (levels[cp] & 1) == 1 && !isToken;
                 _lineOfLogical[i] = cp < n ? cpLine[cp] : lineCount - 1;
             }
@@ -394,6 +454,13 @@ namespace UnityGameTranslator.Core.TextShaping
                 int d = _dispOfLogical[i];
                 if (d >= 0 && d < Display.Length) _logicalOfDisplay[d] = i;
             }
+            // Every glyph of a unit shows the unit's typed characters.
+            for (int i = 0; i < len2; i++)
+                for (int u = 1; u < _unitLenOfLogical[i]; u++)
+                {
+                    int d = _dispOfLogical[i] + u;
+                    if (d >= 0 && d < Display.Length && _logicalOfDisplay[d] < 0) _logicalOfDisplay[d] = _logicalOfDisplay[_dispOfLogical[i]];
+                }
             // The low half of a surrogate pair is the same glyph as its high half.
             for (int d = 1; d < Display.Length; d++)
                 if (_logicalOfDisplay[d] < 0 && char.IsLowSurrogate(Display[d]) && char.IsHighSurrogate(Display[d - 1]))
@@ -581,9 +648,10 @@ namespace UnityGameTranslator.Core.TextShaping
             CaretAnchor(caret, out int d, out bool right, out int line);
             if (d < 0) return _lineParaRtl[line] ? _lineDispEnd[line] : _lineDispStart[line];
             // A display index is one glyph — a shaped letter, a ligature, one character of a token
-            // written out — except a surrogate pair, which spans two.
+            // written out — except a surrogate pair, which spans two, and a unit: all its glyphs.
             if (!right) return d;
-            return d + (d < Display.Length && char.IsHighSurrogate(Display[d]) ? 2 : 1);
+            int first = LogicalAtDisplay(d);
+            return d + (first >= 0 ? _unitLenOfLogical[first] : d < Display.Length && char.IsHighSurrogate(Display[d]) ? 2 : 1);
         }
 
         private int Clamp(int caret) => caret < 0 ? 0 : caret > _logical.Length ? _logical.Length : caret;
@@ -612,6 +680,9 @@ namespace UnityGameTranslator.Core.TextShaping
                 if (byDisplay.TryGetValue(d, out var list)) order.AddRange(list);
             return order;
         }
+
+        /// <summary>How many display characters show logical character <paramref name="i"/>: 1, 2 for a surrogate pair, every glyph of its unit.</summary>
+        internal int DisplayLengthOf(int i) => _logical.Length == 0 ? 1 : _unitLenOfLogical[Math.Max(0, Math.Min(_logical.Length - 1, i))];
 
         /// <summary>Display index of the glyph showing logical character <paramref name="i"/>.</summary>
         internal int DisplayOf(int i) => _dispOfLogical[Math.Max(0, Math.Min(_logical.Length - 1, i))];

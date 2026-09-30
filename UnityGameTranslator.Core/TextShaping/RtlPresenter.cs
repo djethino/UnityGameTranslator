@@ -107,7 +107,7 @@ namespace UnityGameTranslator.Core.TextShaping
         /// one range scan says "nothing to do".
         /// </summary>
         internal static void Present(object instance, long compId, ref string value,
-                                     string settingsFontName = null, FontOverrideRule overrideRule = null)
+                                     string settingsFontName = null, FontOverrideRule overrideRule = null, bool ownUi = false)
         {
             if (string.IsNullOrEmpty(value)) return;
 
@@ -123,7 +123,7 @@ namespace UnityGameTranslator.Core.TextShaping
             long tPerf = Perf.Start();
             try
             {
-                PresentSyllabic(instance, compId, ref value, settingsFontName);
+                PresentSyllabic(instance, compId, ref value, settingsFontName, ownUi);
 
                 var prop = RtlProp(instance);
 
@@ -371,7 +371,7 @@ namespace UnityGameTranslator.Core.TextShaping
             && ((TypeHelper.UI_TextType != null && TypeHelper.UI_TextType.IsInstanceOfType(instance))
                 || UIToolkitSupport.IsTextElementInstance(instance));
 
-        private static void PresentSyllabic(object instance, long compId, ref string value, string settingsFontName)
+        private static void PresentSyllabic(object instance, long compId, ref string value, string settingsFontName, bool ownUi)
         {
             bool needsBreak = WordBreaker.NeedsBreaking(value);
             bool needsShape = OpenTypeText.NeedsShaping(value);
@@ -411,7 +411,8 @@ namespace UnityGameTranslator.Core.TextShaping
                 bool isTmp = TypeHelper.TMP_TextType != null && TypeHelper.TMP_TextType.IsInstanceOfType(instance);
                 bool legacy = !isTmp && DrawsFromLegacyFont(instance);
                 var asset = isTmp ? ShapingFontAsset.ForSettings(settingsFontName) : null;
-                var derived = legacy ? FontManager.DerivedForSettings(settingsFontName) : null;
+                // The mod's own window draws with its interface font, the game's text with its replacement.
+                var derived = !legacy ? null : ownUi ? FontManager.DerivedForInterface() : FontManager.DerivedForSettings(settingsFontName);
                 switch (ShapingRoute.Decide(isTmp, asset != null, legacy, derived != null, engineShapes: false))
                 {
                     case ShapingRoute.Route.OurTmpAsset:

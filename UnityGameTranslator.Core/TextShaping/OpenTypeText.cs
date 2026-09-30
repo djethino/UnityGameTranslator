@@ -1,4 +1,5 @@
-﻿using System.Text;
+﻿using System.Collections.Generic;
+using System.Text;
 
 namespace UnityGameTranslator.Core.TextShaping
 {
@@ -60,6 +61,98 @@ namespace UnityGameTranslator.Core.TextShaping
             if (sb == null) return text;
             sb.Append(text, copied, text.Length - copied);
             return sb.ToString();
+        }
+
+        /// <summary>
+        /// One stretch of typed text drawn as one inseparable group of glyphs — a syllable, a
+        /// conjunct with its signs: the smallest place a caret can stand around in an edited text
+        /// (RtlFieldLayout). <see cref="Glyphs"/> names the glyphs as <see cref="Shape"/> does.
+        /// </summary>
+        internal struct ShapedUnit
+        {
+            public int Start, Length;   // UTF-16 range of the typed text
+            public string Glyphs;
+        }
+
+        /// <summary>
+        /// The shaped runs of <paramref name="text"/> cut into units: glyphs grouped so that no
+        /// unit draws a character another unit also draws (a pre-base sign drawn before its
+        /// consonant stays with it). Text outside the shaped runs is not listed. A run whose glyphs
+        /// cannot all be named is left out, as <see cref="Shape"/> leaves it unshaped.
+        /// </summary>
+        internal static List<ShapedUnit> ShapeUnits(string text, IShapingFont font, IGlyphNamer namer)
+        {
+            var units = new List<ShapedUnit>();
+            if (string.IsNullOrEmpty(text) || font == null || namer == null) return units;
+            int i = 0;
+            while (i < text.Length)
+            {
+                int cp = CodePointAt(text, i, out int width);
+                if (!InRun(cp)) { i += width; continue; }
+                int start = i;
+                while (i < text.Length && InRun(CodePointAt(text, i, out width))) i += width;
+                string run = text.Substring(start, i - start);
+                if (!OpenTypeShaping.NeedsShaping(run)) continue;
+
+                var glyphs = OpenTypeShaping.Shape(run, font);
+                var named = new string[glyphs.Count];
+                bool ok = glyphs.Count > 0;
+                for (int k = 0; k < glyphs.Count && ok; k++)
+                {
+                    var g = glyphs[k];
+                    int code = namer.CodepointFor(g.Glyph, g.XOffset, g.YOffset, g.XAdvance - font.AdvanceWidth(g.Glyph));
+                    if (code <= 0) ok = false;
+                    else named[k] = char.ConvertFromUtf32(code);
+                }
+                if (!ok) continue;
+
+                // A unit ends where every glyph after it comes from later text than every glyph
+                // before it: the minimum of what follows exceeds the maximum of what precedes.
+                var minAfter = new int[glyphs.Count + 1];
+                minAfter[glyphs.Count] = run.Length;
+                for (int k = glyphs.Count - 1; k >= 0; k--) minAfter[k] = System.Math.Min(minAfter[k + 1], glyphs[k].Cluster);
+                int unitFirst = 0, maxBefore = -1;
+                for (int k = 0; k < glyphs.Count; k++)
+                {
+                    maxBefore = System.Math.Max(maxBefore, glyphs[k].Cluster);
+                    if (minAfter[k + 1] <= maxBefore) continue;
+                    int from = minAfter[unitFirst], to = minAfter[k + 1];
+                    var sb = new StringBuilder();
+                    for (int u = unitFirst; u <= k; u++) sb.Append(named[u]);
+                    // Characters no glyph drew (a joiner) belong to the unit before them.
+                    var unit = new ShapedUnit { Start = start + (unitFirst == 0 ? 0 : from), Length = to - (unitFirst == 0 ? 0 : from), Glyphs = sb.ToString() };
+                    // A caret never stands inside a user-perceived character either: a unit that
+                    // starts on a sign, or on the consonant a virama joins, goes with the one before.
+                    int last = units.Count - 1;
+                    if (last >= 0 && units[last].Start + units[last].Length == unit.Start && !GraphemeBoundary(text, unit.Start))
+                        units[last] = new ShapedUnit { Start = units[last].Start, Length = units[last].Length + unit.Length, Glyphs = units[last].Glyphs + unit.Glyphs };
+                    else units.Add(unit);
+                    unitFirst = k + 1;
+                }
+            }
+            return units;
+        }
+
+        /// <summary>
+        /// Whether a user-perceived character may end before <paramref name="i"/> — the parts of
+        /// Unicode's extended grapheme clusters (UAX #29) that concern a shaped run: never before
+        /// a combining sign (GB9, GB9a) or a joiner (GB9), nor between a virama and the consonant it
+        /// joins (GB9c, the Indic conjunct rule of Unicode 15.1). Written here because the
+        /// runtimes the mod runs on (.NET Framework, Mono) know only the older combining rule.
+        /// </summary>
+        internal static bool GraphemeBoundary(string text, int i)
+        {
+            if (i <= 0 || i >= text.Length) return true;
+            int cp = char.ConvertToUtf32(text, char.IsLowSurrogate(text[i]) && i > 0 ? i - 1 : i);
+            if (char.IsLowSurrogate(text[i])) return false;
+            if (cp == 0x200C || cp == 0x200D) return false;
+            var category = System.Globalization.CharUnicodeInfo.GetUnicodeCategory(char.ConvertFromUtf32(cp), 0);
+            if (category == System.Globalization.UnicodeCategory.NonSpacingMark || category == System.Globalization.UnicodeCategory.SpacingCombiningMark
+                || category == System.Globalization.UnicodeCategory.EnclosingMark) return false;
+            // GB9c: Linker (the viramas of InCB=Linker), then a consonant.
+            int prev = text[i - 1];
+            bool linker = prev == 0x094D || prev == 0x09CD || prev == 0x0ACD || prev == 0x0B4D || prev == 0x0C4D || prev == 0x0D4D;
+            return !(linker && category == System.Globalization.UnicodeCategory.OtherLetter);
         }
 
         /// <summary>

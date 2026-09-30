@@ -21,6 +21,14 @@ namespace UnityGameTranslator.Core.UI
 
         public void LocalFileChanged() => TranslatorUIManager.NotifyLocalFileChanged();
 
+        public void DerivedFontRewritten(string fontName)
+        {
+            string interfaceFont = TranslatorCore.EffectiveInterfaceFont;
+            if (!string.IsNullOrEmpty(interfaceFont)
+                && string.Equals(UnityGameTranslator.Common.FontReferences.Name(interfaceFont), fontName, StringComparison.OrdinalIgnoreCase))
+                TranslatorUIManager.ApplyInterfaceFont();
+        }
+
         public void ShuttingDown()
         {
             // Streams first (background tasks holding HTTP connections), then the live edit

@@ -1994,7 +1994,8 @@ namespace UnityGameTranslator.Core
             // copies too (DerivedFonts: complex scripts in the engines that draw by codepoint).
             string fontsFolder = Path.Combine(ModFolder, UnityGameTranslator.Common.AssetPacks.FontsFolder);
             FontFolderRedirect.Install(fontsFolder, DerivedFonts.Prepare(fontsFolder, adapter.IsIL2CPP,
-                Path.Combine(ModFolder, "translations.json")));
+                Path.Combine(ModFolder, "translations.json"), Path.Combine(ModFolder, "config.json"),
+                Path.Combine(ModFolder, ModUi.FileName)));
 
             CachePath = Path.Combine(ModFolder, "translations.json");
             ModUiCachePath = Path.Combine(ModFolder, ModUi.FileName);

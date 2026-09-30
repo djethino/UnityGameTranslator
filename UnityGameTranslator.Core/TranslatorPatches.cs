@@ -2933,19 +2933,20 @@ namespace UnityGameTranslator.Core
             // Early exit: our own internal set_text (nudge) — don't translate/track it.
             if (BypassTextPrefix) return;
 
-            // 🔴 **Our own window shows right-to-left text right, whatever else is decided about
-            // it.** It is not translated here (the whitelist below skips everything but its
-            // registered chrome) and it does not follow the game's translation switch — but a
-            // Failures row, a list or the text editor holds Arabic the moment a game is translated
-            // into it, and uGUI draws that unjoined and backwards. Asked only of a text that
-            // carries a right-to-left letter: one range scan for every other write.
-            if (TextShaping.RtlText.ContainsStrongRtl(textValue) && __instance is Component ownCandidate
+            // 🔴 **Our own window shows right-to-left and shaped text right, whatever else is
+            // decided about it.** It is not translated here (the whitelist below skips everything
+            // but its registered chrome) and it does not follow the game's translation switch — but
+            // a Failures row, a list or the text editor holds Arabic or Hindi the moment a game is
+            // translated into it, and uGUI draws that unjoined, backwards or with its conjuncts
+            // apart. Shaped with the interface font's derived copy (FontManager.DerivedForInterface).
+            if ((TextShaping.RtlText.ContainsStrongRtl(textValue) || TextShaping.OpenTypeText.NeedsShaping(textValue))
+                && __instance is Component ownCandidate
                 && TranslatorCore.IsOwnUI(ownCandidate) && !TranslatorCore.IsOwnUITranslatable(ownCandidate))
             {
                 if (componentType != "TextMesh" && IsInputFieldTextComponentCached(__instance))
-                    TextShaping.RtlInputFields.PresentLabel(GetParentInputFieldCached(__instance), __instance, ref textValue);
+                    TextShaping.RtlInputFields.PresentLabel(GetParentInputFieldCached(__instance), __instance, ref textValue, settingsFontName: null, ownUi: true);
                 else
-                    TextShaping.RtlPresenter.Present(__instance, TypeHelper.GetInstanceID(__instance), ref textValue);
+                    TextShaping.RtlPresenter.Present(__instance, TypeHelper.GetInstanceID(__instance), ref textValue, ownUi: true);
                 return;
             }
 
@@ -3117,7 +3118,7 @@ namespace UnityGameTranslator.Core
                 // wears its replacement font, and its clone atlas gets the presented characters.
                 if ((componentType == "Unity" || componentType == "TMP") && IsInputFieldTextComponentCached(__instance))
                 {
-                    TextShaping.RtlInputFields.PresentLabel(GetParentInputFieldCached(__instance), __instance, ref textValue);
+                    TextShaping.RtlInputFields.PresentLabel(GetParentInputFieldCached(__instance), __instance, ref textValue, settingsFontName ?? fontName, ownUi: false);
                     if (unityCloneFont != null && !string.IsNullOrEmpty(textValue))
                         FontManager.EnsureCharsInCloneAtlasDirect(textValue, unityCloneFont, unityCloneFallback);
                     return;

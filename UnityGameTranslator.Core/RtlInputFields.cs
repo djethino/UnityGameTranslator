@@ -8,8 +8,14 @@ using UnityEngine.UI;
 namespace UnityGameTranslator.Core.TextShaping
 {
     /// <summary>
-    /// Right-to-left text in Unity's input fields — the game's and this mod's own (UniverseLib
-    /// builds uGUI InputField), uGUI and TextMesh Pro. See analyse/rtl-saisie-et-editeur-mod.md.
+    /// Right-to-left text, and text of a script that needs shaping, in Unity's input fields — the
+    /// game's and this mod's own (UniverseLib builds uGUI InputField), uGUI and TextMesh Pro. See
+    /// analyse/rtl-saisie-et-editeur-mod.md and analyse/ecritures-complexes-etat-reel.md (saisie).
+    ///
+    /// A shaped syllable is drawn by the field's font's own tables — the derived copy for uGUI
+    /// (DerivedFonts), our font asset for TMP (ShapingFontAsset) — and stands as one unit for the
+    /// caret (RtlFieldLayout). A TMP label keeps one character per typed one; a unit drawing more
+    /// glyphs than it has characters (a split vowel) cannot, and such a text is left unshaped, said.
     ///
     /// Unity's two fields store and edit the LOGICAL string and draw it as it is: Arabic comes out
     /// unjoined and in typing order, on every version. The field's text is never touched here —
@@ -87,13 +93,15 @@ namespace UnityGameTranslator.Core.TextShaping
         /// field's label. Replaces <paramref name="value"/> by what the label must draw when it
         /// carries right-to-left text, and releases the field otherwise.
         /// </summary>
-        internal static void PresentLabel(object fieldObj, object labelObj, ref string value)
+        /// <param name="settingsFontName">the game font the label wears (its replacement shapes); null for the mod's own window</param>
+        /// <param name="ownUi">the mod's own window: its interface font shapes</param>
+        internal static void PresentLabel(object fieldObj, object labelObj, ref string value, string settingsFontName, bool ownUi)
         {
             if (!TranslatorCore.IsMainThread || fieldObj == null || labelObj == null) return;
 
             if (TypeHelper.TMP_InputFieldType != null && TypeHelper.TMP_InputFieldType.IsInstanceOfType(fieldObj))
             {
-                PresentTmpLabel(fieldObj, labelObj, ref value);
+                PresentTmpLabel(fieldObj, labelObj, ref value, ownUi ? null : ShapingFontAsset.ForSettings(settingsFontName));
                 return;
             }
 
@@ -102,7 +110,8 @@ namespace UnityGameTranslator.Core.TextShaping
             if (field == null || label == null) return;
 
             int id = field.GetInstanceID();
-            var prep = string.IsNullOrEmpty(value) ? null : RtlFieldLayout.Prepare(value);
+            var derived = ownUi ? FontManager.DerivedForInterface() : FontManager.DerivedForSettings(settingsFontName);
+            var prep = string.IsNullOrEmpty(value) ? null : RtlFieldLayout.Prepare(value, UnitsOf(derived));
             if (prep == null) { Release(id); return; }
 
             List<int> wraps = null;
@@ -144,7 +153,29 @@ namespace UnityGameTranslator.Core.TextShaping
             TranslatorCore.LogInfo($"[RtlInputFields] {kind} field shows: {RtlPresenter.Escape(shown)}");
         }
 
-        private static void PresentTmpLabel(object fieldObj, object labelObj, ref string value)
+        /// <summary>The field's font's shaping as units, naming new glyphs in its derived copy (rewritten this tick).</summary>
+        private static Func<string, List<OpenTypeText.ShapedUnit>> UnitsOf(DerivedFonts.Entry derived)
+        {
+            if (derived == null) return null;
+            return text =>
+            {
+                var units = OpenTypeText.ShapeUnits(text, derived.Font, derived.Namer);
+                DerivedFonts.NoteNamed(derived);
+                return units;
+            };
+        }
+
+        /// <summary>
+        /// A derived copy was rewritten (new glyphs named for what was just typed): every uGUI field
+        /// presented draws its label again — with the font object made from the new copy.
+        /// </summary>
+        internal static void OnDerivedFontRewritten()
+        {
+            foreach (var s in _states.Values)
+                if (s.Kind == Engine.UGui && Alive(s) && s.UField != null) s.UField.ForceLabelUpdate();
+        }
+
+        private static void PresentTmpLabel(object fieldObj, object labelObj, ref string value, ShapingFontAsset asset)
         {
             if (!Tmp.Resolve()) return;
 
@@ -155,8 +186,17 @@ namespace UnityGameTranslator.Core.TextShaping
             string tail = tracked ? RtlFieldLayout.ZeroWidthSpace.ToString() : "";
             string logical = tail.Length > 0 ? value.Substring(0, value.Length - 1) : value;
 
-            var prep = string.IsNullOrEmpty(logical) ? null : RtlFieldLayout.Prepare(logical);
+            var prep = string.IsNullOrEmpty(logical) ? null
+                : RtlFieldLayout.Prepare(logical, asset == null ? (Func<string, List<OpenTypeText.ShapedUnit>>)null : t => OpenTypeText.ShapeUnits(t, asset.Font, asset));
             if (prep == null) { Release(id); return; }
+            if (!prep.Paddable)
+            {
+                // TMP reads positions back from its label one for one: a unit drawing more glyphs
+                // than it has typed characters cannot be shown so. Left as TMP draws it, said.
+                Note("a TMP field shows a text whose shaped form is longer than what was typed (a split vowel) — left unshaped");
+                Release(id);
+                return;
+            }
 
             var label = TypeHelper.Il2CppCast(labelObj, typeof(Graphic)) as Graphic;
             if (label == null) { Note("TMP label is not a Graphic on this runtime"); return; }
@@ -364,8 +404,15 @@ namespace UnityGameTranslator.Core.TextShaping
                 {
                     int d = s.Layout.DisplayOf(i);
                     if (d < 0 || d >= s.X.Count) { s.BoxL[i] = s.BoxR[i] = float.NaN; s.BoxLine[i] = -1; continue; }
-                    s.BoxL[i] = s.X[d];
-                    s.BoxR[i] = s.X[d] + s.W[d];
+                    // A shaped unit is all its glyphs: from the leftmost pen to the furthest advance.
+                    float left = s.X[d], right = s.X[d] + s.W[d];
+                    for (int u = 1; u < s.Layout.DisplayLengthOf(i) && d + u < s.X.Count; u++)
+                    {
+                        left = Math.Min(left, s.X[d + u]);
+                        right = Math.Max(right, s.X[d + u] + s.W[d + u]);
+                    }
+                    s.BoxL[i] = left;
+                    s.BoxR[i] = right;
                     s.BoxLine[i] = GeneratorLineOf(s, d);
                 }
                 s.LineTop.Clear(); s.LineBottom.Clear();

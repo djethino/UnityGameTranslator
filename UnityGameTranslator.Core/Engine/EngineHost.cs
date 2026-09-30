@@ -42,5 +42,11 @@ namespace UnityGameTranslator.Core
 
         /// <summary>The game is closing: stop every stream and end every session, briefly.</summary>
         void ShuttingDown();
+
+        /// <summary>
+        /// A font's derived copy was rewritten with new shaped glyphs (DerivedFonts): the window's
+        /// interface font, if it is that font, is to be applied again to draw them.
+        /// </summary>
+        void DerivedFontRewritten(string fontName);
     }
 }

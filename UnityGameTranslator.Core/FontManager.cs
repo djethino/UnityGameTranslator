@@ -2567,12 +2567,25 @@ namespace UnityGameTranslator.Core
             if (string.IsNullOrEmpty(settingsFontName) || !TranslatorCore.FontReplacementActive) return null;
             if (!TranslatorCore.FontSettingsMap.TryGetValue(settingsFontName, out var settings)) return null;
             string fallback = settings.fallback;
-            if (string.IsNullOrEmpty(fallback) || IsGameFontRef(fallback) || _failedFallbackFontNames.Contains(fallback)) return null;
-            string name = StripFontPrefix(fallback);
+            if (string.IsNullOrEmpty(fallback) || _failedFallbackFontNames.Contains(fallback)) return null;
+            return DerivedForReference(fallback);
+        }
+
+        /// <summary>
+        /// The derived copy the mod's own window draws from — its interface font, when that font
+        /// has one (TranslatorCore.EffectiveInterfaceFont, re-backed by name like a game font).
+        /// </summary>
+        internal static DerivedFonts.Entry DerivedForInterface() => DerivedForReference(TranslatorCore.EffectiveInterfaceFont);
+
+        /// <summary>The derived copy a font reference is drawn from, by the origin serving it; null for a game font or none.</summary>
+        private static DerivedFonts.Entry DerivedForReference(string reference)
+        {
+            if (string.IsNullOrEmpty(reference) || IsGameFontRef(reference)) return null;
+            string name = StripFontPrefix(reference);
             // The same origin rule as ResolveSystemFontFamily: "[Custom] X" is fonts/X; a bare name is
             // the installed font first — its fonts/ copy only when the system lacks it. Each origin
             // has its own copy.
-            var served = UnityGameTranslator.Common.FontReferences.Serving(fallback,
+            var served = UnityGameTranslator.Common.FontReferences.Serving(reference,
                 gameHas: IsGameFont(name), customHas: CustomFontLoader.CustomFonts.ContainsKey(name),
                 systemHas: AssetAvailability.IsSystemFontAvailable(name));
             return served == null ? null : ShownDerived(name, served.Value);
@@ -2619,6 +2632,10 @@ namespace UnityGameTranslator.Core
             int users = AskUsersAgain(fontName);
             TranslatorScanner.ClearProcessedCache();
             RequestPendingRefresh();
+            // A field's label named the new glyphs: it draws again, now that they exist — and the
+            // mod's window, when its interface font is this one.
+            TextShaping.RtlInputFields.OnDerivedFontRewritten();
+            TranslatorCore.Host?.DerivedFontRewritten(fontName);
             TranslatorCore.LogDebug($"[FontManager] Derived copy of '{fontName}' rewritten — {users} game font(s) take it");
         }
 

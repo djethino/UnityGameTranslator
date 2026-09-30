@@ -281,6 +281,7 @@ namespace UnityGameTranslator.Core
                     if (refused > 0) TranslatorCore.LogWarning($"[DerivedFonts] {name}: {refused} saved name(s) did not fit this font and were left out");
                 }
                 PreName(entry, translation);
+                if (reserve > 1) PreNameNatural(entry, parser.GlyphCount);
                 // Every file of the reserve is a valid font of its own family from the start: the
                 // engine reads the names when it lists the folder. The first holds everything known.
                 for (int k = 0; k < entry.Files.Count; k++)
@@ -329,6 +330,28 @@ namespace UnityGameTranslator.Core
             }
             File.WriteAllText(entry.NamesPath, entry.Namer.Save());
             TranslatorCore.LogInfo($"[DerivedFonts] {entry.Name}: {lines} shaped line(s) of the translation named {entry.Namer.Added.Count - before} new glyph(s) in {sw.ElapsedMilliseconds} ms");
+        }
+
+        /// <summary>
+        /// IL2CPP: every rewrite of the copy takes one of the session's few names, and a line that
+        /// arrives while the game runs (a live translation, a typed text) needs a rewrite only for
+        /// glyphs never named. Most glyphs a line needs are drawn where they stand — measured on the
+        /// Hindi probe corpus: 101 of 133 — so every glyph of the font is named at its natural place
+        /// once, at start, and the names left serve the positioned marks. Not for a font so large
+        /// its glyphs would take more than half the private codepoints.
+        /// </summary>
+        private static void PreNameNatural(Entry entry, int glyphCount)
+        {
+            int capacity = PrivateGlyphs.Last - PrivateGlyphs.First + 1;
+            if (glyphCount - 1 > capacity / 2)
+            {
+                TranslatorCore.LogInfo($"[DerivedFonts] {entry.Name}: {glyphCount} glyphs — too many to name all at start; lines arriving while the game runs use the session's names");
+                return;
+            }
+            int before = entry.Namer.Added.Count;
+            for (int g = 1; g < glyphCount; g++) entry.Namer.CodepointFor(g, 0, 0, 0);
+            if (entry.Namer.Added.Count > before)
+                TranslatorCore.LogInfo($"[DerivedFonts] {entry.Name}: {entry.Namer.Added.Count - before} glyph(s) named at their natural place for this session's new lines");
         }
 
         private static bool CoversShapedScript(TtfParser parser)

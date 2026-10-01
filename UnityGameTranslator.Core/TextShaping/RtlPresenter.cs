@@ -750,8 +750,15 @@ namespace UnityGameTranslator.Core.TextShaping
                     // made at a box width the layout had not recomputed yet (bench: a 3-letter
                     // label on two rows, a section title under its own list). Wait, without
                     // spending attempts — staleness is already covered by the text check above.
-                    if (!WillBeRedrawn(comp, entry.Kind))
+                    string blocker = RedrawBlocker(comp, entry.Kind);
+                    if (blocker != null)
+                    {
+                        // Debug: a reflow that waits says why, once per component — a text left in
+                        // its measuring form (logical order) on screen is read backwards.
+                        if (TranslatorCore.DebugMode && _waitLogged.Add(id) && _waitLogged.Count <= 200)
+                            TranslatorCore.LogInfo($"[RtlPresenter] reflow waits ({blocker}): comp={id} kind={entry.Kind} @ {(comp is UnityEngine.Component wc ? TranslatorCore.GetGameObjectPath(wc.gameObject) : "?")}");
                         continue;
+                    }
 
                     string final = BuildLines(entry, comp, out string whyNot);
                     // Nothing to change: the engine's own lines were right (one line, no wrap).
@@ -837,6 +844,7 @@ namespace UnityGameTranslator.Core.TextShaping
         }
 
         private static int _fallbackLogBudget = 5;
+        private static readonly HashSet<long> _waitLogged = new HashSet<long>();
 
         // ⚠ No re-cut on box resize. It was tried (a Graphic.OnRectTransformDimensionsChange
         // hook) and it is circular by construction: a ContentSizeFitter sizes the box from the
@@ -957,27 +965,30 @@ namespace UnityGameTranslator.Core.TextShaping
         /// </summary>
         internal static bool IsDrawn(object comp) => WillBeRedrawn(comp, ReflowKind.UGuiText);
 
-        private static bool WillBeRedrawn(object comp, ReflowKind kind)
+        private static bool WillBeRedrawn(object comp, ReflowKind kind) => RedrawBlocker(comp, kind) == null;
+
+        /// <summary>Why the engine will not redraw this component now (see WillBeRedrawn), or null.</summary>
+        private static string RedrawBlocker(object comp, ReflowKind kind)
         {
-            if (!(comp is UnityEngine.Component c) || c.gameObject == null) return true;
-            if (!c.gameObject.activeInHierarchy) return false;
-            if (kind == ReflowKind.Ngui) return true;
+            if (!(comp is UnityEngine.Component c) || c.gameObject == null) return null;
+            if (!c.gameObject.activeInHierarchy) return "inactive";
+            if (kind == ReflowKind.Ngui) return null;
             // TMP lays out what it draws; a 3D TextMeshPro is no Graphic, so the canvas gate below
             // does not apply to it — active and enabled is the question.
-            if (kind == ReflowKind.Tmp) return !(comp is UnityEngine.Behaviour tb) || tb.isActiveAndEnabled;
-            if (comp is UnityEngine.Behaviour b && !b.isActiveAndEnabled) return false;
+            if (kind == ReflowKind.Tmp) return comp is UnityEngine.Behaviour tb && !tb.isActiveAndEnabled ? "disabled" : null;
+            if (comp is UnityEngine.Behaviour b && !b.isActiveAndEnabled) return "disabled";
             EnsureGeneratorPlumbing();
             try
             {
-                if (_canvasProp != null && _canvasProp.GetValue(comp, null) == null) return false;
+                if (_canvasProp != null && _canvasProp.GetValue(comp, null) == null) return "no canvas";
                 if (_cullProp != null && _canvasRendererProp != null)
                 {
                     object renderer = _canvasRendererProp.GetValue(comp, null);
-                    if (renderer != null && (bool)_cullProp.GetValue(renderer, null)) return false;
+                    if (renderer != null && (bool)_cullProp.GetValue(renderer, null)) return "culled";
                 }
             }
             catch (Exception ex) { Faults.Say("RtlPresenter.WillBeRedrawn", ex); }
-            return true;
+            return null;
         }
 
         /// <summary>horizontalOverflow = Overflow while OUR line breaks are displayed.</summary>

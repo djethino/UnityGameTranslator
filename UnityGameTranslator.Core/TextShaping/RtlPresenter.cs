@@ -175,6 +175,7 @@ namespace UnityGameTranslator.Core.TextShaping
                 }
 
                 bool mirror = TranslatorCore.ShouldMirrorRtlAlignment(settingsFontName, overrideRule);
+                LogAlign(instance, compId, "present", settingsFontName, mirror);
 
                 DescribeFont(instance, compId, settingsFontName);
 
@@ -434,6 +435,7 @@ namespace UnityGameTranslator.Core.TextShaping
         private static void KeepEcho(object instance, long compId, string value, string settingsFontName, FontOverrideRule overrideRule)
         {
             bool mirrorNow = TranslatorCore.ShouldMirrorRtlAlignment(settingsFontName, overrideRule);
+            LogAlign(instance, compId, "echo", settingsFontName, mirrorNow);
             if (UIToolkitSupport.IsTextElementInstance(instance))
                 UIToolkitSupport.MirrorAlign(instance, mirrorNow);
             else
@@ -1585,6 +1587,7 @@ namespace UnityGameTranslator.Core.TextShaping
         {
             // "Keep the game's": not merely nothing to do — a component mirrored under an
             // earlier choice gets its own alignment back, or the choice is dead on screen.
+            if (compId != -1) _mirrorDecision[compId] = mirror;
             if (!mirror) { RestoreAlignment(comp, compId); return; }
             try
             {
@@ -1605,7 +1608,9 @@ namespace UnityGameTranslator.Core.TextShaping
 
                 object mirroredObj = MirroredAlignmentValue(alignProp.PropertyType, original);
                 if (mirroredObj == null || Equals(mirroredObj, current)) return;
-                alignProp.SetValue(comp, mirroredObj, null);
+                _settingAlignment = true;
+                try { alignProp.SetValue(comp, mirroredObj, null); }
+                finally { _settingAlignment = false; }
             }
             catch (Exception ex) { Faults.Say("RtlPresenter.MirrorAlignment", ex); }
         }
@@ -1668,6 +1673,8 @@ namespace UnityGameTranslator.Core.TextShaping
                 try { prop.SetValue(instance, original, null); } catch (Exception ex) { Faults.Say("RtlPresenter.RestoreIfFlagged", ex); }
             }
             RestoreAlignment(instance, compId);
+            // Left-to-right again: an alignment the game sets from now on is its own, untouched.
+            _mirrorDecision.Remove(compId);
             RestoreRewrap(instance, compId);
         }
 
@@ -1676,12 +1683,38 @@ namespace UnityGameTranslator.Core.TextShaping
         {
             if (compId == -1 || !_alignedOriginal.TryGetValue(compId, out object anchor)) return;
             _alignedOriginal.Remove(compId);
+            _settingAlignment = true;
             try
             {
                 var alignProp = instance.GetType().GetProperty("alignment", BindingFlags.Public | BindingFlags.Instance);
                 alignProp?.SetValue(instance, anchor, null);
             }
             catch (Exception ex) { Faults.Say("RtlPresenter.RestoreAlignment", ex); }
+            finally { _settingAlignment = false; }
+        }
+
+        // The mirror decided per component for its right-to-left text (MirrorAlignment), and
+        // whether the alignment being set right now is ours — see OnGameAlignment.
+        private static readonly Dictionary<long, bool> _mirrorDecision = new Dictionary<long, bool>();
+        [ThreadStatic] private static bool _settingAlignment;
+
+        /// <summary>
+        /// The GAME set the alignment of a component showing our right-to-left text (TMP's
+        /// alignment setter, hooked). 🔴 Its value is the game's own from now on: a game that sets
+        /// the alignment AFTER the text (a list entry built from a prefab aligned the other way)
+        /// erased our mirror at once, and the prefab's value recorded as "the game's" made every
+        /// later choice land on the wrong side — mirrored at launch showed unmirrored, keep showed
+        /// mirrored (2026-10-02). So: recorded as the original, and mirrored again when that is the
+        /// choice; under "keep", the game's value simply stands.
+        /// </summary>
+        internal static void OnGameAlignment(object instance)
+        {
+            if (_settingAlignment || instance == null || !TranslatorCore.IsMainThread) return;
+            long compId = TypeHelper.GetInstanceID(instance);
+            if (compId == -1 || !_mirrorDecision.TryGetValue(compId, out bool mirror)) return;
+            if (!mirror) { _alignedOriginal.Remove(compId); return; }
+            _alignedOriginal.Remove(compId);
+            MirrorAlignment(instance, compId, true);
         }
 
         /// <summary>The wrap mode a component had before <see cref="DisableRewrap"/>, put back.</summary>
@@ -1695,6 +1728,24 @@ namespace UnityGameTranslator.Core.TextShaping
                 wrapProp?.SetValue(instance, wrap, null);
             }
             catch (Exception ex) { Faults.Say("RtlPresenter.RestoreRewrap", ex); }
+        }
+
+        // Which font name the alignment choice was asked for, and what it answered — the question
+        // behind "the side is wrong at launch and right once toggled" (2026-10-02). Debug only,
+        // one line per component and decision, budgeted like the dump below.
+        private static int _alignLogBudget = 300;
+        private static readonly HashSet<string> _alignLogged = new HashSet<string>();
+
+        private static void LogAlign(object instance, long compId, string when, string settingsFontName, bool mirror)
+        {
+            if (!TranslatorCore.DebugMode || _alignLogBudget <= 0) return;
+            string path = instance is UnityEngine.Component c && c != null ? TranslatorCore.GetGameObjectPath(c.gameObject) : "?";
+            if (!_alignLogged.Add(compId + "|" + when + "|" + settingsFontName + "|" + mirror)) return;
+            _alignLogBudget--;
+            string now = null;
+            try { now = instance.GetType().GetProperty("alignment", BindingFlags.Public | BindingFlags.Instance)?.GetValue(instance, null)?.ToString(); }
+            catch (Exception ex) { Faults.Say("RtlPresenter.LogAlign", ex); }
+            TranslatorCore.LogInfo($"[RtlPresenter] align comp={compId} {when} font='{settingsFontName ?? "(none)"}' mirror={mirror} now={now} original={(_alignedOriginal.TryGetValue(compId, out var o) ? o : "(not recorded)")} @ {path}");
         }
 
         private static void Log(long compId, string mode, string logical, string composed)

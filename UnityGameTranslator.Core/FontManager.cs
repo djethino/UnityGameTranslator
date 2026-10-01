@@ -1342,6 +1342,46 @@ namespace UnityGameTranslator.Core
             return null;
         }
 
+        /// <summary>
+        /// Whether a reference is the fallback of a LEGACY game font — whose object then draws it once
+        /// the game shows that font (GameFontDrawing). From the settings, not the objects: known before
+        /// the game has drawn anything with it.
+        /// </summary>
+        internal static bool IsLegacyGameFallback(string reference)
+        {
+            if (string.IsNullOrEmpty(reference)) return false;
+            string wanted = StripOptionMarker(reference);
+            foreach (var kv in TranslatorCore.FontSettingsMap)
+            {
+                var settings = kv.Value;
+                if (settings == null || !settings.enabled || string.IsNullOrEmpty(settings.fallback)) continue;
+                if (!string.Equals(StripOptionMarker(settings.fallback), wanted, StringComparison.Ordinal)) continue;
+                if (settings.type == "Unity" || _gameUnityFonts.ContainsKey(kv.Key)) return true;
+            }
+            return false;
+        }
+
+        private static bool _fontCreationProbed;
+
+        /// <summary>
+        /// Whether this runtime can make the font objects the mod's window draws with (some IL2CPP
+        /// builds stripped CreateDynamicFontFromOSFont). Asked once: a font is made and destroyed —
+        /// known before a choice depends on it, not only at its first failure.
+        /// </summary>
+        internal static bool CanMakeWindowFonts
+        {
+            get
+            {
+                if (!_fontCreationProbed)
+                {
+                    _fontCreationProbed = true;
+                    var probe = CreateDynamicOSFont("Arial");
+                    if (probe != null) UnityEngine.Object.Destroy(probe);
+                }
+                return _dynamicFontCreationAvailable;
+            }
+        }
+
         /// <summary>A game legacy font loaded right now, by name; null when the game has not loaded it (or unloaded it with its scene).</summary>
         private static Font LoadedGameUnityFont(string name)
         {
@@ -4220,7 +4260,11 @@ namespace UnityGameTranslator.Core
 
                 if (replacementFont != null)
                 {
+                    bool newObject = !_unityFallbackFonts.TryGetValue(originalFontName, out var before) || before != replacementFont;
                     _unityFallbackFonts[originalFontName] = replacementFont;
+                    // The mod's window may be waiting for this very object to draw the game's text
+                    // with (GameFontDrawing, where fonts cannot be made): told as it arrives.
+                    if (newObject) TranslatorCore.Host?.GameFontReplaced(originalFontName);
                     // Don't add to _createdFallbackFontNames if it's the original game font
                     // (we modified its fontNames, not created a new font)
                     // Nor when it IS a game font used as a fallback: marking the game's own font as
@@ -5646,6 +5690,13 @@ namespace UnityGameTranslator.Core
         /// <summary>Suffix marking a font the translation knows but the game has not loaded yet.</summary>
         public const string UnloadedMarker = " (not loaded)";
 
+        /// <summary>
+        /// Suffix marking, in the mod window's source/target text font lists, a font that on this game
+        /// only draws the characters the interface font lacks: the runtime cannot make fonts, and no
+        /// game font has it as its fallback (GameFontDrawing) — shown only there.
+        /// </summary>
+        public const string MissingCharactersOnlyMarker = " (missing characters only)";
+
         /// <summary>Suffix marking a configured fallback that no list can offer.</summary>
         public const string IncompatibleMarker = " (incompatible)";
 
@@ -5679,6 +5730,8 @@ namespace UnityGameTranslator.Core
                 return entry.Substring(0, entry.Length - FromFontsFolderMarker.Length);
             if (entry.EndsWith(AfterRestartMarker, StringComparison.Ordinal))
                 return entry.Substring(0, entry.Length - AfterRestartMarker.Length);
+            if (entry.EndsWith(MissingCharactersOnlyMarker, StringComparison.Ordinal))
+                return entry.Substring(0, entry.Length - MissingCharactersOnlyMarker.Length);
             return entry;
         }
 

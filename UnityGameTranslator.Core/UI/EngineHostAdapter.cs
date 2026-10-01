@@ -54,6 +54,11 @@ namespace UnityGameTranslator.Core.UI
                 }
         }
 
+        public void GameFontReplaced(string gameFontName)
+        {
+            if (GameTextFonts.WaitsForGameFonts) GameTextFonts.PutAll();
+        }
+
         public void ShuttingDown()
         {
             // Streams first (background tasks holding HTTP connections), then the live edit

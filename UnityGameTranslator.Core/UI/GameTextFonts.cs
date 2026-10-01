@@ -69,6 +69,9 @@ namespace UnityGameTranslator.Core.UI
             return shared;
         }
 
+        /// <summary>A side font this runtime cannot make: it is drawn with a game font object when one comes (EngineHostAdapter.GameFontReplaced).</summary>
+        internal static bool WaitsForGameFonts => _cannotMake.Count > 0;
+
         /// <summary>Gives one text of the window its side's font.</summary>
         internal static void Put(UnityEngine.UI.Text text, GameTextSide side)
         {

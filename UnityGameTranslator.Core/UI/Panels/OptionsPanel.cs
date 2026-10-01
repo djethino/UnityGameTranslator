@@ -533,8 +533,11 @@ namespace UnityGameTranslator.Core.UI.Panels
             // shows — (None) is the window's own font for the first, the interface font for the others.
             var windowFontOptions = FontOptions.For(FontOptionKind.Legacy, FontManager.SystemFonts);
             FillWindowFontPicker(_interfaceFontDropdown, windowFontOptions, TranslatorCore.EffectiveInterfaceFont);
-            FillWindowFontPicker(_sourceTextFontDropdown, windowFontOptions, TranslatorCore.Config.source_text_font);
-            FillWindowFontPicker(_targetTextFontDropdown, windowFontOptions, TranslatorCore.Config.target_text_font);
+            // The game's text: on a game that cannot make fonts, a font no game font uses only draws
+            // what the interface font lacks — said beside it before it is chosen, there only.
+            var gameTextFontOptions = FontManager.CanMakeWindowFonts ? windowFontOptions : MarkMissingCharactersOnly(windowFontOptions);
+            FillWindowFontPicker(_sourceTextFontDropdown, gameTextFontOptions, TranslatorCore.Config.source_text_font);
+            FillWindowFontPicker(_targetTextFontDropdown, gameTextFontOptions, TranslatorCore.Config.target_text_font);
 
             _notificationPositionDropdown.SetOptions(new[] { "Top-Right", "Top-Left", "Bottom-Right", "Bottom-Left" });
             _notificationPositionDropdown.SelectedValue = "Top-Right";
@@ -1471,6 +1474,23 @@ namespace UnityGameTranslator.Core.UI.Panels
                 TranslatorCore.LogWarning($"[Options] Failed to refresh models: {e}");
                 TranslatorUIManager.RunOnMainThread(() => ConnectionTests.TellModels(_aiTestStatusLabel, 0));
             }
+        }
+
+        /// <summary>
+        /// The list with "(missing characters only)" beside each installed or fonts/ font no game font
+        /// has as its fallback (FontManager.IsLegacyGameFallback) — what a source/target text font is
+        /// on a game that cannot make fonts. Game fonts, headings and marked entries are left as they are.
+        /// </summary>
+        private static List<string> MarkMissingCharactersOnly(List<string> options)
+        {
+            var marked = new List<string>(options.Count);
+            foreach (var option in options)
+            {
+                bool plainFont = !option.StartsWith("(") && !option.StartsWith("--- ")
+                    && !FontManager.IsGameFontRef(option) && FontManager.StripOptionMarker(option) == option;
+                marked.Add(plainFont && !FontManager.IsLegacyGameFallback(option) ? option + FontManager.MissingCharactersOnlyMarker : option);
+            }
+            return marked;
         }
 
         /// <summary>A font picker of the window: the shared list, its chosen entry selected (display markers ignored).</summary>

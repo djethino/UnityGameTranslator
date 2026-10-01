@@ -54,5 +54,11 @@ namespace UnityGameTranslator.Core
         /// a game font the window was asked to draw with is looked for again.
         /// </summary>
         void SceneChanged();
+
+        /// <summary>
+        /// A game legacy font received its replacement object (FontManager): the mod's window may be
+        /// waiting for it to draw the game's text with, where it cannot make fonts.
+        /// </summary>
+        void GameFontReplaced(string gameFontName);
     }
 }

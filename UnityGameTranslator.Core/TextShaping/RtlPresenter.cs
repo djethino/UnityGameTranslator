@@ -737,7 +737,13 @@ namespace UnityGameTranslator.Core.TextShaping
                 try
                 {
                     // The game moved on to another text — this reflow is stale.
-                    if (TypeHelper.GetText(comp) != entry.Assigned) { _reflows.Remove(id); continue; }
+                    if (TypeHelper.GetText(comp) != entry.Assigned)
+                    {
+                        if (TranslatorCore.DebugMode && _waitLogged.Count <= 400 && _staleLogged.Add(id))
+                            TranslatorCore.LogInfo($"[RtlPresenter] reflow dropped (the text changed since): comp={id} kind={entry.Kind}");
+                        _reflows.Remove(id);
+                        continue;
+                    }
 
                     // 🔴 A component the engine will not REDRAW has no fresh line data and never
                     // will until it shows — and "redraw" is wider than "active". Games preload
@@ -755,7 +761,7 @@ namespace UnityGameTranslator.Core.TextShaping
                     {
                         // Debug: a reflow that waits says why, once per component — a text left in
                         // its measuring form (logical order) on screen is read backwards.
-                        if (TranslatorCore.DebugMode && _waitLogged.Add(id) && _waitLogged.Count <= 200)
+                        if (TranslatorCore.DebugMode && _waitReasons.Add(id + "|" + blocker) && _waitReasons.Count <= 400)
                             TranslatorCore.LogInfo($"[RtlPresenter] reflow waits ({blocker}): comp={id} kind={entry.Kind} @ {(comp is UnityEngine.Component wc ? TranslatorCore.GetGameObjectPath(wc.gameObject) : "?")}");
                         continue;
                     }
@@ -808,6 +814,8 @@ namespace UnityGameTranslator.Core.TextShaping
 
                     RegisterShown(id, final, entry.Logical);
                     Log(id, "reflow/final", entry.Logical, final);
+                    if (TranslatorCore.DebugMode && _waitLogged.Count <= 400 && _staleLogged.Add(-id - 1))
+                        TranslatorCore.LogInfo($"[RtlPresenter] reflow written: comp={id} kind={entry.Kind} lines={final.Split('\n').Length}");
 
                     {
                         // 🔴 WE computed the line breaks — the engine must not wrap again. A
@@ -847,6 +855,8 @@ namespace UnityGameTranslator.Core.TextShaping
 
         private static int _fallbackLogBudget = 5;
         private static readonly HashSet<long> _waitLogged = new HashSet<long>();
+        private static readonly HashSet<long> _staleLogged = new HashSet<long>();
+        private static readonly HashSet<string> _waitReasons = new HashSet<string>();
 
         // ⚠ No re-cut on box resize. It was tried (a Graphic.OnRectTransformDimensionsChange
         // hook) and it is circular by construction: a ContentSizeFitter sizes the box from the

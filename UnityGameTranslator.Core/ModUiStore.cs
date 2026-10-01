@@ -178,11 +178,26 @@ namespace UnityGameTranslator.Core
         /// ⚠ One caller: the migration lifting `_settings.ui_font` out of a game translation, where
         /// it never belonged. It is not a setter for general use — the font written at every save is
         /// the one in FORCE, which the caller passes to <see cref="Save"/>; this only gives the file
-        /// something to state when nothing else does.
+        /// something to state when nothing else does. A choice made in Options goes through
+        /// <see cref="FollowFont"/>.
         /// </summary>
         public void AdoptFont(string font)
         {
             if (string.IsNullOrEmpty(font)) return;
+            Font = font;
+            Modified = true;
+        }
+
+        /// <summary>
+        /// The interface font chosen in Options becomes the one this file asks for — none included.
+        /// The file states the font in force so a copy carried elsewhere stays readable; were it
+        /// left alone, its old font would be the one in force again as soon as the local choice was
+        /// (None), and (None) could never be chosen (2026-10-01: the font came back at each start).
+        /// </summary>
+        public void FollowFont(string font)
+        {
+            if (string.IsNullOrEmpty(font)) font = null;
+            if (string.Equals(font, Font, StringComparison.OrdinalIgnoreCase)) return;
             Font = font;
             Modified = true;
         }

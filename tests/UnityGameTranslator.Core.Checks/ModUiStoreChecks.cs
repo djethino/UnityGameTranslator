@@ -36,6 +36,7 @@ namespace UnityGameTranslator.Core.Checks
                 KeepsAnUnreadableFile(check, Fresh(root));
                 SetsAsideAndTakesBack(check, Fresh(root));
                 SavesWhenOnlyTheFontMoved(check, Fresh(root));
+                NoneClearsTheFileFont(check, Fresh(root));
                 SurvivesAFailedReload(check, Fresh(root));
             }
             finally
@@ -213,6 +214,30 @@ namespace UnityGameTranslator.Core.Checks
             check(back.Font == "NotoSans" && back.Entries.Count == 1,
                 "and the lines are still there afterwards",
                 "a write triggered by the font must write the whole file, not a header");
+        }
+
+        private static void NoneClearsTheFileFont(Action<bool, string, string> check, string folder)
+        {
+            WriteInterface(folder, "French", "Segoe UI", "Apply", "Appliquer");
+
+            var store = Store();
+            store.Load(folder, "French");
+            // (None) applied in Options: the local choice is empty, and the font in force is then
+            // whatever the file asks for — so the file must stop asking.
+            store.FollowFont(null);
+            check(store.SaveIfDirty(folder, "French", null),
+                "🔴 (None) applied over a font the file asked for is written",
+                "the file kept 'Segoe UI', which came back as the font in force at the next start "
+                + "and showed Apply (1) on a picker nobody had touched");
+
+            var back = Store();
+            back.Load(folder, "French");
+            check(back.Font == null && back.Entries.Count == 1,
+                "and the file asks for no font afterwards, its lines kept",
+                $"font {back.Font ?? "(none)"}, {back.Entries.Count} line(s)");
+
+            back.FollowFont(null);
+            check(!back.Modified, "and (None) over no font owes the file nothing", "a save at every Apply");
         }
 
         private static void SurvivesAFailedReload(Action<bool, string, string> check, string folder)

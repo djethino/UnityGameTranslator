@@ -279,7 +279,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                     // Compare against what is in effect, so the Apply counter reacts to the toggle
                     // the same way whether or not the user had already made an explicit choice.
                     translate_mod_ui = TranslatorCore.ShouldTranslateOwnUI,
-                    interface_font = TranslatorCore.Config.interface_font,
+                    // The font in effect, as the picker shows it: the interface file states one too.
+                    interface_font = TranslatorCore.EffectiveInterfaceFont,
                     source_text_font = TranslatorCore.Config.source_text_font,
                     target_text_font = TranslatorCore.Config.target_text_font,
                     object_name_font = TranslatorCore.Config.object_name_font,
@@ -1542,9 +1543,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // Applying records an EXPLICIT choice (tri-state leaves "undecided" for users who
                 // never opened this, letting the translation decide for them).
                 TranslatorCore.Config.translate_mod_ui = _translateModUIToggle.IsOn;
-                TranslatorCore.Config.interface_font = _interfaceFontDropdown != null
-                    ? NormalizeInterfaceFont(_interfaceFontDropdown.SelectedValue)
-                    : TranslatorCore.Config.interface_font;
+                string interfaceFontBefore = TranslatorCore.EffectiveInterfaceFont;
+                if (_interfaceFontDropdown != null)
+                    TranslatorCore.SetInterfaceFont(NormalizeInterfaceFont(_interfaceFontDropdown.SelectedValue));
                 TranslatorCore.Config.source_text_font = _sourceTextFontDropdown != null
                     ? NormalizeInterfaceFont(_sourceTextFontDropdown.SelectedValue)
                     : TranslatorCore.Config.source_text_font;
@@ -1764,6 +1765,10 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // translation's own settings, so the comparison above cannot see it. Named rather
                 // than left out — ConfigEffects decides what it means, like every other key.
                 if (eventSystemChanged) changedKeys.Add("disable_eventsystem_override");
+                // The interface font in effect can move with the config key unchanged: (None) over a
+                // font the interface file asked for (SetInterfaceFont).
+                if (!string.Equals(interfaceFontBefore, TranslatorCore.EffectiveInterfaceFont, StringComparison.OrdinalIgnoreCase))
+                    changedKeys.Add("interface_font");
                 if (ConfigEffects.NeedsRedraw(changedKeys))
                 {
                     // Interface font: (re)apply the mod UI font from the committed config.

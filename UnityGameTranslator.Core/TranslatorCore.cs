@@ -3285,6 +3285,22 @@ namespace UnityGameTranslator.Core
             }
         }
 
+        /// <summary>
+        /// The interface font applied in Options: the local choice, and the font the interface file
+        /// asks for, moved together — otherwise (None) applied leaves the file's font in force
+        /// (<see cref="EffectiveInterfaceFont"/>), and the picker shows it back with Apply (1) pending.
+        /// </summary>
+        public static void SetInterfaceFont(string font)
+        {
+            if (string.IsNullOrEmpty(font)) font = null;
+            Config.interface_font = font;
+            lock (lockObj)
+            {
+                _modUi.FollowFont(font);
+            }
+            SaveModUiCacheIfDirty();
+        }
+
         /// <summary>Write it only if the file does not already hold what we have.</summary>
         public static void SaveModUiCacheIfDirty()
         {

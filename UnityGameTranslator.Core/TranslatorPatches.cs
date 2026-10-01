@@ -287,17 +287,6 @@ namespace UnityGameTranslator.Core
                         patchCount++;
                     }
 
-                    // TMP_Text.alignment (and horizontalAlignment, newer TMP) — a game setting the side
-                    // of a right-to-left text after its text: RtlPresenter.OnGameAlignment.
-                    foreach (var alignName in new[] { "alignment", "horizontalAlignment" })
-                    {
-                        var alignProp = TypeHelper.TMP_TextType.GetProperty(alignName, BindingFlags.Public | BindingFlags.Instance);
-                        if (alignProp?.SetMethod == null) continue;
-                        var postfix = typeof(TranslatorPatches).GetMethod(nameof(TMPText_SetAlignment_Postfix), BindingFlags.Static | BindingFlags.Public);
-                        patcher(alignProp.SetMethod, null, postfix);
-                        patchCount++;
-                    }
-
                     // TMP_Text.maxVisibleCharacters setter — a typewriter reveal counted on the
                     // original, carried over to the translation (Engine/RevealScale).
                     var maxVisibleProp = TypeHelper.TMP_TextType.GetProperty("maxVisibleCharacters", BindingFlags.Public | BindingFlags.Instance);
@@ -3550,13 +3539,6 @@ namespace UnityGameTranslator.Core
                 }
             }
             catch (Exception ex) { TranslatorCore.LogDebug($"[Reveal] maxVisibleCharacters prefix: {ex.Message}"); }
-        }
-
-        public static void TMPText_SetAlignment_Postfix(object __instance)
-        {
-            // Inside the game's own setter: said, never thrown into it.
-            try { TextShaping.RtlPresenter.OnGameAlignment(__instance); }
-            catch (Exception ex) { Faults.Say("Patches.TMPText_SetAlignment_Postfix", ex); }
         }
 
         public static void TMPText_SetFontSize_Prefix(object __instance, ref float value)

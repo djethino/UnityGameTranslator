@@ -1326,8 +1326,9 @@ namespace UnityGameTranslator.Core
         /// access violation inside the hook, and so did <c>tk2dTextMesh.FormattedText</c> once that
         /// one was left out (bench, NGUI and tk2d stand-ins, 2026-10-01) — the same
         /// family as the UI.Text <c>fontSize</c> setter kept to Mono below. Such a native body is a few
-        /// bytes, likely shared by every getter of the same shape (the linker folds identical code), so
-        /// the hook lands on code that is not this method's alone. The scanner reads and writes these
+        /// bytes, shared by every getter of the same shape: the linker folds identical code (the
+        /// disassembled bench build has no function of its own for UILabel.get_text), so the hook
+        /// lands on code that is not this method's alone. The scanner reads and writes these
         /// texts itself (<c>TranslatorScanner.GetTextForType</c>), so text that was never set through
         /// the setter is still found.
         /// </summary>

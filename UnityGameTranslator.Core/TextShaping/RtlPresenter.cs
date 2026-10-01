@@ -197,7 +197,19 @@ namespace UnityGameTranslator.Core.TextShaping
                     // 2026-10-01). Only that case: the lines are then cut by us, next frame, in
                     // logical order, against the width the layout gave this text and with TMP's own
                     // ruler (BuildTmpLines). A text with no such run is the engine's to wrap.
-                    if (compId != -1 && RtlComposer.HasLtrRunAcrossSpace(value))
+                    // The same text again (a game re-setting its labels every frame) in a box of the
+                    // same width: the lines already cut for it, at once — re-queueing would flip the
+                    // screen between the engine's wrap and ours each frame and measure again each time.
+                    bool runAcrossSpace = compId != -1 && RtlComposer.HasLtrRunAcrossSpace(value);
+                    if (runAcrossSpace && _tmpLines.TryGetValue(compId, out var known) && known.Logical == value
+                        && TmpLayout(instance, out _, out float widthNow) && Math.Abs(widthNow - known.Width) < 0.5f)
+                    {
+                        if (_reflows.TryGetValue(compId, out var pending) && pending.Kind == ReflowKind.Tmp) _reflows.Remove(compId);
+                        RegisterShown(compId, known.Final, value);
+                        value = known.Final;
+                        return;
+                    }
+                    if (runAcrossSpace)
                         _reflows[compId] = new Reflow
                         {
                             Comp = new WeakReference(instance),
@@ -628,7 +640,13 @@ namespace UnityGameTranslator.Core.TextShaping
             public int Attempts;
             public bool Mirror;
             public ReflowKind Kind;
+            public float Width;       // TMP: the width the lines were cut at
         }
+
+        // TMP: the lines last cut per component — what it is given again when the game writes the same
+        // text into a box of the same width (see Present).
+        private sealed class TmpCut { public string Logical; public float Width; public string Final; }
+        private static readonly Dictionary<long, TmpCut> _tmpLines = new Dictionary<long, TmpCut>();
 
         private static readonly Dictionary<long, Reflow> _reflows = new Dictionary<long, Reflow>();
         private static readonly List<long> _reflowScratch = new List<long>();
@@ -737,7 +755,12 @@ namespace UnityGameTranslator.Core.TextShaping
 
                     string final = BuildLines(entry, comp, out string whyNot);
                     // Nothing to change: the engine's own lines were right (one line, no wrap).
-                    if (final != null && final == entry.Assigned) { _reflows.Remove(id); continue; }
+                    if (final != null && final == entry.Assigned)
+                    {
+                        if (entry.Kind == ReflowKind.Tmp) _tmpLines[id] = new TmpCut { Logical = entry.Logical, Width = entry.Width, Final = final };
+                        _reflows.Remove(id);
+                        continue;
+                    }
                     if (final == null)
                     {
                         // Line source not ready (or unreadable). The engine rebuilds a drawn
@@ -750,6 +773,14 @@ namespace UnityGameTranslator.Core.TextShaping
                         // resort. Either way SAY so: a silent fallback made the reversed line
                         // stack undiagnosable from a screenshot.
                         if (++entry.Attempts < 3) continue;
+                        // TMP: the flagged form stays — the engine's own wrap, as before this pass
+                        // existed. A visual-order fallback would be read backwards under the flag.
+                        if (entry.Kind == ReflowKind.Tmp)
+                        {
+                            if (_fallbackLogBudget > 0) { _fallbackLogBudget--; TranslatorCore.LogWarning($"[RtlPresenter] TMP lines not cut ({whyNot}) — the engine's own wrap kept: comp={id}"); }
+                            _reflows.Remove(id);
+                            continue;
+                        }
                         string whyOwn = null;
                         if (entry.Kind == ReflowKind.UGuiText)
                             final = BuildUGuiLinesNow(comp, entry.Measure, out whyOwn);
@@ -794,6 +825,7 @@ namespace UnityGameTranslator.Core.TextShaping
                         // the game re-set it through the prefix on the way back from a run).
                         FontManager.EnsureCharsInCloneAtlas(final, comp);
                     }
+                    if (entry.Kind == ReflowKind.Tmp) _tmpLines[id] = new TmpCut { Logical = entry.Logical, Width = entry.Width, Final = final };
                     _reflows.Remove(id);
                 }
                 catch (Exception ex)
@@ -853,17 +885,13 @@ namespace UnityGameTranslator.Core.TextShaping
         private static readonly Dictionary<Type, PropertyInfo[]> _tmpLayoutProps = new Dictionary<Type, PropertyInfo[]>();
 
         /// <summary>
-        /// The lines of a right-to-left TMP text cut in LOGICAL order — the engine wrapping the
-        /// flagged form cuts a left-to-right run of several words backwards (see Present). Cut
-        /// at its spaces against the width the layout gave this text (the rect less TMP's
-        /// margins, read now, a frame after the text was assigned — the reason it is a second
-        /// pass), with TMP's own measure of each candidate line; then composed flagged as one
-        /// string, each line ending with an explicit break the engine keeps. Returns the assigned
-        /// form unchanged when the text is one line or the component does not wrap.
+        /// A TMP component's wrapping switch and the width its text is laid out in: the rect less
+        /// TMP's margins. False when it has no rect to read.
         /// </summary>
-        private static string BuildTmpLines(object comp, Reflow entry, out string whyNot)
+        private static bool TmpLayout(object comp, out bool wraps, out float width)
         {
-            whyNot = null;
+            wraps = true;
+            width = 0f;
             var type = comp.GetType();
             if (!_tmpLayoutProps.TryGetValue(type, out var props))
             {
@@ -876,14 +904,31 @@ namespace UnityGameTranslator.Core.TextShaping
                     type.GetProperty("rectTransform", pub),
                 };
             }
-            if (props[0] != null && props[0].GetValue(comp, null) is bool wraps && !wraps) return entry.Assigned;
-            if (props[1] != null && props[1].GetValue(comp, null)?.ToString().IndexOf("NoWrap", StringComparison.Ordinal) >= 0) return entry.Assigned;
-
+            if (props[0] != null && props[0].GetValue(comp, null) is bool on && !on) wraps = false;
+            if (props[1] != null && props[1].GetValue(comp, null)?.ToString().IndexOf("NoWrap", StringComparison.Ordinal) >= 0) wraps = false;
             var rect = props[3]?.GetValue(comp, null) as UnityEngine.RectTransform;
-            if (rect == null) { whyNot = "no rectTransform"; return null; }
-            float width = rect.rect.width;
+            if (rect == null) return false;
+            width = rect.rect.width;
             if (props[2]?.GetValue(comp, null) is UnityEngine.Vector4 margin) width -= margin.x + margin.z;
+            return true;
+        }
+
+        /// <summary>
+        /// The lines of a right-to-left TMP text cut in LOGICAL order — the engine wrapping the
+        /// flagged form cuts a left-to-right run of several words backwards (see Present). Cut
+        /// at its spaces against the width the layout gave this text (the rect less TMP's
+        /// margins, read now, a frame after the text was assigned — the reason it is a second
+        /// pass), with TMP's own measure of each candidate line; then composed flagged as one
+        /// string, each line ending with an explicit break the engine keeps. Returns the assigned
+        /// form unchanged when the text is one line or the component does not wrap.
+        /// </summary>
+        private static string BuildTmpLines(object comp, Reflow entry, out string whyNot)
+        {
+            whyNot = null;
+            if (!TmpLayout(comp, out bool wraps, out float width)) { whyNot = "no rectTransform"; return null; }
+            if (!wraps) return entry.Assigned;
             if (width <= 1f) { whyNot = "no width yet"; return null; }
+            entry.Width = width;
 
             // Half a unit of slack: a line measured exactly at the width must not be re-wrapped by
             // the engine's rounding (the same lesson as UI.Text's DisableRewrap, kept as a margin

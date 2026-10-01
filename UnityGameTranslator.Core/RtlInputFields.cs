@@ -97,13 +97,28 @@ namespace UnityGameTranslator.Core.TextShaping
         /// </summary>
         /// <param name="settingsFontName">the game font the label wears (its replacement shapes); null for the mod's own window</param>
         /// <param name="ownUi">the mod's own window: its interface font shapes</param>
+        /// <summary>
+        /// A field showing text that needs shaping with no font that shapes it: said as a text does
+        /// (RtlPresenter's ReorderOnly) — the window notice for the mod's own fields (the in-game
+        /// editor showed "संग्रह" unjoined and nothing said it, 2026-10-01), the font notice for a
+        /// game field holding our translation. What the player types is not ours to report.
+        /// </summary>
+        private static void NoteIfUnshaped(bool canShape, string value, string settingsFontName, bool ownUi)
+        {
+            if (canShape || string.IsNullOrEmpty(value) || !TextShaping.OpenTypeText.NeedsShaping(value)) return;
+            if (ownUi) FontManager.NoteWindowUnshaped();
+            else if (TranslatorCore.IsAlreadyTargetText(value)) FontManager.NoteUnshaped(settingsFontName, value);
+        }
+
         internal static void PresentLabel(object fieldObj, object labelObj, ref string value, string settingsFontName, bool ownUi)
         {
             if (!TranslatorCore.IsMainThread || fieldObj == null || labelObj == null) return;
 
             if (TypeHelper.TMP_InputFieldType != null && TypeHelper.TMP_InputFieldType.IsInstanceOfType(fieldObj))
             {
-                PresentTmpLabel(fieldObj, labelObj, ref value, ownUi ? null : ShapingFontAsset.ForSettings(settingsFontName));
+                var asset = ownUi ? null : ShapingFontAsset.ForSettings(settingsFontName);
+                NoteIfUnshaped(asset != null, value, settingsFontName, ownUi);
+                PresentTmpLabel(fieldObj, labelObj, ref value, asset);
                 return;
             }
 
@@ -113,6 +128,7 @@ namespace UnityGameTranslator.Core.TextShaping
 
             int id = field.GetInstanceID();
             var derived = ownUi ? FontManager.DerivedForInterface() : FontManager.DerivedForSettings(settingsFontName);
+            NoteIfUnshaped(derived != null, value, settingsFontName, ownUi);
             var prep = string.IsNullOrEmpty(value) ? null : RtlFieldLayout.Prepare(value, UnitsOf(derived));
             if (prep == null) { Release(id); return; }
 

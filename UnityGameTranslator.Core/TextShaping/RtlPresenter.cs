@@ -128,7 +128,9 @@ namespace UnityGameTranslator.Core.TextShaping
                 string arrivedLogical = TranslatorCore.TryGetPresentedLogical(value);
                 bool ownEcho = arrivedLogical != null && arrivedLogical != value;
 
-                PresentSyllabic(instance, compId, ref value, settingsFontName, ownUi);
+                // Presented again from its logical text: what arrived was ours, but for another
+                // font — no longer an echo to keep.
+                if (PresentSyllabic(instance, compId, ref value, settingsFontName, ownUi)) ownEcho = false;
 
                 var prop = RtlProp(instance);
 
@@ -417,14 +419,57 @@ namespace UnityGameTranslator.Core.TextShaping
             }
         }
 
-        private static void PresentSyllabic(object instance, long compId, ref string value, string settingsFontName, bool ownUi)
+        // The font each component's shaped text was made for (DrawnFor), by component — what tells
+        // an echo still right from one made for a font the component no longer draws with.
+        private static readonly Dictionary<long, string> _shapedFor = new Dictionary<long, string>();
+
+        /// <summary>
+        /// The route a component's text is shaped by, and a key naming the font behind it: our TMP
+        /// asset, a derived copy, or none (the codepoints only reordered). Decided in one place
+        /// (ShapingRoute), the one the coverage checks walk.
+        /// </summary>
+        private static string DrawnFor(object instance, string settingsFontName, bool ownUi,
+            out ShapingRoute.Route route, out ShapingFontAsset asset, out DerivedFonts.Entry derived)
         {
+            bool isTmp = TypeHelper.TMP_TextType != null && TypeHelper.TMP_TextType.IsInstanceOfType(instance);
+            bool legacy = !isTmp && DrawsFromLegacyFont(instance);
+            asset = isTmp ? ShapingFontAsset.ForSettings(settingsFontName) : null;
+            // The mod's own window draws with its interface font, the game's text with its replacement.
+            derived = !legacy ? null : ownUi ? FontManager.DerivedForInterface() : FontManager.DerivedForSettings(settingsFontName);
+            route = ShapingRoute.Decide(isTmp, asset != null, legacy, derived != null, engineShapes: false);
+            switch (route)
+            {
+                case ShapingRoute.Route.OurTmpAsset: return "tmp:" + System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(asset);
+                case ShapingRoute.Route.DerivedFont: return "derived:" + derived.Key;
+                default: return "reorder";
+            }
+        }
+
+        /// <summary>
+        /// Word breaking, OpenType shaping or the codepoint reorder for one outgoing text. True when
+        /// it presented again, from its logical text, a text of ours shaped for another font.
+        /// </summary>
+        private static bool PresentSyllabic(object instance, long compId, ref string value, string settingsFontName, bool ownUi)
+        {
+            // Our own output coming back (a refresh re-sets what is on screen) is kept — unless it
+            // was shaped for another font than the one the component draws with now: a fallback
+            // set, changed or removed. A copy's private names are nothing in another font: the
+            // buttons went blank when a fallback was set back to none (2026-10-01).
+            bool again = false;
+            string ownLogical = TranslatorCore.TryGetPresentedLogical(value);
+            if (ownLogical != null)
+            {
+                if (compId == -1 || !_shapedFor.TryGetValue(compId, out var was)
+                    || was == DrawnFor(instance, settingsFontName, ownUi, out _, out _, out _)) return false;
+                value = ownLogical;
+                again = true;
+            }
+
             bool needsBreak = WordBreaker.NeedsBreaking(value);
             bool needsShape = OpenTypeText.NeedsShaping(value);
             bool needsReorder = IndicReorderer.NeedsReordering(value);
-            if (!needsBreak && !needsReorder && !needsShape) return;
-            if (TranslatorCore.TryGetPresentedLogical(value) != null) return;
-            if (UIToolkitSupport.IsTextElementInstance(instance) && UIToolkitSupport.IsAtgActive(instance)) return;
+            if (!needsBreak && !needsReorder && !needsShape) return again;
+            if (UIToolkitSupport.IsTextElementInstance(instance) && UIToolkitSupport.IsAtgActive(instance)) return again;
 
             string logical = value;
             string working = value;
@@ -451,15 +496,11 @@ namespace UnityGameTranslator.Core.TextShaping
             // engine the mod does not re-font (TextMesh) — keeps stage C's reorder, the most a
             // font we cannot read can take (ShapingCoverageChecks lists them).
             bool shaped = false;
+            string drawnFor = null;
             if (needsShape)
             {
-                // The route is decided in one place (ShapingRoute), the one the coverage checks walk.
-                bool isTmp = TypeHelper.TMP_TextType != null && TypeHelper.TMP_TextType.IsInstanceOfType(instance);
-                bool legacy = !isTmp && DrawsFromLegacyFont(instance);
-                var asset = isTmp ? ShapingFontAsset.ForSettings(settingsFontName) : null;
-                // The mod's own window draws with its interface font, the game's text with its replacement.
-                var derived = !legacy ? null : ownUi ? FontManager.DerivedForInterface() : FontManager.DerivedForSettings(settingsFontName);
-                switch (ShapingRoute.Decide(isTmp, asset != null, legacy, derived != null, engineShapes: false))
+                drawnFor = DrawnFor(instance, settingsFontName, ownUi, out var route, out var asset, out var derived);
+                switch (route)
                 {
                     case ShapingRoute.Route.OurTmpAsset:
                     {
@@ -486,7 +527,12 @@ namespace UnityGameTranslator.Core.TextShaping
             if (needsReorder && !shaped)
                 working = IndicReorderer.Reorder(working);
 
-            if (ReferenceEquals(working, logical) || working == logical) return;
+            if (compId != -1)
+            {
+                if (drawnFor != null) _shapedFor[compId] = drawnFor;
+                else _shapedFor.Remove(compId);
+            }
+            if (ReferenceEquals(working, logical) || working == logical) return again;
             RegisterShown(compId, working, logical);
             Log(compId, (needsBreak ? "words+" : "") + (shaped ? "opentype" : needsReorder ? "indic" : "none"), logical, working);
             value = working;
@@ -511,6 +557,7 @@ namespace UnityGameTranslator.Core.TextShaping
                     Kind = ReflowKind.UGuiWords,
                 };
             }
+            return again;
         }
 
         private static int _dictionaryLogBudget = 3;

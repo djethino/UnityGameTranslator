@@ -748,8 +748,7 @@ namespace UnityGameTranslator.Core.TextShaping
                     // The game moved on to another text — this reflow is stale.
                     if (TypeHelper.GetText(comp) != entry.Assigned)
                     {
-                        if (TranslatorCore.DebugMode && _waitLogged.Count <= 400 && _staleLogged.Add(id))
-                            TranslatorCore.LogInfo($"[RtlPresenter] reflow dropped (the text changed since): comp={id} kind={entry.Kind}");
+                        TraceReflow(id, "dropped (the text changed since) " + entry.Kind, comp);
                         _reflows.Remove(id);
                         continue;
                     }
@@ -793,8 +792,7 @@ namespace UnityGameTranslator.Core.TextShaping
                         // settled for THIS text — and whole-string visual order stays the last
                         // resort. Either way SAY so: a silent fallback made the reversed line
                         // stack undiagnosable from a screenshot.
-                        if (TranslatorCore.DebugMode && _waitLogged.Add(-id - 1) && _waitLogged.Count <= 400)
-                            TranslatorCore.LogInfo($"[RtlPresenter] reflow not ready ({whyNot}): comp={id} kind={entry.Kind} attempt={entry.Attempts + 1} @ {(comp is UnityEngine.Component nc ? TranslatorCore.GetGameObjectPath(nc.gameObject) : "?")}");
+                        TraceReflow(id, "not ready (" + whyNot + ") " + entry.Kind + " attempt " + (entry.Attempts + 1), comp);
                         if (++entry.Attempts < 3) continue;
                         // TMP: the flagged form stays — the engine's own wrap, as before this pass
                         // existed. A visual-order fallback would be read backwards under the flag.
@@ -822,8 +820,7 @@ namespace UnityGameTranslator.Core.TextShaping
 
                     RegisterShown(id, final, entry.Logical);
                     Log(id, "reflow/final", entry.Logical, final);
-                    if (TranslatorCore.DebugMode && _waitLogged.Count <= 400 && _staleLogged.Add(-id - 1))
-                        TranslatorCore.LogInfo($"[RtlPresenter] reflow written: comp={id} kind={entry.Kind} lines={final.Split('\n').Length}");
+                    TraceReflow(id, "written " + entry.Kind + ", " + final.Split('\n').Length + " line(s)", comp);
 
                     {
                         // 🔴 WE computed the line breaks — the engine must not wrap again. A
@@ -862,8 +859,6 @@ namespace UnityGameTranslator.Core.TextShaping
         }
 
         private static int _fallbackLogBudget = 5;
-        private static readonly HashSet<long> _waitLogged = new HashSet<long>();
-        private static readonly HashSet<long> _staleLogged = new HashSet<long>();
         private static readonly HashSet<string> _waitReasons = new HashSet<string>();
         private static int _inactiveTraces;
 
@@ -874,8 +869,11 @@ namespace UnityGameTranslator.Core.TextShaping
         /// </summary>
         private static void TraceReflow(long id, string state, object comp = null)
         {
-            if (!TranslatorCore.DebugMode || _waitReasons.Count > 4000 || !_waitReasons.Add(id + "|" + state)) return;
-            if (state == "waits (inactive)" && ++_inactiveTraces > 50) return;
+            if (!TranslatorCore.DebugMode) return;
+            // Waiting on an inactive component: neither remembered nor said past the first fifty —
+            // a hidden screen holds hundreds, and they must not crowd out the states that matter.
+            if (state == "waits (inactive)") { if (_inactiveTraces >= 50 || !_waitReasons.Add(id + "|" + state)) return; _inactiveTraces++; }
+            else if (!_waitReasons.Add(id + "|" + state)) return;
             string where = comp is UnityEngine.Component wc && wc != null ? " @ " + TranslatorCore.GetGameObjectPath(wc.gameObject) : "";
             TranslatorCore.LogInfo($"[RtlPresenter] reflow {state}: comp={id}{where}");
         }

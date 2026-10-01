@@ -1847,10 +1847,13 @@ namespace UnityGameTranslator.Core
         /// <summary>
         /// Set how RTL text aligns on components using this font: null/"mirror" (default) or
         /// "keep". Same shared store as every font setting (travels with the translation).
-        /// Reaches the screen through the Apply's ForceRefreshAllText: every component is
-        /// re-set, our own shaped text comes back through the setter prefix, and the presenter
-        /// re-decides the alignment on that echo (a component the game never re-sets — a screen
-        /// of static buttons — would otherwise keep the old choice for the whole session).
+        /// Reaches the screen by re-setting this font's components (RefreshForFont): our own
+        /// shaped text comes back through the setter prefix, and the presenter re-decides the
+        /// alignment on that echo — a component the game never re-sets would otherwise keep the
+        /// old choice for the whole session.
+        /// ⚠ Not left to the Apply's global pass: it refuses to re-set a component whose text is
+        /// already translated (issue #21's guard), so part of a screen kept the old side — one
+        /// list half mirrored, half not, until the font was changed and changed back (2026-10-02).
         /// </summary>
         public static void SetFontRtlAlignment(string fontName, string rtlAlignment)
         {
@@ -1860,7 +1863,9 @@ namespace UnityGameTranslator.Core
                 settings = new FontSettings { type = "Unknown" };
                 TranslatorCore.FontSettingsMap[fontName] = settings;
             }
+            if (string.Equals(settings.rtl_alignment, rtlAlignment, StringComparison.OrdinalIgnoreCase)) return;
             settings.rtl_alignment = rtlAlignment;
+            TranslatorScanner.RefreshForFont(fontName);
         }
 
         /// <param name="settleNow">

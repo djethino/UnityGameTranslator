@@ -10,103 +10,151 @@ namespace UnityGameTranslator.Core
     /// next launch happens in the session (user, 2026-10-01: « une sorte de pool […] pour l'utilisateur
     /// ça doit être transparent »). The engine lists its font folder once (FontFolderRedirect) and, on
     /// the IL2CPP path, keeps in memory a family it has opened (probe 2 N_B): a font that must reach
-    /// legacy text during the session needs a name that was listed at start and never opened. Each
-    /// slot is an empty font of family "UGT Pool k" (DerivedFontWriter.Placeholder) until
-    /// <see cref="Take"/> hands it out; the caller writes the real font into its file, under that family.
+    /// legacy text during the session needs a name that was listed at start and never opened.
     ///
-    /// Proven on the probe bench (analyse/ecritures-complexes-etat-reel.md, the pool): an empty font
-    /// listed at start, written later, is drawn — Unity 2018.4, 2021.3, 6000.6, Mono and IL2CPP paths.
-    /// Listing 1000 of them costs about 0.15 s at start.
+    /// VIRTUAL (user, 2026-10-01: « on ne peut pas créer 1000 fichiers par jeu chez les utilisateurs »):
+    /// the names exist only in the engine's listing (IVirtualFonts, FontFolderRedirect). One real file,
+    /// the TEMPLATE — an empty font — stands behind every empty slot: the engine opens it, and what it
+    /// reads is the empty font of THAT slot (<see cref="ContentOf"/>), same length since every family
+    /// name has the same width ("UGT Pool 0001"). A filled slot opens the file it was given
+    /// (<see cref="Fill"/>). Proven on the probe bench that an empty font listed at start and filled
+    /// later is drawn (analyse/ecritures-complexes-etat-reel.md, the pool).
     ///
-    /// Size: <see cref="FirstSize"/> the first time (the user's figure), and doubled at the next launch
-    /// when a session used more than half — a long session is followed by a larger pool, never a
-    /// fixed ceiling. A slot used in the previous session is emptied again at start.
+    /// Size: <see cref="FirstSize"/> (the user's figure), doubled at the next launch when a session
+    /// used more than half — read from one line kept next to the template (<see cref="StateFile"/>).
     ///
-    /// PURE by contract (no Unity) — linked into Core.Checks.
+    /// Thread-safe: the engine asks from its own threads. PURE by contract (no Unity) — linked into
+    /// Core.Checks.
     /// </summary>
-    internal sealed class FontPool
+    internal sealed class FontPool : IVirtualFonts
     {
-        /// <summary>The pool's size the first time (user, 2026-10-01).</summary>
-        internal const int FirstSize = 1000;
+        /// <summary>
+        /// The pool's size the first time (user, 2026-10-01: « j'imagine mal un jeu avec plus de 100
+        /// fonts ; pour l'hindi, 1 font = 30 » — 3000 for about a hundred).
+        /// </summary>
+        internal const int FirstSize = 3000;
 
         internal const string FilePrefix = "ugt-pool-";
         internal const string FamilyPrefix = "UGT Pool ";
+        internal const string TemplateFile = "pool-template.ttf";
+        internal const string StateFile = "pool.state";
 
         internal struct Slot
         {
-            public string File;
-            public string Family;
+            public string Name;     // the file name the engine lists
+            public string Family;   // the family the engine knows it by
         }
 
+        private readonly object _gate = new object();
+        private readonly string _statePath;
+        private readonly int _width;
+        private readonly string[] _filled;   // index k-1: the real file slot k opens, null while empty
         private int _next = 1;
 
-        /// <summary>Every slot's file, to show the engine (FontFolderRedirect.Install).</summary>
-        internal readonly List<string> Files = new List<string>();
-        internal int Size => Files.Count;
-        /// <summary>Slots used in the previous session (their files held a real font).</summary>
+        internal int Size { get; }
+        /// <summary>Slots used in the previous session, as it recorded them.</summary>
         internal int UsedLastSession { get; }
-        internal int Taken => _next - 1;
-        internal bool Spent => _next > Size;
+        internal int Taken { get { lock (_gate) return _next - 1; } }
+        internal bool Spent { get { lock (_gate) return _next > Size; } }
 
-        internal static string FileOf(string folder, int k) => Path.Combine(folder, FilePrefix + k + ".ttf");
-        internal static string FamilyOf(int k) => FamilyPrefix + k;
+        /// <summary>The real file behind every empty slot.</summary>
+        internal string TemplatePath { get; }
+        internal long TemplateLength { get; }
+
+        internal string NameOf(int k) => FilePrefix + k.ToString("D" + _width) + ".ttf";
+        internal string FamilyOf(int k) => FamilyPrefix + k.ToString("D" + _width);
 
         /// <summary>
-        /// Writes the pool in <paramref name="folder"/>: every slot an empty font, the ones filled last
-        /// session emptied again, grown when that session used more than half. Throws on a file error:
-        /// the caller says it and shows no pool.
+        /// The pool for this launch, in <paramref name="folder"/>: its size from what the previous
+        /// session recorded, the template written when missing or of another width. Throws on a file
+        /// error: the caller says it and shows no pool.
         /// </summary>
         internal FontPool(string folder)
         {
             Directory.CreateDirectory(folder);
+            _statePath = Path.Combine(folder, StateFile);
 
-            // One listing of the folder gives every slot's length (a file asked one by one costs ten times more).
-            var lengths = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
-            foreach (var info in new DirectoryInfo(folder).GetFiles(FilePrefix + "*.ttf"))
-                lengths[info.Name] = info.Length;
-
-            var filled = new List<bool>();   // index k-1: slot k held a real font
-            while (lengths.TryGetValue(Path.GetFileName(FileOf(folder, filled.Count + 1)), out long length))
-                filled.Add(!IsEmpty(length, FamilyOf(filled.Count + 1)));
-            int previous = filled.Count;
-            UsedLastSession = filled.FindAll(f => f).Count;
-
-            int size = Math.Max(FirstSize, previous);
-            if (UsedLastSession * 2 > previous && previous > 0) size = Math.Max(size, previous * 2);
-
-            for (int k = 1; k <= size; k++)
+            int previous = 0, used = 0;
+            if (File.Exists(_statePath))
             {
-                string file = FileOf(folder, k);
-                if (k > previous || filled[k - 1])
-                    File.WriteAllBytes(file, DerivedFontWriter.Placeholder(FamilyOf(k)));
-                Files.Add(file);
+                var parts = File.ReadAllText(_statePath).Split(' ');
+                if (parts.Length != 2 || !int.TryParse(parts[0], out previous) || !int.TryParse(parts[1], out used))
+                    throw new InvalidDataException($"{StateFile} is not '<size> <used>'");
             }
+            UsedLastSession = used;
+            int size = Math.Max(FirstSize, previous);
+            if (previous > 0 && used * 2 > previous) size = Math.Max(size, previous * 2);
+            Size = size;
+            _width = size.ToString().Length;
+            _filled = new string[size];
+
+            TemplatePath = Path.Combine(folder, TemplateFile);
+            byte[] template = DerivedFontWriter.Placeholder(FamilyOf(0));
+            TemplateLength = template.Length;
+            if (!File.Exists(TemplatePath) || new FileInfo(TemplatePath).Length != template.Length)
+                File.WriteAllBytes(TemplatePath, template);
+            WriteState(0);
         }
 
-        // An empty slot's length depends only on the length of its family's name.
-        private readonly Dictionary<int, long> _emptyLength = new Dictionary<int, long>();
+        private void WriteState(int used) => File.WriteAllText(_statePath, Size + " " + used);
 
         /// <summary>
-        /// Whether a slot is still empty — by its length alone: a font written into a slot is a real
-        /// font, thousands of bytes, and a slot taken for empty by mistake would only stay what it is,
-        /// a valid font of the slot's own family. Reading 1000 files at every launch is what this spares.
-        /// </summary>
-        private bool IsEmpty(long length, string family)
-        {
-            if (!_emptyLength.TryGetValue(family.Length, out long expected))
-                _emptyLength[family.Length] = expected = DerivedFontWriter.Placeholder(family).Length;
-            return length == expected;
-        }
-
-        /// <summary>
-        /// A name never opened in this session, or null when the pool is spent (its size grows at the
-        /// next launch). The caller writes its font into the slot's file under the slot's family.
+        /// A name never opened in this session, or null when the pool is spent (it grows at the next
+        /// launch). The caller writes its font somewhere and gives it to the slot (<see cref="Fill"/>).
         /// </summary>
         internal Slot? Take()
         {
-            if (Spent) return null;
-            int k = _next++;
-            return new Slot { File = Files[k - 1], Family = FamilyOf(k) };
+            int k;
+            lock (_gate)
+            {
+                if (_next > Size) return null;
+                k = _next++;
+            }
+            // Recorded as it happens: a session that ends by a crash still counts.
+            WriteState(k);
+            return new Slot { Name = NameOf(k), Family = FamilyOf(k) };
+        }
+
+        /// <summary>From now on the engine opening this slot opens <paramref name="realFile"/>.</summary>
+        internal void Fill(Slot slot, string realFile)
+        {
+            int k = IndexOf(slot.Name);
+            if (k <= 0) throw new ArgumentException($"{slot.Name} is not a slot of this pool");
+            lock (_gate) _filled[k - 1] = realFile;
+        }
+
+        private int IndexOf(string name)
+        {
+            if (name == null || name.Length != NameOf(1).Length
+                || !name.StartsWith(FilePrefix, StringComparison.OrdinalIgnoreCase)
+                || !name.EndsWith(".ttf", StringComparison.OrdinalIgnoreCase)) return -1;
+            return int.TryParse(name.Substring(FilePrefix.Length, _width), out int k) && k >= 1 && k <= Size ? k : -1;
+        }
+
+        // ── What the engine is shown (FontFolderRedirect) ──────────────────────────────────────
+
+        public IEnumerable<string> Names()
+        {
+            for (int k = 1; k <= Size; k++) yield return NameOf(k);
+        }
+
+        public bool Has(string name) => IndexOf(name) > 0;
+
+        public long ListedLength(string name) => TemplateLength;
+
+        public string PathOf(string name)
+        {
+            int k = IndexOf(name);
+            if (k <= 0) return null;
+            lock (_gate) return _filled[k - 1] ?? TemplatePath;
+        }
+
+        public byte[] ContentOf(string name)
+        {
+            int k = IndexOf(name);
+            if (k <= 0) return null;
+            lock (_gate) if (_filled[k - 1] != null) return null;
+            return DerivedFontWriter.Placeholder(FamilyOf(k));
         }
     }
 }

@@ -43,6 +43,13 @@ namespace UnityGameTranslator.Core
             [DllImport(Lib, EntryPoint = "__xstat64")] public static extern int xstat64(int version, IntPtr path, IntPtr buf);
             [DllImport(Lib, EntryPoint = "dlsym")] public static extern IntPtr dlsym(IntPtr handle, string name);
             [DllImport(Lib)] public static extern IntPtr gnu_get_libc_version();
+            [DllImport(Lib, SetLastError = true)] public static extern int memfd_create(string name, uint flags);
+            [DllImport(Lib, SetLastError = true)] public static extern int mkstemp(byte[] template);
+            [DllImport(Lib)] public static extern int unlink(byte[] path);
+            [DllImport(Lib)] public static extern IntPtr write(int fd, byte[] buffer, UIntPtr count);
+            [DllImport(Lib)] public static extern long lseek(int fd, long offset, int whence);
+            [DllImport(Lib)] public static extern int close(int fd);
+            [DllImport(Lib)] public static extern IntPtr fdopen(int fd, IntPtr mode);
         }
 
         /// <summary>
@@ -74,7 +81,57 @@ namespace UnityGameTranslator.Core
             [DllImport(Lib)] public static extern IntPtr _dyld_get_image_header(uint index);
             [DllImport(Lib)] public static extern IntPtr _dyld_get_image_vmaddr_slide(uint index);
             [DllImport(Lib)] public static extern IntPtr dlsym(IntPtr handle, string name);
+            [DllImport(Lib, SetLastError = true)] public static extern int mkstemp(byte[] template);
+            [DllImport(Lib)] public static extern int unlink(byte[] path);
+            [DllImport(Lib)] public static extern IntPtr write(int fd, byte[] buffer, UIntPtr count);
+            [DllImport(Lib)] public static extern long lseek(int fd, long offset, int whence);
+            [DllImport(Lib)] public static extern int close(int fd);
+            [DllImport(Lib)] public static extern IntPtr fdopen(int fd, IntPtr mode);
         }
+
+        /// <summary>
+        /// A pool name still empty, opened by the engine: a file that exists nowhere — its bytes in
+        /// memory (memfd_create, glibc 2.27+), otherwise a temporary file removed as soon as it is open
+        /// — read by the engine like any file. -1 when the path is not such a name (or, said, when no
+        /// such file could be made: the engine then opens the template, whose family repeats).
+        /// </summary>
+        private static int AnonymousFont(IntPtr path)
+        {
+            if (_virtual == null) return -1;
+            string name;
+            try
+            {
+                OursForPath(PathOf(path), out name);
+                if (name == null) return -1;
+            }
+            catch (Exception ex) { Faults.Say("FontFolderRedirect.AnonymousFont", ex); return -1; }
+            var content = _virtual.ContentOf(name);
+            if (content == null) return -1;   // a filled name: its real file
+
+            bool mac = Current() == Os.Mac;
+            int fd = -1;
+            if (!mac && GlibcAtLeast(2, 27)) fd = LinuxC.memfd_create("ugt-pool", 0);
+            if (fd < 0)
+            {
+                var template = Encoding.UTF8.GetBytes(Path.Combine(Path.GetTempPath(), "ugt-pool-XXXXXX") + "\0");
+                fd = mac ? MacC.mkstemp(template) : LinuxC.mkstemp(template);
+                if (fd >= 0) { if (mac) MacC.unlink(template); else LinuxC.unlink(template); }
+            }
+            if (fd < 0)
+            {
+                if (System.Threading.Interlocked.Exchange(ref _anonymousSaid, 1) == 0)
+                    TranslatorCore.LogWarning($"[FontFolder] No in-memory file could be made for the pool (errno {Marshal.GetLastWin32Error()})");
+                return -1;
+            }
+            long written = mac ? MacC.write(fd, content, (UIntPtr)(uint)content.Length).ToInt64()
+                               : LinuxC.write(fd, content, (UIntPtr)(uint)content.Length).ToInt64();
+            if (written != content.Length) { if (mac) MacC.close(fd); else LinuxC.close(fd); return -1; }
+            if (mac) MacC.lseek(fd, 0, 0); else LinuxC.lseek(fd, 0, 0);
+            System.Threading.Interlocked.Increment(ref _servedReads);
+            return fd;
+        }
+
+        private static int _anonymousSaid;
 
         /// <summary>
         /// The real function for an imported name, asked of the dynamic linker — never read from the
@@ -200,7 +257,7 @@ namespace UnityGameTranslator.Core
                     var path = PathOf(name);
                     if (dir != IntPtr.Zero && IsOurFolder(path))
                     {
-                        lock (Gate) Listings[dir] = new Listing(_ours.Keys, DirentSize);
+                        lock (Gate) Listings[dir] = new Listing(ShownNames(), DirentSize);
                         SawListing(path);
                     }
                 }
@@ -278,10 +335,10 @@ namespace UnityGameTranslator.Core
                     SawListing(path);
 
                     var callback = Marshal.GetDelegateForFunctionPointer<FtwCallback_>(fn);
-                    foreach (var name in _ours.Keys)
+                    foreach (var name in ShownNames())
                     {
                         var fake = Marshal.StringToHGlobalAnsi(_systemFonts + "/" + name);
-                        var real64 = Marshal.StringToHGlobalAnsi(_ours[name]);
+                        var real64 = Marshal.StringToHGlobalAnsi(_ours.TryGetValue(name, out var file) ? file : _virtual.PathOf(name));
                         var stat = Marshal.AllocHGlobal(256);
                         try
                         {
@@ -310,7 +367,11 @@ namespace UnityGameTranslator.Core
         private static Func<IntPtr, IntPtr> OpenHook() => real =>
         {
             var callReal = Marshal.GetDelegateForFunctionPointer<Open_>(real);
-            Open_ ours = (path, flags, mode) => Redirected(path, p => callReal(p, flags, mode));
+            Open_ ours = (path, flags, mode) =>
+            {
+                int anonymous = AnonymousFont(path);
+                return anonymous >= 0 ? anonymous : Redirected(path, p => callReal(p, flags, mode));
+            };
             Keep.Add(ours);
             return Marshal.GetFunctionPointerForDelegate(ours);
         };
@@ -318,7 +379,14 @@ namespace UnityGameTranslator.Core
         private static Func<IntPtr, IntPtr> FOpenHook() => real =>
         {
             var callReal = Marshal.GetDelegateForFunctionPointer<FOpen_>(real);
-            FOpen_ ours = (path, mode) => Redirected(path, p => callReal(p, mode));
+            FOpen_ ours = (path, mode) =>
+            {
+                int anonymous = AnonymousFont(path);
+                if (anonymous < 0) return Redirected(path, p => callReal(p, mode));
+                var file = Current() == Os.Mac ? MacC.fdopen(anonymous, mode) : LinuxC.fdopen(anonymous, mode);
+                if (file == IntPtr.Zero) { if (Current() == Os.Mac) MacC.close(anonymous); else LinuxC.close(anonymous); }
+                return file;
+            };
             Keep.Add(ours);
             return Marshal.GetFunctionPointerForDelegate(ours);
         };
@@ -350,7 +418,18 @@ namespace UnityGameTranslator.Core
         private static Func<IntPtr, IntPtr> RealPathHook() => real =>
         {
             var callReal = Marshal.GetDelegateForFunctionPointer<RealPath_>(real);
-            RealPath_ ours = (path, resolved) => Redirected(path, p => callReal(p, resolved));
+            RealPath_ ours = (path, resolved) =>
+            {
+                // A pool name resolves to ITSELF: resolved to the template, it would be opened as the
+                // template and read under the template's family.
+                string name = null;
+                try { OursForPath(PathOf(path), out name); } catch (Exception ex) { Faults.Say("FontFolderRedirect.realpath", ex); }
+                if (name == null) return Redirected(path, p => callReal(p, resolved));
+                var bytes = Encoding.UTF8.GetBytes(PathOf(path) + "\0");
+                var target = resolved != IntPtr.Zero ? resolved : Marshal.AllocHGlobal(bytes.Length);   // malloc: the caller frees it
+                Marshal.Copy(bytes, 0, target, bytes.Length);
+                return target;
+            };
             Keep.Add(ours);
             return Marshal.GetFunctionPointerForDelegate(ours);
         };

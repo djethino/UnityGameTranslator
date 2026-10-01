@@ -1069,6 +1069,13 @@ namespace UnityGameTranslator.Core
                     var names = namesMethod.Invoke(null, null) as string[];
                     if (names != null && names.Length > 0)
                     {
+                        // 🔴 The engine's list holds what the mod SHOWS it too (FontFolderRedirect):
+                        // fonts/ files, derived copies, the pool's thousands of names. None of them is a
+                        // System font — offered here they would bury the real ones and duplicate the
+                        // Custom list. Left out by path when the engine gives paths, by our families'
+                        // mark ("UGT …") otherwise.
+                        var kept = new List<string>(names.Length);
+                        bool byPath = false;
                         // Try GetPathsToOSFonts (Unity 2019.1+) — same order as names
                         try
                         {
@@ -1081,6 +1088,8 @@ namespace UnityGameTranslator.Core
                                 {
                                     for (int i = 0; i < names.Length; i++)
                                     {
+                                        if (FontFolderRedirect.IsShownByUs(paths[i])) continue;
+                                        kept.Add(names[i]);
                                         if (!string.IsNullOrEmpty(names[i]) && !string.IsNullOrEmpty(paths[i]))
                                         {
                                             if (!_systemFontPaths.ContainsKey(names[i]))
@@ -1088,15 +1097,20 @@ namespace UnityGameTranslator.Core
                                         }
                                     }
                                     TranslatorCore.LogDebug($"[FontManager] Built font path mapping: {_systemFontPaths.Count} entries");
+                                    byPath = true;
                                 }
                             }
                         }
                         catch (Exception ex)
                         {
+                            kept.Clear();
                             TranslatorCore.LogDebug($"[FontManager] GetPathsToOSFonts unavailable: {ex.Message}");
                         }
 
-                        return names;
+                        if (!byPath)
+                            foreach (var name in names)
+                                if (!DerivedFonts.IsOurFamily(name)) kept.Add(name);
+                        if (kept.Count > 0) return kept.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
                     }
                 }
                 TranslatorCore.LogDebug("[FontManager] GetOSInstalledFontNames returned empty, trying filesystem fallback");
@@ -1428,10 +1442,10 @@ namespace UnityGameTranslator.Core
                     // under a pool name (DerivedFonts.LateCopy).
                     if (FontFolderRedirect.ReachOf(clean, custom.TtfPath) == FontFolderRedirect.Reach.NextLaunch)
                     {
-                        var lent = DerivedFonts.LateCopy(clean, custom.TtfPath);
+                        var lent = DerivedFonts.LateCopy(clean, custom.TtfPath, out string lentFile);
                         if (lent != null)
                         {
-                            ttfPath = lent.Value.File;
+                            ttfPath = lentFile;
                             return lent.Value.Family;
                         }
                     }
@@ -2609,7 +2623,7 @@ namespace UnityGameTranslator.Core
         private static DerivedFonts.Entry ShownDerived(string name, UnityGameTranslator.Common.FontSource origin)
         {
             var derived = DerivedFonts.Ensure(name, origin);
-            return derived != null && FontFolderRedirect.ShowsFile(System.IO.Path.GetFileName(derived.CurrentFile)) ? derived : null;
+            return derived != null && FontFolderRedirect.ShowsFile(derived.CurrentShownName) ? derived : null;
         }
 
         /// <summary>
@@ -4378,7 +4392,7 @@ namespace UnityGameTranslator.Core
 
             string name = StripFontPrefix(fontRef);
             var derived = DerivedFonts.Get(name);
-            if (derived != null && FontFolderRedirect.ShowsFile(System.IO.Path.GetFileName(derived.CurrentFile))) return false;
+            if (derived != null && FontFolderRedirect.ShowsFile(derived.CurrentShownName)) return false;
             return LegacyReach(name) != FontFolderRedirect.Reach.Now;
         }
 

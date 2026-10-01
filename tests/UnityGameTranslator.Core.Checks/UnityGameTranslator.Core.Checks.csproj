@@ -290,6 +290,7 @@
     <Compile Include="../../UnityGameTranslator.Core/Rasterizer/DerivedFontWriter.cs" />
     <Compile Include="../../UnityGameTranslator.Core/Rasterizer/FontCollection.cs" />
     <Compile Include="../../UnityGameTranslator.Core/Engine/FontPool.cs" />
+    <Compile Include="../../UnityGameTranslator.Core/Engine/IVirtualFonts.cs" />
     <Compile Include="../../UnityGameTranslator.Core/Engine/FontCoverage.cs" />
     <!-- The Unicode conformance suite, gzipped (15 MB of text otherwise) — data from the
          Unicode Consortium, not derived from the code under test — and one real font (OFL, see

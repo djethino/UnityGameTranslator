@@ -39,6 +39,10 @@ namespace UnityGameTranslator.Core
         [DllImport("kernel32.dll")] private static extern bool VirtualProtect(IntPtr address, UIntPtr size, uint newProtect, out uint oldProtect);
         [DllImport("kernel32.dll")] private static extern void SetLastError(uint code);
         [DllImport("kernel32.dll")] private static extern uint GetLastError();
+        [DllImport("kernel32.dll")] private static extern bool SetFilePointerEx(IntPtr file, long distance, out long newPointer, uint method);
+        [DllImport("kernel32.dll")] private static extern bool GetFileInformationByHandle(IntPtr file, IntPtr info);
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] private static extern IntPtr CreateFileW(string name, uint access, uint share, IntPtr security, uint disposition, uint flags, IntPtr template);
+        [DllImport("kernel32.dll")] private static extern bool CloseHandle(IntPtr handle);
 
         private const uint PAGE_READWRITE = 0x04;
         private const uint ERROR_NO_MORE_FILES = 18;
@@ -52,6 +56,7 @@ namespace UnityGameTranslator.Core
         [UnmanagedFunctionPointer(CallingConvention.Winapi)] private delegate IntPtr CreateFileW_(IntPtr name, uint access, uint share, IntPtr security, uint disposition, uint flags, IntPtr template);
         [UnmanagedFunctionPointer(CallingConvention.Winapi)] private delegate uint GetFileAttributesW_(IntPtr name);
         [UnmanagedFunctionPointer(CallingConvention.Winapi)] private delegate int GetFileAttributesExW_(IntPtr name, int level, IntPtr info);
+        [UnmanagedFunctionPointer(CallingConvention.Winapi)] private delegate int ReadFile_(IntPtr file, IntPtr buffer, uint toRead, IntPtr read, IntPtr overlapped);
 
         // The real functions, and our replacements — kept referenced so they are never collected
         // while the engine holds their addresses.
@@ -62,15 +67,18 @@ namespace UnityGameTranslator.Core
         private static CreateFileW_ _realCreateFile; private static readonly CreateFileW_ OurCreateFile = CreateFile;
         private static GetFileAttributesW_ _realGetAttributes; private static readonly GetFileAttributesW_ OurGetAttributes = GetAttributes;
         private static GetFileAttributesExW_ _realGetAttributesEx; private static readonly GetFileAttributesExW_ OurGetAttributesEx = GetAttributesEx;
+        private static ReadFile_ _realReadFile; private static readonly ReadFile_ OurReadFile = ReadFile;
 
         private static string _systemFonts;                                   // the folder our files are shown in, no trailing separator
         private static string[] _engineFolders;                               // every folder the engine walks for fonts
         private static StringComparison _pathCase = StringComparison.OrdinalIgnoreCase;
         private static Dictionary<string, string> _ours;                      // file name → full path in fonts/
+        private static IVirtualFonts _virtual;                                // names shown that are no file of their own (FontPool)
         private static readonly Dictionary<string, Reach> Reached = new Dictionary<string, Reach>(StringComparer.OrdinalIgnoreCase);
         private static readonly Dictionary<IntPtr, Queue<string>> Pending = new Dictionary<IntPtr, Queue<string>>();
         private static readonly object Gate = new object();
         private static bool _installed, _sawListing;
+        private static readonly System.Diagnostics.Stopwatch ListingClock = new System.Diagnostics.Stopwatch();
 
         /// <summary>
         /// Whether the engine is shown a fonts/ file for this font name (the file's name without its
@@ -138,17 +146,34 @@ namespace UnityGameTranslator.Core
             return null;
         }
 
-        /// <summary>Whether the engine is shown this exact file name (a derived copy, DerivedFonts).</summary>
+        /// <summary>
+        /// Whether a path the engine reports as an installed font is one the mod shows it — a fonts/
+        /// file, a derived copy, a pool name: not a System font.
+        /// </summary>
+        public static bool IsShownByUs(string path) =>
+            !string.IsNullOrEmpty(path) && _ours != null && Patched.Count > 0
+            && OursForPath(path) != null;
+
+        /// <summary>Every name the engine is shown in its font folder: fonts/ and the copies, then the pool's.</summary>
+        private static IEnumerable<string> ShownNames()
+        {
+            foreach (var name in _ours.Keys) yield return name;
+            if (_virtual != null) foreach (var name in _virtual.Names()) yield return name;
+        }
+
+        /// <summary>Whether the engine is shown this exact file name (a derived copy, a pool name — DerivedFonts).</summary>
         public static bool ShowsFile(string fileName) =>
-            !string.IsNullOrEmpty(fileName) && _ours != null && Patched.Count > 0 && _ours.ContainsKey(fileName);
+            !string.IsNullOrEmpty(fileName) && _ours != null && Patched.Count > 0
+            && (_ours.ContainsKey(fileName) || (_virtual != null && _virtual.Has(fileName)));
 
         /// <summary>
         /// Changes the engine's own imports so it sees fonts/ as installed fonts. Once; says what it did;
         /// changes nothing when there is nothing to show or anything looks unexpected.
         /// <paramref name="alsoShown"/>: files outside fonts/ shown the same way — the derived copies
         /// (DerivedFonts), written before this is called since the engine lists its folder once.
+        /// <paramref name="virtualFonts"/>: names shown with no file of their own (FontPool).
         /// </summary>
-        public static void Install(string fontsFolder, IList<string> alsoShown = null)
+        public static void Install(string fontsFolder, IList<string> alsoShown = null, IVirtualFonts virtualFonts = null)
         {
             if (_installed) return;
             _installed = true;
@@ -195,21 +220,21 @@ namespace UnityGameTranslator.Core
                         if (File.Exists(file)) _ours[Path.GetFileName(file)] = file;
 
                 // Nothing to show: the engine is left exactly as it is.
-                if (_ours.Count == 0) return;
+                if (_ours.Count == 0 && virtualFonts == null) return;
+                if (virtualFonts != null && !OpenTemplateIdentity(virtualFonts)) virtualFonts = null;
+                _virtual = virtualFonts;
+                if (_ours.Count == 0 && _virtual == null) return;
 
                 int patched = os == Os.Windows ? InstallWindows()
                             : os == Os.Linux ? InstallLinux()
                             : InstallMac();
                 if (patched <= 0) return;   // each says why
 
-                // The pool's names are counted, not listed: a thousand file names would bury the rest.
-                var named = new List<string>();
+                // The pool's names are counted, not listed: thousands of names would bury the rest.
                 int pool = 0;
-                foreach (var name in _ours.Keys)
-                    if (name.StartsWith(FontPool.FilePrefix, StringComparison.OrdinalIgnoreCase)) pool++;
-                    else named.Add(name);
+                if (_virtual != null) foreach (var _ in _virtual.Names()) pool++;
                 TranslatorCore.LogInfo($"[FontFolder] {patched} engine import(s) redirected ({os}); {_ours.Count} font file(s) shown in {_systemFonts}: "
-                    + (named.Count > 0 ? string.Join(", ", named) : "none of fonts/") + $" + {pool} pool name(s)");
+                    + (_ours.Count > 0 ? string.Join(", ", _ours.Keys) : "none") + $" + {pool} pool name(s) with no file of their own");
             }
             catch (Exception ex)
             {
@@ -236,6 +261,14 @@ namespace UnityGameTranslator.Core
                     ["CreateFileW"] = real => { _realCreateFile = Marshal.GetDelegateForFunctionPointer<CreateFileW_>(real); return Marshal.GetFunctionPointerForDelegate(OurCreateFile); },
                     ["GetFileAttributesW"] = real => { _realGetAttributes = Marshal.GetDelegateForFunctionPointer<GetFileAttributesW_>(real); return Marshal.GetFunctionPointerForDelegate(OurGetAttributes); },
                     ["GetFileAttributesExW"] = real => { _realGetAttributesEx = Marshal.GetDelegateForFunctionPointer<GetFileAttributesExW_>(real); return Marshal.GetFunctionPointerForDelegate(OurGetAttributesEx); },
+                    // Only for pool names: what the engine reads from the template is the empty font
+                    // of the slot it opened (see ReadFile). Not taken when there is no pool.
+                    ["ReadFile"] = real =>
+                    {
+                        if (_virtual == null) return real;
+                        _realReadFile = Marshal.GetDelegateForFunctionPointer<ReadFile_>(real);
+                        return Marshal.GetFunctionPointerForDelegate(OurReadFile);
+                    },
                 });
         }
 
@@ -273,6 +306,7 @@ namespace UnityGameTranslator.Core
                     IntPtr real = Marshal.ReadIntPtr(cell);
                     Write(cell, replace(real));
                     Patched.Add(new KeyValuePair<IntPtr, IntPtr>(cell, real));
+                    if (name == "ReadFile") _readFileCell = new KeyValuePair<IntPtr, IntPtr>(cell, real);
                     count++;
                 }
             }
@@ -306,13 +340,23 @@ namespace UnityGameTranslator.Core
 
         // ── Answers ──────────────────────────────────────────────────────────────────────────────
 
-        /// <summary>The fonts/ file standing for a path in the folder ours are shown in, or null.</summary>
-        private static string OursForPath(string path)
+        /// <summary>
+        /// The real file standing for a path in the folder ours are shown in, or null: a fonts/ file,
+        /// or what a pool name opens (<see cref="IVirtualFonts.PathOf"/>).
+        /// </summary>
+        private static string OursForPath(string path) => OursForPath(path, out _);
+
+        private static string OursForPath(string path, out string virtualName)
         {
-            if (string.IsNullOrEmpty(path) || _ours == null || _ours.Count == 0) return null;
+            virtualName = null;
+            if (string.IsNullOrEmpty(path) || _ours == null || (_ours.Count == 0 && _virtual == null)) return null;
             var dir = Path.GetDirectoryName(path);
             if (dir == null || !string.Equals(dir.TrimEnd('\\', '/'), _systemFonts, _pathCase)) return null;
-            return _ours.TryGetValue(Path.GetFileName(path), out var file) ? file : null;
+            string name = Path.GetFileName(path);
+            if (_ours.TryGetValue(name, out var file)) return file;
+            if (_virtual == null || !_virtual.Has(name)) return null;
+            virtualName = name;
+            return _virtual.PathOf(name);
         }
 
         /// <summary>Whether a folder (or a Windows listing pattern inside it) is the one ours are shown in.</summary>
@@ -326,6 +370,7 @@ namespace UnityGameTranslator.Core
         {
             if (_sawListing) return;
             _sawListing = true;
+            ListingClock.Start();
             TranslatorCore.LogInfo($"[FontFolder] engine lists the font folder ({what}) — our {_ours.Count} file(s) added");
         }
 
@@ -343,7 +388,8 @@ namespace UnityGameTranslator.Core
         private static void Track(IntPtr handle, IntPtr pattern)
         {
             if (handle == InvalidHandle || !IsFontFolderListing(pattern)) return;
-            lock (Gate) Pending[handle] = new Queue<string>(_ours.Keys);
+            var queue = new Queue<string>(ShownNames());
+            lock (Gate) Pending[handle] = queue;
             SawListing(Marshal.PtrToStringUni(pattern));
         }
 
@@ -381,7 +427,7 @@ namespace UnityGameTranslator.Core
 
                 if (next != null)
                 {
-                    Describe(data, next, new FileInfo(_ours[next]).Length);
+                    Describe(data, next, _ours.TryGetValue(next, out var real) ? new FileInfo(real).Length : _virtual.ListedLength(next));
                     SetLastError(0);
                     return 1;
                 }
@@ -414,15 +460,26 @@ namespace UnityGameTranslator.Core
 
         private static IntPtr CreateFile(IntPtr name, uint access, uint share, IntPtr security, uint disposition, uint flags, IntPtr template)
         {
-            string ours = null;
-            try { ours = OursFor(name); } catch (Exception ex) { Faults.Say("FontFolderRedirect.CreateFile", ex); }
+            string ours = null, virtualName = null;
+            try { ours = name == IntPtr.Zero ? null : OursForPath(Marshal.PtrToStringUni(name), out virtualName); }
+            catch (Exception ex) { Faults.Say("FontFolderRedirect.CreateFile", ex); }
             if (ours == null) return _realCreateFile(name, access, share, security, disposition, flags, template);
 
             var redirected = Marshal.StringToHGlobalUni(ours);
             try
             {
                 var handle = _realCreateFile(redirected, access, share, security, disposition, flags, template);
-                if (handle != InvalidHandle) return handle;
+                if (handle != InvalidHandle)
+                {
+                    if (virtualName != null)
+                    {
+                        uint lastError = GetLastError();
+                        try { Serve(handle, virtualName, flags); }
+                        catch (Exception ex) { Faults.Say("FontFolderRedirect.Serve", ex, virtualName); }
+                        SetLastError(lastError);
+                    }
+                    return handle;
+                }
 
                 uint error = GetLastError();
                 bool first;
@@ -433,6 +490,140 @@ namespace UnityGameTranslator.Core
             }
             finally { Marshal.FreeHGlobal(redirected); }
         }
+
+        // ── Pool names: the template opened, the slot's own empty font read ──────────────────────
+
+        private const uint FILE_FLAG_OVERLAPPED = 0x40000000;
+        // The template's identity (volume serial, file index): a handle in Served whose value the
+        // system gave since to another file is never touched.
+        private static uint _templateVolume, _templateIndexHigh, _templateIndexLow;
+        private sealed class ServedFile { public byte[] Content; public string Name; }
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<IntPtr, ServedFile> Served =
+            new System.Collections.Concurrent.ConcurrentDictionary<IntPtr, ServedFile>();
+        private static int _servedReads, _asyncSaid;
+        // The engine's ReadFile cell and its real function: given back once the pool has been read.
+        private static KeyValuePair<IntPtr, IntPtr> _readFileCell;
+        // When the engine has read the whole pool: every name opened, and the last one read as many
+        // times as the first (all are the same file to it, so it reads each the same way).
+        private static readonly HashSet<string> OpenedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        private static readonly Dictionary<string, int> ReadsOfName = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        private static string _firstName, _lastName;
+        private static int _readsPerName = -1, _poolSize = -1;
+
+        /// <summary>Reads the template's identity once; false (said) when it cannot be — no pool then.</summary>
+        private static bool OpenTemplateIdentity(IVirtualFonts virtualFonts)
+        {
+            string template = null;
+            foreach (var name in virtualFonts.Names()) { template = virtualFonts.PathOf(name); break; }
+            if (template == null || !File.Exists(template)) return false;
+            // Linux and macOS: an empty name is opened as an in-memory file of its own (AnonymousFont).
+            if (Current() != Os.Windows) return true;
+            var handle = CreateFileW(template, 0x80000000 /* GENERIC_READ */, 1 /* FILE_SHARE_READ */, IntPtr.Zero, 3 /* OPEN_EXISTING */, 0, IntPtr.Zero);
+            if (handle == InvalidHandle)
+            {
+                TranslatorCore.LogWarning($"[FontFolder] The pool's template could not be opened (Windows error {GetLastError()}) — no pool this session");
+                return false;
+            }
+            try { return Identity(handle, out _templateVolume, out _templateIndexHigh, out _templateIndexLow); }
+            finally { CloseHandle(handle); }
+        }
+
+        private static bool Identity(IntPtr handle, out uint volume, out uint indexHigh, out uint indexLow)
+        {
+            volume = indexHigh = indexLow = 0;
+            var info = Marshal.AllocHGlobal(52);   // BY_HANDLE_FILE_INFORMATION
+            try
+            {
+                if (!GetFileInformationByHandle(handle, info)) return false;
+                volume = (uint)Marshal.ReadInt32(info, 28);
+                indexHigh = (uint)Marshal.ReadInt32(info, 44);
+                indexLow = (uint)Marshal.ReadInt32(info, 48);
+                return true;
+            }
+            finally { Marshal.FreeHGlobal(info); }
+        }
+
+        /// <summary>An empty slot's handle (the template): what is read through it is the slot's own font.</summary>
+        private static void Serve(IntPtr handle, string virtualName, uint flags)
+        {
+            var content = _virtual.ContentOf(virtualName);
+            if (content == null) { Served.TryRemove(handle, out _); return; }   // a filled slot: its real file as it is
+            if ((flags & FILE_FLAG_OVERLAPPED) != 0 && System.Threading.Interlocked.Exchange(ref _asyncSaid, 1) == 0)
+                TranslatorCore.LogWarning("[FontFolder] The engine opens a pool name for asynchronous reads — what it reads there is not replaced");
+            Served[handle] = new ServedFile { Content = content, Name = virtualName };
+            lock (Gate)
+            {
+                if (_poolSize < 0) { _poolSize = 0; foreach (var _ in _virtual.Names()) _poolSize++; }
+                if (OpenedNames.Count == 0) _firstName = virtualName;
+                else if (OpenedNames.Count == 1 && !OpenedNames.Contains(virtualName))
+                    ReadsOfName.TryGetValue(_firstName, out _readsPerName);   // the first name is read in full by now
+                OpenedNames.Add(virtualName);
+                _lastName = virtualName;
+            }
+        }
+
+        /// <summary>
+        /// The engine's ReadFile: untouched for every file but the template opened under a pool name,
+        /// whose bytes are replaced by the slot's empty font at the same place — same length, so the
+        /// file's size, position and every other question stay the system's own answers.
+        /// </summary>
+        private static int ReadFile(IntPtr file, IntPtr buffer, uint toRead, IntPtr read, IntPtr overlapped)
+        {
+            ServedFile served;
+            if (Served.IsEmpty || !Served.TryGetValue(file, out served))
+                return _realReadFile(file, buffer, toRead, read, overlapped);
+            byte[] content = served.Content;
+
+            long position = -1;
+            if (overlapped != IntPtr.Zero)
+                position = (uint)Marshal.ReadInt32(overlapped, 2 * IntPtr.Size) | ((long)Marshal.ReadInt32(overlapped, 2 * IntPtr.Size + 4) << 32);
+            else if (!SetFilePointerEx(file, 0, out position, 1 /* FILE_CURRENT */)) position = -1;
+
+            int ok = _realReadFile(file, buffer, toRead, read, overlapped);
+            uint error = GetLastError();
+            try
+            {
+                if (ok != 0 && read != IntPtr.Zero && position >= 0)
+                {
+                    if (Identity(file, out uint volume, out uint high, out uint low)
+                        && volume == _templateVolume && high == _templateIndexHigh && low == _templateIndexLow)
+                    {
+                        int n = Marshal.ReadInt32(read);
+                        int count = (int)Math.Max(0, Math.Min(n, content.Length - position));
+                        if (count > 0) Marshal.Copy(content, (int)position, buffer, count);
+                        System.Threading.Interlocked.Increment(ref _servedReads);
+                        bool done;
+                        lock (Gate)
+                        {
+                            ReadsOfName.TryGetValue(served.Name, out int reads);
+                            ReadsOfName[served.Name] = ++reads;
+                            done = OpenedNames.Count == _poolSize && _readsPerName > 0
+                                   && served.Name == _lastName && reads >= _readsPerName;
+                        }
+                        // The whole pool read: no empty name is opened again (a name is filled before
+                        // the mod hands out its family), so the engine gets its own ReadFile back.
+                        if (done) GiveReadFileBack();
+                    }
+                    else Served.TryRemove(file, out _);   // the value now names another file
+                }
+            }
+            catch (Exception ex) { Faults.Say("FontFolderRedirect.ReadFile", ex); }
+            SetLastError(error);
+            return ok;
+        }
+
+        private static void GiveReadFileBack()
+        {
+            if (_readFileCell.Key == IntPtr.Zero) return;
+            Write(_readFileCell.Key, _readFileCell.Value);
+            _readFileCell = default(KeyValuePair<IntPtr, IntPtr>);
+            Served.Clear();
+            lock (Gate) { ReadsOfName.Clear(); OpenedNames.Clear(); }
+            TranslatorCore.LogInfo($"[FontFolder] the engine has read the pool ({_servedReads} reads of empty names served, {_readsPerName} per name, {ListingClock.ElapsedMilliseconds} ms after it began listing) — its ReadFile given back");
+        }
+
+        /// <summary>How many reads were served a slot's empty font — the log's proof the pool was read through.</summary>
+        internal static int ServedReads => _servedReads;
 
         private static uint GetAttributes(IntPtr name)
         {

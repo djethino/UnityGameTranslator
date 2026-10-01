@@ -1995,7 +1995,7 @@ namespace UnityGameTranslator.Core
             string fontsFolder = Path.Combine(ModFolder, UnityGameTranslator.Common.AssetPacks.FontsFolder);
             FontFolderRedirect.Install(fontsFolder, DerivedFonts.Prepare(fontsFolder, adapter.IsIL2CPP,
                 Path.Combine(ModFolder, "translations.json"), Path.Combine(ModFolder, "config.json"),
-                Path.Combine(ModFolder, ModUi.FileName)));
+                Path.Combine(ModFolder, ModUi.FileName)), DerivedFonts.Pool);
 
             CachePath = Path.Combine(ModFolder, "translations.json");
             ModUiCachePath = Path.Combine(ModFolder, ModUi.FileName);

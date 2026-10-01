@@ -585,6 +585,15 @@ namespace UnityGameTranslator.Core
         }
 
         private static Type _classPointerStore;
+        private static readonly Dictionary<Type, bool> _absentFromGame = new Dictionary<Type, bool>();
+
+        /// <summary><see cref="Il2CppClassAbsent"/>, asked once per type: lookups ask it every pass.</summary>
+        private static bool AbsentFromGame(Type type)
+        {
+            if (!_absentFromGame.TryGetValue(type, out bool absent))
+                _absentFromGame[type] = absent = Il2CppClassAbsent(type);
+            return absent;
+        }
 
         /// <summary>
         /// The interop knows the type but the game's IL2CPP build has no class for it: the
@@ -1563,6 +1572,11 @@ namespace UnityGameTranslator.Core
 
         private static UnityEngine.Object[] FindAllObjectsOfTypeUntimed(Type type)
         {
+            // 🔴 A type the game's IL2CPP build has no class for has no instance — and the Mono
+            // route below, asked about it, was the suspect when a game with no TextMesh died on its
+            // first level once TextMesh was scanned (2026-10-01, no log: the process just ended).
+            // Answered here, for every caller, before either route is tried.
+            if (_il2cppHelpersInitialized && AbsentFromGame(type)) return new UnityEngine.Object[0];
 
             // IL2CPP path: use Il2CppType.Of<T>() pattern
             if (_il2cppHelpersInitialized && _il2cppTypeOfMethod != null && _il2cppResourcesFindAllMethod != null

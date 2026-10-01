@@ -23,7 +23,7 @@ namespace UnityGameTranslator.Core.UI
 
         public void DerivedFontRewritten(string fontName)
         {
-            string interfaceFont = TranslatorCore.EffectiveInterfaceFont;
+            string interfaceFont = TranslatorCore.WindowFont;
             if (!string.IsNullOrEmpty(interfaceFont)
                 && string.Equals(UnityGameTranslator.Common.FontReferences.Name(interfaceFont), fontName, StringComparison.OrdinalIgnoreCase))
                 TranslatorUIManager.ApplyInterfaceFont();

@@ -34,8 +34,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         // General section
         private ToggleHandle _enableTranslationsToggle;
         private ToggleHandle _translateModUIToggle;
-        private SearchableDropdown _interfaceFontDropdown; // mod UI font, shown only when translating the mod UI
-        private Host _interfaceFontRow;                    // container toggled with the checkbox
+        private SearchableDropdown _interfaceFontDropdown; // the window's font: its own text and the game text it shows
         private SearchableDropdown _sourceLanguageDropdown;
         private SearchableDropdown _targetLanguageDropdown;
 
@@ -395,7 +394,6 @@ namespace UnityGameTranslator.Core.UI.Panels
             // ── General ─────────────────────────────────────────────────────────
             _enableTranslationsToggle = _screen.Toggle("EnableTranslationsToggle");
             _translateModUIToggle = _screen.Toggle("TranslateModUIToggle");
-            _interfaceFontRow = _screen.Host("InterfaceFontRow");
             _interfaceFontDropdown = _screen.Dropdown("InterfaceFont");
             _notificationsEnabledToggle = _screen.Toggle("NotifEnabledToggle");
             _notificationPositionDropdown = _screen.Dropdown("NotifPosition");
@@ -529,7 +527,6 @@ namespace UnityGameTranslator.Core.UI.Panels
                 initialInterfaceFont = "(None)";
             _interfaceFontDropdown.SetOptions(interfaceFontOptions);
             _interfaceFontDropdown.SelectedValue = initialInterfaceFont;
-            _interfaceFontRow.Visible = _translateModUIToggle.IsOn;
 
             _notificationPositionDropdown.SetOptions(new[] { "Top-Right", "Top-Left", "Bottom-Right", "Bottom-Left" });
             _notificationPositionDropdown.SelectedValue = "Top-Right";
@@ -680,12 +677,11 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (!_isLoadingSettings) UpdateApplyButtonText();
         }
 
-        /// <summary>The interface font picker appears the moment the box is ticked; the value applies on Apply.</summary>
-        private void OnTranslateModUiChanged()
-        {
-            if (_interfaceFontRow != null) _interfaceFontRow.Visible = _translateModUIToggle.IsOn;
-            OnSettingChanged();
-        }
+        /// <summary>
+        /// The interface font is offered whether or not the interface is translated: the window shows
+        /// the game's text too (user, 2026-10-01). The value applies on Apply.
+        /// </summary>
+        private void OnTranslateModUiChanged() => OnSettingChanged();
 
         /// <summary>One shortcut's capture control, in the host the document keeps for it.</summary>
         private void PlaceHotkey(HotkeyCapture capture, string host, string help)
@@ -870,6 +866,8 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// <summary>Bring the Translation tab forward — the server, the model, the keys.</summary>
         public void ShowTranslationTab() => _tabBar?.SelectTab("Translation");
 
+        public void ShowGeneralTab() => _tabBar?.SelectTab("General");
+
         public void RefreshFromConfig()
         {
             // Guard: UI might not be constructed yet (e.g. early mod init)
@@ -924,9 +922,6 @@ namespace UnityGameTranslator.Core.UI.Panels
             // never made one). Ticking the box then records an explicit choice.
             _translateModUIToggle.IsOn = TranslatorCore.ShouldTranslateOwnUI;
 
-            // Interface font: sync the picker visibility with the checkbox on (re)load.
-            if (_interfaceFontRow != null)
-                _interfaceFontRow.Visible = _translateModUIToggle.IsOn;
 
             // Source language
             string configSourceLang = TranslatorCore.Config.source_language;

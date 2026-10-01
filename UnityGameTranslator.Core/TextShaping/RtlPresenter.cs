@@ -452,7 +452,9 @@ namespace UnityGameTranslator.Core.TextShaping
                     case ShapingRoute.Route.ReorderOnly:
                         // Shown without its shaping: said on the Fonts tab and in the corner, for a
                         // text of the translation (FontManager.Coverage).
-                        if (TranslatorCore.IsAlreadyTargetText(logical)) FontManager.NoteUnshaped(settingsFontName);
+                        // The mod's own window: said in the corner while it is open (FontManager.WindowCannotShape).
+                        if (ownUi) FontManager.NoteWindowUnshaped();
+                        else if (TranslatorCore.IsAlreadyTargetText(logical)) FontManager.NoteUnshaped(settingsFontName);
                         break;
                 }
             }

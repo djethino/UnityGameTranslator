@@ -97,6 +97,11 @@ namespace UnityGameTranslator.Core.UI.Panels
         private Host _fontCoverageBox;
         private LabelHandle _fontCoverageLabel;
         private int _fontCoverageIgnoredAt;    // the weight Ignore was pressed at (MissingWeight); more shows the box again
+        // This window shows text its font cannot shape (FontManager.WindowCannotShape): the fact, and
+        // the way to the interface font. Said while a window is open — that is where it shows.
+        private Host _windowFontBox;
+        private LabelHandle _windowFontLabel;
+        private string _windowFontIgnoredFor;  // the window font Ignore was pressed with; another one shows the box again
 
         // UI elements - SSE connection indicator
         private Host _connectionBox;
@@ -306,7 +311,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             bool live = aiEnabled && (TranslatorCore.QueueCount > 0 || TranslatorCore.IsTranslating
                                       || TranslatorCore.BackendUnreachable != ConnectionProblem.None)
                         || FontConversions.Current().Count > 0;
-            if (live) return true;
+            if (live || ShowsWindowFont()) return true;
             if (panelsOpen) return false;
 
             return ShowsModUpdate(false) || ShowsSync(false) || _webNotifWanted || ShowsFailures(false) || ShowsFontCoverage(false);
@@ -336,6 +341,14 @@ namespace UnityGameTranslator.Core.UI.Panels
             int weight = MissingWeight(out _);
             return weight > 0 && weight > _fontCoverageIgnoredAt;
         }
+
+        /// <summary>
+        /// This window had to show text its font cannot shape — the game's text in Translation Tools or
+        /// the Inspector, or its own translated labels — not ignored for this window font. Shown with
+        /// windows open too: it is about what they show.
+        /// </summary>
+        private bool ShowsWindowFont()
+            => FontManager.WindowCannotShape && (TranslatorCore.WindowFont ?? "") != _windowFontIgnoredFor;
 
         /// <summary>Characters missing over every game font, plus one per font that cannot shape: more of either shows the box again after Ignore.</summary>
         private static int MissingWeight(out List<FontManager.FontProblem> fonts)
@@ -405,6 +418,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             _failuresFixBtn = _screen.Button("FailuresFixBtn");
             _fontCoverageBox = _screen.Host("FontCoverageBox");
             _fontCoverageLabel = _screen.Label("FontCoverageLabel");
+            _windowFontBox = _screen.Host("WindowFontBox");
+            _windowFontLabel = _screen.Label("WindowFontLabel");
             TranslatorCore.Failures.Changed += () => TranslatorUIManager.RunOnMainThread(RefreshOverlay);
             _syncLabel = _screen.Label("SyncLabel");
             _syncBranchBtn = _screen.Button("SyncBranchBtn");
@@ -460,6 +475,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                 case "failuresIgnore": return OnFailuresIgnoreClicked;
                 case "fontCoverageFix": return () => Intents.OpenTranslationParameters(ParametersTab.Fonts);
                 case "fontCoverageIgnore": return OnFontCoverageIgnoreClicked;
+                case "windowFontFix": return Intents.OpenInterfaceSettings;
+                case "windowFontIgnore": return OnWindowFontIgnoreClicked;
                 case "unreachableSettings": return Intents.OpenTranslationSettings;
                 case "unreachableIgnore": return Intents.PauseLiveTranslation;
                 default: return null;
@@ -822,6 +839,16 @@ namespace UnityGameTranslator.Core.UI.Panels
                     : $"{fonts.Count} fonts cannot display {what} correctly");
             }
 
+            // 2b ter. This window cannot show the game's text correctly with its font.
+            bool showWindowFont = ShowsWindowFont();
+            if (_windowFontBox != null) _windowFontBox.Visible = showWindowFont;
+            if (showWindowFont)
+            {
+                string language = TranslatorCore.EffectiveTargetLanguage;
+                string what = string.IsNullOrEmpty(language) ? "this translation" : language;
+                _windowFontLabel?.Show($"This window cannot display {what} correctly. Set an interface font.");
+            }
+
             // 2c. A font being converted in the background: the game keeps running, and this says
             // why the text has not changed font yet — and that it is moving.
             var conversions = FontConversions.Current();
@@ -1020,7 +1047,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // 🔴 Every box of the stack, the site's notification included: left out of this list,
             // it was drawn without a height of its own, over the buttons of the box above it.
-            foreach (var box in new[] { _modUpdateBox, _syncBox, _webNotifBox, _failuresBox, _fontCoverageBox, _unreachableBox, _fontBox, _aiBox, _connectionBox, _toast?.Handle })
+            foreach (var box in new[] { _modUpdateBox, _syncBox, _webNotifBox, _failuresBox, _fontCoverageBox, _windowFontBox, _unreachableBox, _fontBox, _aiBox, _connectionBox, _toast?.Handle })
             {
                 if (box == null || !box.Visible) continue;
 
@@ -1064,6 +1091,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (_webNotifBox != null && _webNotifBox.Visible) height += 60;
             if (_failuresBox != null && _failuresBox.Visible) height += 60;
             if (_fontCoverageBox != null && _fontCoverageBox.Visible) height += 60;
+            if (_windowFontBox != null && _windowFontBox.Visible) height += 60;
             if (_unreachableBox != null && _unreachableBox.Visible) height += 80;
             if (_aiBox != null && _aiBox.Visible) height += 50;
             if (_fontBox != null && _fontBox.Visible) height += 50;
@@ -1217,6 +1245,12 @@ namespace UnityGameTranslator.Core.UI.Panels
         private void OnFontCoverageIgnoreClicked()
         {
             _fontCoverageIgnoredAt = MissingWeight(out _);
+            RefreshOverlay();
+        }
+
+        private void OnWindowFontIgnoreClicked()
+        {
+            _windowFontIgnoredFor = TranslatorCore.WindowFont ?? "";
             RefreshOverlay();
         }
 

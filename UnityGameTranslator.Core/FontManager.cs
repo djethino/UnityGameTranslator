@@ -2597,10 +2597,10 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// The derived copy the mod's own window draws from — its interface font, when that font
-        /// has one (TranslatorCore.EffectiveInterfaceFont, re-backed by name like a game font).
+        /// The derived copy the mod's own window draws from — its font (TranslatorCore.WindowFont: the
+        /// interface font, else the game's Arial replacement), when that font has one.
         /// </summary>
-        internal static DerivedFonts.Entry DerivedForInterface() => DerivedForReference(TranslatorCore.EffectiveInterfaceFont);
+        internal static DerivedFonts.Entry DerivedForInterface() => DerivedForReference(TranslatorCore.WindowFont);
 
         /// <summary>The derived copy a font reference is drawn from, by the origin serving it; null for a game font or none.</summary>
         private static DerivedFonts.Entry DerivedForReference(string reference) =>
@@ -2640,7 +2640,7 @@ namespace UnityGameTranslator.Core
             var references = new List<string>();
             foreach (var kv in TranslatorCore.FontSettingsMap)
                 if (!string.IsNullOrEmpty(kv.Value?.fallback)) references.Add(kv.Value.fallback);
-            if (!string.IsNullOrEmpty(TranslatorCore.EffectiveInterfaceFont)) references.Add(TranslatorCore.EffectiveInterfaceFont);
+            if (!string.IsNullOrEmpty(TranslatorCore.WindowFont)) references.Add(TranslatorCore.WindowFont);
 
             int signature = 17;
             unchecked

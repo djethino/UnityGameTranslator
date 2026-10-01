@@ -1790,6 +1790,37 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// The game fonts whose replacement the mod's window takes when no interface font is set: Unity's
+        /// built-in font, Arial — "LegacyRuntime" since Unity 2022.2. The window is drawn in its own
+        /// copy of Arial (UniverseLib's), which is never in the game's list, so it follows the game's.
+        /// </summary>
+        private static readonly string[] WindowFontStandIns = { "Arial", "LegacyRuntime" };
+
+        /// <summary>
+        /// The font the mod's window draws with — its own labels AND the game text it shows (Translation
+        /// Tools, Inspector) — decided by the user on 2026-10-01: the interface font as soon as one is
+        /// set (translated interface or not); otherwise the replacement this game's fonts give Arial,
+        /// when the game has that line; null otherwise (the window keeps its built-in font).
+        /// </summary>
+        public static string WindowFont
+        {
+            get
+            {
+                string chosen = EffectiveInterfaceFont;
+                if (!string.IsNullOrEmpty(chosen)) return InterfaceFontMissing ? null : chosen;
+                if (!FontReplacementActive) return null;
+                foreach (var name in WindowFontStandIns)
+                    if (FontSettingsMap.TryGetValue(name, out var settings) && !string.IsNullOrEmpty(settings?.fallback)
+                        && UnityGameTranslator.Common.FontReferences.Order(settings.fallback)[0] != UnityGameTranslator.Common.FontSource.Game
+                        // The whole window takes it: a font without the Latin alphabet would turn
+                        // every label of the window into boxes to show one script.
+                        && FontManager.DrawsLatin(settings.fallback) != false)
+                        return settings.fallback;
+                return null;
+            }
+        }
+
+        /// <summary>
         /// An interface font is required but absent from this machine. Cached: this is read from
         /// translation hot paths, and resolving a font name touches the filesystem.
         /// </summary>

@@ -43,6 +43,7 @@ namespace UnityGameTranslator.Core.UI
         private static string _pendingRebackFont;       // IL2CPP: font to reback after the deferred restore→reback gap
         private static int _rebackDelay;                // frames left before the pending reback fires
         private static string _missingInterfaceFontReported; // font we already warned about (warn once per value)
+        private static string _appliedWindowFont;            // the window font last applied ("" for none); null before the first
         // The interface font + mod-UI translation are applied lazily on first show: at init the custom
         // fonts aren't loaded yet and the translation worker isn't ready, so an early pass is a no-op.
         private static bool _uiFontBootstrapped;
@@ -1555,22 +1556,26 @@ namespace UnityGameTranslator.Core.UI
             // UI font in place — rewrite its fontNames to the chosen system font's family, and FreeType
             // re-rasterizes with it. Same mechanism the game font-replacement uses (FontManager reback via
             // TextureHelper.SetFontNames). Works on Mono AND IL2CPP.
-            // The font in effect: the user's local override, else the one the translation asks for.
-            string requestedFont = TranslatorCore.EffectiveInterfaceFont;
+            // The font in effect (TranslatorCore.WindowFont): the interface font when one is set —
+            // translated interface or not, the window shows the game's text too — else the replacement
+            // this game's fonts give Arial.
+            string requestedFont = TranslatorCore.WindowFont;
+            _appliedWindowFont = requestedFont ?? "";
+            string interfaceFont = TranslatorCore.EffectiveInterfaceFont;
 
             // The font may simply not be here: the translation names one whose files come from the
             // author's resources link, or a config arrived from another machine. The interface then
             // stays English (ShouldTranslateOwnUI is false) rather than showing boxes — so say what
             // is missing, since this window is where the user comes to find out.
-            if (!string.IsNullOrEmpty(requestedFont) && TranslatorCore.InterfaceFontMissing)
+            if (!string.IsNullOrEmpty(interfaceFont) && TranslatorCore.InterfaceFontMissing)
             {
-                if (_missingInterfaceFontReported != requestedFont)
+                if (_missingInterfaceFontReported != interfaceFont)
                 {
-                    _missingInterfaceFontReported = requestedFont;
-                    TranslatorCore.LogWarning($"[UIManager] Interface font '{requestedFont}' is missing — " +
+                    _missingInterfaceFontReported = interfaceFont;
+                    TranslatorCore.LogWarning($"[UIManager] Interface font '{interfaceFont}' is missing — " +
                         "mod interface kept in English (get the translation's resources to install it)");
                     StatusOverlay?.ShowToast(
-                        $"Missing font '{requestedFont}' — interface kept in English. Install the translation's resources.",
+                        $"Missing font '{interfaceFont}' — interface kept in English. Install the translation's resources.",
                         ToastTone.Off);
                 }
             }
@@ -1579,8 +1584,7 @@ namespace UnityGameTranslator.Core.UI
                 _missingInterfaceFontReported = null;
             }
 
-            bool wantCustom = TranslatorCore.ShouldTranslateOwnUI && !string.IsNullOrEmpty(requestedFont)
-                && !TranslatorCore.InterfaceFontMissing;
+            bool wantCustom = !string.IsNullOrEmpty(requestedFont);
 
             // The split is by RUNTIME CAPABILITY, not by platform: wherever a fresh OS-backed Font can
             // be created (Mono, and IL2CPP builds that kept CreateDynamicFontFromOSFont) we swap the
@@ -5768,6 +5772,11 @@ namespace UnityGameTranslator.Core.UI
             // method stops being called the moment the last panel closes: the code that hands the
             // game its input back lived in the one place that goes quiet exactly when it is
             // needed. Reported as a game whose menus never recovered, not even on reopening.
+            // The window's font follows what it depends on — the interface font, the game's Arial
+            // replacement — whichever place changed it (TranslatorCore.WindowFont): read from the
+            // state, as nothing has to remember to say it.
+            if (_appliedWindowFont != null && (TranslatorCore.WindowFont ?? "") != _appliedWindowFont)
+                ApplyInterfaceFont();
             // Deferred interface-font re-dirty (atlas warms async after a reback).
             TickFontRerender();
 

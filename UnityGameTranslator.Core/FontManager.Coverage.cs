@@ -111,6 +111,25 @@ namespace UnityGameTranslator.Core
                 TranslatorCore.LogInfo($"[FontManager] '{settingsFontName}' draws text that needs shaping without it — a font file (Custom or System) shapes it");
         }
 
+        // The window font (or "" for none) the mod's window was seen unable to shape with; null when never.
+        private static string _windowUnshapedWith;
+
+        /// <summary>
+        /// The mod's window had to show text needing shaping that its font cannot shape
+        /// (ShapingRoute "reorder only" for its own text): the game's text it shows, or its translated
+        /// labels. Said once per window font.
+        /// </summary>
+        internal static void NoteWindowUnshaped()
+        {
+            string font = TranslatorCore.WindowFont ?? "";
+            if (_windowUnshapedWith == font) return;
+            _windowUnshapedWith = font;
+            TranslatorCore.LogInfo($"[FontManager] the mod's window shows text that needs shaping without it ({(font.Length == 0 ? "no interface font" : font)}) — an interface font with that script shapes it");
+        }
+
+        /// <summary>Whether the mod's window, with the font it has now, was seen unable to shape what it shows.</summary>
+        internal static bool WindowCannotShape => _windowUnshapedWith != null && _windowUnshapedWith == (TranslatorCore.WindowFont ?? "");
+
         private static void Refresh()
         {
             int signature = SettingsSignature();
@@ -168,14 +187,7 @@ namespace UnityGameTranslator.Core
             string fallback = settings?.fallback;
             if (TranslatorCore.FontReplacementActive && !string.IsNullOrEmpty(fallback))
             {
-                string name = UnityGameTranslator.Common.FontReferences.Name(fallback);
-                var served = UnityGameTranslator.Common.FontReferences.Serving(fallback,
-                    gameHas: IsGameFont(name), customHas: CustomFontLoader.CustomFonts.ContainsKey(name),
-                    systemHas: AssetAvailability.IsSystemFontAvailable(name));
-                string path = null;
-                if (served == UnityGameTranslator.Common.FontSource.Custom
-                    && CustomFontLoader.CustomFonts.TryGetValue(name, out var info)) path = info?.TtfPath;
-                else if (served == UnityGameTranslator.Common.FontSource.System) path = InstalledFontPath(name);
+                string path = FileOfReference(fallback, out string name, out var served);
                 var cmap = CharacterMap(path);
                 if (cmap != null) sources.Add(cp => cmap.Contains(cp));
                 else if (served == UnityGameTranslator.Common.FontSource.Game)
@@ -198,6 +210,33 @@ namespace UnityGameTranslator.Core
             path = DerivedFonts.SourcePathOfInstalled(name) ?? CustomFontLoader.FindSystemTtfPath(name);
             _installedPathByName[name] = path;
             return path;
+        }
+
+        /// <summary>The font file a reference is served by (fonts/ or installed), with its name and origin; null for a game font or none found.</summary>
+        private static string FileOfReference(string reference, out string name, out UnityGameTranslator.Common.FontSource? served)
+        {
+            name = UnityGameTranslator.Common.FontReferences.Name(reference);
+            served = UnityGameTranslator.Common.FontReferences.Serving(reference,
+                gameHas: IsGameFont(name), customHas: CustomFontLoader.CustomFonts.ContainsKey(name),
+                systemHas: AssetAvailability.IsSystemFontAvailable(name));
+            if (served == UnityGameTranslator.Common.FontSource.Custom
+                && CustomFontLoader.CustomFonts.TryGetValue(name, out var info)) return info?.TtfPath;
+            if (served == UnityGameTranslator.Common.FontSource.System) return InstalledFontPath(name);
+            return null;
+        }
+
+        /// <summary>
+        /// Whether a font draws the basic Latin letters and digits — what the mod's window's own labels
+        /// are written in. Null when its file cannot be read: nothing to say either way.
+        /// </summary>
+        internal static bool? DrawsLatin(string reference)
+        {
+            if (string.IsNullOrEmpty(reference)) return null;
+            var cmap = CharacterMap(FileOfReference(reference, out _, out _));
+            if (cmap == null) return null;
+            for (int c = 'A'; c <= 'Z'; c++) if (!cmap.Contains(c) || !cmap.Contains(c + 32)) return false;
+            for (int c = '0'; c <= '9'; c++) if (!cmap.Contains(c)) return false;
+            return true;
         }
 
         /// <summary>A font file's characters, read once per file. Null when there is no file or it cannot be read (then nothing is claimed).</summary>

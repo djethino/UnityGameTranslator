@@ -68,6 +68,13 @@ namespace UnityGameTranslator.Core.UI
             TranslatorUIManager.OptionsPanel?.ShowTranslationTab();
         }
 
+        /// <summary>The options, on the General tab: where the interface font is set.</summary>
+        public static void OpenInterfaceSettings()
+        {
+            Screens?.Show(ScreenId.Options);
+            TranslatorUIManager.OptionsPanel?.ShowGeneralTab();
+        }
+
         /// <summary>The backups window, refreshed as it comes up.</summary>
         public static void OpenBackups() => TranslatorUIManager.BackupsPanel?.ShowPanel();
 

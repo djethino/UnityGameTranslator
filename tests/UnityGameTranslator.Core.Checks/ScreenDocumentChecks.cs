@@ -181,12 +181,12 @@ namespace UnityGameTranslator.Core.Checks
             check(overlay.Body.Count == 1 && overlay.Body[0].Kind == "stack" && overlay.Body[0].Int("pad") != null && overlay.Body[0].Int("spacing") != null,
                 "one stack, whose spacing and padding the document states in pixels", "the code sizes the window from them — read there, never copied");
             check(overlay.Body[0].Children.All(b => !b.StartsVisible || b.Kind == "toast")
-                  && overlay.Body[0].Children.Count(b => b.Kind == "callout") == 8 && overlay.Nodes["ToastBox"].Kind == "toast",
-                "every box starts hidden: eight callouts (a font converting and a font missing characters among them), a connection line, a toast", "the code shows each when its moment comes");
+                  && overlay.Body[0].Children.Count(b => b.Kind == "callout") == 9 && overlay.Nodes["ToastBox"].Kind == "toast",
+                "every box starts hidden: nine callouts (a font converting, a font missing characters and the window's font among them), a connection line, a toast", "the code shows each when its moment comes");
             check(overlay.Acts.Keys.OrderBy(k => k).SequenceEqual(new[] {
                       "failuresFix", "failuresIgnore", "fontCoverageFix", "fontCoverageIgnore", "modDownload", "modIgnore", "modManager", "syncAction", "syncBranch", "syncCompare", "syncFork",
-                      "syncIgnore", "syncSettings", "unreachableIgnore", "unreachableSettings", "webNotifDismiss", "webNotifView" }),
-                "overlay.json asks for the seventeen acts its code handles", $"got {string.Join(",", overlay.Acts.Keys)}");
+                      "syncIgnore", "syncSettings", "unreachableIgnore", "unreachableSettings", "webNotifDismiss", "webNotifView", "windowFontFix", "windowFontIgnore" }),
+                "overlay.json asks for the nineteen acts its code handles", $"got {string.Join(",", overlay.Acts.Keys)}");
             // 🔴 An unreachable server is a STATE, red, with its ways out: not a toast that fades while
             // the queue status comes back saying "Translating…" (2026-09-23).
             check(overlay.Nodes["UnreachableBox"].Word("tone") == "Error"
@@ -200,6 +200,13 @@ namespace UnityGameTranslator.Core.Checks
                   && overlay.Nodes["FontCoverageIgnoreBtn"].Word("act") == "fontCoverageIgnore",
                 "a font missing characters of the translation has its own box, with Fonts and Ignore",
                 "Fonts opens the Fonts tab, where a replacement is chosen");
+            // The mod's window shows the game's text too (user, 2026-10-01): when its font cannot, the
+            // fact, the way to the interface font in Options, Ignore.
+            check(overlay.Nodes["WindowFontBox"].Word("tone") == "Warning"
+                  && overlay.Nodes["WindowFontFixBtn"].Word("act") == "windowFontFix"
+                  && overlay.Nodes["WindowFontIgnoreBtn"].Word("act") == "windowFontIgnore",
+                "the window's font that cannot show the translation has its own box, with Options and Ignore",
+                "Options opens the General tab, where the interface font is set");
             check(overlay.Nodes["ConnectionDot"].Flag("wrap") == false && overlay.Nodes["ConnectionDot"].Int("minWidth") == 12,
                 "the connection dot keeps its own glyph's width and never folds", "it is what keeps the words flush against it on the right");
             check(!upload.Pinned && upload.TitleBar && ScreenDocument.Parse(JObject.Parse(@"{""name"":""X"",""size"":{""width"":500,""height"":200},""body"":[],""footer"":[]}")).TitleBar,

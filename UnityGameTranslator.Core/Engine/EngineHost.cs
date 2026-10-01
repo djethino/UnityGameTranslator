@@ -48,5 +48,11 @@ namespace UnityGameTranslator.Core
         /// interface font, if it is that font, is to be applied again to draw them.
         /// </summary>
         void DerivedFontRewritten(string fontName);
+
+        /// <summary>
+        /// The game changed scene: fonts it loads or unloads with its scenes may have come or gone —
+        /// a game font the window was asked to draw with is looked for again.
+        /// </summary>
+        void SceneChanged();
     }
 }

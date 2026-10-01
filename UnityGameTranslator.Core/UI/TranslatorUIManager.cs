@@ -1585,6 +1585,7 @@ namespace UnityGameTranslator.Core.UI
             }
 
             bool wantCustom = !string.IsNullOrEmpty(requestedFont);
+            bool wantGameFont = wantCustom && FontManager.IsGameFontRef(requestedFont);
             // Source/target text fonts this runtime cannot make into fonts of their own: the window's
             // single font must draw from them too (GameTextFonts) — empty wherever fonts can be made.
             var unmadeSideFonts = GameTextFonts.Unmade();
@@ -1607,7 +1608,7 @@ namespace UnityGameTranslator.Core.UI
                 _uiFontRebacked = false;
                 _pendingRebackChain = null;
             }
-            else if (wantCustom || unmadeSideFonts.Count > 0)
+            else if ((wantCustom && !wantGameFont) || unmadeSideFonts.Count > 0)
             {
                 // IL2CPP: fresh Font creation is stripped, so reback the UI font's OS backing (fontNames).
                 // Rebacking directly over a previous font leaves the atlas stale at runtime — the change
@@ -1619,13 +1620,17 @@ namespace UnityGameTranslator.Core.UI
                 RerenderModUIFont(false);
                 // The window's font first — the interface font, or its own family when none — then
                 // the side fonts it must carry, in the order Unity tries them for a missing character.
-                _pendingRebackChain = new List<string> { wantCustom ? requestedFont : _originalUIFontFamily };
+                _pendingRebackChain = new List<string> { wantCustom && !wantGameFont ? requestedFont : _originalUIFontFamily };
                 _pendingRebackChain.AddRange(unmadeSideFonts);
                 _rebackDelay = 60; // ~1s — the slowest atlas we've seen (Frog); LongYin tolerates it too
                 _uiFontRebacked = true;
             }
             else
             {
+                // A game font the game has not loaded (or unloaded with its scene): the window keeps
+                // its own font, and the next scene asks again (EngineHostAdapter.SceneChanged).
+                if (wantGameFont)
+                    TranslatorCore.LogInfo($"[UIManager] Interface font '{requestedFont}' is a game font not loaded right now — the window keeps its own font until it is");
                 // Restore original. Cancel any pending reback first, else a queued reback would re-apply
                 // the font after the user turned the feature off ("keeps the first fallback" bug).
                 _pendingRebackChain = null;
@@ -5783,10 +5788,11 @@ namespace UnityGameTranslator.Core.UI
             // method stops being called the moment the last panel closes: the code that hands the
             // game its input back lived in the one place that goes quiet exactly when it is
             // needed. Reported as a game whose menus never recovered, not even on reopening.
-            // The window's font follows what it depends on — the interface font, the game's Arial
-            // replacement — whichever place changed it (TranslatorCore.WindowFont): read from the
-            // state, as nothing has to remember to say it.
-            if (_appliedWindowFont != null && (TranslatorCore.WindowFont ?? "") != _appliedWindowFont)
+            // The window's font follows what it depends on — the interface font, whichever place
+            // changed it (TranslatorCore.WindowFont) — read from the state, as nothing has to remember
+            // to say it. And a game font it was drawing with, unloaded with its scene, is no font at
+            // all: the window takes its own again (a destroyed object reads as null — no lookup).
+            if (_appliedWindowFont != null && ((TranslatorCore.WindowFont ?? "") != _appliedWindowFont || UniversalUI.DefaultFont == null))
                 ApplyInterfaceFont();
             // Deferred interface-font re-dirty (atlas warms async after a reback).
             TickFontRerender();

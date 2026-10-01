@@ -42,6 +42,18 @@ namespace UnityGameTranslator.Core.UI
                 GameTextFonts.PutAll();
         }
 
+        public void SceneChanged()
+        {
+            // Only when the window draws with a game font somewhere — its interface, or the game's
+            // text it shows: those come and go with the scenes; the others do not.
+            foreach (var side in new GameTextSide?[] { null, GameTextSide.Source, GameTextSide.Target })
+                if (FontManager.IsGameFontRef(TranslatorCore.WindowFontFor(side)))
+                {
+                    TranslatorUIManager.ApplyInterfaceFont();
+                    return;
+                }
+        }
+
         public void ShuttingDown()
         {
             // Streams first (background tasks holding HTTP connections), then the live edit

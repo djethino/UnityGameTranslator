@@ -1819,6 +1819,9 @@ namespace UnityGameTranslator.Core
             if (side == null) return WindowFont;
             string chosen = side == GameTextSide.Source ? Config?.source_text_font : Config?.target_text_font;
             if (string.IsNullOrEmpty(chosen)) return WindowFont;
+            // A game font is there or not with the scene, never "missing on this machine": the
+            // window asks for it when it draws, and again at each scene (UI.GameTextFonts).
+            if (FontManager.IsGameFontRef(chosen)) return chosen;
             if (!_sideFontAvailable.TryGetValue(chosen, out bool available))
             {
                 available = AssetAvailability.IsFontAvailable(chosen);
@@ -1839,6 +1842,9 @@ namespace UnityGameTranslator.Core
             {
                 string font = EffectiveInterfaceFont;
                 if (string.IsNullOrEmpty(font)) return false;
+                // A game font comes and goes with the scenes: loaded or not is the window's to find
+                // when it draws (TranslatorUIManager.ApplyInterfaceFont), never a missing install.
+                if (FontManager.IsGameFontRef(font)) return false;
 
                 if (_fontAvailabilityCheckedFor != font)
                 {
@@ -2150,6 +2156,7 @@ namespace UnityGameTranslator.Core
             TranslatorPatches.ClearCache();
 
             FontManager.OnSceneChanged();
+            Host?.SceneChanged();
 
             // Load/reload image replacements for the new scene
             ImageReplacer.OnSceneChange();

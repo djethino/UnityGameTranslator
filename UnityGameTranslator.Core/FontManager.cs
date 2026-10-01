@@ -1285,33 +1285,67 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// Try to load a FRESH OS-backed <see cref="Font"/> object for the mod interface font. Returns
-        /// a dynamic font when the runtime can create one (Mono, and IL2CPP builds where
-        /// CreateDynamicFontFromOSFont survived stripping), else null — callers then fall back to
-        /// RebackFontToSystem on the existing UI font. A fresh object has an empty atlas, so it
-        /// re-renders cleanly at runtime.
-        ///
-        /// The font is created from the RESOLVED OS family, never from the raw picker entry: the
-        /// picker lists font FILE names ("BKANT", "C64_Pro_Mono-STYLE") while FreeType only knows
-        /// FAMILY names ("Book Antiqua", "C64 Pro Mono") — creating from the file name yields a font
-        /// that silently renders as Arial. Deliberately does NOT reuse a game font (unlike
-        /// CreateUnityFontFromSystem): it would be the wrong typeface, and rebacking it would change
-        /// the game's own text.
+        /// The <see cref="Font"/> object the mod's window draws with for a font reference — its
+        /// interface, or the game's source text / translation it shows (UI.GameTextFonts). Null when
+        /// it cannot be had: the caller then keeps the window's own font, or (a runtime that cannot
+        /// make fonts) puts the reference in the window font's chain (RebackFontToChain).
+        /// - "[Game] X": the game's own legacy font object, when the game has it loaded — used as it
+        ///   is, never rebacked: that would change the game's own text.
+        /// - an installed font or "[Custom] X": a FRESH OS-backed font, when the runtime can make one
+        ///   (Mono, and IL2CPP builds where CreateDynamicFontFromOSFont survived stripping) — an
+        ///   empty atlas re-renders cleanly — made from the RESOLVED family (WindowFamilyNames), never
+        ///   from the raw picker entry: FreeType only knows family names, and a file name yields a
+        ///   font that silently renders as Arial.
+        /// A reference keeps its origin throughout: two fonts of one name from two origins are two
+        /// fonts (user, 2026-10-01).
         /// </summary>
         public static Font LoadUIFont(string fontName)
         {
             if (string.IsNullOrEmpty(fontName)) return null;
-            string clean = StripFontPrefix(fontName);
-            string family = ResolveSystemFontFamily(clean, out _);
+            if (IsGameFontRef(fontName)) return LoadedGameUnityFont(StripFontPrefix(fontName));
 
-            var font = CreateDynamicOSFont(family);
-            if (font == null && !string.Equals(family, clean, StringComparison.OrdinalIgnoreCase))
-                font = CreateDynamicOSFont(clean);
+            var names = WindowFamilyNames(fontName);
+            Font font = null;
+            foreach (var name in names)
+            {
+                font = CreateDynamicOSFont(name);
+                if (font != null) break;
+            }
             if (font == null) return null;
 
-            // Pin the glyph source to the resolved family (file name kept as second candidate).
-            ApplyFontFamilyNames(font, clean, family);
+            // Pin the glyph source to the resolved names.
+            SetWindowFontNames(font, names);
             return font;
+        }
+
+        /// <summary>A game legacy font loaded right now, by name; null when the game has not loaded it (or unloaded it with its scene).</summary>
+        private static Font LoadedGameUnityFont(string name)
+        {
+            if (_gameUnityFonts.TryGetValue(name, out var known) && known != null) return known;
+            return FindLoadedGameUnityFont(name);
+        }
+
+        /// <summary>
+        /// The names a window font is pointed at, for an installed or fonts/ reference: its resolved
+        /// family (a derived copy's for a font that needs shaping), then — for an INSTALLED font only —
+        /// its own name, which may be the file name FreeType knows it by. Never a fonts/ font's bare
+        /// name: an installed font of the same name would answer for it.
+        /// </summary>
+        private static List<string> WindowFamilyNames(string reference)
+        {
+            string clean = StripFontPrefix(reference);
+            string family = ResolveSystemFontFamily(reference, out _);
+            var names = new List<string> { family };
+            bool installed = UnityGameTranslator.Common.FontReferences.Order(reference)[0] == UnityGameTranslator.Common.FontSource.System;
+            if (installed && !string.Equals(family, clean, StringComparison.OrdinalIgnoreCase)) names.Add(clean);
+            return names;
+        }
+
+        private static bool SetWindowFontNames(Font target, List<string> names)
+        {
+            bool ok = UniverseLib.Runtime.TextureHelper.SetFontNames(target, names.ToArray());
+            if (ok) TranslatorCore.LogInfo($"[FontManager] Rebacked '{target.name}' fontNames=[{string.Join(", ", names)}]");
+            return ok;
         }
 
         /// <summary>
@@ -1349,7 +1383,7 @@ namespace UnityGameTranslator.Core
         /// <summary>
         /// Resolve a system/custom font's real family name (as the OS FreeType resolves it) plus its
         /// TTF path. Shared by the GAME font-replacement reback (GetUnityReplacementFont) and the
-        /// INTERFACE-font reback (RebackFontToSystem) so the resolution logic lives in one place.
+        /// mod window's fonts (LoadUIFont, RebackFontToChain) so the resolution logic lives in one place.
         /// </summary>
         public static string ResolveSystemFontFamily(string fontName, out string ttfPath)
         {
@@ -1420,42 +1454,13 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// Reback a Font's OS glyph source by rewriting its <c>fontNames</c> to a system font family,
-        /// so FreeType re-rasterizes it with that font. This is the IL2CPP-safe way to change a uGUI
-        /// font (same mechanism the game font-replacement uses via TextureHelper.SetFontNames) — you
-        /// cannot create a fresh OS-backed Font on IL2CPP. Used for the mod's interface font.
+        /// Reback the mod window's single font to SEVERAL fonts, in the order Unity tries them for a
+        /// character — the IL2CPP-safe way to change a uGUI font where no fresh one can be made: its
+        /// interface font (or its own family), then the source/target text fonts the game's text it
+        /// shows needs (UI.GameTextFonts). Each named as LoadUIFont names one (WindowFamilyNames); a
+        /// game font cannot join a chain of names, and is said.
         /// NOTE: the atlas caches by (char, size); after rebacking, existing glyphs stay cached until
         /// re-requested at a new size — callers must force a rebuild (see TranslatorUIManager).
-        /// </summary>
-        public static bool RebackFontToSystem(Font target, string systemFontName)
-        {
-            if (target == null || string.IsNullOrEmpty(systemFontName)) return false;
-            string clean = StripFontPrefix(systemFontName);
-            return ApplyFontFamilyNames(target, clean, ResolveSystemFontFamily(clean, out _));
-        }
-
-        /// <summary>
-        /// Point a Font's glyph source at a system font: family first, then the file name as a
-        /// second candidate. Shared by RebackFontToSystem and LoadUIFont so both spell the
-        /// fontNames the same way (and the family is resolved only once per call site).
-        /// </summary>
-        private static bool ApplyFontFamilyNames(Font target, string clean, string family)
-        {
-            var names = new List<string> { family };
-            if (!string.Equals(family, clean, StringComparison.OrdinalIgnoreCase))
-                names.Add(clean);
-
-            bool ok = UniverseLib.Runtime.TextureHelper.SetFontNames(target, names.ToArray());
-            if (ok) TranslatorCore.LogInfo($"[FontManager] Rebacked '{target.name}' fontNames=[{string.Join(", ", names)}]");
-            return ok;
-        }
-
-        /// <summary>
-        /// Reback a Font to SEVERAL fonts, in the order Unity tries them for a character: the mod's
-        /// window on a runtime that cannot make fonts — its interface font (or its own family), then
-        /// the source/target text fonts the game's text it shows needs (UI.GameTextFonts). Each is
-        /// resolved as RebackFontToSystem resolves one: its family (a derived copy for a font that
-        /// needs shaping), then its file name.
         /// </summary>
         public static bool RebackFontToChain(Font target, IList<string> fontNames)
         {
@@ -1464,17 +1469,18 @@ namespace UnityGameTranslator.Core
             foreach (var fontName in fontNames)
             {
                 if (string.IsNullOrEmpty(fontName)) continue;
-                string clean = StripFontPrefix(fontName);
-                string family = ResolveSystemFontFamily(clean, out _);
-                if (!names.Contains(family)) names.Add(family);
-                if (!string.Equals(family, clean, StringComparison.OrdinalIgnoreCase) && !names.Contains(clean)) names.Add(clean);
+                if (IsGameFontRef(fontName))
+                {
+                    TranslatorCore.LogWarning($"[FontManager] '{fontName}' is a game font: on this runtime the mod's window can only draw from installed or fonts/ fonts");
+                    continue;
+                }
+                foreach (var name in WindowFamilyNames(fontName))
+                    if (!names.Contains(name)) names.Add(name);
             }
-            bool ok = UniverseLib.Runtime.TextureHelper.SetFontNames(target, names.ToArray());
-            if (ok) TranslatorCore.LogInfo($"[FontManager] Rebacked '{target.name}' fontNames=[{string.Join(", ", names)}]");
-            return ok;
+            return names.Count > 0 && SetWindowFontNames(target, names);
         }
 
-        /// <summary>Restore a Font's fontNames to its own family name (undo RebackFontToSystem).</summary>
+        /// <summary>Restore a Font's fontNames to its own family name (undo RebackFontToChain).</summary>
         public static bool RestoreFontToOriginal(Font target, string originalFamily)
         {
             if (target == null) return false;
@@ -4054,7 +4060,7 @@ namespace UnityGameTranslator.Core
                     string cleanFallback = StripFontPrefix(settings.fallback);
 
                     // Real font family name (+ TTF path for the cmap probe below) — shared resolver,
-                    // also used by the interface-font reback (RebackFontToSystem).
+                    // also used by the mod window's fonts (LoadUIFont, RebackFontToChain).
                     string realFontName = ResolveSystemFontFamily(settings.fallback, out string ttfPath);
 
                     // Save original fontNames BEFORE modifying (only first time)

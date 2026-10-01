@@ -42,7 +42,10 @@ namespace UnityGameTranslator.Core.UI
             made = FontManager.LoadUIFont(own);
             if (made == null)
             {
-                _cannotMake.Add(own);
+                // A game font not loaded right now is asked again at the next scene
+                // (EngineHostAdapter.SceneChanged); an installed or fonts/ font this runtime cannot
+                // make never will be, and joins the window font's chain instead (Unmade).
+                if (!FontManager.IsGameFontRef(own)) _cannotMake.Add(own);
                 return UniversalUI.DefaultFont;
             }
             _made[own] = made;

@@ -528,17 +528,13 @@ namespace UnityGameTranslator.Core.UI.Panels
             // ── The choices only the code knows ─────────────────────────────────
             // Show the font IN EFFECT — the local override if set, else the one the translation
             // asks for — so the picker reflects what the user actually sees.
-            _interfaceFontDropdown.CategoryProvider = FontManager.GetFontOrigin;
-            string[] interfaceFontOptions = BuildInterfaceFontOptions();
-            string initialInterfaceFont = string.IsNullOrEmpty(TranslatorCore.EffectiveInterfaceFont)
-                ? "(None)" : TranslatorCore.EffectiveInterfaceFont;
-            if (!Array.Exists(interfaceFontOptions, o => o == initialInterfaceFont))
-                initialInterfaceFont = "(None)";
-            _interfaceFontDropdown.SetOptions(interfaceFontOptions);
-            _interfaceFontDropdown.SelectedValue = initialInterfaceFont;
-            // The same fonts to choose from for the game's text the window shows; (None) is the interface font.
-            FillGameTextFontPicker(_sourceTextFontDropdown, interfaceFontOptions, TranslatorCore.Config.source_text_font);
-            FillGameTextFontPicker(_targetTextFontDropdown, interfaceFontOptions, TranslatorCore.Config.target_text_font);
+            // The window draws legacy text: the same Game, System and Custom fonts a game's uGUI text
+            // is offered as a fallback (FontOptions), for its interface and for the game's text it
+            // shows — (None) is the window's own font for the first, the interface font for the others.
+            var windowFontOptions = FontOptions.For(FontOptionKind.Legacy, FontManager.SystemFonts);
+            FillWindowFontPicker(_interfaceFontDropdown, windowFontOptions, TranslatorCore.EffectiveInterfaceFont);
+            FillWindowFontPicker(_sourceTextFontDropdown, windowFontOptions, TranslatorCore.Config.source_text_font);
+            FillWindowFontPicker(_targetTextFontDropdown, windowFontOptions, TranslatorCore.Config.target_text_font);
 
             _notificationPositionDropdown.SetOptions(new[] { "Top-Right", "Top-Left", "Bottom-Right", "Bottom-Left" });
             _notificationPositionDropdown.SelectedValue = "Top-Right";
@@ -1477,39 +1473,13 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
         }
 
-        /// <summary>
-        /// Build the interface-font picker options: SYSTEM fonts only. The mod UI font is applied by
-        /// rebacking its fontNames to a font family the OS can resolve (FontManager.RebackFontToSystem)
-        /// — the IL2CPP-safe way, since a fresh OS-backed Font can't be created there. Game-bundled and
-        /// custom (SDF/TMP) fonts aren't OS-installed families, so they can't be rebacked and are omitted.
-        /// A system font that covers the target script (e.g. Malgun Gothic for Korean) is what to pick.
-        /// </summary>
-        private static string[] BuildInterfaceFontOptions()
-        {
-            var options = new List<string> { "(None)" };
-
-            var sys = FontManager.SystemFonts;
-            if (sys != null)
-            {
-                // Only offer fonts the OS can actually hand us a file for — an entry the runtime
-                // cannot resolve would silently render as the default font instead.
-                foreach (string font in sys)
-                {
-                    if (AssetAvailability.IsSystemFontAvailable(font))
-                        options.Add(font);
-                }
-            }
-
-            return options.ToArray();
-        }
-
-        private static void FillGameTextFontPicker(SearchableDropdown picker, string[] options, string chosen)
+        /// <summary>A font picker of the window: the shared list, its chosen entry selected (display markers ignored).</summary>
+        private static void FillWindowFontPicker(SearchableDropdown picker, List<string> options, string chosen)
         {
             if (picker == null) return;
             picker.CategoryProvider = FontManager.GetFontOrigin;
-            string initial = string.IsNullOrEmpty(chosen) || !Array.Exists(options, o => o == chosen) ? "(None)" : chosen;
-            picker.SetOptions(options);
-            picker.SelectedValue = initial;
+            picker.SetOptions(options.ToArray());
+            picker.SelectedValue = FontOptions.Find(options, chosen) ?? "(None)";
         }
 
         /// <summary>Normalize an interface-font picker selection to a stored value (null = default UI font).</summary>
@@ -1517,7 +1487,9 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             if (string.IsNullOrEmpty(selected) || selected == "(None)") return null;
             if (selected.StartsWith("--- ")) return null; // separator row, not a real choice
-            return selected;
+            // The entry as displayed may carry a marker ("(not loaded)", "(after restart)"): the font
+            // is what is stored, with its origin.
+            return FontManager.StripOptionMarker(selected);
         }
 
         private void ApplySettings()

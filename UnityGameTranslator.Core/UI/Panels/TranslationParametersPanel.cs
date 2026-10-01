@@ -1820,25 +1820,6 @@ namespace UnityGameTranslator.Core.UI.Panels
         }
 
         /// <summary>
-        /// The picker entry matching <paramref name="wanted"/>, ignoring display-only markers on
-        /// either side, or null. Marker-insensitive because the same font is offered as
-        /// "[Game] X" or "[Game] X (not loaded)" depending on what the game currently holds in
-        /// memory — a stored fallback must select its entry in both cases.
-        /// </summary>
-        private static string FindOption(List<string> options, string wanted)
-        {
-            if (options == null || string.IsNullOrEmpty(wanted)) return null;
-
-            string target = FontManager.StripOptionMarker(wanted);
-            foreach (var option in options)
-            {
-                if (string.Equals(FontManager.StripOptionMarker(option), target, StringComparison.Ordinal))
-                    return option;
-            }
-            return null;
-        }
-
-        /// <summary>
         /// One detected font, from its template: name and presence, the Translate box and the
         /// Identify button on the first line; the RTL box when this translation involves
         /// right-to-left text; the fallback picker for fonts that support one; the size slider
@@ -1959,91 +1940,11 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// </summary>
         private void FillFallback(BuiltScreen row, FontDisplayInfo fontInfo, string capturedFontName)
         {
-            // Build options array based on font type
-            var options = new List<string> { "(None)" };
-            string[] availableFonts = null;
+            // The same list wherever a font is chosen to draw text (FontOptions): the Options
+            // window's fonts for the mod's own window take the legacy one.
             bool isTMPFont = fontInfo.Type == "TMP" || fontInfo.Type == "TextMeshPro" || fontInfo.Type == "TMP (alt)";
-
-            if (fontInfo.Type == "TMP (alt)")
-            {
-                // For alternate TMP (TMProOld, etc.), show game fonts + system fonts
-                var altFonts = TranslatorPatches.GetAlternateTMPFontNames();
-                if (altFonts != null && altFonts.Length > 0)
-                {
-                    options.Add("--- Game Fonts ---");
-                    foreach (var af in altFonts)
-                        options.Add(AssetPacks.GameFontPrefix + af);
-                }
-
-                if (_systemFonts != null && _systemFonts.Length > 0)
-                {
-                    options.Add("--- System Fonts ---");
-                    availableFonts = _systemFonts;
-                }
-            }
-            else if (isTMPFont)
-            {
-                var gameFonts = FontManager.GetGameFontNames();
-                var knownFonts = FontManager.GetKnownUnloadedFontNames(tmpFamily: true);
-                if (gameFonts.Length > 0 || knownFonts.Length > 0)
-                {
-                    options.Add("--- Game Fonts ---");
-                    foreach (var gf in gameFonts)
-                        options.Add(AssetPacks.GameFontPrefix + gf);
-                    // Known from the translation but not in memory right now — see
-                    // FontManager.GetKnownUnloadedFontNames. Without them, a font used as a
-                    // fallback in a past session could not be picked again.
-                    foreach (var kf in knownFonts)
-                        options.Add(AssetPacks.GameFontPrefix + kf + FontManager.UnloadedMarker);
-                }
-
-                if (_systemFonts != null && _systemFonts.Length > 0)
-                {
-                    options.Add("--- System Fonts ---");
-                    availableFonts = _systemFonts;
-                }
-            }
-            else
-            {
-                // Unity Font: game fonts first (with [Game] prefix), then system fonts
-                var gameUnityFonts = FontManager.GetGameUnityFontNames();
-                var knownFonts = FontManager.GetKnownUnloadedFontNames(tmpFamily: false);
-                if (gameUnityFonts.Length > 0 || knownFonts.Length > 0)
-                {
-                    options.Add("--- Game Fonts ---");
-                    foreach (var gf in gameUnityFonts)
-                        options.Add(AssetPacks.GameFontPrefix + gf);
-                    foreach (var kf in knownFonts)
-                        options.Add(AssetPacks.GameFontPrefix + kf + FontManager.UnloadedMarker);
-                }
-                availableFonts = _systemFonts;
-            }
-
-            if (availableFonts != null && availableFonts.Length > 0)
-            {
-                if (options.Count > 1)
-                    options.Add("--- System Fonts ---");
-                options.AddRange(availableFonts);
-            }
-
-            // Add custom fonts (user-provided fonts from fonts/ folder). TextMeshPro reads the file
-            // itself; legacy text only through the engine's list of fonts, made once at start — a
-            // file added since takes a name of the pool listed then (FontManager.LegacyReach), and
-            // waits for the next launch only when the pool is spent; an atlas font never gets there.
-            var customOptions = new List<string>();
-            foreach (var customFont in FontManager.GetCustomFontNames())
-            {
-                var reach = isTMPFont ? FontFolderRedirect.Reach.Now : FontManager.LegacyReach(customFont);
-                if (reach == FontFolderRedirect.Reach.Never) continue;
-                customOptions.Add(AssetPacks.CustomFontPrefix + customFont
-                    + (reach == FontFolderRedirect.Reach.NextLaunch ? FontManager.AfterRestartMarker : ""));
-            }
-            if (customOptions.Count > 0)
-            {
-                if (options.Count > 1)
-                    options.Add("--- Custom Fonts ---");
-                options.AddRange(customOptions);
-            }
+            var options = FontOptions.For(fontInfo.Type == "TMP (alt)" ? FontOptionKind.AltTmp : isTMPFont ? FontOptionKind.Tmp : FontOptionKind.Legacy,
+                                          _systemFonts);
 
             var dropdown = row.Dropdown("Fallback");
 
@@ -2064,9 +1965,9 @@ namespace UnityGameTranslator.Core.UI.Panels
             string initialValue = "(None)";
             if (!string.IsNullOrEmpty(fontInfo.FallbackFont))
             {
-                string match = FindOption(options, fontInfo.FallbackFont)
+                string match = FontOptions.Find(options, fontInfo.FallbackFont)
                     // Migration: old JSON might have a game font name without [Game] prefix
-                    ?? FindOption(options, AssetPacks.GameFontPrefix + fontInfo.FallbackFont);
+                    ?? FontOptions.Find(options, AssetPacks.GameFontPrefix + fontInfo.FallbackFont);
 
                 if (match == null)
                 {

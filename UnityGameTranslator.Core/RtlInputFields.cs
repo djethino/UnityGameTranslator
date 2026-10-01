@@ -14,8 +14,8 @@ namespace UnityGameTranslator.Core.TextShaping
     ///
     /// A shaped syllable is drawn by the field's font's own tables — the derived copy for uGUI
     /// (DerivedFonts), our font asset for TMP (ShapingFontAsset) — and stands as one unit for the
-    /// caret (RtlFieldLayout). A TMP label keeps one character per typed one; a unit drawing more
-    /// glyphs than it has characters (a split vowel) cannot, and such a text is left unshaped, said.
+    /// caret (RtlFieldLayout). A TMP label may hold more characters than were typed (a split vowel:
+    /// কো is drawn ে + ক + া): every label character is told the typed one it stands for.
     ///
     /// Unity's two fields store and edit the LOGICAL string and draw it as it is: Arabic comes out
     /// unjoined and in typing order, on every version. The field's text is never touched here —
@@ -25,11 +25,12 @@ namespace UnityGameTranslator.Core.TextShaping
     /// - uGUI: the label is given the presented form (<see cref="RtlFieldLayout.Display"/>) and
     ///   the map answers for it — the click (GetCharacterIndexFromPosition postfix) and the
     ///   arrows. The field's own editing works on the logical text and never reads the label;
-    /// - TMP: its field DOES read positions back from the label by index (Backspace removes
-    ///   <c>text.Remove(characterInfo[caret - 1].index, …)</c>), so its label keeps the typed
-    ///   order, shaped one character per typed character (<see cref="RtlFieldLayout.Prepared.PaddedShaped"/>),
-    ///   and only the GLYPHS are moved into visual order after TMP lays the text out
-    ///   (GenerateTextMesh postfix). Every index TMP reads stays the typed one;
+    /// - TMP: its field DOES read positions back from the label's characterInfo (Backspace removes
+    ///   <c>text.Remove(characterInfo[caret - 1].index, characterInfo[caret - 1].stringLength)</c>, TMP
+    ///   1.4 to Unity 6), so its label keeps the typed order (<see cref="RtlFieldLayout.Prepared.LabelFor"/>)
+    ///   and, after TMP lays the text out (GenerateTextMesh postfix), every characterInfo is given the
+    ///   typed position and length it stands for, then the GLYPHS are moved into visual order. Every
+    ///   index TMP reads is a typed one: Backspace after কো takes ো, as every editor does;
     /// - both: the caret and the selection the field draws are made transparent while the label
     ///   is presented and drawn here, from the map, with plain Image quads (no type of ours to
     ///   register on IL2CPP); the arrow keys follow the screen (user's decision, 2026-09-25).
@@ -55,6 +56,7 @@ namespace UnityGameTranslator.Core.TextShaping
             public string Logical;           // the typed text the label shows (uGUI: the visible slice)
             public string Shown;             // what the label was given
             public int DrawStart;            // uGUI: where the visible slice starts; TMP: 0
+            public int[] LabelIndex, LabelLength; // TMP: for each label character, the typed text it stands for
 
             public bool Hidden;
             public Color OriginalCaret;
@@ -189,14 +191,6 @@ namespace UnityGameTranslator.Core.TextShaping
             var prep = string.IsNullOrEmpty(logical) ? null
                 : RtlFieldLayout.Prepare(logical, asset == null ? (Func<string, List<OpenTypeText.ShapedUnit>>)null : t => OpenTypeText.ShapeUnits(t, asset.Font, asset));
             if (prep == null) { Release(id); return; }
-            if (!prep.Paddable)
-            {
-                // TMP reads positions back from its label one for one: a unit drawing more glyphs
-                // than it has typed characters cannot be shown so. Left as TMP draws it, said.
-                Note("a TMP field shows a text whose shaped form is longer than what was typed (a split vowel) — left unshaped");
-                Release(id);
-                return;
-            }
 
             var label = TypeHelper.Il2CppCast(labelObj, typeof(Graphic)) as Graphic;
             if (label == null) { Note("TMP label is not a Graphic on this runtime"); return; }
@@ -207,7 +201,16 @@ namespace UnityGameTranslator.Core.TextShaping
             s.Prep = prep;
             s.Layout = prep.Lay(null);          // re-laid with TMP's own lines at the glyph move
             s.Logical = logical;
-            s.Shown = prep.PaddedShaped() + tail;
+            string shown = prep.LabelFor(out var labelIndex, out var labelLength);
+            if (tail.Length > 0)
+            {
+                // TMP's caret-tracking space stands for the end of the typed text.
+                Array.Resize(ref labelIndex, labelIndex.Length + 1); labelIndex[labelIndex.Length - 1] = logical.Length;
+                Array.Resize(ref labelLength, labelLength.Length + 1); labelLength[labelLength.Length - 1] = 1;
+            }
+            s.LabelIndex = labelIndex;
+            s.LabelLength = labelLength;
+            s.Shown = shown + tail;
             s.DrawStart = 0;
             s.BoxesFromReorder = false;
             _byTmpLabel[label.GetInstanceID()] = s;
@@ -461,9 +464,35 @@ namespace UnityGameTranslator.Core.TextShaping
                 int labelId = TypeHelper.GetInstanceID(__instance);
                 if (!_byTmpLabel.TryGetValue(labelId, out var s)) return;
                 if (LabelText(s) != s.Shown) return;
+                TellTypedPositions(s, __instance);
                 MoveTmpGlyphs(s, __instance);
             }
             catch (Exception ex) { Note("TMP glyph move failed: " + ex.Message); }
+        }
+
+        /// <summary>
+        /// Every characterInfo of the label TMP just laid out gets the typed position and length it
+        /// stands for (RtlFieldLayout.Prepared.LabelFor) — what TMP_InputField reads to edit, select
+        /// and place its caret. Before, its index is a position in the LABEL, which holds more
+        /// characters than were typed when a unit draws more glyphs than it has characters.
+        /// </summary>
+        private static void TellTypedPositions(FieldState s, object label)
+        {
+            if (s.LabelIndex == null || Tmp.CiStringLength == null) return;
+            var info = Tmp.TextInfo.GetValue(label, null);
+            if (info == null) return;
+            int count = Convert.ToInt32(Tmp.Get(Tmp.CharacterCount, info));
+            var chars = Tmp.Get(Tmp.CharacterInfo, info);
+            if (chars == null) return;
+            for (int k = 0; k < count; k++)
+            {
+                var c = Tmp.Item(chars, k);
+                int at = Convert.ToInt32(Tmp.Get(Tmp.CiIndex, c));
+                if (at < 0 || at >= s.LabelIndex.Length) continue;
+                Tmp.Set(Tmp.CiIndex, c, s.LabelIndex[at]);
+                Tmp.Set(Tmp.CiStringLength, c, s.LabelLength[at]);
+                Tmp.SetItem(chars, k, c);
+            }
         }
 
         private static void MoveTmpGlyphs(FieldState s, object label)
@@ -478,8 +507,9 @@ namespace UnityGameTranslator.Core.TextShaping
             if (chars == null || lines == null || count <= 0) return;
 
             int n = s.Logical.Length;
-            var kOf = new int[n];
-            for (int i = 0; i < n; i++) kOf[i] = -1;
+            // The label characters drawing each typed one, in label order — several for a typed
+            // character a unit drew more glyphs for (a split vowel), none for one merged away.
+            var kOf = new List<int>[n];
             var origin = new float[count];
             var advance = new float[count];
             var lineOf = new int[count];
@@ -491,7 +521,7 @@ namespace UnityGameTranslator.Core.TextShaping
                 origin[k] = Convert.ToSingle(Tmp.Get(Tmp.CiOrigin, c));
                 advance[k] = Convert.ToSingle(Tmp.Get(Tmp.CiXAdvance, c));
                 lineOf[k] = Convert.ToInt32(Tmp.Get(Tmp.CiLine, c));
-                if (indexOf[k] >= 0 && indexOf[k] < n && kOf[indexOf[k]] < 0) kOf[indexOf[k]] = k;
+                if (indexOf[k] >= 0 && indexOf[k] < n) (kOf[indexOf[k]] ?? (kOf[indexOf[k]] = new List<int>())).Add(k);
             }
 
             // TMP's own line starts, as typed indices: the soft wraps to lay out against.
@@ -527,15 +557,17 @@ namespace UnityGameTranslator.Core.TextShaping
                 float startX = float.MaxValue;
                 foreach (int i in order)
                 {
-                    int k = kOf[i];
-                    if (k < 0) continue;
-                    if (engineLine < 0) engineLine = lineOf[k];
-                    startX = Math.Min(startX, origin[k]);
+                    if (kOf[i] == null) continue;
+                    foreach (int k in kOf[i])
+                    {
+                        if (engineLine < 0) engineLine = lineOf[k];
+                        startX = Math.Min(startX, origin[k]);
+                    }
                 }
                 if (engineLine < 0)
                 {
                     int start = s.Layout.LineLogicalStart(L);
-                    engineLine = start < n && kOf[start] >= 0 ? lineOf[kOf[start]] : Math.Min(L, lineCount - 1);
+                    engineLine = start < n && kOf[start] != null ? lineOf[kOf[start][0]] : Math.Min(L, lineCount - 1);
                 }
                 s.EngineLineOfLine[L] = engineLine;
                 if (startX == float.MaxValue) continue;
@@ -543,19 +575,21 @@ namespace UnityGameTranslator.Core.TextShaping
                 float cursor = startX;
                 foreach (int i in order)
                 {
-                    int k = kOf[i];
-                    if (k < 0) continue;
-                    float w = advance[k] - origin[k];
-                    float delta = cursor - origin[k];
-                    if (Math.Abs(delta) > 0.001f)
-                    {
-                        MoveTmpQuad(chars, meshes, k, delta);
-                        moved = true;
-                    }
+                    if (kOf[i] == null) continue;
                     s.BoxL[i] = cursor;
-                    s.BoxR[i] = cursor + w;
-                    s.BoxLine[i] = lineOf[k];
-                    cursor += w;
+                    s.BoxLine[i] = lineOf[kOf[i][0]];
+                    foreach (int k in kOf[i])
+                    {
+                        float w = advance[k] - origin[k];
+                        float delta = cursor - origin[k];
+                        if (Math.Abs(delta) > 0.001f)
+                        {
+                            MoveTmpQuad(chars, meshes, k, delta);
+                            moved = true;
+                        }
+                        cursor += w;
+                    }
+                    s.BoxR[i] = cursor;
                 }
             }
 
@@ -956,7 +990,7 @@ namespace UnityGameTranslator.Core.TextShaping
             internal static PropertyInfo LabelText, TextInfo;
             internal static MethodInfo UpdateVertexData;
             internal static MemberInfo CharacterCount, CharacterInfo, LineCount, LineInfo, MeshInfo;
-            internal static MemberInfo CiIndex, CiOrigin, CiXAdvance, CiLine, CiVisible, CiMaterial, CiVertex;
+            internal static MemberInfo CiIndex, CiStringLength, CiOrigin, CiXAdvance, CiLine, CiVisible, CiMaterial, CiVertex;
             internal static MemberInfo LiFirst, LiAscender, LiDescender, MiVertices;
             private static readonly Dictionary<string, PropertyInfo> _fieldProps = new Dictionary<string, PropertyInfo>();
 
@@ -991,6 +1025,7 @@ namespace UnityGameTranslator.Core.TextShaping
 
                     var ciType = ElementType(TypeOf(CharacterInfo));
                     CiIndex = Member(ciType, "index");
+                    CiStringLength = Member(ciType, "stringLength");
                     CiOrigin = Member(ciType, "origin");
                     CiXAdvance = Member(ciType, "xAdvance");
                     CiLine = Member(ciType, "lineNumber");
@@ -1009,7 +1044,7 @@ namespace UnityGameTranslator.Core.TextShaping
                     _ok = FieldText != null && FieldIsFocused != null && FieldStringPosition != null
                           && FieldStringAnchor != null && FieldStringFocus != null && LabelText != null
                           && TextInfo != null && CharacterInfo != null && LineInfo != null && MeshInfo != null
-                          && CiIndex != null && CiOrigin != null && CiXAdvance != null && CiLine != null
+                          && CiIndex != null && CiStringLength != null && CiOrigin != null && CiXAdvance != null && CiLine != null
                           && LiFirst != null && LiAscender != null && LiDescender != null && MiVertices != null
                           && FieldProp("caretColor") != null && FieldProp("selectionColor") != null
                           && FieldProp("customCaretColor") != null;
@@ -1052,6 +1087,13 @@ namespace UnityGameTranslator.Core.TextShaping
 
             internal static object Get(MemberInfo m, object target) =>
                 m is FieldInfo f ? f.GetValue(target) : ((PropertyInfo)m).GetValue(target, null);
+
+            /// <summary>Sets a member of an element read with <see cref="Item"/> — a boxed struct on Mono, written back with <see cref="SetItem"/>.</summary>
+            internal static void Set(MemberInfo m, object target, object value)
+            {
+                if (m is FieldInfo f) f.SetValue(target, value);
+                else ((PropertyInfo)m).SetValue(target, value, null);
+            }
 
             internal static object Item(object array, int index)
             {

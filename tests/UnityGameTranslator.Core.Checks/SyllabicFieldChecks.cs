@@ -25,6 +25,8 @@ namespace UnityGameTranslator.Core.Checks
             // Right to left: units named by private codepoints still read right to left (a Hebrew
             // field showed its line backwards, probe 3, 2026-10-01).
             One(check, Path.Combine(fonts, "NotoSansHebrew.ttf"), "שָׁלוֹם עוֹלָם");
+            // Outside the Basic Multilingual Plane, right to left, joined: every character a surrogate pair.
+            One(check, Path.Combine(fonts, "NotoSansAdlam.ttf"), "\U0001E900\U0001E923\U0001E924\U0001E922\U0001E925 \U0001E922\U0001E944");
         }
 
         private static void One(Action<bool, string, string> check, string fontPath, string text)
@@ -96,10 +98,41 @@ namespace UnityGameTranslator.Core.Checks
                     if (layout.DisplayLengthOf(i) != u.Glyphs.Length) lengths = false;
             check(lengths, $"{name}: every typed character of a unit is drawn by all its glyphs", "");
 
-            // TMP's one-for-one label: exactly as long as the typed text, or refused.
-            string padded = prep.PaddedShaped();
-            check(padded == null ? !prep.Paddable : padded.Length == text.Length,
-                $"{name}: TMP's label keeps one character per typed one, or says it cannot", padded == null ? "not paddable" : padded.Length + " vs " + text.Length);
+            // TMP's label: every character tells the typed one it stands for, in order, and TMP's
+            // own editing — read from those (TMP_InputField: Backspace removes characterInfo[caret - 1],
+            // Delete characterInfo[caret]) — lands on what was typed, at every unit edge.
+            string tmpLabel = prep.LabelFor(out var index, out var length);
+            bool ordered = index.Length == tmpLabel.Length && length.Length == tmpLabel.Length;
+            for (int k = 1; ordered && k < index.Length; k++) if (index[k] < index[k - 1]) ordered = false;
+            check(ordered && index.Length > 0 && index[0] == 0 && index[index.Length - 1] + length[length.Length - 1] == text.Length,
+                $"{name}: TMP's label covers the typed text, in order", $"{tmpLabel.Length} label characters for {text.Length} typed");
+            bool editsRight = true;
+            string why = "";
+            foreach (var u in units)
+            {
+                // Label characters of this unit: those standing for its typed characters.
+                int first = Array.FindIndex(index, x => x >= u.Start), last = Array.FindLastIndex(index, x => x < u.Start + u.Length);
+                if (first < 0 || last < first) { editsRight = false; why = "unit " + u.Start + " has no label character"; break; }
+                string afterBackspace = text.Remove(index[last], length[last]);
+                string afterDelete = text.Remove(index[first], length[first]);
+                // A character is a code point: a surrogate pair goes whole.
+                int end = u.Start + u.Length;
+                int lastWidth = end - 2 >= u.Start && char.IsLowSurrogate(text[end - 1]) ? 2 : 1;
+                int firstWidth = char.IsHighSurrogate(text[u.Start]) ? 2 : 1;
+                if (afterBackspace != text.Remove(end - lastWidth, lastWidth) || afterDelete != text.Remove(u.Start, firstWidth))
+                { editsRight = false; why = $"unit {u.Start}+{u.Length}"; break; }
+            }
+            check(editsRight, $"{name}: Backspace after a unit takes its last typed character, Delete before it its first", why);
+
+            // TMP draws the label's glyphs where the typed characters they stand for come on screen
+            // (RtlInputFields.MoveTmpGlyphs): that order must give exactly what the uGUI field shows.
+            var onScreen = new System.Text.StringBuilder();
+            foreach (int i in layout.LogicalOnScreen(0))
+                for (int k = 0; k < tmpLabel.Length; k++)
+                    if (index[k] == i && tmpLabel[k] != RtlFieldLayout.ZeroWidthSpace) onScreen.Append(tmpLabel[k]);
+            string uguiShows = layout.Display.Replace(RtlFieldLayout.ZeroWidthSpace.ToString(), "");
+            check(onScreen.ToString() == uguiShows, $"{name}: TMP's glyphs moved into screen order show what the uGUI field shows",
+                $"TMP {Codes(onScreen.ToString())} · uGUI {Codes(uguiShows)}");
         }
 
         private static string Codes(string s)

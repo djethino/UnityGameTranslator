@@ -36,15 +36,16 @@ namespace UnityGameTranslator.Core.Checks
         }
 
         /// <summary>
-        /// TMP's input field reads positions back from its label by index, so its label is given the
-        /// shaped text one-for-one with what was typed, and only the glyphs are moved afterwards.
+        /// TMP's input field reads positions back from its label's characterInfo, so its label keeps
+        /// the typed order, every character of it told the typed one it stands for, and only the
+        /// glyphs are moved afterwards.
         /// </summary>
         private static void ForAnEngineThatMovesGlyphs(Action<bool, string, string> check)
         {
             var prep = RtlFieldLayout.Prepare("السلام لا بأس");
-            string padded = prep.PaddedShaped();
-            check(padded.Length == "السلام لا بأس".Length,
-                "the padded label is as long as the typed text",
+            string padded = prep.LabelFor(out var index, out var length);
+            check(padded.Length == "السلام لا بأس".Length && index.SequenceEqual(Enumerable.Range(0, padded.Length)) && length.All(l => l == 1),
+                "Arabic: the label is as long as the typed text, each character standing for its own",
                 "every drawn character's index is the typed one's — the field's own editing stays right");
             // "السلام": alef, lam, seen, LAM, ALEF, meem — the ligature is at 3, the alef at 4.
             check(padded[3] != 'ل' && padded[4] == RtlFieldLayout.ZeroWidthSpace,
@@ -52,7 +53,7 @@ namespace UnityGameTranslator.Core.Checks
                 "the glyph where it is drawn, nothing visible where it merged");
 
             var mixed = RtlFieldLayout.Prepare("abc مرحبا");
-            check(mixed.PaddedShaped().StartsWith("abc "),
+            check(mixed.LabelFor(out _, out _).StartsWith("abc "),
                 "Latin stays as typed",
                 "only the right-to-left letters take their shaped forms");
 

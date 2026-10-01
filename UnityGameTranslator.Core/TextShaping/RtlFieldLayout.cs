@@ -57,9 +57,6 @@ namespace UnityGameTranslator.Core.TextShaping
         {
             internal string Logical;
 
-            /// <summary>Whether <see cref="PaddedShaped"/> can keep one label character per typed character.</summary>
-            internal bool Paddable;
-
             /// <summary>
             /// The shaped text in LOGICAL order, tokens written out — the string an engine must
             /// wrap: the glyphs it will draw, in the order the lines are cut in.
@@ -111,20 +108,36 @@ namespace UnityGameTranslator.Core.TextShaping
             }
 
             /// <summary>
-            /// The shaped text in LOGICAL order, ONE character per typed character: a letter merged
-            /// into the glyph before it (the alef of a lam-alef, a haraka joined to its shadda)
-            /// leaves a zero-width space in its slot, tokens are written as typed.
+            /// The label of an engine whose input field reads positions back from the drawn text —
+            /// TMP_InputField, which takes them from its label's characterInfo (Backspace removes
+            /// <c>text.Remove(characterInfo[caret - 1].index, characterInfo[caret - 1].stringLength)</c>,
+            /// TMP 1.4 to Unity 6) — and, for each of its UTF-16 characters, the typed text it stands
+            /// for (<paramref name="typedIndex"/>, <paramref name="typedLength"/>). The caller writes
+            /// those into characterInfo after each layout (RtlInputFields), so every edit lands on what
+            /// was typed whatever the label holds.
             ///
-            /// 🔴 For an engine whose input field reads positions back from the drawn text by
-            /// index (TMP_InputField deletes <c>text.Remove(characterInfo[caret - 1].index, …)</c>):
-            /// given this string, every drawn character's index IS the typed character's index,
-            /// and all of the field's own editing stays right. Only the glyphs' places change
-            /// afterwards (see <see cref="RtlFieldLayout.LogicalOnScreen"/>).
+            /// The shaped text in LOGICAL order, tokens as typed: a unit's glyphs, then a zero-width
+            /// space for each typed character left (a letter merged into the glyph before it); a unit
+            /// drawing MORE glyphs than it has characters (a split vowel: কো is ে + ক + া) gives them all,
+            /// spread over its characters in order — its first glyph stands for its first character
+            /// (Delete takes it), its last for its last (Backspace takes it, as every editor does).
             /// </summary>
-            internal string PaddedShaped()
+            internal string LabelFor(out int[] typedIndex, out int[] typedLength)
             {
-                if (!Paddable) return null;
                 var sb = new StringBuilder(Logical.Length);
+                var index = new List<int>(Logical.Length);
+                var length = new List<int>(Logical.Length);
+                void Map(int typed, int count)
+                {
+                    // Never inside a surrogate pair: TMP would remove half of it.
+                    if (typed > 0 && typed < Logical.Length && char.IsLowSurrogate(Logical[typed]) && char.IsHighSurrogate(Logical[typed - 1]))
+                        typed--;
+                    if (typed < Logical.Length && char.IsHighSurrogate(Logical[typed]) && typed + 1 < Logical.Length && char.IsLowSurrogate(Logical[typed + 1]))
+                        count = 2;
+                    index.Add(typed);
+                    length.Add(count);
+                }
+
                 int lastCp = -1;
                 for (int i = 0; i < Logical.Length;)
                 {
@@ -133,38 +146,55 @@ namespace UnityGameTranslator.Core.TextShaping
                     bool isToken = t >= 0 && t < Tokens.Count;
                     if (isToken && UnitTokens.Contains(t))
                     {
-                        // A unit: its glyphs, then one zero-width space per typed character left.
                         int typed = 0;
                         while (i + typed < Logical.Length && CpOfLogical[i + typed] == cp) typed++;
-                        sb.Append(Tokens[t]);
-                        for (int k = Tokens[t].Length; k < typed; k++) sb.Append(ZeroWidthSpace);
+                        // The unit's typed CHARACTERS — code points, a surrogate pair being one: a
+                        // glyph stands for a character, never for half of one (an Adlam letter and
+                        // the mark above it are two characters, four UTF-16 units).
+                        var starts = new List<int>();
+                        for (int k = i; k < i + typed; k += char.IsHighSurrogate(Logical[k]) && k + 1 < i + typed ? 2 : 1) starts.Add(k);
+                        string glyphs = Tokens[t];
+                        int m = starts.Count;
+                        sb.Append(glyphs);
+                        if (glyphs.Length <= m)
+                        {
+                            // One label character per typed character: the glyphs, then a zero-width
+                            // space for each character merged away.
+                            for (int k = glyphs.Length; k < m; k++) sb.Append(ZeroWidthSpace);
+                            for (int k = 0; k < m; k++) Map(starts[k], 1);
+                        }
+                        else
+                            for (int k = 0; k < glyphs.Length; k++) Map(starts[k * m / glyphs.Length], 1);
                         i += typed;
                         lastCp = cp;
                         continue;
                     }
-                    if (isToken) { sb.Append(Logical[i]); i++; lastCp = cp; continue; }
+                    if (isToken) { sb.Append(Logical[i]); Map(i, 1); i++; lastCp = cp; continue; }
 
                     int width = char.IsHighSurrogate(Logical[i]) && i + 1 < Logical.Length ? 2 : 1;
                     if (cp == lastCp)
                     {
-                        for (int k = 0; k < width; k++) sb.Append(ZeroWidthSpace);
+                        for (int k = 0; k < width; k++) { sb.Append(ZeroWidthSpace); Map(i + k, 1); }
                     }
                     else
                     {
                         string glyph = char.ConvertFromUtf32(Cps[cp]);
-                        // A glyph of another width than the character it shows cannot keep the
-                        // one-for-one promise: the typed character stands in for it.
-                        if (glyph.Length == width) sb.Append(glyph);
-                        else sb.Append(Logical, i, width);
+                        // A glyph of another width than the character it shows: the typed character
+                        // stands in for it.
+                        string drawn = glyph.Length == width ? glyph : Logical.Substring(i, width);
+                        sb.Append(drawn);
+                        for (int k = 0; k < drawn.Length; k++) Map(i, width);
                     }
                     lastCp = cp;
                     i += width;
                 }
+                typedIndex = index.ToArray();
+                typedLength = length.ToArray();
                 return sb.ToString();
             }
         }
 
-        /// <summary>What <see cref="Prepared.PaddedShaped"/> puts in a merged character's slot (U+200B).</summary>
+        /// <summary>What <see cref="Prepared.LabelFor"/> puts in a merged character's slot (U+200B).</summary>
         internal const char ZeroWidthSpace = (char)0x200B;
 
         /// <summary>
@@ -262,18 +292,6 @@ namespace UnityGameTranslator.Core.TextShaping
             prep.MeasureStartOfCp[prep.Cps.Length] = measure.Length;
             prep.MeasureText = measure.ToString();
             prep.CpOfMeasure = cpOfMeasure.ToArray();
-            // One label character per typed one is possible only when no unit draws more glyphs
-            // than it has typed characters (a split vowel drawn in two places can).
-            prep.Paddable = true;
-            for (int i = 0; i < logical.Length;)
-            {
-                int cp = prep.CpOfLogical[i];
-                int t = prep.Cps[cp] - SentinelBase;
-                int typed = 1;
-                while (i + typed < logical.Length && prep.CpOfLogical[i + typed] == cp) typed++;
-                if (t >= 0 && t < tokens.Count && unitTokens.Contains(t) && tokens[t].Length > typed) prep.Paddable = false;
-                i += typed;
-            }
             return prep;
         }
 
@@ -701,7 +719,13 @@ namespace UnityGameTranslator.Core.TextShaping
                 list.Add(i);
             }
             for (int d = from; d < to; d++)
-                if (byDisplay.TryGetValue(d, out var list)) order.AddRange(list);
+            {
+                if (!byDisplay.TryGetValue(d, out var list)) continue;
+                // The typed characters one glyph group shows: a right-to-left unit is drawn last
+                // glyph first (Display reverses it), so its characters come on screen the same way.
+                if (list.Count > 1 && IsRtl(list[0])) list.Reverse();
+                order.AddRange(list);
+            }
             return order;
         }
 

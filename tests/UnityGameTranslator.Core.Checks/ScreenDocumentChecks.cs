@@ -293,11 +293,41 @@ namespace UnityGameTranslator.Core.Checks
             check(options.Nodes["CaptureKeyboardWhy"].Bind != null && !options.Nodes["CaptureKeyboardWhy"].StartsVisible
                   && !options.Nodes["PauseWhy"].StartsVisible && !options.Nodes["PauseBlocked"].StartsVisible,
                 "each capture box has a hidden line for the runtime's own reason; freezing has its three", "whether an intention can be honoured is the game's to say");
-            // 43 = the 39 settings acts (the last one: recording the game's text writes) plus the
-            // About tab's four doors out: this mod's source, the Manager, the website, the studio. A
-            // tab that only reads and links asks for no more.
-            check(options.Acts.Count == 43 && options.Nodes["AiAdvanced"].Kind == "collapsible" && options.Nodes["AiAdvanced"].Flag("expanded") == false,
-                "options.json asks for 43 acts and folds the AI's advanced settings", $"got {options.Acts.Count} acts");
+            // ── The game's text in the mod's windows: each piece showing it names its side, so it is drawn
+            // in the source or target text font and never in the interface's (user, 2026-10-01 —
+            // analyse/polices-fenetres-du-mod.md, the inventory). A piece left unmarked would fall back
+            // to the interface font with nothing to say so.
+            var gameTextPieces = new (string file, string template, string piece, string side)[]
+            {
+                ("inspector.json", "TextEditEntry", "Key", "source"), ("inspector.json", "TextEditEntry", "TranslationInput", "target"),
+                ("inspector.json", "TextEditEntry", "Preview", "target"), ("inspector.json", null, "HoverPathValue", "source"),
+                ("inspector.json", null, "SelectedPathValue", "source"),
+                ("tools.json", "FailureRow", "Source", "source"), ("tools.json", null, "SourceText", "source"),
+                ("tools.json", null, "FailElement", "source"), ("tools.json", "TextRow", "Text", "target"),
+                ("tools.json", null, "FailInput", "target"), ("tools.json", "HeldRow", "Text", "source"),
+                ("tools.json", "HeldRow", "Element", "source"), ("tools.json", "FindResult", "Path", "source"),
+                ("tools.json", "ExclusionRow", "PatternLabel", "source"), ("tools.json", "ScanCandidate", "Label", "source"),
+                ("tools.json", "VariableRow", "Detail", "source"),
+                ("merge.json", "ConflictRow", "Key", "source"), ("merge.json", "ConflictRow", "LocalValue", "target"),
+                ("merge.json", "ConflictRow", "RemoteValue", "target"),
+            };
+            var gameTextDocs = new Dictionary<string, ScreenDocument>();
+            foreach (var g in gameTextPieces)
+            {
+                if (!gameTextDocs.TryGetValue(g.file, out var doc))
+                    gameTextDocs[g.file] = doc = ScreenDocument.FromFile(Path.Combine(folder, g.file));
+                ScreenNode node = null;
+                if (g.template == null) doc.Nodes.TryGetValue(g.piece, out node);
+                else if (doc.Templates.TryGetValue(g.template, out var template)) template.Pieces.Nodes.TryGetValue(g.piece, out node);
+                check(node != null && node.Word("gameText") == g.side,
+                    $"{g.file} {(g.template ?? "body")}/{g.piece} shows the game's {g.side} text", node == null ? "not found" : node.Word("gameText") ?? "unmarked");
+            }
+
+            // 45 = the 41 settings acts (the last ones: the source and target text fonts of the game's
+            // text the window shows) plus the About tab's four doors out: this mod's source, the
+            // Manager, the website, the studio. A tab that only reads and links asks for no more.
+            check(options.Acts.Count == 45 && options.Nodes["AiAdvanced"].Kind == "collapsible" && options.Nodes["AiAdvanced"].Flag("expanded") == false,
+                "options.json asks for 45 acts and folds the AI's advanced settings", $"got {options.Acts.Count} acts");
 
             // ⚠ The About tab carries the mod's only two pictures. A document can name a picture
             // and never hold one: if either box disappears, the code that fills it throws at

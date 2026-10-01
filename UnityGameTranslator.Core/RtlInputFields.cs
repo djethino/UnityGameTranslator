@@ -103,10 +103,10 @@ namespace UnityGameTranslator.Core.TextShaping
         /// editor showed "संग्रह" unjoined and nothing said it, 2026-10-01), the font notice for a
         /// game field holding our translation. What the player types is not ours to report.
         /// </summary>
-        private static void NoteIfUnshaped(bool canShape, string value, string settingsFontName, bool ownUi)
+        private static void NoteIfUnshaped(bool canShape, string value, string settingsFontName, bool ownUi, GameTextSide? side)
         {
             if (canShape || string.IsNullOrEmpty(value) || !TextShaping.OpenTypeText.NeedsShaping(value)) return;
-            if (ownUi) FontManager.NoteWindowUnshaped();
+            if (ownUi) FontManager.NoteWindowUnshaped(side);
             else if (TranslatorCore.IsAlreadyTargetText(value)) FontManager.NoteUnshaped(settingsFontName, value);
         }
 
@@ -117,7 +117,7 @@ namespace UnityGameTranslator.Core.TextShaping
             if (TypeHelper.TMP_InputFieldType != null && TypeHelper.TMP_InputFieldType.IsInstanceOfType(fieldObj))
             {
                 var asset = ownUi ? null : ShapingFontAsset.ForSettings(settingsFontName);
-                NoteIfUnshaped(asset != null, value, settingsFontName, ownUi);
+                NoteIfUnshaped(asset != null, value, settingsFontName, ownUi, ModWindowText.SideOf(fieldObj) ?? ModWindowText.SideOf(labelObj));
                 PresentTmpLabel(fieldObj, labelObj, ref value, asset);
                 return;
             }
@@ -127,8 +127,11 @@ namespace UnityGameTranslator.Core.TextShaping
             if (field == null || label == null) return;
 
             int id = field.GetInstanceID();
-            var derived = ownUi ? FontManager.DerivedForInterface() : FontManager.DerivedForSettings(settingsFontName);
-            NoteIfUnshaped(derived != null, value, settingsFontName, ownUi);
+            // The mod's own field draws in the font of the part it shows: the game's source text or
+            // its translation (ModWindowText), else the interface's.
+            var side = ownUi ? ModWindowText.SideOf(field) ?? ModWindowText.SideOf(label) : null;
+            var derived = ownUi ? FontManager.DerivedForWindow(side) : FontManager.DerivedForSettings(settingsFontName);
+            NoteIfUnshaped(derived != null, value, settingsFontName, ownUi, side);
             var prep = string.IsNullOrEmpty(value) ? null : RtlFieldLayout.Prepare(value, UnitsOf(derived));
             if (prep == null) { Release(id); return; }
 

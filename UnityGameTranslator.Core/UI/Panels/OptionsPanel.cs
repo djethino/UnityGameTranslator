@@ -34,7 +34,10 @@ namespace UnityGameTranslator.Core.UI.Panels
         // General section
         private ToggleHandle _enableTranslationsToggle;
         private ToggleHandle _translateModUIToggle;
-        private SearchableDropdown _interfaceFontDropdown; // the window's font: its own text and the game text it shows
+        private SearchableDropdown _interfaceFontDropdown; // the window's font: its buttons and labels
+        // The fonts the window draws the GAME's text in — its source text and its translation (ModWindowText).
+        private SearchableDropdown _sourceTextFontDropdown;
+        private SearchableDropdown _targetTextFontDropdown;
         private SearchableDropdown _sourceLanguageDropdown;
         private SearchableDropdown _targetLanguageDropdown;
 
@@ -203,6 +206,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             public bool enable_translations;
             public bool translate_mod_ui;
             public string interface_font;
+            public string source_text_font;
+            public string target_text_font;
             public string source_language;
             public string target_language;
             public string settings_hotkey;
@@ -273,6 +278,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                     // the same way whether or not the user had already made an explicit choice.
                     translate_mod_ui = TranslatorCore.ShouldTranslateOwnUI,
                     interface_font = TranslatorCore.Config.interface_font,
+                    source_text_font = TranslatorCore.Config.source_text_font,
+                    target_text_font = TranslatorCore.Config.target_text_font,
                     source_language = TranslatorCore.Config.source_language ?? "auto",
                     target_language = TranslatorCore.Config.target_language ?? "auto",
                     settings_hotkey = TranslatorCore.Config.settings_hotkey ?? Hotkeys.Default,
@@ -395,6 +402,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             _enableTranslationsToggle = _screen.Toggle("EnableTranslationsToggle");
             _translateModUIToggle = _screen.Toggle("TranslateModUIToggle");
             _interfaceFontDropdown = _screen.Dropdown("InterfaceFont");
+            _sourceTextFontDropdown = _screen.Dropdown("SourceTextFont");
+            _targetTextFontDropdown = _screen.Dropdown("TargetTextFont");
             _notificationsEnabledToggle = _screen.Toggle("NotifEnabledToggle");
             _notificationPositionDropdown = _screen.Dropdown("NotifPosition");
             _debugLoggingToggle = _screen.Toggle("DebugLoggingToggle");
@@ -527,6 +536,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                 initialInterfaceFont = "(None)";
             _interfaceFontDropdown.SetOptions(interfaceFontOptions);
             _interfaceFontDropdown.SelectedValue = initialInterfaceFont;
+            // The same fonts to choose from for the game's text the window shows; (None) is the interface font.
+            FillGameTextFontPicker(_sourceTextFontDropdown, interfaceFontOptions, TranslatorCore.Config.source_text_font);
+            FillGameTextFontPicker(_targetTextFontDropdown, interfaceFontOptions, TranslatorCore.Config.target_text_font);
 
             _notificationPositionDropdown.SetOptions(new[] { "Top-Right", "Top-Left", "Bottom-Right", "Bottom-Left" });
             _notificationPositionDropdown.SelectedValue = "Top-Right";
@@ -558,6 +570,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // General
                 case "translateModUiChanged": return OnTranslateModUiChanged;
                 case "interfaceFontChanged": return OnSettingChanged;
+                case "sourceTextFontChanged": return OnSettingChanged;
+                case "targetTextFontChanged": return OnSettingChanged;
                 case "notificationsEnabledChanged": return OnNotificationsEnabledChanged;
                 case "notifPositionChanged":
                 case "debugLoggingChanged":
@@ -1489,6 +1503,15 @@ namespace UnityGameTranslator.Core.UI.Panels
             return options.ToArray();
         }
 
+        private static void FillGameTextFontPicker(SearchableDropdown picker, string[] options, string chosen)
+        {
+            if (picker == null) return;
+            picker.CategoryProvider = FontManager.GetFontOrigin;
+            string initial = string.IsNullOrEmpty(chosen) || !Array.Exists(options, o => o == chosen) ? "(None)" : chosen;
+            picker.SetOptions(options);
+            picker.SelectedValue = initial;
+        }
+
         /// <summary>Normalize an interface-font picker selection to a stored value (null = default UI font).</summary>
         private static string NormalizeInterfaceFont(string selected)
         {
@@ -1514,6 +1537,12 @@ namespace UnityGameTranslator.Core.UI.Panels
                 TranslatorCore.Config.interface_font = _interfaceFontDropdown != null
                     ? NormalizeInterfaceFont(_interfaceFontDropdown.SelectedValue)
                     : TranslatorCore.Config.interface_font;
+                TranslatorCore.Config.source_text_font = _sourceTextFontDropdown != null
+                    ? NormalizeInterfaceFont(_sourceTextFontDropdown.SelectedValue)
+                    : TranslatorCore.Config.source_text_font;
+                TranslatorCore.Config.target_text_font = _targetTextFontDropdown != null
+                    ? NormalizeInterfaceFont(_targetTextFontDropdown.SelectedValue)
+                    : TranslatorCore.Config.target_text_font;
                 TranslatorCore.InvalidateInterfaceFontAvailability();
 
                 // Languages
@@ -1888,6 +1917,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             P.Track(_enableTranslationsToggle, () => _enableTranslationsToggle.IsOn != S().enable_translations);
             P.Track(_translateModUIToggle, () => _translateModUIToggle.IsOn != S().translate_mod_ui);
             P.Track(_interfaceFontDropdown?.Handle, () => NormalizeInterfaceFont(_interfaceFontDropdown?.SelectedValue) != S().interface_font);
+            P.Track(_sourceTextFontDropdown?.Handle, () => NormalizeInterfaceFont(_sourceTextFontDropdown?.SelectedValue) != S().source_text_font);
+            P.Track(_targetTextFontDropdown?.Handle, () => NormalizeInterfaceFont(_targetTextFontDropdown?.SelectedValue) != S().target_text_font);
 
             // Languages
             P.Track(_sourceLanguageDropdown.Handle, () =>

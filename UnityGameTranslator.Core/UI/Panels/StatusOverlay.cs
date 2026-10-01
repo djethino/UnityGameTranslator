@@ -101,7 +101,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         // the way to the interface font. Said while a window is open — that is where it shows.
         private Host _windowFontBox;
         private LabelHandle _windowFontLabel;
-        private string _windowFontIgnoredFor;  // the window font Ignore was pressed with; another one shows the box again
+        private string _windowFontIgnoredFor;  // the parts and fonts Ignore was pressed on (WindowFontState); another state shows the box again
 
         // UI elements - SSE connection indicator
         private Host _connectionBox;
@@ -348,7 +348,24 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// windows open too: it is about what they show.
         /// </summary>
         private bool ShowsWindowFont()
-            => FontManager.WindowCannotShape && (TranslatorCore.WindowFont ?? "") != _windowFontIgnoredFor;
+        {
+            string state = WindowFontState();
+            return state != null && state != _windowFontIgnoredFor;
+        }
+
+        /// <summary>
+        /// The parts of the window that cannot shape what they show, each with its font — what Ignore
+        /// was pressed on; another part, or another font for one, shows the box again. Null when none.
+        /// </summary>
+        private static string WindowFontState()
+        {
+            var parts = FontManager.WindowPartsUnshaped();
+            if (parts.Count == 0) return null;
+            var state = new System.Text.StringBuilder();
+            foreach (var part in parts)
+                state.Append(part?.ToString() ?? "Interface").Append('=').Append(TranslatorCore.WindowFontFor(part)).Append(';');
+            return state.ToString();
+        }
 
         /// <summary>Characters missing over every game font, plus one per font that cannot shape: more of either shows the box again after Ignore.</summary>
         private static int MissingWeight(out List<FontManager.FontProblem> fonts)
@@ -841,7 +858,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (_windowFontBox != null) _windowFontBox.Visible = showWindowFont;
             if (showWindowFont)
             {
-                _windowFontLabel?.Show(FontNotices.ForWindow());
+                _windowFontLabel?.Show(FontNotices.ForWindow(FontManager.WindowPartsUnshaped()));
             }
 
             // 2c. A font being converted in the background: the game keeps running, and this says
@@ -1245,7 +1262,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         private void OnWindowFontIgnoreClicked()
         {
-            _windowFontIgnoredFor = TranslatorCore.WindowFont ?? "";
+            _windowFontIgnoredFor = WindowFontState();
             RefreshOverlay();
         }
 

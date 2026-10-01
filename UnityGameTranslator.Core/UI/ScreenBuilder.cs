@@ -476,6 +476,11 @@ namespace UnityGameTranslator.Core.UI
                         field.Changed += _ => changed();
                     }
                     field.Visible = node.StartsVisible;
+                    if (GameTextOf(node) is GameTextSide fieldSide && field.Ref?.Component != null)
+                    {
+                        ModWindowText.Mark(field.Ref.Component, field.Ref.Component.textComponent, fieldSide);
+                        GameTextFonts.Put(field.Ref.Component.textComponent, fieldSide);
+                    }
                     built.Add(node.Name, field);
                     Describe(site, node, field);
                     break;
@@ -557,6 +562,11 @@ namespace UnityGameTranslator.Core.UI
                     if (node.Flag("italic") is bool italic) label.Italic = italic;
                     if (node.Flag("bold") is bool bold) label.Bold = bold;
                     label.Visible = node.StartsVisible;
+                    if (GameTextOf(node) is GameTextSide labelSide)
+                    {
+                        ModWindowText.Mark(label.Text, labelSide);
+                        GameTextFonts.Put(label.Text, labelSide);
+                    }
                     built.Add(node.Name, label);
                     Describe(site, node, label);
                     break;
@@ -619,6 +629,18 @@ namespace UnityGameTranslator.Core.UI
                 case "ElementSpacing": return UIStyles.ElementSpacing;
                 case "SectionPadding": return UIStyles.SectionPadding;
                 default: throw new ScreenDocumentException($"'{node.Name}': '{node.Word(prop)}' is not a spacing the theme names");
+            }
+        }
+
+        /// <summary>The side of the game's text a piece shows (`gameText`), or null for the interface.</summary>
+        private static GameTextSide? GameTextOf(ScreenNode node)
+        {
+            switch (node.Word("gameText"))
+            {
+                case null: return null;
+                case "source": return GameTextSide.Source;
+                case "target": return GameTextSide.Target;
+                default: throw new ScreenDocumentException($"'{node.Name}': '{node.Word("gameText")}' is not a side of the game's text (source, target)");
             }
         }
 

@@ -23,10 +23,19 @@ namespace UnityGameTranslator.Core.UI
 
         public void DerivedFontRewritten(string fontName)
         {
-            string interfaceFont = TranslatorCore.WindowFont;
-            if (!string.IsNullOrEmpty(interfaceFont)
-                && string.Equals(UnityGameTranslator.Common.FontReferences.Name(interfaceFont), fontName, StringComparison.OrdinalIgnoreCase))
-                TranslatorUIManager.ApplyInterfaceFont();
+            // A font the mod's window draws with — its interface's, or the source/target text font of
+            // the game's text it shows — rewritten: its font objects are made again and put back.
+            bool windowFont = false;
+            foreach (var side in new GameTextSide?[] { null, GameTextSide.Source, GameTextSide.Target })
+            {
+                string font = TranslatorCore.WindowFontFor(side);
+                if (!string.IsNullOrEmpty(font)
+                    && string.Equals(UnityGameTranslator.Common.FontReferences.Name(font), fontName, StringComparison.OrdinalIgnoreCase))
+                    windowFont = true;
+            }
+            if (!windowFont) return;
+            GameTextFonts.Forget(fontName);
+            TranslatorUIManager.ApplyInterfaceFont();
         }
 
         public void ShuttingDown()

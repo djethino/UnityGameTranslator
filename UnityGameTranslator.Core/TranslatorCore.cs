@@ -1790,34 +1790,43 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// The game fonts whose replacement the mod's window takes when no interface font is set: Unity's
-        /// built-in font, Arial — "LegacyRuntime" since Unity 2022.2. The window is drawn in its own
-        /// copy of Arial (UniverseLib's), which is never in the game's list, so it follows the game's.
-        /// </summary>
-        private static readonly string[] WindowFontStandIns = { "Arial", "LegacyRuntime" };
-
-        /// <summary>
-        /// The font the mod's window draws with — its own labels AND the game text it shows (Translation
-        /// Tools, Inspector) — decided by the user on 2026-10-01: the interface font as soon as one is
-        /// set (translated interface or not); otherwise the replacement this game's fonts give Arial,
-        /// when the game has that line; null otherwise (the window keeps its built-in font).
+        /// The font the mod's window draws its INTERFACE with — its buttons, titles and labels: the
+        /// interface font when one is set and present, null otherwise (the window keeps its own
+        /// built-in font). Never a font of the game (user, 2026-10-01: the interface stays legible
+        /// in its own font whatever the game is translated into; the game's text shown in the window
+        /// has fonts of its own — <see cref="WindowFontFor"/>).
         /// </summary>
         public static string WindowFont
         {
             get
             {
                 string chosen = EffectiveInterfaceFont;
-                if (!string.IsNullOrEmpty(chosen)) return InterfaceFontMissing ? null : chosen;
-                if (!FontReplacementActive) return null;
-                foreach (var name in WindowFontStandIns)
-                    if (FontSettingsMap.TryGetValue(name, out var settings) && !string.IsNullOrEmpty(settings?.fallback)
-                        && UnityGameTranslator.Common.FontReferences.Order(settings.fallback)[0] != UnityGameTranslator.Common.FontSource.Game
-                        // The whole window takes it: a font without the Latin alphabet would turn
-                        // every label of the window into boxes to show one script.
-                        && FontManager.DrawsLatin(settings.fallback) != false)
-                        return settings.fallback;
-                return null;
+                if (string.IsNullOrEmpty(chosen)) return null;
+                return InterfaceFontMissing ? null : chosen;
             }
+        }
+
+        private static readonly Dictionary<string, bool> _sideFontAvailable = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// The font the mod's window draws one side of the GAME's text with (ModWindowText): the
+        /// source or target text font when one is chosen and present on this machine, the
+        /// interface's (<see cref="WindowFont"/>) otherwise. null side = the interface itself.
+        /// A chosen font absent from this machine is said once, and the interface's is used.
+        /// </summary>
+        public static string WindowFontFor(GameTextSide? side)
+        {
+            if (side == null) return WindowFont;
+            string chosen = side == GameTextSide.Source ? Config?.source_text_font : Config?.target_text_font;
+            if (string.IsNullOrEmpty(chosen)) return WindowFont;
+            if (!_sideFontAvailable.TryGetValue(chosen, out bool available))
+            {
+                available = AssetAvailability.IsFontAvailable(chosen);
+                _sideFontAvailable[chosen] = available;
+                if (!available)
+                    LogWarning($"[UIManager] {(side == GameTextSide.Source ? "Source" : "Target")} text font '{chosen}' is missing on this machine — the interface font draws that text");
+            }
+            return available ? chosen : WindowFont;
         }
 
         /// <summary>
@@ -1841,7 +1850,11 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>Forget the cached font-availability verdict (after fonts are (un)installed).</summary>
-        public static void InvalidateInterfaceFontAvailability() => _fontAvailabilityCheckedFor = null;
+        public static void InvalidateInterfaceFontAvailability()
+        {
+            _fontAvailabilityCheckedFor = null;
+            _sideFontAvailable.Clear();
+        }
 
         /// <summary>
         /// Whether the mod's own interface should be translated right now.

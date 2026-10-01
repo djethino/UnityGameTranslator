@@ -336,7 +336,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 var problem = FontManager.ProblemOf(font);
                 if (problem != null) lines.Add(FontNotices.ForFont(problem.Value));
             }
-            if (FontManager.WindowCannotShape) lines.Add(FontNotices.ForWindow());
+            foreach (var part in FontManager.WindowPartsUnshaped()) lines.Add(FontNotices.ForWindow(part));
             string text = string.Join("\n", lines);
             if (text == _textFontNoticeLabel.Value && _textFontNoticeLabel.Visible == (lines.Count > 0)) return;
             _textFontNoticeLabel.Show(text);

@@ -434,8 +434,10 @@ namespace UnityGameTranslator.Core.TextShaping
             bool isTmp = TypeHelper.TMP_TextType != null && TypeHelper.TMP_TextType.IsInstanceOfType(instance);
             bool legacy = !isTmp && DrawsFromLegacyFont(instance);
             asset = isTmp ? ShapingFontAsset.ForSettings(settingsFontName) : null;
-            // The mod's own window draws with its interface font, the game's text with its replacement.
-            derived = !legacy ? null : ownUi ? FontManager.DerivedForInterface() : FontManager.DerivedForSettings(settingsFontName);
+            // The mod's own window draws its interface in the interface font and the game's text it
+            // shows in the source or target text font (ModWindowText); the game's text on screen in
+            // its replacement.
+            derived = !legacy ? null : ownUi ? FontManager.DerivedForWindow(ModWindowText.SideOf(instance)) : FontManager.DerivedForSettings(settingsFontName);
             route = ShapingRoute.Decide(isTmp, asset != null, legacy, derived != null, engineShapes: false);
             switch (route)
             {
@@ -518,8 +520,9 @@ namespace UnityGameTranslator.Core.TextShaping
                     case ShapingRoute.Route.ReorderOnly:
                         // Shown without its shaping: said on the Fonts tab and in the corner, for a
                         // text of the translation (FontManager.Coverage).
-                        // The mod's own window: said in the corner while it is open (FontManager.WindowCannotShape).
-                        if (ownUi) FontManager.NoteWindowUnshaped();
+                        // The mod's own window: said in the corner while it is open, for the part that
+                        // shows it (FontManager.WindowCannotShape).
+                        if (ownUi) FontManager.NoteWindowUnshaped(ModWindowText.SideOf(instance));
                         else if (TranslatorCore.IsAlreadyTargetText(logical)) FontManager.NoteUnshaped(settingsFontName, logical);
                         break;
                 }

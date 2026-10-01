@@ -151,9 +151,11 @@ namespace UnityGameTranslator.Core
             // the interface font. A font chosen during the session is derived then (Ensure), one left
             // is removed (KeepOnly) — a font tried and abandoned takes no room.
             var references = FallbackReferences(translation);
-            // The mod's own interface font too: its window shows translation values and takes typed
-            // text, in any script (config.json's interface_font wins over the interface file's).
-            foreach (var reference in new[] { ReadString(configPath, "interface_font"), ReadString(interfacePath, "_settings", "ui_font") })
+            // The mod's own window too: its interface font (config.json's interface_font wins over the
+            // interface file's), and the fonts it draws the game's source text and translation in
+            // (source_text_font, target_text_font — ModWindowText).
+            foreach (var reference in new[] { ReadString(configPath, "interface_font"), ReadString(interfacePath, "_settings", "ui_font"),
+                                              ReadString(configPath, "source_text_font"), ReadString(configPath, "target_text_font") })
                 if (!string.IsNullOrEmpty(reference)) references.Add(reference);
 
             var customFiles = FontFilesByName(fontsFolder);

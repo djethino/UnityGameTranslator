@@ -40,7 +40,7 @@ namespace UnityGameTranslator.Core.UI
         private static int _uiFontBumpDelta;            // current +1 atlas-invalidation bump (0 or 1)
         private static int _fontRerenderCountdown;      // frames until a deferred re-dirty (atlas warms async)
         private static bool _uiFontRebacked;            // true = IL2CPP reback path in effect (vs Mono object swap)
-        private static string _pendingRebackFont;       // IL2CPP: font to reback after the deferred restore→reback gap
+        private static List<string> _pendingRebackChain; // IL2CPP: the font names to reback after the deferred restore→reback gap (window font, then the source/target text fonts it must carry)
         private static int _rebackDelay;                // frames left before the pending reback fires
         private static string _missingInterfaceFontReported; // font we already warned about (warn once per value)
         private static string _appliedWindowFont;            // the window font last applied ("" for none); null before the first
@@ -1556,9 +1556,9 @@ namespace UnityGameTranslator.Core.UI
             // UI font in place — rewrite its fontNames to the chosen system font's family, and FreeType
             // re-rasterizes with it. Same mechanism the game font-replacement uses (FontManager reback via
             // TextureHelper.SetFontNames). Works on Mono AND IL2CPP.
-            // The font in effect (TranslatorCore.WindowFont): the interface font when one is set —
-            // translated interface or not, the window shows the game's text too — else the replacement
-            // this game's fonts give Arial.
+            // The font in effect (TranslatorCore.WindowFont): the interface font when one is set,
+            // the window's own otherwise. The game's text the window shows has fonts of its own
+            // (GameTextFonts), put after the interface's.
             string requestedFont = TranslatorCore.WindowFont;
             _appliedWindowFont = requestedFont ?? "";
             string interfaceFont = TranslatorCore.EffectiveInterfaceFont;
@@ -1585,6 +1585,9 @@ namespace UnityGameTranslator.Core.UI
             }
 
             bool wantCustom = !string.IsNullOrEmpty(requestedFont);
+            // Source/target text fonts this runtime cannot make into fonts of their own: the window's
+            // single font must draw from them too (GameTextFonts) — empty wherever fonts can be made.
+            var unmadeSideFonts = GameTextFonts.Unmade();
 
             // The split is by RUNTIME CAPABILITY, not by platform: wherever a fresh OS-backed Font can
             // be created (Mono, and IL2CPP builds that kept CreateDynamicFontFromOSFont) we swap the
@@ -1599,11 +1602,12 @@ namespace UnityGameTranslator.Core.UI
                 UniversalUI.DefaultFont = freshFont;
                 int changed = 0;
                 SwapModUIFont(UiBase.RootObject.transform, freshFont, ref changed);
+                GameTextFonts.PutAll();
                 InvalidateScopeStrips();
                 _uiFontRebacked = false;
-                _pendingRebackFont = null;
+                _pendingRebackChain = null;
             }
-            else if (wantCustom)
+            else if (wantCustom || unmadeSideFonts.Count > 0)
             {
                 // IL2CPP: fresh Font creation is stripped, so reback the UI font's OS backing (fontNames).
                 // Rebacking directly over a previous font leaves the atlas stale at runtime — the change
@@ -1613,7 +1617,10 @@ namespace UnityGameTranslator.Core.UI
                 FontManager.RestoreFontToOriginal(_originalUIFont, _originalUIFontFamily);
                 UniversalUI.DefaultFont = _originalUIFont;
                 RerenderModUIFont(false);
-                _pendingRebackFont = requestedFont;
+                // The window's font first — the interface font, or its own family when none — then
+                // the side fonts it must carry, in the order Unity tries them for a missing character.
+                _pendingRebackChain = new List<string> { wantCustom ? requestedFont : _originalUIFontFamily };
+                _pendingRebackChain.AddRange(unmadeSideFonts);
                 _rebackDelay = 60; // ~1s — the slowest atlas we've seen (Frog); LongYin tolerates it too
                 _uiFontRebacked = true;
             }
@@ -1621,7 +1628,7 @@ namespace UnityGameTranslator.Core.UI
             {
                 // Restore original. Cancel any pending reback first, else a queued reback would re-apply
                 // the font after the user turned the feature off ("keeps the first fallback" bug).
-                _pendingRebackFont = null;
+                _pendingRebackChain = null;
                 _fontRerenderCountdown = 0;
                 if (_uiFontRebacked)
                 {
@@ -1632,6 +1639,7 @@ namespace UnityGameTranslator.Core.UI
                 UniversalUI.DefaultFont = _originalUIFont;
                 int changed = 0;
                 SwapModUIFont(UiBase.RootObject.transform, _originalUIFont, ref changed);
+                GameTextFonts.PutAll();
                 InvalidateScopeStrips();
             }
         }
@@ -1672,7 +1680,8 @@ namespace UnityGameTranslator.Core.UI
         {
             if (node == null) return;
             var text = node.GetComponent<UnityEngine.UI.Text>();
-            if (text != null && text.font != font)
+            // The game's text the window shows keeps the font of its side (GameTextFonts).
+            if (text != null && text.font != font && ModWindowText.SideOf(text) == null)
             {
                 text.font = font;
                 if (!string.IsNullOrEmpty(text.text))
@@ -1701,13 +1710,13 @@ namespace UnityGameTranslator.Core.UI
 
             // Deferred reback (IL2CPP): the original font was restored on Apply; after the gap that lets
             // the atlas re-rasterize, reback the chosen font — the off→on cycle automated.
-            if (_pendingRebackFont != null)
+            if (_pendingRebackChain != null)
             {
                 if (--_rebackDelay <= 0)
                 {
-                    string font = _pendingRebackFont;
-                    _pendingRebackFont = null;
-                    FontManager.RebackFontToSystem(_originalUIFont, font);
+                    var chain = _pendingRebackChain;
+                    _pendingRebackChain = null;
+                    FontManager.RebackFontToChain(_originalUIFont, chain);
                     UniversalUI.DefaultFont = _originalUIFont;
                     RerenderModUIFont(true);
                     _fontRerenderCountdown = 30;

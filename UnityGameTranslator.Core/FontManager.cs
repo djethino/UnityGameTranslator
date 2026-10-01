@@ -1450,6 +1450,30 @@ namespace UnityGameTranslator.Core
             return ok;
         }
 
+        /// <summary>
+        /// Reback a Font to SEVERAL fonts, in the order Unity tries them for a character: the mod's
+        /// window on a runtime that cannot make fonts — its interface font (or its own family), then
+        /// the source/target text fonts the game's text it shows needs (UI.GameTextFonts). Each is
+        /// resolved as RebackFontToSystem resolves one: its family (a derived copy for a font that
+        /// needs shaping), then its file name.
+        /// </summary>
+        public static bool RebackFontToChain(Font target, IList<string> fontNames)
+        {
+            if (target == null || fontNames == null || fontNames.Count == 0) return false;
+            var names = new List<string>();
+            foreach (var fontName in fontNames)
+            {
+                if (string.IsNullOrEmpty(fontName)) continue;
+                string clean = StripFontPrefix(fontName);
+                string family = ResolveSystemFontFamily(clean, out _);
+                if (!names.Contains(family)) names.Add(family);
+                if (!string.Equals(family, clean, StringComparison.OrdinalIgnoreCase) && !names.Contains(clean)) names.Add(clean);
+            }
+            bool ok = UniverseLib.Runtime.TextureHelper.SetFontNames(target, names.ToArray());
+            if (ok) TranslatorCore.LogInfo($"[FontManager] Rebacked '{target.name}' fontNames=[{string.Join(", ", names)}]");
+            return ok;
+        }
+
         /// <summary>Restore a Font's fontNames to its own family name (undo RebackFontToSystem).</summary>
         public static bool RestoreFontToOriginal(Font target, string originalFamily)
         {
@@ -2546,10 +2570,11 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// The derived copy the mod's own window draws from — its font (TranslatorCore.WindowFont: the
-        /// interface font, else the game's Arial replacement), when that font has one.
+        /// The derived copy a part of the mod's own window draws from — the interface font for its
+        /// labels, the source or target text font for the game's text it shows
+        /// (TranslatorCore.WindowFontFor) — when that font has one.
         /// </summary>
-        internal static DerivedFonts.Entry DerivedForInterface() => DerivedForReference(TranslatorCore.WindowFont);
+        internal static DerivedFonts.Entry DerivedForWindow(GameTextSide? side) => DerivedForReference(TranslatorCore.WindowFontFor(side));
 
         /// <summary>The derived copy a font reference is drawn from, by the origin serving it; null for a game font or none.</summary>
         private static DerivedFonts.Entry DerivedForReference(string reference) =>
@@ -2589,7 +2614,11 @@ namespace UnityGameTranslator.Core
             var references = new List<string>();
             foreach (var kv in TranslatorCore.FontSettingsMap)
                 if (!string.IsNullOrEmpty(kv.Value?.fallback)) references.Add(kv.Value.fallback);
-            if (!string.IsNullOrEmpty(TranslatorCore.WindowFont)) references.Add(TranslatorCore.WindowFont);
+            foreach (var side in new GameTextSide?[] { null, GameTextSide.Source, GameTextSide.Target })
+            {
+                string windowFont = TranslatorCore.WindowFontFor(side);
+                if (!string.IsNullOrEmpty(windowFont)) references.Add(windowFont);
+            }
 
             int signature = 17;
             unchecked

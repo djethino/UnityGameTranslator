@@ -25,7 +25,28 @@ namespace UnityGameTranslator.Core.UI
         /// <summary>Several game fonts at once — the Fonts tab names each, on its own row.</summary>
         internal static string ForFonts(int count) => $"{count} fonts draw {What} incorrectly. Set a fallback font for each.";
 
-        /// <summary>The mod's own window (FontManager.WindowCannotShape).</summary>
-        internal static string ForWindow() => $"This window draws {What} incorrectly. Set an interface font.";
+        /// <summary>
+        /// A part of the mod's own window that cannot shape what it shows (FontManager.WindowCannotShape):
+        /// its translated labels (the interface font), the game's source text or its translation (their
+        /// own fonts — user, 2026-10-01). The source side is never named by its language: it is not
+        /// always known ("auto"); the target always is.
+        /// </summary>
+        internal static string ForWindow(GameTextSide? side)
+        {
+            switch (side)
+            {
+                case GameTextSide.Source: return "This window shows the source text incorrectly. Set a source text font in Options.";
+                case GameTextSide.Target: return $"This window shows {What} incorrectly. Set a target text font in Options.";
+                default: return $"This window's labels draw {What} incorrectly. Set an interface font in Options.";
+            }
+        }
+
+        /// <summary>One line per part of the window that cannot shape what it shows; empty when none.</summary>
+        internal static string ForWindow(System.Collections.Generic.List<GameTextSide?> parts)
+        {
+            var lines = new System.Collections.Generic.List<string>();
+            foreach (var part in parts) lines.Add(ForWindow(part));
+            return string.Join("\n", lines);
+        }
     }
 }

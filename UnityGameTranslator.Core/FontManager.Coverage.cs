@@ -140,24 +140,38 @@ namespace UnityGameTranslator.Core
                  + (sample == 0 ? "" : $", HasCharacter(U+{sample:X4}) {(has.HasValue ? has.Value.ToString() : "unknown")}") + ")";
         }
 
-        // The window font (or "" for none) the mod's window was seen unable to shape with; null when never.
-        private static string _windowUnshapedWith;
+        // By what the mod's window shows — its interface (null side), the game's source text, its
+        // translation (ModWindowText) — the font ("" for none) it was seen unable to shape with.
+        private static readonly Dictionary<string, string> _windowUnshapedWith = new Dictionary<string, string>(StringComparer.Ordinal);
+
+        private static string WindowKey(GameTextSide? side) => side?.ToString() ?? "Interface";
 
         /// <summary>
-        /// The mod's window had to show text needing shaping that its font cannot shape
-        /// (ShapingRoute "reorder only" for its own text): the game's text it shows, or its translated
-        /// labels. Said once per window font.
+        /// The mod's window had to show text needing shaping that the font of that part cannot shape
+        /// (ShapingRoute "reorder only" for its own text): its translated labels in the interface font,
+        /// or the game's text in the source or target text font. Said once per part and font.
         /// </summary>
-        internal static void NoteWindowUnshaped()
+        internal static void NoteWindowUnshaped(GameTextSide? side)
         {
-            string font = TranslatorCore.WindowFont ?? "";
-            if (_windowUnshapedWith == font) return;
-            _windowUnshapedWith = font;
-            TranslatorCore.LogInfo($"[FontManager] the mod's window shows text that needs shaping without it ({(font.Length == 0 ? "no interface font" : font)}) — an interface font with that script shapes it");
+            string font = TranslatorCore.WindowFontFor(side) ?? "";
+            string key = WindowKey(side);
+            if (_windowUnshapedWith.TryGetValue(key, out var was) && was == font) return;
+            _windowUnshapedWith[key] = font;
+            TranslatorCore.LogInfo($"[FontManager] the mod's window shows {(side == null ? "its labels" : side == GameTextSide.Source ? "the game's source text" : "the translation")} needing shaping without it ({(font.Length == 0 ? "no font chosen" : font)}) — a {(side == null ? "interface" : side == GameTextSide.Source ? "source text" : "target text")} font with that script shapes it");
         }
 
-        /// <summary>Whether the mod's window, with the font it has now, was seen unable to shape what it shows.</summary>
-        internal static bool WindowCannotShape => _windowUnshapedWith != null && _windowUnshapedWith == (TranslatorCore.WindowFont ?? "");
+        /// <summary>Whether this part of the mod's window, with the font it has now, was seen unable to shape what it shows.</summary>
+        internal static bool WindowCannotShape(GameTextSide? side) =>
+            _windowUnshapedWith.TryGetValue(WindowKey(side), out var font) && font == (TranslatorCore.WindowFontFor(side) ?? "");
+
+        /// <summary>The parts of the mod's window that cannot shape what they show, in a fixed order: interface, source, target.</summary>
+        internal static List<GameTextSide?> WindowPartsUnshaped()
+        {
+            var parts = new List<GameTextSide?>();
+            foreach (var side in new GameTextSide?[] { null, GameTextSide.Source, GameTextSide.Target })
+                if (WindowCannotShape(side)) parts.Add(side);
+            return parts;
+        }
 
         private static void Refresh()
         {

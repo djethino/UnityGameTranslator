@@ -2979,7 +2979,8 @@ namespace UnityGameTranslator.Core
             // but its registered chrome) and it does not follow the game's translation switch — but
             // a Failures row, a list or the text editor holds Arabic or Hindi the moment a game is
             // translated into it, and uGUI draws that unjoined, backwards or with its conjuncts
-            // apart. Shaped with the interface font's derived copy (FontManager.DerivedForInterface).
+            // apart. Shaped with the derived copy of the font of the part that shows it — interface,
+            // source text or target text (FontManager.DerivedForWindow, ModWindowText).
             if ((TextShaping.RtlText.ContainsStrongRtl(textValue) || TextShaping.OpenTypeText.NeedsShaping(textValue))
                 && __instance is Component ownCandidate
                 && TranslatorCore.IsOwnUI(ownCandidate) && !TranslatorCore.IsOwnUITranslatable(ownCandidate))

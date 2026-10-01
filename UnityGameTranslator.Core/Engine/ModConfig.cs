@@ -403,6 +403,12 @@ namespace UnityGameTranslator.Core
         // "[Game] "/"[Custom] " picker prefix). null = use whatever the translation asks for
         // (_settings.ui_font), or UniverseLib's default when it asks for nothing.
         public string interface_font { get; set; } = null;
+        // The game's text shown in the mod's windows (the inspector's editor, Translation Tools,
+        // Merge) — not the interface: its source text and its translation, each in a font of its own
+        // so the interface keeps its font (user, 2026-10-01). null = the interface font. Same
+        // picker values as interface_font. See analyse/polices-fenetres-du-mod.md.
+        public string source_text_font { get; set; } = null;
+        public string target_text_font { get; set; } = null;
 
         /// <summary>
         /// Advanced fallback: Translate at localization string level (ToString/op_Implicit).

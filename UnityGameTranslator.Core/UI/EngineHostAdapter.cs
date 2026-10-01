@@ -23,19 +23,23 @@ namespace UnityGameTranslator.Core.UI
 
         public void DerivedFontRewritten(string fontName)
         {
-            // A font the mod's window draws with — its interface's, or the source/target text font of
-            // the game's text it shows — rewritten: its font objects are made again and put back.
-            bool windowFont = false;
-            foreach (var side in new GameTextSide?[] { null, GameTextSide.Source, GameTextSide.Target })
+            // A font the mod's window draws with, rewritten (new glyphs named as the translation
+            // grows): only what draws from it is given the new copy. The interface's font → the whole
+            // window. A source/target text font → the game's text it shows only (measured: redoing the
+            // whole window at each rewrite swapped its font 16 times in one session); where that font
+            // has no object of its own (a runtime that cannot make fonts) it lives in the window's
+            // chain, so the window is done again.
+            bool Names(GameTextSide? side)
             {
                 string font = TranslatorCore.WindowFontFor(side);
-                if (!string.IsNullOrEmpty(font)
-                    && string.Equals(UnityGameTranslator.Common.FontReferences.Name(font), fontName, StringComparison.OrdinalIgnoreCase))
-                    windowFont = true;
+                return !string.IsNullOrEmpty(font)
+                    && string.Equals(UnityGameTranslator.Common.FontReferences.Name(font), fontName, StringComparison.OrdinalIgnoreCase);
             }
-            if (!windowFont) return;
-            GameTextFonts.Forget(fontName);
-            TranslatorUIManager.ApplyInterfaceFont();
+            bool sideFont = Names(GameTextSide.Source) || Names(GameTextSide.Target);
+            if (Names(null) || (sideFont && !GameTextFonts.Forget(fontName)))
+                TranslatorUIManager.ApplyInterfaceFont();
+            else if (sideFont)
+                GameTextFonts.PutAll();
         }
 
         public void ShuttingDown()

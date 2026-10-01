@@ -93,15 +93,19 @@ namespace UnityGameTranslator.Core.UI
             return names;
         }
 
-        /// <summary>A side font whose derived copy was rewritten: its font object is made again at the next use.</summary>
-        internal static void Forget(string fontName)
+        /// <summary>
+        /// A side font whose derived copy was rewritten: its font object is made again at the next use.
+        /// False when it had none (never made, or this runtime cannot make it).
+        /// </summary>
+        internal static bool Forget(string fontName)
         {
-            if (string.IsNullOrEmpty(fontName)) return;
+            if (string.IsNullOrEmpty(fontName)) return false;
             var stale = new List<string>();
             foreach (var reference in _made.Keys)
                 if (string.Equals(UnityGameTranslator.Common.FontReferences.Name(reference), fontName, StringComparison.OrdinalIgnoreCase))
                     stale.Add(reference);
             foreach (var reference in stale) _made.Remove(reference);
+            return stale.Count > 0;
         }
     }
 }

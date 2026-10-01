@@ -1898,7 +1898,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                     string what = string.IsNullOrEmpty(language) ? "this translation" : language;
                     row.Say("missingChars", problem.Value.Missing > 0
                         ? $"Missing {problem.Value.Missing} characters of {what}."
-                        : $"Cannot display {what} correctly. Choose a System or Custom font.");
+                        : $"Draws {what} incorrectly. Choose a System or Custom font.");
                     row.Label("MissingChars").Visible = true;
                 }
 

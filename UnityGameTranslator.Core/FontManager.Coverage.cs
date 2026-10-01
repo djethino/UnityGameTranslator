@@ -105,10 +105,30 @@ namespace UnityGameTranslator.Core
         /// A text drawn with this game font needed shaping its font could not give (ShapingRoute said
         /// "reorder only"): every character may be there, and the text is still wrong on screen.
         /// </summary>
-        internal static void NoteUnshaped(string settingsFontName)
+        internal static void NoteUnshaped(string settingsFontName, string text)
         {
             if (Coverage.NoteUnshaped(settingsFontName))
-                TranslatorCore.LogInfo($"[FontManager] '{settingsFontName}' draws text that needs shaping without it — a font file (Custom or System) shapes it");
+                TranslatorCore.LogInfo($"[FontManager] '{settingsFontName}' draws text that needs shaping without it — a font file (Custom or System) shapes it{LegacyFontFacts(settingsFontName, text)}");
+        }
+
+        /// <summary>
+        /// What a legacy game font does with a character it may not hold, for the log line above: a
+        /// dynamic font asks the fonts named in its Font Names, then Unity's built-in list of system
+        /// fonts (Unity manual, Font). Whether the letters on screen are the font's own or borrowed
+        /// decides what may be said about it; these are the facts that tell.
+        /// </summary>
+        private static string LegacyFontFacts(string settingsFontName, string text)
+        {
+            if (!_gameUnityFonts.TryGetValue(settingsFontName, out var font) || font == null) return "";
+            int sample = 0;
+            foreach (char c in text) if (c > 0x7F && !char.IsWhiteSpace(c)) { sample = c; break; }
+            var probe = FontHasCharacterMethod;
+            bool? has = sample == 0 || probe == null ? null : Invoke(probe, font, (char)sample);
+            // By reflection: under IL2CPP fontNames is an Il2Cpp array, and naming the Mono property
+            // here would make this whole method refuse to compile there (StringsOf).
+            var names = StringsOf(typeof(Font).GetProperty("fontNames")?.GetValue(font, null)) ?? new string[0];
+            return $" (dynamic {font.dynamic}, Font Names [{string.Join(", ", names)}]"
+                 + (sample == 0 ? "" : $", HasCharacter(U+{sample:X4}) {(has.HasValue ? has.Value.ToString() : "unknown")}") + ")";
         }
 
         // The window font (or "" for none) the mod's window was seen unable to shape with; null when never.

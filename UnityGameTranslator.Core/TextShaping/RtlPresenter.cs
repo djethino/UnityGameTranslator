@@ -479,7 +479,7 @@ namespace UnityGameTranslator.Core.TextShaping
                         // text of the translation (FontManager.Coverage).
                         // The mod's own window: said in the corner while it is open (FontManager.WindowCannotShape).
                         if (ownUi) FontManager.NoteWindowUnshaped();
-                        else if (TranslatorCore.IsAlreadyTargetText(logical)) FontManager.NoteUnshaped(settingsFontName);
+                        else if (TranslatorCore.IsAlreadyTargetText(logical)) FontManager.NoteUnshaped(settingsFontName, logical);
                         break;
                 }
             }

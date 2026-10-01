@@ -834,9 +834,17 @@ namespace UnityGameTranslator.Core.UI.Panels
                 MissingWeight(out var fonts);
                 string language = TranslatorCore.EffectiveTargetLanguage;
                 string what = string.IsNullOrEmpty(language) ? "this translation" : language;
-                _fontCoverageLabel?.Show(fonts.Count == 1
-                    ? $"Font \"{fonts[0].Font}\" cannot display {what} correctly"
-                    : $"{fonts.Count} fonts cannot display {what} correctly");
+                // What the player sees on screen (user, 2026-10-01: "cannot display" was read
+                // under Hindi shown on screen). A dynamic legacy font borrows the letters it lacks
+                // from system fonts and Unity counts them as its own (Font.HasCharacter: True for a
+                // letter its file does not hold), so "borrowed" cannot be proved — "draws incorrectly"
+                // is true whether the letters are its own or not. Missing characters are boxes or
+                // nothing: said as such.
+                _fontCoverageLabel?.Show(fonts.Count > 1
+                    ? $"{fonts.Count} fonts draw {what} incorrectly"
+                    : fonts[0].Missing > 0
+                        ? $"Font \"{fonts[0].Font}\" is missing {(string.IsNullOrEmpty(language) ? "characters of this translation" : language + " characters")}"
+                        : $"Font \"{fonts[0].Font}\" draws {what} incorrectly");
             }
 
             // 2b ter. This window cannot show the game's text correctly with its font.
@@ -846,7 +854,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             {
                 string language = TranslatorCore.EffectiveTargetLanguage;
                 string what = string.IsNullOrEmpty(language) ? "this translation" : language;
-                _windowFontLabel?.Show($"This window cannot display {what} correctly. Set an interface font.");
+                _windowFontLabel?.Show($"This window draws {what} incorrectly. Set an interface font.");
             }
 
             // 2c. A font being converted in the background: the game keeps running, and this says

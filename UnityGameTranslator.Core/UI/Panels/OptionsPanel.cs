@@ -526,18 +526,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             FillAboutTab();
 
             // ── The choices only the code knows ─────────────────────────────────
-            // Show the font IN EFFECT — the local override if set, else the one the translation
-            // asks for — so the picker reflects what the user actually sees.
-            // The window draws legacy text: the same Game, System and Custom fonts a game's uGUI text
-            // is offered as a fallback (FontOptions), for its interface and for the game's text it
-            // shows — (None) is the window's own font for the first, the interface font for the others.
-            var windowFontOptions = FontOptions.For(FontOptionKind.Legacy, FontManager.SystemFonts);
-            FillWindowFontPicker(_interfaceFontDropdown, windowFontOptions, TranslatorCore.EffectiveInterfaceFont);
-            // The game's text: on a game that cannot make fonts, a font no game font uses only draws
-            // what the interface font lacks — said beside it before it is chosen, there only.
-            var gameTextFontOptions = FontManager.CanMakeWindowFonts ? windowFontOptions : MarkMissingCharactersOnly(windowFontOptions);
-            FillWindowFontPicker(_sourceTextFontDropdown, gameTextFontOptions, TranslatorCore.Config.source_text_font);
-            FillWindowFontPicker(_targetTextFontDropdown, gameTextFontOptions, TranslatorCore.Config.target_text_font);
+            FillWindowFontPickers();
 
             _notificationPositionDropdown.SetOptions(new[] { "Top-Right", "Top-Left", "Bottom-Right", "Bottom-Left" });
             _notificationPositionDropdown.SelectedValue = "Top-Right";
@@ -934,6 +923,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Tri-state: show what is IN EFFECT (the user's choice, or the translation's when they
             // never made one). Ticking the box then records an explicit choice.
             _translateModUIToggle.IsOn = TranslatorCore.ShouldTranslateOwnUI;
+            FillWindowFontPickers();
 
 
             // Source language
@@ -1474,6 +1464,26 @@ namespace UnityGameTranslator.Core.UI.Panels
                 TranslatorCore.LogWarning($"[Options] Failed to refresh models: {e}");
                 TranslatorUIManager.RunOnMainThread(() => ConnectionTests.TellModels(_aiTestStatusLabel, 0));
             }
+        }
+
+        /// <summary>
+        /// The window's three font pickers, filled from what is true NOW — at construction and at each
+        /// opening (LoadCurrentSettings): the game loads its fonts as it goes ("(not loaded)" read at
+        /// the mod's start stayed on a font the game had since loaded), and a choice left without Apply
+        /// does not survive the window's closing. Shows the font IN EFFECT — the local override if set,
+        /// else the one the translation asks for. The window draws legacy text: the same Game, System
+        /// and Custom fonts a game's uGUI text is offered as a fallback (FontOptions) — (None) is the
+        /// window's own font for the interface, the interface font for the game's text.
+        /// </summary>
+        private void FillWindowFontPickers()
+        {
+            var windowFontOptions = FontOptions.For(FontOptionKind.Legacy, FontManager.SystemFonts);
+            FillWindowFontPicker(_interfaceFontDropdown, windowFontOptions, TranslatorCore.EffectiveInterfaceFont);
+            // The game's text: on a game that cannot make fonts, a font no game font uses only draws
+            // what the interface font lacks — said beside it before it is chosen, there only.
+            var gameTextFontOptions = FontManager.CanMakeWindowFonts ? windowFontOptions : MarkMissingCharactersOnly(windowFontOptions);
+            FillWindowFontPicker(_sourceTextFontDropdown, gameTextFontOptions, TranslatorCore.Config.source_text_font);
+            FillWindowFontPicker(_targetTextFontDropdown, gameTextFontOptions, TranslatorCore.Config.target_text_font);
         }
 
         /// <summary>

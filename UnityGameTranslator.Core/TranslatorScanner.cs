@@ -841,6 +841,31 @@ namespace UnityGameTranslator.Core
                 RegisterType(genericType);
             }
 
+            // tk2dTextMesh under IL2CPP: its setter is small and non-virtual, so the C++ compiler
+            // copies it into the game's callers and the setter hook never sees a write (seen in a
+            // disassembled build, 2026-10-01 — the same as NGUI's UILabel). Its getter is not hooked
+            // there either (TranslatorPatches.FieldGettersPatchable). The scanner reads it and writes
+            // the translation back through the setter, which IS hooked when called (by reflection).
+            // On Mono both hooks cover it.
+            if (TranslatorCore.Adapter?.IsIL2CPP == true && TranslatorPatches.Tk2dType != null)
+            {
+                var tk2d = TranslatorPatches.Tk2dType;
+                var textProp = tk2d.GetProperty("text", pubInst);
+                if (textProp != null && textProp.CanRead && textProp.CanWrite)
+                    RegisterType(new RegisteredTextType
+                    {
+                        Name = "tk2dTextMesh",
+                        Category = "tk2d",
+                        ComponentType = tk2d,
+                        TextProp = textProp,
+                        FontProp = tk2d.GetProperty("font", pubInst),
+                        ColorProp = tk2d.GetProperty("color", pubInst),
+                        FontTypeName = "tk2d",
+                        NeedsForceMeshUpdate = false,
+                        NeedsSetAllDirty = false
+                    });
+            }
+
             TranslatorCore.LogDebug($"[Scanner] Registered {_registeredTypes.Count} text component types");
         }
 

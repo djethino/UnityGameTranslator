@@ -1997,6 +1997,51 @@ namespace UnityGameTranslator.Core
             return null;
         }
 
+        /// <summary>The Mono overload, alone in its method for the same reason as <see cref="GetComponentDirect"/>.</summary>
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static Component AddComponentDirect(GameObject go, Type type) => go.AddComponent(type);
+
+        private static MethodInfo _addComponentIl2Cpp;
+        private static MethodInfo _il2cppTypeOfForAdd;
+
+        /// <summary>
+        /// Add a component whose type is only known at runtime (tk2d's font data, made by Tk2dFonts).
+        /// ⚠ The ONLY place allowed the non-generic AddComponent(Type) — check-il2cpp-safety.ps1 holds
+        /// it, as for GetComponent. Under IL2CPP that overload takes an Il2CppSystem.Type: the type is
+        /// given through Il2CppType.Of&lt;T&gt;() and the answer cast back to the asked type.
+        /// Throws what the engine throws; the caller says it.
+        /// </summary>
+        public static Component AddComponentByType(GameObject go, Type type)
+        {
+            if (go == null || type == null) return null;
+            if (TranslatorCore.Adapter?.IsIL2CPP != true) return AddComponentDirect(go, type);
+
+            if (_addComponentIl2Cpp == null)
+            {
+                // GetMethods lists; it does not throw.
+                foreach (var method in go.GetType().GetMethods(BindingFlags.Public | BindingFlags.Instance))
+                {
+                    if (method.Name != "AddComponent" || method.IsGenericMethodDefinition) continue;
+                    var parms = method.GetParameters();
+                    if (parms.Length == 1 && parms[0].ParameterType != typeof(Type)) { _addComponentIl2Cpp = method; break; }
+                }
+                _il2cppTypeOfForAdd = _il2cppTypeOfMethod;
+                if (_il2cppTypeOfForAdd == null)
+                {
+                    var il2cppType = Type.GetType("Il2CppInterop.Runtime.Il2CppType, Il2CppInterop.Runtime");
+                    if (il2cppType != null)
+                        foreach (var method in il2cppType.GetMethods(BindingFlags.Public | BindingFlags.Static))
+                            if (method.Name == "Of" && method.IsGenericMethodDefinition && method.GetParameters().Length == 0)
+                            { _il2cppTypeOfForAdd = method; break; }
+                }
+                if (_addComponentIl2Cpp == null || _il2cppTypeOfForAdd == null)
+                    throw new MissingMethodException("GameObject.AddComponent(Il2CppSystem.Type) or Il2CppType.Of<T>() not found on this runtime");
+            }
+            var typeObject = _il2cppTypeOfForAdd.MakeGenericMethod(type).Invoke(null, null);
+            var added = _addComponentIl2Cpp.Invoke(go, new[] { typeObject });
+            return Il2CppCast(added, type) as Component;
+        }
+
         #endregion
     }
 }

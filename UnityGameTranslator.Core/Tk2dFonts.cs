@@ -1,5 +1,4 @@
 using System;
-using System.Collections;
 using System.Collections.Generic;
 using System.Reflection;
 using UnityEngine;
@@ -22,8 +21,12 @@ namespace UnityGameTranslator.Core
     /// flipped; the text mesh takes a font through its `font` property and draws again on ForceBuild.
     ///
     /// Entries are added as texts need them, and every entry is read again when Unity rebuilds the
-    /// Font's atlas (Font.textureRebuilt), every text drawn with it built again then.
-    /// ⚠ Mono only: the atlas event is a C# event IL2CPP would take as one of its own proxies.
+    /// Font's atlas (Font.textureRebuilt, subscribed through EngineEvents), every text drawn with it
+    /// built again then.
+    /// Both runtimes. Under IL2CPP tk2d's types are interop proxies: their fields are PROPERTIES (a
+    /// field lookup finds nothing and a write does nothing, silently — hence Member below), its
+    /// dictionary and arrays are Il2Cpp collections made in the member's own type, and a wrapper read
+    /// twice is two objects — every object here is known by its instance id, never by reference.
     /// Main thread.
     /// </summary>
     internal static class Tk2dFonts
@@ -31,36 +34,45 @@ namespace UnityGameTranslator.Core
         private sealed class Replacement
         {
             public object Original;                 // the game's tk2dFontData
+            public int OriginalId;
             public string OriginalName;
             public Font Font;                       // the dynamic font it is drawn from
+            public int FontId;
             public Component Data;                  // our tk2dFontData
-            public IDictionary CharDict;            // Dictionary<int, tk2dFontChar>
+            public object CharDict;                 // Dictionary<int, tk2dFontChar> (Il2Cpp's under IL2CPP)
+            public MethodInfo DictSet, DictRemove;
             public int PixelSize;
             public float Scale;                     // world units per pixel at PixelSize
             public float LineHeightPx, AscentPx;
             public readonly HashSet<int> Known = new HashSet<int>();
-            public readonly List<WeakReference> Users = new List<WeakReference>();
+            public readonly Dictionary<int, object> Users = new Dictionary<int, object>();   // by instance id
         }
 
         private static Type _dataType, _charType;
-        private static readonly Dictionary<object, Replacement> _byOriginal = new Dictionary<object, Replacement>();
-        private static readonly Dictionary<object, Replacement> _byData = new Dictionary<object, Replacement>();
-        private static bool _rebuiltHooked, _il2cppSaid;
+        private static readonly Dictionary<int, Replacement> _byOriginal = new Dictionary<int, Replacement>();
+        private static readonly Dictionary<int, Replacement> _byData = new Dictionary<int, Replacement>();
+        private static bool _rebuiltHooked;
+        private static object _rebuiltHandler;
+
+        private static int IdOf(object unityObject) => unityObject == null ? -1 : TypeHelper.GetInstanceID(unityObject);
+
+        private static bool Ours(object fontData, out Replacement replacement)
+        {
+            replacement = null;
+            int id = IdOf(fontData);
+            return id != -1 && _byData.TryGetValue(id, out replacement);
+        }
 
         /// <summary>The game font a tk2d font stands for: itself, or the one a replacement of ours was made for.</summary>
         internal static object OriginalOf(object fontData)
-            => fontData != null && _byData.TryGetValue(fontData, out var r) ? r.Original : fontData;
+            => Ours(fontData, out var r) ? r.Original : fontData;
 
         /// <summary>The name a tk2d font is known by in the font settings — the game font's, never ours.</summary>
         internal static string OriginalNameOf(object fontData)
-            => fontData != null && _byData.TryGetValue(fontData, out var r) ? r.OriginalName : (fontData as UnityEngine.Object)?.name;
+            => Ours(fontData, out var r) ? r.OriginalName : (fontData as UnityEngine.Object)?.name;
 
         /// <summary>Whether this tk2d text draws from a replacement of ours — a dynamic font, by codepoint, like uGUI Text.</summary>
-        internal static bool DrawsReplacement(object textMesh)
-        {
-            var font = FontOf(textMesh);
-            return font != null && _byData.ContainsKey(font);
-        }
+        internal static bool DrawsReplacement(object textMesh) => Ours(FontOf(textMesh), out _);
 
         /// <summary>
         /// Gives a tk2d text the replacement of its game font when one is set and it can draw the text —
@@ -76,16 +88,7 @@ namespace UnityGameTranslator.Core
             var font = FontManager.GetUnityReplacementFont(settingsFontName);
             if (font == null)
             {
-                if (!ReferenceEquals(current, original)) SetFont(textMesh, original);   // the setting was left
-                return;
-            }
-            if (TranslatorCore.Adapter?.IsIL2CPP ?? false)
-            {
-                if (!_il2cppSaid)
-                {
-                    _il2cppSaid = true;
-                    TranslatorCore.LogInfo("[Tk2dFonts] tk2d text keeps its game font on IL2CPP: its atlas event cannot be followed there");
-                }
+                if (IdOf(current) != IdOf(original)) SetFont(textMesh, original);   // the setting was left
                 return;
             }
             if (FontManager.CloneCoverageProbeAvailable && !FontManager.CloneCoversText(settingsFontName, font, text)) return;
@@ -93,7 +96,7 @@ namespace UnityGameTranslator.Core
             var replacement = For(original, settingsFontName, font);
             if (replacement == null) return;
             Ensure(replacement, text);
-            if (!ReferenceEquals(current, replacement.Data)) SetFont(textMesh, replacement.Data);
+            if (IdOf(current) != IdOf(replacement.Data)) SetFont(textMesh, replacement.Data);
             Track(replacement, textMesh);
         }
 
@@ -101,8 +104,7 @@ namespace UnityGameTranslator.Core
         internal static void EnsureDrawn(object textMesh, string text)
         {
             if (textMesh == null || string.IsNullOrEmpty(text)) return;
-            var font = FontOf(textMesh);
-            if (font != null && _byData.TryGetValue(font, out var replacement)) Ensure(replacement, text);
+            if (Ours(FontOf(textMesh), out var replacement)) Ensure(replacement, text);
         }
 
         private static object FontOf(object textMesh)
@@ -125,11 +127,13 @@ namespace UnityGameTranslator.Core
         {
             // A Font made again (a derived copy rewritten): a new replacement. The previous one stays —
             // texts still drawn with it keep their glyphs until they are written again.
-            if (_byOriginal.TryGetValue(original, out var known) && known.Font == font) return known;
+            int originalId = IdOf(original);
+            if (originalId == -1) return null;
+            if (_byOriginal.TryGetValue(originalId, out var known) && known.FontId == IdOf(font)) return known;
             if (!Resolve()) return null;
 
-            float lineHeight = FloatField(original, "lineHeight");
-            var texel = FieldValue(original, "texelSize") is Vector2 v ? v : Vector2.zero;
+            float lineHeight = Get(original, "lineHeight") is float h ? h : 0f;
+            var texel = Get(original, "texelSize") is Vector2 v ? v : Vector2.zero;
             if (lineHeight <= 0f)
             {
                 TranslatorCore.LogWarning($"[Tk2dFonts] {originalName}: the game font has no line height — kept");
@@ -142,35 +146,52 @@ namespace UnityGameTranslator.Core
             float lineHeightPx = font.lineHeight * scale, ascentPx = font.ascent * scale;
             if (lineHeightPx <= 0f) lineHeightPx = pixelSize;
 
+            // The dictionary in the member's own type: Dictionary<int, tk2dFontChar> on Mono,
+            // Il2CppSystem's under IL2CPP — both written through their indexer and Remove.
+            var dictType = MemberType(_dataType, "charDict");
+            if (dictType == null)
+            {
+                TranslatorCore.LogWarning($"[Tk2dFonts] {originalName}: this tk2d has no character dictionary — kept");
+                return null;
+            }
+
             var go = new GameObject((original as UnityEngine.Object)?.name ?? originalName);
             go.hideFlags = HideFlags.HideAndDontSave;
             UnityEngine.Object.DontDestroyOnLoad(go);
-            var data = go.AddComponent(_dataType);
+            var data = TypeHelper.AddComponentByType(go, _dataType);
+            if (data == null)
+            {
+                TranslatorCore.LogWarning($"[Tk2dFonts] {originalName}: no tk2dFontData could be made — kept");
+                UnityEngine.Object.Destroy(go);
+                return null;
+            }
 
-            var dict = (IDictionary)Activator.CreateInstance(typeof(Dictionary<,>).MakeGenericType(typeof(int), _charType));
+            var dict = Activator.CreateInstance(dictType);
             var replacement = new Replacement
             {
-                Original = original, OriginalName = originalName, Font = font, Data = data, CharDict = dict,
+                Original = original, OriginalId = originalId, OriginalName = originalName, Font = font, FontId = IdOf(font),
+                Data = data, CharDict = dict,
+                DictSet = dictType.GetMethod("set_Item"), DictRemove = OneArgument(dictType, "Remove"),
                 PixelSize = pixelSize, Scale = lineHeight / lineHeightPx, LineHeightPx = lineHeightPx, AscentPx = ascentPx,
             };
-            Set(data, "version", FieldValue(original, "version") ?? 2);
+            Set(data, "version", Get(original, "version") ?? 2);
             Set(data, "lineHeight", lineHeight);
             Set(data, "useDictionary", true);
             Set(data, "charDict", dict);
-            Set(data, "chars", Array.CreateInstance(_charType, 0));
-            Set(data, "kerning", Array.CreateInstance(_dataType.GetField("kerning")?.FieldType.GetElementType() ?? typeof(object), 0));
+            Set(data, "chars", NewArray(MemberType(_dataType, "chars"), 0));
+            Set(data, "kerning", NewArray(MemberType(_dataType, "kerning"), 0));
             Set(data, "material", font.material);
             Set(data, "needMaterialInstance", false);
             Set(data, "isPacked", false);
             Set(data, "textureGradients", false);
             Set(data, "premultipliedAlpha", false);
             Set(data, "texelSize", new Vector2(replacement.Scale, replacement.Scale));
-            dict[0] = NewChar(Vector3.zero, Vector3.zero, Vector3.zero, Vector3.zero, false, 0f);   // what a missing character draws
+            Put(replacement, 0, NewChar(Vector3.zero, Vector3.zero, Vector3.zero, Vector3.zero, false, 0f));   // what a missing character draws
             replacement.Known.Add(0);
 
             HookRebuilt();
-            _byOriginal[original] = replacement;
-            _byData[data] = replacement;
+            _byOriginal[originalId] = replacement;
+            _byData[IdOf(data)] = replacement;
             TranslatorCore.LogInfo($"[Tk2dFonts] {originalName}: replaced by '{font.name}' ({pixelSize} px, line height {lineHeight})");
             return replacement;
         }
@@ -197,7 +218,7 @@ namespace UnityGameTranslator.Core
             if (c == 0) return;
             if (!r.Font.GetCharacterInfo((char)c, out var ci, r.PixelSize, FontStyle.Normal))
             {
-                r.CharDict.Remove(c);   // not in the font: entry 0 is drawn, as tk2d does
+                r.DictRemove.Invoke(r.CharDict, new object[] { c });   // not in the font: entry 0 is drawn, as tk2d does
                 return;
             }
             float s = r.Scale, below = r.LineHeightPx - r.AscentPx;   // the baseline, from the line's bottom
@@ -208,23 +229,32 @@ namespace UnityGameTranslator.Core
             bool flipped = !Mathf.Approximately(topLeft.x, bottomLeft.x);
             var uv0 = flipped ? (Vector3)bottomRight : (Vector3)topLeft;
             var uv1 = flipped ? (Vector3)topLeft : (Vector3)bottomRight;
-            r.CharDict[c] = NewChar(p0, p1, uv0, uv1, flipped, ci.advance * s);
+            Put(r, c, NewChar(p0, p1, uv0, uv1, flipped, ci.advance * s));
         }
+
+        private static void Put(Replacement r, int c, object entry) => r.DictSet.Invoke(r.CharDict, new[] { (object)c, entry });
 
         private static object NewChar(Vector3 p0, Vector3 p1, Vector3 uv0, Vector3 uv1, bool flipped, float advance)
         {
             var ch = Activator.CreateInstance(_charType);
             Set(ch, "p0", p0); Set(ch, "p1", p1); Set(ch, "uv0", uv0); Set(ch, "uv1", uv1);
             Set(ch, "flipped", flipped); Set(ch, "advance", advance); Set(ch, "channel", 0);
-            Set(ch, "gradientUv", new Vector2[4]);
+            Set(ch, "gradientUv", NewArray(MemberType(_charType, "gradientUv"), 4));
             return ch;
         }
 
+        /// <summary>
+        /// The texts drawn with a replacement, built again when its atlas moves — held by instance id
+        /// (a wrapper read twice is two objects under IL2CPP), the destroyed ones let go.
+        /// </summary>
         private static void Track(Replacement replacement, object textMesh)
         {
-            foreach (var w in replacement.Users) if (ReferenceEquals(w.Target, textMesh)) return;
-            replacement.Users.RemoveAll(w => !(w.Target is UnityEngine.Object o) || o == null);
-            replacement.Users.Add(new WeakReference(textMesh));
+            int id = IdOf(textMesh);
+            if (id == -1 || replacement.Users.ContainsKey(id)) return;
+            var gone = new List<int>();
+            foreach (var user in replacement.Users) if (!TypeHelper.IsUnityObjectAlive(user.Value)) gone.Add(user.Key);
+            foreach (int g in gone) replacement.Users.Remove(g);
+            replacement.Users[id] = textMesh;
         }
 
         // ── the atlas moved: every entry read again, every text built again ──
@@ -233,7 +263,22 @@ namespace UnityGameTranslator.Core
         {
             if (_rebuiltHooked) return;
             _rebuiltHooked = true;
-            Font.textureRebuilt += OnTextureRebuilt;
+            // Unfollowed, a replacement keeps the places its characters had in an atlas Unity has
+            // since moved, and draws pieces of other characters: said.
+            try
+            {
+                _rebuiltHandler = EngineEvents.Add(typeof(Font), "textureRebuilt", (Action<Font>)OnTextureRebuilt);
+                if (_rebuiltHandler == null) TranslatorCore.LogWarning("[Tk2dFonts] Font.textureRebuilt not found — tk2d replacements are not read again when an atlas moves");
+            }
+            catch (Exception ex) { Faults.Say("Tk2dFonts.HookRebuilt", ex); }
+        }
+
+        /// <summary>The atlas event let go at shutdown: left live, Unity's teardown would call it against destroyed fonts.</summary>
+        internal static void Shutdown()
+        {
+            if (_rebuiltHandler == null) return;
+            EngineEvents.Remove(typeof(Font), "textureRebuilt", _rebuiltHandler);
+            _rebuiltHandler = null;
         }
 
         private static bool _inRebuilt;
@@ -250,19 +295,20 @@ namespace UnityGameTranslator.Core
             _inRebuilt = true;
             try
             {
+                int fontId = IdOf(font);
                 foreach (var r in _byData.Values)
                 {
-                    if (r.Font != font) continue;
+                    if (r.FontId != fontId) continue;
                     var known = new System.Text.StringBuilder(r.Known.Count);
                     foreach (int c in r.Known) if (c != 0) known.Append((char)c);
                     if (known.Length > 0) font.RequestCharactersInTexture(known.ToString(), r.PixelSize, FontStyle.Normal);
                 }
                 foreach (var r in _byData.Values)
                 {
-                    if (r.Font != font) continue;
+                    if (r.FontId != fontId) continue;
                     foreach (int c in r.Known) Fill(r, c);
-                    foreach (var w in r.Users)
-                        if (w.Target is UnityEngine.Object o && o != null) TypeHelper.InvokeNoArg(o, "ForceBuild");
+                    foreach (var user in r.Users.Values)
+                        if (TypeHelper.IsUnityObjectAlive(user)) TypeHelper.InvokeNoArg(user, "ForceBuild");
                 }
             }
             // Called by the engine: a failure here is said, never thrown back into its atlas code.
@@ -285,19 +331,50 @@ namespace UnityGameTranslator.Core
             return true;
         }
 
-        private static object FieldValue(object target, string name)
+        /// <summary>
+        /// A member of tk2d's types by name: the field on Mono, the property Il2CppInterop makes of it
+        /// under IL2CPP.
+        /// </summary>
+        private static MemberInfo Member(Type type, string name)
         {
-            var f = target?.GetType().GetField(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-            return f?.GetValue(target);
+            var flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
+            return (MemberInfo)type.GetField(name, flags) ?? Members.Property(type, name, flags);
         }
 
-        private static float FloatField(object target, string name) => FieldValue(target, name) is float f ? f : 0f;
+        private static Type MemberType(Type type, string name)
+        {
+            var member = Member(type, name);
+            return member is FieldInfo f ? f.FieldType : (member as PropertyInfo)?.PropertyType;
+        }
+
+        private static object Get(object target, string name)
+        {
+            var member = target == null ? null : Member(target.GetType(), name);
+            if (member is FieldInfo f) return f.GetValue(target);
+            return member is PropertyInfo p && p.CanRead ? p.GetValue(target, null) : null;
+        }
 
         private static void Set(object target, string name, object value)
         {
-            var f = target.GetType().GetField(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-            if (f == null) return;   // a tk2d version without this field: the field it would set does not exist there either
-            f.SetValue(target, value);
+            // A tk2d version without this member: the member it would set does not exist there either.
+            var member = Member(target.GetType(), name);
+            if (member is FieldInfo f) f.SetValue(target, value);
+            else if (member is PropertyInfo p && p.CanWrite) p.SetValue(target, value, null);
+        }
+
+        /// <summary>An array of the member's own type: T[] on Mono, Il2CppReferenceArray/StructArray (made by their length) under IL2CPP.</summary>
+        private static object NewArray(Type arrayType, int length)
+        {
+            if (arrayType == null) return null;
+            if (arrayType.IsArray) return Array.CreateInstance(arrayType.GetElementType(), length);
+            return arrayType.GetConstructor(new[] { typeof(long) })?.Invoke(new object[] { (long)length });
+        }
+
+        private static MethodInfo OneArgument(Type type, string name)
+        {
+            foreach (var method in type.GetMethods(BindingFlags.Public | BindingFlags.Instance))
+                if (method.Name == name && method.GetParameters().Length == 1) return method;
+            return null;
         }
     }
 }

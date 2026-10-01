@@ -510,6 +510,8 @@ namespace UnityGameTranslator.Core
 
         /// <summary>
         /// Subscribe to Canvas.willRenderCanvases — fires just before Unity renders all canvases.
+        /// Its delegate type is Canvas.WillRenderCanvases (a named delegate), NOT System.Action:
+        /// EngineEvents makes the right one on each runtime.
         /// </summary>
         private static void SubscribeWillRenderCanvases()
         {
@@ -517,69 +519,15 @@ namespace UnityGameTranslator.Core
 
             try
             {
-                // Canvas.willRenderCanvases is a static event
-                var canvasType = typeof(Canvas);
-                var addMethod = canvasType.GetMethod("add_willRenderCanvases",
-                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
-
-                if (addMethod == null)
+                _willRenderHandler = EngineEvents.Add(typeof(Canvas), "willRenderCanvases", (Action)OnWillRenderCanvases);
+                if (_willRenderHandler != null)
                 {
-                    // Try event directly
-                    var evt = canvasType.GetEvent("willRenderCanvases",
-                        BindingFlags.Public | BindingFlags.Static);
-                    if (evt != null)
-                        addMethod = evt.GetAddMethod(true);
-                }
-
-                if (addMethod != null)
-                {
-                    // The event's delegate type: Canvas.WillRenderCanvases (a named delegate),
-                    // NOT System.Action — passing the Action directly fails on both runtimes.
-                    var paramType = addMethod.GetParameters()[0].ParameterType;
-                    Action handler = OnWillRenderCanvases;
-                    object wrappedHandler = handler;
-
-                    if (TranslatorCore.Adapter?.IsIL2CPP == true)
-                    {
-                        // IL2CPP: wrap the managed Action into the Il2Cpp delegate type
-                        try
-                        {
-                            var delegateSupportType = AssemblyTypes.Find("Il2CppInterop.Runtime.DelegateSupport");
-                            if (delegateSupportType != null)
-                            {
-                                var convertMethod = delegateSupportType.GetMethod("ConvertDelegate",
-                                    BindingFlags.Public | BindingFlags.Static);
-                                if (convertMethod != null)
-                                {
-                                    var genericConvert = convertMethod.MakeGenericMethod(paramType);
-                                    wrappedHandler = genericConvert.Invoke(null, new object[] { handler });
-                                }
-                            }
-                        }
-                        // Without the conversion the subscription below is refused, and the atlas
-                        // re-warm on scene change never runs: said.
-                        catch (Exception ex) { Faults.Say("FontManager.SubscribeWillRenderCanvases delegate", ex); }
-                    }
-                    else if (paramType != typeof(Action) && typeof(Delegate).IsAssignableFrom(paramType))
-                    {
-                        // Mono: rebuild a delegate of the exact event type from our static method.
-                        // Without this, add_willRenderCanvases(Action) throws "Object of type
-                        // 'System.Action' cannot be converted to type 'Canvas+WillRenderCanvases'",
-                        // and the scene-change atlas re-warm never runs on Mono games.
-                        var method = typeof(FontManager).GetMethod(nameof(OnWillRenderCanvases),
-                            BindingFlags.NonPublic | BindingFlags.Static);
-                        if (method != null)
-                            wrappedHandler = Delegate.CreateDelegate(paramType, method);
-                    }
-
-                    addMethod.Invoke(null, new object[] { wrappedHandler });
-                    _willRenderHandler = wrappedHandler; // keep for symmetric removal on shutdown
                     _willRenderSubscribed = true;
                     TranslatorCore.LogDebug("[FontManager] Subscribed to Canvas.willRenderCanvases");
                 }
                 else
                 {
-                    TranslatorCore.LogDebug("[FontManager] Canvas.willRenderCanvases not found");
+                    TranslatorCore.LogDebug("[FontManager] Canvas.willRenderCanvases not subscribed");
                 }
             }
             catch (Exception ex)
@@ -599,23 +547,8 @@ namespace UnityGameTranslator.Core
 
             try
             {
-                var canvasType = typeof(Canvas);
-                var removeMethod = canvasType.GetMethod("remove_willRenderCanvases",
-                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
-
-                if (removeMethod == null)
-                {
-                    var evt = canvasType.GetEvent("willRenderCanvases",
-                        BindingFlags.Public | BindingFlags.Static);
-                    if (evt != null)
-                        removeMethod = evt.GetRemoveMethod(true);
-                }
-
-                if (removeMethod != null)
-                {
-                    removeMethod.Invoke(null, new object[] { _willRenderHandler });
-                    TranslatorCore.LogDebug("[FontManager] Unsubscribed from Canvas.willRenderCanvases");
-                }
+                EngineEvents.Remove(typeof(Canvas), "willRenderCanvases", _willRenderHandler);
+                TranslatorCore.LogDebug("[FontManager] Unsubscribed from Canvas.willRenderCanvases");
             }
             catch (Exception ex)
             {

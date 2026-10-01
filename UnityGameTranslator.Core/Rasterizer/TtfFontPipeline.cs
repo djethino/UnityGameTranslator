@@ -72,7 +72,7 @@ namespace UnityGameTranslator.Core.Rasterizer
             // Largest first: pick the highest sampling size whose atlas fits the budget.
             // Sizes above 128 only become reachable when the budget is raised above the 4096
             // default — they let our atlas match (or exceed) the game font's own sampling size
-            // (e.g. FrogDetective's HauntedIsland is sampled at 408 px/em), which is what keeps
+            // (a test game's own font is sampled at 408 px/em), which is what keeps
             // replacement text from looking softer than the original at large display sizes.
             foreach (float size in new[] { 512f, 384f, 256f, 192f, 128f, 96f, 64f })
             {

@@ -1416,11 +1416,11 @@ namespace UnityGameTranslator.Core
                 PrimeDocumentsFromLookup();
             }
 
-            for (int i = _documents.Count - 1; i >= 0; i--)
+            _deadDocuments.Clear();
+            foreach (var entry in _documents)
             {
-                var document = _documents[i].Target;
-                bool dead = document == null || (document is UnityEngine.Object uo && uo == null);
-                if (dead) { _documents.RemoveAt(i); continue; }
+                var document = entry.Value;
+                if (!TypeHelper.IsUnityObjectAlive(document)) { _deadDocuments.Add(entry.Key); continue; }
 
                 // A disabled document has nothing on screen; its root would be walked for nothing.
                 if (document is UnityEngine.Behaviour b && !b.isActiveAndEnabled) continue;
@@ -1430,14 +1430,20 @@ namespace UnityGameTranslator.Core
                 catch (Exception ex) { Faults.Say("UIToolkit.StartWalkCycle", ex); }
                 if (root != null) _walk.Push(root);
             }
+            foreach (int id in _deadDocuments) _documents.Remove(id);
             return _walk.Count > 0;
         }
 
         /// <summary>The walk in progress, kept between frames — see Scan.</summary>
         private static readonly Stack<object> _walk = new Stack<object>();
 
-        // The documents we know of. Weak: a document dies with its scene and must not be held.
-        private static readonly List<WeakReference> _documents = new List<WeakReference>();
+        // The documents we know of, by instance id, let go once Unity has destroyed them. ⚠ Not weak
+        // references: under IL2CPP the object we hold is an interop wrapper nobody else holds, which
+        // the collector takes while the document is still on screen — and a wrapper read twice is
+        // two objects, so only the id says "the same document". Holding a wrapper keeps nothing of
+        // the engine's alive.
+        private static readonly Dictionary<int, object> _documents = new Dictionary<int, object>();
+        private static readonly List<int> _deadDocuments = new List<int>();
         private static bool _documentsFromEvents;   // OnEnable patched: no per-cycle lookup needed
         private static bool _documentsPrimed;       // the one initial lookup has been done
 
@@ -1446,9 +1452,12 @@ namespace UnityGameTranslator.Core
             if (__instance == null) return;
             try
             {
-                for (int i = 0; i < _documents.Count; i++)
-                    if (ReferenceEquals(_documents[i].Target, __instance)) return;
-                _documents.Add(new WeakReference(__instance));
+                int id = TypeHelper.GetInstanceID(__instance);
+                if (id == -1 || _documents.ContainsKey(id)) return;
+                // A lookup under IL2CPP answers plain UnityEngine.Object wrappers: reading
+                // rootVisualElement off one threw "Object does not match target type" (bench,
+                // 2026-10-01), and every document found that way was never walked.
+                _documents[id] = TypeHelper.Il2CppCast(__instance, UIDocumentType);
             }
             catch (Exception ex) { Faults.Say("UIToolkit.UIDocument_OnEnable_Postfix", ex); }
         }

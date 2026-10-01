@@ -56,6 +56,16 @@ $rules = @(
             "Type known at compile time -> GetComponent<T>() (used all over the Core, proven on IL2CPP)",
             "Type only known at runtime -> follow ImageReplacer's reflection fallback"
         )
+    },
+    @{
+        Name    = "non-generic AddComponent(Type)"
+        # Same trap as GetComponent: under IL2CPP the overload takes an Il2CppSystem.Type.
+        Pattern = '\.AddComponent\s*\('
+        Allowed = @("TypeHelper.cs")
+        Advice  = @(
+            "Type known at compile time -> AddComponent<T>()",
+            "Type only known at runtime -> TypeHelper.AddComponentByType"
+        )
     }
 )
 

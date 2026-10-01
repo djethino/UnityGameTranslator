@@ -424,8 +424,9 @@ namespace UnityGameTranslator.Core
         {
             if (string.IsNullOrEmpty(file) || !File.Exists(file)) return true;
             try { File.Delete(file); return true; }
-            catch (IOException) { return false; }   // held open by the engine
-            catch (UnauthorizedAccessException ex)
+            // Held open by the engine: Windows' sharing / lock violation (errors 32, 33).
+            catch (IOException ex) when ((ex.HResult & 0xFFFF) == 32 || (ex.HResult & 0xFFFF) == 33) { return false; }
+            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
             {
                 Faults.Say("DerivedFonts.TryRemove", ex, Sanitize.Path(file));
                 return false;

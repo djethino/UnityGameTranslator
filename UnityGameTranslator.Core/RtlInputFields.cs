@@ -131,7 +131,10 @@ namespace UnityGameTranslator.Core.TextShaping
             // its translation (ModWindowText), else the interface's.
             var side = ownUi ? ModWindowText.SideOf(field) ?? ModWindowText.SideOf(label) : null;
             var derived = ownUi ? FontManager.DerivedForWindow(side) : FontManager.DerivedForSettings(settingsFontName);
-            NoteIfUnshaped(derived != null, value, settingsFontName, ownUi, side);
+            // A copy shapes only the letters its font has (FontManager.Covers): the window's Arial
+            // has a copy and no Hindi.
+            NoteIfUnshaped(derived != null && (!ownUi || FontManager.Covers(TranslatorCore.WindowFontFor(side), value) != false),
+                           value, settingsFontName, ownUi, side);
             var prep = string.IsNullOrEmpty(value) ? null : RtlFieldLayout.Prepare(value, UnitsOf(derived));
             if (prep == null) { Release(id); return; }
 

@@ -282,6 +282,31 @@ namespace UnityGameTranslator.Core
             return true;
         }
 
+        /// <summary>
+        /// Whether a font (fonts/ or installed) holds every letter and mark of a text — what the mod's
+        /// window needs before it calls a text shaped: a font with a derived copy shapes only the
+        /// scripts it draws (the interface's Arial has one, and no Hindi: Unity then borrows the
+        /// letters from the system one by one, unjoined — seen in a game, 2026-10-01). Null when its
+        /// file cannot be read: nothing is claimed.
+        /// </summary>
+        internal static bool? Covers(string reference, string text)
+        {
+            if (string.IsNullOrEmpty(reference) || string.IsNullOrEmpty(text)) return null;
+            var cmap = CharacterMap(FileOfReference(reference, out _, out _));
+            if (cmap == null) return null;
+            for (int i = 0; i < text.Length; i++)
+            {
+                int cp = char.IsHighSurrogate(text[i]) && i + 1 < text.Length ? char.ConvertToUtf32(text[i], text[++i]) : text[i];
+                if (cp < 0x80) continue;
+                var category = System.Globalization.CharUnicodeInfo.GetUnicodeCategory(char.ConvertFromUtf32(cp), 0);
+                bool letterOrMark = category <= System.Globalization.UnicodeCategory.OtherLetter
+                    || category == System.Globalization.UnicodeCategory.NonSpacingMark
+                    || category == System.Globalization.UnicodeCategory.SpacingCombiningMark;
+                if (letterOrMark && !cmap.Contains(cp)) return false;
+            }
+            return true;
+        }
+
         /// <summary>A font file's characters, read once per file. Null when there is no file or it cannot be read (then nothing is claimed).</summary>
         private static HashSet<int> CharacterMap(string path)
         {

@@ -515,6 +515,11 @@ namespace UnityGameTranslator.Core.TextShaping
                         string s = OpenTypeText.Shape(working, derived.Font, derived.Namer);
                         if (!ReferenceEquals(s, working)) { working = s; shaped = true; }
                         DerivedFonts.NoteNamed(derived);   // new names → the copy is rewritten this tick
+                        // The mod's own window: a font with a copy shapes only the letters it has —
+                        // the interface's Arial has none of Hindi. Said as unshaped (the window
+                        // notice); a game font lacking them is the coverage notice's.
+                        if (ownUi && FontManager.Covers(TranslatorCore.WindowFontFor(ModWindowText.SideOf(instance)), logical) == false)
+                            FontManager.NoteWindowUnshaped(ModWindowText.SideOf(instance));
                         break;
                     }
                     case ShapingRoute.Route.ReorderOnly:

@@ -610,7 +610,9 @@ namespace UnityGameTranslator.Core
                 entry.Namer.MarkWritten();
                 TranslatorCore.LogInfo($"[DerivedFonts] {name}: derived copy ready ({entry.Namer.Added.Count} shaped glyph(s) known) as '{entry.CurrentFamily}'");
             }
-            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
+            // InvalidDataException: a font file the parser accepted but the writer finds malformed — it
+            // gets no copy, said, and never reaches the Apply or the scene that asked for it.
+            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException || ex is InvalidDataException)
             {
                 Faults.Say("DerivedFonts.Build", ex, Sanitize.Path(_folder));
                 return null;

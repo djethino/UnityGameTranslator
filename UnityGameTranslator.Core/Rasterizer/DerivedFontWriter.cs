@@ -272,6 +272,9 @@ namespace UnityGameTranslator.Core.Rasterizer
         internal static byte[] WithTrueTypeOutlines(byte[] source, out string refusal)
         {
             refusal = null;
+            // A collection is opened face by face by its caller (FontCollection); one arriving whole is
+            // refused like any font this writer cannot copy, never thrown into the Apply that chose it.
+            if (source.Length >= 4 && ReadUInt32(source, 0) == 0x74746366) { refusal = "a font collection (.ttc) is not a single font"; return null; }
             var tables = ReadDirectory(source);
             if (tables.ContainsKey("glyf") && tables.ContainsKey("loca")) return source;
             if (tables.ContainsKey("CFF ")) return TrueTypeFromCff(source, tables, out refusal);
@@ -483,51 +486,110 @@ namespace UnityGameTranslator.Core.Rasterizer
 
         // ─────────────────────────────── cmap ───────────────────────────────
 
-        private static byte[] BuildCmap(SortedDictionary<int, int> map)
+        /// <summary>
+        /// The copy's cmap: Windows BMP (format 4) and Windows full (format 12). A font with more BMP
+        /// characters than format 4 can hold in its 64 KB (a CJK font: tens of thousands, their glyph
+        /// numbers scattered) keeps format 12 alone — it maps every character, and is what FreeType reads
+        /// first; throwing there took down the Options' Apply when one was chosen (2026-10-01).
+        /// </summary>
+        internal static byte[] BuildCmap(SortedDictionary<int, int> map)
         {
             byte[] f4 = BuildFormat4(map);
             byte[] f12 = BuildFormat12(map);
             var ms = new MemoryStream();
             WriteUInt16(ms, 0);                                                // version
-            WriteUInt16(ms, 2);                                                // subtables
-            WriteUInt16(ms, 3); WriteUInt16(ms, 1); WriteUInt32(ms, 4 + 8 * 2);                    // Windows BMP → format 4
-            WriteUInt16(ms, 3); WriteUInt16(ms, 10); WriteUInt32(ms, (uint)(4 + 8 * 2 + f4.Length)); // Windows full → format 12
-            ms.Write(f4, 0, f4.Length);
+            if (f4 != null)
+            {
+                WriteUInt16(ms, 2);                                            // subtables
+                WriteUInt16(ms, 3); WriteUInt16(ms, 1); WriteUInt32(ms, 4 + 8 * 2);                    // Windows BMP → format 4
+                WriteUInt16(ms, 3); WriteUInt16(ms, 10); WriteUInt32(ms, (uint)(4 + 8 * 2 + f4.Length)); // Windows full → format 12
+                ms.Write(f4, 0, f4.Length);
+            }
+            else
+            {
+                WriteUInt16(ms, 1);
+                WriteUInt16(ms, 3); WriteUInt16(ms, 10); WriteUInt32(ms, 4 + 8);                      // Windows full → format 12
+            }
             ms.Write(f12, 0, f12.Length);
             return ms.ToArray();
         }
 
-        /// <summary>Format 4: runs of consecutive codepoints mapped to consecutive glyphs, each a segment with idDelta.</summary>
+        private sealed class Segment
+        {
+            public int Start, End, Delta;
+            public List<int> Glyphs;   // null: the glyphs follow the codepoints (idDelta); else one per codepoint (glyphIdArray)
+        }
+
+        /// <summary>
+        /// Format 4, as fonts write it: one segment per run of consecutive codepoints — by idDelta where
+        /// the glyphs follow too, through glyphIdArray where they are scattered (a CJK font: one segment
+        /// per character would take 8 bytes each), whichever is smaller for that run. Null when it still
+        /// exceeds the 64 KB its length field can say.
+        /// </summary>
         private static byte[] BuildFormat4(SortedDictionary<int, int> map)
         {
-            var starts = new List<int>(); var ends = new List<int>(); var deltas = new List<int>();
-            int runStart = -1, runEnd = -1, runGlyph = -1;
+            // Runs of consecutive codepoints (the BMP; 0xFFFF is the closing segment's).
+            var runs = new List<List<KeyValuePair<int, int>>>();
             foreach (var kv in map)
             {
                 if (kv.Key > 0xFFFE) break;
-                if (runStart >= 0 && kv.Key == runEnd + 1 && kv.Value == runGlyph + (kv.Key - runStart)) { runEnd = kv.Key; continue; }
-                if (runStart >= 0) { starts.Add(runStart); ends.Add(runEnd); deltas.Add(runGlyph - runStart); }
-                runStart = runEnd = kv.Key; runGlyph = kv.Value;
+                if (runs.Count == 0 || kv.Key != runs[runs.Count - 1][runs[runs.Count - 1].Count - 1].Key + 1)
+                    runs.Add(new List<KeyValuePair<int, int>>());
+                runs[runs.Count - 1].Add(kv);
             }
-            if (runStart >= 0) { starts.Add(runStart); ends.Add(runEnd); deltas.Add(runGlyph - runStart); }
-            starts.Add(0xFFFF); ends.Add(0xFFFF); deltas.Add(1);               // the closing segment
 
-            int segs = starts.Count;
+            var segments = new List<Segment>();
+            foreach (var run in runs)
+            {
+                // The run cut where the glyphs stop following the codepoints.
+                var deltaSegments = new List<Segment>();
+                foreach (var kv in run)
+                {
+                    var last = deltaSegments.Count > 0 ? deltaSegments[deltaSegments.Count - 1] : null;
+                    if (last != null && kv.Value - kv.Key == last.Delta) { last.End = kv.Key; continue; }
+                    deltaSegments.Add(new Segment { Start = kv.Key, End = kv.Key, Delta = kv.Value - kv.Key });
+                }
+                // 8 bytes a segment; through the array, one segment and 2 bytes a codepoint.
+                if (deltaSegments.Count * 8 <= 8 + 2 * run.Count) segments.AddRange(deltaSegments);
+                else
+                {
+                    var glyphs = new List<int>(run.Count);
+                    foreach (var kv in run) glyphs.Add(kv.Value);
+                    segments.Add(new Segment { Start = run[0].Key, End = run[run.Count - 1].Key, Delta = 0, Glyphs = glyphs });
+                }
+            }
+            segments.Add(new Segment { Start = 0xFFFF, End = 0xFFFF, Delta = 1 });   // the closing segment
+
+            int segs = segments.Count;
+            int arrayLength = 0;
+            foreach (var seg in segments) if (seg.Glyphs != null) arrayLength += seg.Glyphs.Count;
+            long length = 16L + segs * 8L + arrayLength * 2L;
+            if (length > 0xFFFF) return null;
+
             var ms = new MemoryStream();
             WriteUInt16(ms, 4);
-            WriteUInt16(ms, 16 + segs * 8);                                    // length
+            WriteUInt16(ms, (int)length);
             WriteUInt16(ms, 0);                                                // language
             WriteUInt16(ms, segs * 2);
             int sr = 2 * (1 << (int)Math.Floor(Math.Log(segs, 2)));
             WriteUInt16(ms, sr);
             WriteUInt16(ms, (int)Math.Floor(Math.Log(segs, 2)));
             WriteUInt16(ms, segs * 2 - sr);
-            foreach (int e in ends) WriteUInt16(ms, e);
+            foreach (var seg in segments) WriteUInt16(ms, seg.End);
             WriteUInt16(ms, 0);                                                // reservedPad
-            foreach (int s in starts) WriteUInt16(ms, s);
-            foreach (int d in deltas) WriteUInt16(ms, d & 0xFFFF);
-            foreach (int _ in starts) WriteUInt16(ms, 0);                      // idRangeOffset: always idDelta
-            if (ms.Length > 0xFFFF) throw new InvalidDataException("cmap format 4 over 64 KB");
+            foreach (var seg in segments) WriteUInt16(ms, seg.Start);
+            foreach (var seg in segments) WriteUInt16(ms, seg.Delta & 0xFFFF);
+            // idRangeOffset: from its own slot to the segment's first entry of glyphIdArray, in bytes.
+            int arrayAt = 0;
+            for (int i = 0; i < segs; i++)
+            {
+                var seg = segments[i];
+                if (seg.Glyphs == null) { WriteUInt16(ms, 0); continue; }
+                WriteUInt16(ms, 2 * (segs - i) + 2 * arrayAt);
+                arrayAt += seg.Glyphs.Count;
+            }
+            foreach (var seg in segments)
+                if (seg.Glyphs != null) foreach (int g in seg.Glyphs) WriteUInt16(ms, g);
             return ms.ToArray();
         }
 

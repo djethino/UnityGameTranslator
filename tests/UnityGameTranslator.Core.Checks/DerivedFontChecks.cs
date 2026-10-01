@@ -33,6 +33,72 @@ namespace UnityGameTranslator.Core.Checks
             }
             Flex(check, Path.Combine(fonts, "UgtCffFlex.otf"));
             CidKeyed(check, Path.Combine(fonts, "NotoSansJP-cid-subset.otf"), Path.Combine(fonts, "NotoSansJP-cid-subset.points.json"));
+            LargeCmap(check, 25000, expectFormat4: true);
+            LargeCmap(check, 40000, expectFormat4: false);
+        }
+
+        /// <summary>
+        /// A CJK-sized cmap: tens of thousands of consecutive codepoints whose glyph numbers are
+        /// scattered — what a CJK font maps. One idDelta segment per character overflowed format 4's
+        /// 64 KB and the writer threw into the Options' Apply (2026-10-01). Now a run goes through
+        /// glyphIdArray while that fits, and format 12 alone carries the map when nothing does. Both
+        /// subtables are decoded here by the specification (the format 4 one by hand: the mod's parser
+        /// prefers format 12 and would never read it).
+        /// </summary>
+        private static void LargeCmap(Action<bool, string, string> check, int count, bool expectFormat4)
+        {
+            string label = $"cmap of {count} scattered glyphs";
+            byte[] source = DerivedFontWriter.Placeholder("UGT Check Cmap");
+            var added = new List<DerivedFontWriter.Added>();
+            for (int k = 0; k < count; k++)
+                added.Add(new DerivedFontWriter.Added { Codepoint = 0x3400 + (int)((long)k * 7919 % count), Glyph = 0, Advance = 500 });
+            byte[] derived = DerivedFontWriter.Write(source, "UGT Check Cmap", added, out string refusal);
+            check(derived != null, $"{label}: written", refusal ?? "");
+            if (derived == null) return;
+
+            var parser = new TtfParser(derived);
+            int wrong12 = 0;
+            for (int k = 0; k < count; k++) if (parser.GetGlyphIndex(added[k].Codepoint) != 1 + k) wrong12++;
+            check(wrong12 == 0, $"{label}: every codepoint reaches its glyph (format 12)", $"{wrong12} wrong");
+
+            var format4 = Format4Of(derived);
+            check((format4 != null) == expectFormat4, $"{label}: format 4 {(expectFormat4 ? "written" : "left out, over 64 KB")}", format4 == null ? "absent" : "present");
+            if (format4 == null) return;
+            int wrong4 = 0;
+            for (int k = 0; k < count; k++)
+                if (!format4.TryGetValue(added[k].Codepoint, out int g) || g != 1 + k) wrong4++;
+            check(wrong4 == 0 && format4.Count == count, $"{label}: every codepoint reaches its glyph (format 4)", $"{wrong4} wrong, {format4.Count} mapped");
+        }
+
+        /// <summary>The (3,1) format 4 subtable decoded by the OpenType specification, or null when absent.</summary>
+        private static Dictionary<int, int> Format4Of(byte[] font)
+        {
+            int U16(int at) => (font[at] << 8) | font[at + 1];
+            long U32(int at) => ((long)U16(at) << 16) | (uint)U16(at + 2);
+            int cmap = -1;
+            for (int i = 0, n = U16(4); i < n; i++)
+                if (System.Text.Encoding.ASCII.GetString(font, 12 + i * 16, 4) == "cmap") cmap = (int)U32(12 + i * 16 + 8);
+            int sub = -1;
+            for (int i = 0, n = U16(cmap + 2); i < n; i++)
+            {
+                int r = cmap + 4 + i * 8;
+                if (U16(r) == 3 && U16(r + 2) == 1) sub = cmap + (int)U32(r + 4);
+            }
+            if (sub < 0 || U16(sub) != 4) return null;
+            int segs = U16(sub + 6) / 2;
+            int ends = sub + 14, starts = ends + segs * 2 + 2, deltas = starts + segs * 2, ranges = deltas + segs * 2;
+            var map = new Dictionary<int, int>();
+            for (int i = 0; i < segs; i++)
+            {
+                int start = U16(starts + i * 2), end = U16(ends + i * 2), delta = U16(deltas + i * 2), range = U16(ranges + i * 2);
+                for (int c = start; c <= end && c != 0xFFFF; c++)
+                {
+                    int g = range == 0 ? (c + delta) & 0xFFFF : U16(ranges + i * 2 + range + (c - start) * 2);
+                    if (range != 0 && g != 0) g = (g + delta) & 0xFFFF;
+                    if (g != 0) map[c] = g;
+                }
+            }
+            return map;
         }
 
         /// <summary>

@@ -3,8 +3,12 @@ using UnityEngine;
 
 namespace UnityGameTranslator.Core
 {
-    /// <summary>Which side of the game's text an element of the mod's own window shows.</summary>
-    public enum GameTextSide { Source, Target }
+    /// <summary>
+    /// Which kind of the game's text an element of the mod's own window shows: its source text, its
+    /// translation, or the names of its objects (paths, code identifiers — English by convention even
+    /// in a game written in another language, so in a font of their own: user, 2026-10-01).
+    /// </summary>
+    public enum GameTextSide { Source, Target, ObjectNames }
 
     /// <summary>
     /// The elements of the mod's own windows that show the GAME's text — its source text or its
@@ -18,6 +22,17 @@ namespace UnityGameTranslator.Core
     /// </summary>
     public static class ModWindowText
     {
+        /// <summary>
+        /// Every part of the window, each with a font of its own: the interface (null), then the game's
+        /// source text, its translation, its object names. The one list every walk over them reads.
+        /// </summary>
+        public static readonly GameTextSide?[] Parts = { null, GameTextSide.Source, GameTextSide.Target, GameTextSide.ObjectNames };
+
+        /// <summary>What a part is called in a log line.</summary>
+        public static string Describe(GameTextSide? part) =>
+            part == GameTextSide.Source ? "source text" : part == GameTextSide.Target ? "target text"
+            : part == GameTextSide.ObjectNames ? "object name" : "interface";
+
         private sealed class Entry
         {
             public GameTextSide Side;

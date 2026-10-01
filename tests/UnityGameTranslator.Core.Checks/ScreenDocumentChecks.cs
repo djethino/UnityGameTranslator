@@ -300,14 +300,14 @@ namespace UnityGameTranslator.Core.Checks
             var gameTextPieces = new (string file, string template, string piece, string side)[]
             {
                 ("inspector.json", "TextEditEntry", "Key", "source"), ("inspector.json", "TextEditEntry", "TranslationInput", "target"),
-                ("inspector.json", "TextEditEntry", "Preview", "target"), ("inspector.json", null, "HoverPathValue", "source"),
-                ("inspector.json", null, "SelectedPathValue", "source"),
+                ("inspector.json", "TextEditEntry", "Preview", "target"), ("inspector.json", null, "HoverPathValue", "names"),
+                ("inspector.json", null, "SelectedPathValue", "names"),
                 ("tools.json", "FailureRow", "Source", "source"), ("tools.json", null, "SourceText", "source"),
-                ("tools.json", null, "FailElement", "source"), ("tools.json", "TextRow", "Text", "target"),
+                ("tools.json", null, "FailElement", "names"), ("tools.json", "TextRow", "Text", "target"),
                 ("tools.json", null, "FailInput", "target"), ("tools.json", "HeldRow", "Text", "source"),
-                ("tools.json", "HeldRow", "Element", "source"), ("tools.json", "FindResult", "Path", "source"),
-                ("tools.json", "ExclusionRow", "PatternLabel", "source"), ("tools.json", "ScanCandidate", "Label", "source"),
-                ("tools.json", "VariableRow", "Detail", "source"),
+                ("tools.json", "HeldRow", "Element", "names"), ("tools.json", "FindResult", "Path", "names"),
+                ("tools.json", "ExclusionRow", "PatternLabel", "names"), ("tools.json", "ScanCandidate", "Label", "names"),
+                ("tools.json", "VariableRow", "Detail", "names"),
                 ("merge.json", "ConflictRow", "Key", "source"), ("merge.json", "ConflictRow", "LocalValue", "target"),
                 ("merge.json", "ConflictRow", "RemoteValue", "target"),
             };
@@ -323,11 +323,11 @@ namespace UnityGameTranslator.Core.Checks
                     $"{g.file} {(g.template ?? "body")}/{g.piece} shows the game's {g.side} text", node == null ? "not found" : node.Word("gameText") ?? "unmarked");
             }
 
-            // 45 = the 41 settings acts (the last ones: the source and target text fonts of the game's
-            // text the window shows) plus the About tab's four doors out: this mod's source, the
+            // 46 = the 42 settings acts (the last ones: the source text, target text and object name
+            // fonts of the game's text the window shows) plus the About tab's four doors out: this mod's source, the
             // Manager, the website, the studio. A tab that only reads and links asks for no more.
-            check(options.Acts.Count == 45 && options.Nodes["AiAdvanced"].Kind == "collapsible" && options.Nodes["AiAdvanced"].Flag("expanded") == false,
-                "options.json asks for 45 acts and folds the AI's advanced settings", $"got {options.Acts.Count} acts");
+            check(options.Acts.Count == 46 && options.Nodes["AiAdvanced"].Kind == "collapsible" && options.Nodes["AiAdvanced"].Flag("expanded") == false,
+                "options.json asks for 46 acts and folds the AI's advanced settings", $"got {options.Acts.Count} acts");
 
             // ⚠ The About tab carries the mod's only two pictures. A document can name a picture
             // and never hold one: if either box disappears, the code that fills it throws at

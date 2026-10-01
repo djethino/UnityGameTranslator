@@ -155,7 +155,8 @@ namespace UnityGameTranslator.Core
             // interface file's), and the fonts it draws the game's source text and translation in
             // (source_text_font, target_text_font — ModWindowText).
             foreach (var reference in new[] { ReadString(configPath, "interface_font"), ReadString(interfacePath, "_settings", "ui_font"),
-                                              ReadString(configPath, "source_text_font"), ReadString(configPath, "target_text_font") })
+                                              ReadString(configPath, "source_text_font"), ReadString(configPath, "target_text_font"),
+                                              ReadString(configPath, "object_name_font") })
                 if (!string.IsNullOrEmpty(reference)) references.Add(reference);
 
             var customFiles = FontFilesByName(fontsFolder);

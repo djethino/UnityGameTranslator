@@ -37,6 +37,7 @@ namespace UnityGameTranslator.Core.UI
             {
                 case GameTextSide.Source: return "This window shows the source text incorrectly. Set a source text font in Options.";
                 case GameTextSide.Target: return $"This window shows {What} incorrectly. Set a target text font in Options.";
+                case GameTextSide.ObjectNames: return "This window shows object names incorrectly. Set an object name font in Options.";
                 default: return $"This window's labels draw {What} incorrectly. Set an interface font in Options.";
             }
         }

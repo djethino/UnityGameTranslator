@@ -35,7 +35,7 @@ namespace UnityGameTranslator.Core.UI
                 return !string.IsNullOrEmpty(font)
                     && string.Equals(UnityGameTranslator.Common.FontReferences.Name(font), fontName, StringComparison.OrdinalIgnoreCase);
             }
-            bool sideFont = Names(GameTextSide.Source) || Names(GameTextSide.Target);
+            bool sideFont = Names(GameTextSide.Source) || Names(GameTextSide.Target) || Names(GameTextSide.ObjectNames);
             if (Names(null) || (sideFont && !GameTextFonts.Forget(fontName)))
                 TranslatorUIManager.ApplyInterfaceFont();
             else if (sideFont)
@@ -46,7 +46,7 @@ namespace UnityGameTranslator.Core.UI
         {
             // Only when the window draws with a game font somewhere — its interface, or the game's
             // text it shows: those come and go with the scenes; the others do not.
-            foreach (var side in new GameTextSide?[] { null, GameTextSide.Source, GameTextSide.Target })
+            foreach (var side in ModWindowText.Parts)
                 if (FontManager.IsGameFontRef(TranslatorCore.WindowFontFor(side)))
                 {
                     TranslatorUIManager.ApplyInterfaceFont();

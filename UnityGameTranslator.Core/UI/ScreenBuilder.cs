@@ -640,7 +640,8 @@ namespace UnityGameTranslator.Core.UI
                 case null: return null;
                 case "source": return GameTextSide.Source;
                 case "target": return GameTextSide.Target;
-                default: throw new ScreenDocumentException($"'{node.Name}': '{node.Word("gameText")}' is not a side of the game's text (source, target)");
+                case "names": return GameTextSide.ObjectNames;
+                default: throw new ScreenDocumentException($"'{node.Name}': '{node.Word("gameText")}' is not a kind of the game's text (source, target, names)");
             }
         }
 

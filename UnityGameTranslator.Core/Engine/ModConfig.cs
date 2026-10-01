@@ -409,6 +409,9 @@ namespace UnityGameTranslator.Core
         // picker values as interface_font. See analyse/polices-fenetres-du-mod.md.
         public string source_text_font { get; set; } = null;
         public string target_text_font { get; set; } = null;
+        // The names of the game's objects shown there (paths, code identifiers): English by
+        // convention even in a game written in another language — the interface font unless set.
+        public string object_name_font { get; set; } = null;
 
         /// <summary>
         /// Advanced fallback: Translate at localization string level (ToString/op_Implicit).

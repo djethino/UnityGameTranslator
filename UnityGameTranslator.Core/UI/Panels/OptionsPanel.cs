@@ -38,6 +38,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         // The fonts the window draws the GAME's text in — its source text and its translation (ModWindowText).
         private SearchableDropdown _sourceTextFontDropdown;
         private SearchableDropdown _targetTextFontDropdown;
+        private SearchableDropdown _objectNameFontDropdown;
         private SearchableDropdown _sourceLanguageDropdown;
         private SearchableDropdown _targetLanguageDropdown;
 
@@ -208,6 +209,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             public string interface_font;
             public string source_text_font;
             public string target_text_font;
+            public string object_name_font;
             public string source_language;
             public string target_language;
             public string settings_hotkey;
@@ -280,6 +282,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                     interface_font = TranslatorCore.Config.interface_font,
                     source_text_font = TranslatorCore.Config.source_text_font,
                     target_text_font = TranslatorCore.Config.target_text_font,
+                    object_name_font = TranslatorCore.Config.object_name_font,
                     source_language = TranslatorCore.Config.source_language ?? "auto",
                     target_language = TranslatorCore.Config.target_language ?? "auto",
                     settings_hotkey = TranslatorCore.Config.settings_hotkey ?? Hotkeys.Default,
@@ -404,6 +407,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _interfaceFontDropdown = _screen.Dropdown("InterfaceFont");
             _sourceTextFontDropdown = _screen.Dropdown("SourceTextFont");
             _targetTextFontDropdown = _screen.Dropdown("TargetTextFont");
+            _objectNameFontDropdown = _screen.Dropdown("ObjectNameFont");
             _notificationsEnabledToggle = _screen.Toggle("NotifEnabledToggle");
             _notificationPositionDropdown = _screen.Dropdown("NotifPosition");
             _debugLoggingToggle = _screen.Toggle("DebugLoggingToggle");
@@ -560,6 +564,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 case "interfaceFontChanged": return OnSettingChanged;
                 case "sourceTextFontChanged": return OnSettingChanged;
                 case "targetTextFontChanged": return OnSettingChanged;
+                case "objectNameFontChanged": return OnSettingChanged;
                 case "notificationsEnabledChanged": return OnNotificationsEnabledChanged;
                 case "notifPositionChanged":
                 case "debugLoggingChanged":
@@ -1484,6 +1489,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             var gameTextFontOptions = FontManager.CanMakeWindowFonts ? windowFontOptions : MarkMissingCharactersOnly(windowFontOptions);
             FillWindowFontPicker(_sourceTextFontDropdown, gameTextFontOptions, TranslatorCore.Config.source_text_font);
             FillWindowFontPicker(_targetTextFontDropdown, gameTextFontOptions, TranslatorCore.Config.target_text_font);
+            FillWindowFontPicker(_objectNameFontDropdown, gameTextFontOptions, TranslatorCore.Config.object_name_font);
         }
 
         /// <summary>
@@ -1545,6 +1551,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                 TranslatorCore.Config.target_text_font = _targetTextFontDropdown != null
                     ? NormalizeInterfaceFont(_targetTextFontDropdown.SelectedValue)
                     : TranslatorCore.Config.target_text_font;
+                TranslatorCore.Config.object_name_font = _objectNameFontDropdown != null
+                    ? NormalizeInterfaceFont(_objectNameFontDropdown.SelectedValue)
+                    : TranslatorCore.Config.object_name_font;
                 TranslatorCore.InvalidateInterfaceFontAvailability();
 
                 // Languages
@@ -1921,6 +1930,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             P.Track(_interfaceFontDropdown?.Handle, () => NormalizeInterfaceFont(_interfaceFontDropdown?.SelectedValue) != S().interface_font);
             P.Track(_sourceTextFontDropdown?.Handle, () => NormalizeInterfaceFont(_sourceTextFontDropdown?.SelectedValue) != S().source_text_font);
             P.Track(_targetTextFontDropdown?.Handle, () => NormalizeInterfaceFont(_targetTextFontDropdown?.SelectedValue) != S().target_text_font);
+            P.Track(_objectNameFontDropdown?.Handle, () => NormalizeInterfaceFont(_objectNameFontDropdown?.SelectedValue) != S().object_name_font);
 
             // Languages
             P.Track(_sourceLanguageDropdown.Handle, () =>

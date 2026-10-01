@@ -1817,7 +1817,9 @@ namespace UnityGameTranslator.Core
         public static string WindowFontFor(GameTextSide? side)
         {
             if (side == null) return WindowFont;
-            string chosen = side == GameTextSide.Source ? Config?.source_text_font : Config?.target_text_font;
+            string chosen = side == GameTextSide.Source ? Config?.source_text_font
+                          : side == GameTextSide.Target ? Config?.target_text_font
+                          : Config?.object_name_font;
             if (string.IsNullOrEmpty(chosen)) return WindowFont;
             // A game font is there or not with the scene, never "missing on this machine": the
             // window asks for it when it draws, and again at each scene (UI.GameTextFonts).
@@ -1827,7 +1829,7 @@ namespace UnityGameTranslator.Core
                 available = AssetAvailability.IsFontAvailable(chosen);
                 _sideFontAvailable[chosen] = available;
                 if (!available)
-                    LogWarning($"[UIManager] {(side == GameTextSide.Source ? "Source" : "Target")} text font '{chosen}' is missing on this machine — the interface font draws that text");
+                    LogWarning($"[UIManager] The {ModWindowText.Describe(side)} font '{chosen}' is missing on this machine — the interface font draws that text");
             }
             return available ? chosen : WindowFont;
         }

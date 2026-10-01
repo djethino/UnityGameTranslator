@@ -2684,7 +2684,7 @@ namespace UnityGameTranslator.Core
             var references = new List<string>();
             foreach (var kv in TranslatorCore.FontSettingsMap)
                 if (!string.IsNullOrEmpty(kv.Value?.fallback)) references.Add(kv.Value.fallback);
-            foreach (var side in new GameTextSide?[] { null, GameTextSide.Source, GameTextSide.Target })
+            foreach (var side in ModWindowText.Parts)
             {
                 string windowFont = TranslatorCore.WindowFontFor(side);
                 if (!string.IsNullOrEmpty(windowFont)) references.Add(windowFont);

@@ -111,7 +111,7 @@ namespace UnityGameTranslator.Core.UI
         internal static List<string> Unmade()
         {
             var names = new List<string>();
-            foreach (var side in new[] { GameTextSide.Target, GameTextSide.Source })
+            foreach (var side in new[] { GameTextSide.Target, GameTextSide.Source, GameTextSide.ObjectNames })
             {
                 string own = OwnFontOf(side);
                 if (own == null) continue;

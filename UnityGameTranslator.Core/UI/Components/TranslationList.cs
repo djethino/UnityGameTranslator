@@ -42,7 +42,7 @@ namespace UnityGameTranslator.Core.UI.Components
         /// width the row HAS — rows are built before the list is laid out, and the width they
         /// are first dealt in is a stand-in (<see cref="Reflow"/>).
         /// </summary>
-        private sealed class Strip { public Host Host; public List<Badge> Chips; public float DealtIn; }
+        private sealed class Strip { public Host Host; public List<Badge> Chips; public float DealtIn; public int FontEpoch; }
         private readonly List<Strip> _strips = new List<Strip>();
 
         private struct ShownRow
@@ -352,10 +352,12 @@ namespace UnityGameTranslator.Core.UI.Components
             foreach (var strip in _strips)
             {
                 float width = BadgeStrip.WidthOf(strip.Host, 0f);
-                if (width < 1f || Mathf.Abs(width - strip.DealtIn) < 0.5f) continue;
+                // Measured in another font: dealt again even at the same width.
+                if (width < 1f || (Mathf.Abs(width - strip.DealtIn) < 0.5f && strip.FontEpoch == TranslatorUIManager.WindowFontEpoch)) continue;
                 strip.Host.Clear();
                 BadgeStrip.Create(strip.Host, "Badges", strip.Chips, width, Surface.Item);
                 strip.DealtIn = width;
+                strip.FontEpoch = TranslatorUIManager.WindowFontEpoch;
             }
         }
 
@@ -579,7 +581,7 @@ namespace UnityGameTranslator.Core.UI.Components
                 var chipHost = row.Host("Badges");
                 float dealtIn = BadgeStrip.WidthOf(chipHost, 360f);
                 BadgeStrip.Create(chipHost, "Badges", chips, dealtIn, Surface.Item);
-                _strips.Add(new Strip { Host = chipHost, Chips = chips, DealtIn = dealtIn });
+                _strips.Add(new Strip { Host = chipHost, Chips = chips, DealtIn = dealtIn, FontEpoch = TranslatorUIManager.WindowFontEpoch });
             }
 
             // The size, and how much of the game it reaches: what the chips above do not say.

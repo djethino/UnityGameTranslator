@@ -1620,7 +1620,7 @@ namespace UnityGameTranslator.Core.UI
                 int changed = 0;
                 SwapModUIFont(UiBase.RootObject.transform, freshFont, ref changed);
                 GameTextFonts.PutAll();
-                InvalidateScopeStrips();
+                WindowFontChanged();
                 _uiFontRebacked = false;
                 _rebackedChain = null;
                 _pendingRebackChain = null;
@@ -1683,7 +1683,7 @@ namespace UnityGameTranslator.Core.UI
                 int changed = 0;
                 SwapModUIFont(UiBase.RootObject.transform, _originalUIFont, ref changed);
                 GameTextFonts.PutAll();
-                InvalidateScopeStrips();
+                WindowFontChanged();
             }
         }
 
@@ -1777,6 +1777,26 @@ namespace UnityGameTranslator.Core.UI
             bool last = _fontRerenderCountdown == 0;
             int changed = 0;
             RerenderModUIWalk(UiBase.RootObject.transform, 0, last, ref changed);
+            // The new glyphs are in: what was measured with the old ones is measured again.
+            if (last) WindowFontChanged();
+        }
+
+        /// <summary>
+        /// Counts the changes of the font the window draws with. Whatever sized itself from its text
+        /// (BadgeStrip chips, scope strips) compares it with the count it was measured at.
+        /// </summary>
+        public static int WindowFontEpoch { get; private set; }
+
+        /// <summary>
+        /// The window's font has changed what its words measure. Chips keep the width their word had
+        /// in the old font — "Published" cut into "Publish / ed" after applying a wider font, until
+        /// the card happened to be redrawn (2026-10-01) — so every panel is asked to measure again,
+        /// through the same path a resize takes (FollowBodySize).
+        /// </summary>
+        private static void WindowFontChanged()
+        {
+            WindowFontEpoch++;
+            InvalidateScopeStrips();
         }
 
         /// <summary>

@@ -622,13 +622,18 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             var size = BodySize;
             if (size.y <= 1f) return;
-            if (Math.Abs(size.y - _lastBodySize.y) < 0.5f && Math.Abs(size.x - _lastBodySize.x) < 0.5f) return;
+            // A change of the window's font is a change of what every measured word takes: asked
+            // again like a resize (TranslatorUIManager.WindowFontChanged).
+            if (Math.Abs(size.y - _lastBodySize.y) < 0.5f && Math.Abs(size.x - _lastBodySize.x) < 0.5f
+                && _lastFontEpoch == TranslatorUIManager.WindowFontEpoch) return;
 
             _lastBodySize = size;
+            _lastFontEpoch = TranslatorUIManager.WindowFontEpoch;
             BodySized();
         }
 
         private Vector2 _lastBodySize;
+        private int _lastFontEpoch;
 
         /// <summary>
         /// Watches the window for a tremble — a layout going back and forth between two states,

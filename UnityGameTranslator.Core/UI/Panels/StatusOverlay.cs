@@ -839,12 +839,13 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // from system fonts and Unity counts them as its own (Font.HasCharacter: True for a
                 // letter its file does not hold), so "borrowed" cannot be proved — "draws incorrectly"
                 // is true whether the letters are its own or not. Missing characters are boxes or
-                // nothing: said as such.
+                // nothing: said as such. Then the way out (user, same day: "on ne donne pas de
+                // solution"), in the word of the Fonts tab its button opens ("Fallback:").
                 _fontCoverageLabel?.Show(fonts.Count > 1
-                    ? $"{fonts.Count} fonts draw {what} incorrectly"
+                    ? $"{fonts.Count} fonts draw {what} incorrectly. Set a fallback font for each."
                     : fonts[0].Missing > 0
-                        ? $"Font \"{fonts[0].Font}\" is missing {(string.IsNullOrEmpty(language) ? "characters of this translation" : language + " characters")}"
-                        : $"Font \"{fonts[0].Font}\" draws {what} incorrectly");
+                        ? $"Font \"{fonts[0].Font}\" is missing {(string.IsNullOrEmpty(language) ? "characters of this translation" : language + " characters")}. Set a fallback font for it."
+                        : $"Font \"{fonts[0].Font}\" draws {what} incorrectly. Set a fallback font for it.");
             }
 
             // 2b ter. This window cannot show the game's text correctly with its font.

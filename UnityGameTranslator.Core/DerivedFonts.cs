@@ -508,18 +508,30 @@ namespace UnityGameTranslator.Core
             try
             {
                 if (path != null) return File.ReadAllBytes(path);
+                // The best face of ALL the collections, not the first file's: a family's Bold file
+                // carries its family name too and is listed before its Regular (FontCollection.FindFace).
+                string bestFile = null;
+                int bestFace = -1, bestRank = int.MaxValue;
                 foreach (var dir in CustomFontLoader.SystemFontDirectories())
+                {
                     foreach (var file in Directory.GetFiles(dir, "*.ttc", SearchOption.AllDirectories))
                     {
-                        int face;
-                        using (var stream = File.OpenRead(file)) face = FontCollection.FindFace(stream, name);
-                        if (face < 0) continue;
-                        byte[] bytes = FontCollection.Face(File.ReadAllBytes(file), face);
-                        Directory.CreateDirectory(folder);
-                        path = Path.Combine(folder, "sys-" + Sanitized(name) + ".ttf");
-                        File.WriteAllBytes(path, bytes);
-                        return bytes;
+                        int face, rank;
+                        using (var stream = File.OpenRead(file)) face = FontCollection.FindFace(stream, name, out rank);
+                        if (face < 0 || rank >= bestRank) continue;
+                        bestFile = file; bestFace = face; bestRank = rank;
+                        if (rank == 0) break;
                     }
+                    if (bestRank == 0) break;
+                }
+                if (bestFile != null)
+                {
+                    byte[] bytes = FontCollection.Face(File.ReadAllBytes(bestFile), bestFace);
+                    Directory.CreateDirectory(folder);
+                    path = Path.Combine(folder, "sys-" + Sanitized(name) + ".ttf");
+                    File.WriteAllBytes(path, bytes);
+                    return bytes;
+                }
             }
             catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException || ex is InvalidDataException || ex is ArgumentException)
             {

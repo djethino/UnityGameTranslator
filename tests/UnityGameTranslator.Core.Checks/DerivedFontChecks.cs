@@ -33,6 +33,7 @@ namespace UnityGameTranslator.Core.Checks
             }
             Flex(check, Path.Combine(fonts, "UgtCffFlex.otf"));
             CidKeyed(check, Path.Combine(fonts, "NotoSansJP-cid-subset.otf"), Path.Combine(fonts, "NotoSansJP-cid-subset.points.json"));
+            RegularOfFamily(check);
             LargeCmap(check, 25000, expectFormat4: true);
             LargeCmap(check, 40000, expectFormat4: false);
         }
@@ -338,21 +339,7 @@ namespace UnityGameTranslator.Core.Checks
         /// </summary>
         private static void Collection(Action<bool, string, string> check, byte[] a, byte[] b)
         {
-            int header = 12 + 2 * 4;
-            int atA = header, atB = header + ((a.Length + 3) & ~3);
-            var ttc = new byte[atB + b.Length];
-            Put32(ttc, 0, 0x74746366); Put32(ttc, 4, 0x00010000); Put32(ttc, 8, 2);
-            Put32(ttc, 12, (uint)atA); Put32(ttc, 16, (uint)atB);
-            foreach (var (font, at) in new[] { (a, atA), (b, atB) })
-            {
-                Array.Copy(font, 0, ttc, at, font.Length);
-                int tables = font[4] << 8 | font[5];
-                for (int t = 0; t < tables; t++)
-                {
-                    int r = at + 12 + t * 16 + 8;
-                    Put32(ttc, r, (uint)((ttc[r] << 24 | ttc[r + 1] << 16 | ttc[r + 2] << 8 | ttc[r + 3]) + at));
-                }
-            }
+            var ttc = Ttc(a, b);
 
             var khmer = new TtfParser(b);
             using (var stream = new MemoryStream(ttc))
@@ -373,6 +360,70 @@ namespace UnityGameTranslator.Core.Checks
                 if (cp != 0 && face.GetGlyphIndex(cp) != khmer.GetGlyphIndex(cp)) differ++;
             check(same && differ == 0, "collection: the face taken out is the font that went in (names, glyphs, outlines, mappings)",
                 $"glyphs {face.GlyphCount}/{khmer.GlyphCount}, {differ} difference(s)");
+        }
+
+        /// <summary>A two-face collection of <paramref name="a"/> then <paramref name="b"/>.</summary>
+        private static byte[] Ttc(byte[] a, byte[] b)
+        {
+            int header = 12 + 2 * 4;
+            int atA = header, atB = header + ((a.Length + 3) & ~3);
+            var ttc = new byte[atB + b.Length];
+            Put32(ttc, 0, 0x74746366); Put32(ttc, 4, 0x00010000); Put32(ttc, 8, 2);
+            Put32(ttc, 12, (uint)atA); Put32(ttc, 16, (uint)atB);
+            foreach (var (font, at) in new[] { (a, atA), (b, atB) })
+            {
+                Array.Copy(font, 0, ttc, at, font.Length);
+                int tables = font[4] << 8 | font[5];
+                for (int t = 0; t < tables; t++)
+                {
+                    int r = at + 12 + t * 16 + 8;
+                    Put32(ttc, r, (uint)((ttc[r] << 24 | ttc[r + 1] << 16 | ttc[r + 2] << 8 | ttc[r + 3]) + at));
+                }
+            }
+            return ttc;
+        }
+
+        /// <summary>
+        /// A family's Bold and Regular faces carry the same family name (id 1), and in a system's
+        /// font folder the Bold's file comes first: "Yu Gothic" drew in bold until the Regular was
+        /// preferred (2026-10-01). Both faces here: family "Yu Test", full names that are not the
+        /// family's ("Yu Tesb" / "Yu Tesr", as "Yu Gothic Bold" / "Yu Gothic Regular"), the Bold first.
+        /// </summary>
+        private static void RegularOfFamily(Action<bool, string, string> check)
+        {
+            byte[] bold = DerivedFontWriter.Placeholder("Yu Test");
+            SetName(bold, 2, "Bolding");
+            SetName(bold, 4, "Yu Tesb");
+            byte[] regular = DerivedFontWriter.Placeholder("Yu Test");
+            SetName(regular, 4, "Yu Tesr");
+            using (var stream = new MemoryStream(Ttc(bold, regular)))
+            {
+                int face = FontCollection.FindFace(stream, "Yu Test", out int rank);
+                check(face == 1 && rank == 1, "collection: a family's Regular wins over its Bold listed first", $"face {face}, rank {rank}");
+                face = FontCollection.FindFace(stream, "Yu Tesb", out rank);
+                check(face == 0 && rank == 0, "collection: a full name finds its own face", $"face {face}, rank {rank}");
+            }
+        }
+
+        /// <summary>Rewrites the en-US string of name <paramref name="id"/> in place — same length only.</summary>
+        private static void SetName(byte[] font, int id, string value)
+        {
+            int U16(int at) => font[at] << 8 | font[at + 1];
+            int name = -1;
+            for (int t = 0, n = U16(4); t < n; t++)
+                if (System.Text.Encoding.ASCII.GetString(font, 12 + t * 16, 4) == "name")
+                    name = font[12 + t * 16 + 8] << 24 | font[12 + t * 16 + 9] << 16 | font[12 + t * 16 + 10] << 8 | font[12 + t * 16 + 11];
+            int count = U16(name + 2), strings = name + U16(name + 4);
+            for (int i = 0; i < count; i++)
+            {
+                int r = name + 6 + i * 12;
+                if (U16(r + 6) != id) continue;
+                byte[] bytes = System.Text.Encoding.BigEndianUnicode.GetBytes(value);
+                if (bytes.Length != U16(r + 8)) throw new ArgumentException($"name {id}: same length only");
+                Array.Copy(bytes, 0, font, strings + U16(r + 10), bytes.Length);
+                return;
+            }
+            throw new ArgumentException($"name {id}: absent");
         }
 
         private static void Put32(byte[] b, int o, uint v)

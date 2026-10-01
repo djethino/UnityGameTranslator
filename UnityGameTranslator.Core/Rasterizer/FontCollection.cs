@@ -21,29 +21,59 @@ namespace UnityGameTranslator.Core.Rasterizer
         internal static int FaceCount(byte[] file) => IsCollection(file) ? (int)ReadUInt32(file, 8) : 1;
 
         /// <summary>
-        /// The index of the face of a collection that carries <paramref name="name"/> among its
-        /// family or full names (ids 1, 4, 16 — the ones an engine looks a font up by, as
-        /// TtfParser's Metrics.Names), -1 when none or when the file is not a collection. Reads the
-        /// directories and name tables only: a system's collections weigh tens of megabytes, and
-        /// they are searched while the game starts.
+        /// The index of the face of a collection that carries <paramref name="name"/>, -1 when none
+        /// or when the file is not a collection. See the other overload for which face wins.
         /// </summary>
-        internal static int FindFace(Stream file, string name)
+        internal static int FindFace(Stream file, string name) => FindFace(file, name, out _);
+
+        /// <summary>The worst <see cref="FindFace(Stream, string, out int)"/> rank: a typographic family only.</summary>
+        internal const int WorstRank = 3;
+
+        /// <summary>
+        /// The face of a collection that best carries <paramref name="name"/>, with how well
+        /// (<paramref name="rank"/>, 0 best), so a caller searching several collections keeps the
+        /// best face of all of them rather than the first file listed. Reads the directories and
+        /// name tables only: a system's collections weigh tens of megabytes, and they are searched
+        /// while the game starts.
+        ///
+        /// 0 — the face's full name (id 4) IS the name ("Yu Gothic UI Semibold");
+        /// 1 — its family (id 1) is, and it is the Regular of that family;
+        /// 2 — its family is, in another style: the Bold of a family carries the same family name,
+        ///     and its file is listed before the Regular's ("Yu Gothic" gave the Bold, 2026-10-01);
+        /// 3 — only its typographic family (id 16), shared by every weight ("Nirmala UI" names the
+        ///     Semilight face too).
+        /// </summary>
+        internal static int FindFace(Stream file, string name, out int rank)
         {
+            rank = int.MaxValue;
             var header = ReadAt(file, 0, 12);
             if (header == null || ReadUInt32(header, 0) != Ttcf) return -1;
             int count = (int)ReadUInt32(header, 8);
             var offsets = ReadAt(file, 12, count * 4);
             if (offsets == null) return -1;
-            // The face's own family or full name first (ids 1, 4); a typographic family (id 16) is
-            // shared by the weights of a family — "Nirmala UI" names the Semilight face too.
-            var tables = new byte[count][];
-            for (int i = 0; i < count; i++) tables[i] = NameTable(file, ReadUInt32(offsets, i * 4));
-            foreach (bool typographic in new[] { false, true })
-                for (int i = 0; i < count; i++)
-                    if (tables[i] != null && Names(tables[i], typographic).Exists(n => string.Equals(n, name, StringComparison.OrdinalIgnoreCase)))
-                        return i;
-            return -1;
+            int best = -1;
+            for (int i = 0; i < count && rank > 0; i++)
+            {
+                var table = NameTable(file, ReadUInt32(offsets, i * 4));
+                if (table == null) continue;
+                int r = Has(table, 4, name) ? 0
+                      : Has(table, 1, name) ? (IsRegular(table) ? 1 : 2)
+                      : Has(table, 16, name) ? WorstRank
+                      : int.MaxValue;
+                if (r < rank) { rank = r; best = i; }
+            }
+            return best;
         }
+
+        private static bool Has(byte[] table, int id, string name) =>
+            NamesOf(table, id).Exists(n => string.Equals(n, name, StringComparison.OrdinalIgnoreCase));
+
+        /// <summary>Its subfamily (id 2) is the plain style, in the words fonts use for it.</summary>
+        private static bool IsRegular(byte[] table) =>
+            NamesOf(table, 2).Exists(n => n.Equals("Regular", StringComparison.OrdinalIgnoreCase)
+                                       || n.Equals("Normal", StringComparison.OrdinalIgnoreCase)
+                                       || n.Equals("Book", StringComparison.OrdinalIgnoreCase)
+                                       || n.Equals("Roman", StringComparison.OrdinalIgnoreCase));
 
         private static byte[] NameTable(Stream file, long dir)
         {
@@ -63,6 +93,10 @@ namespace UnityGameTranslator.Core.Rasterizer
 
         /// <summary>The family and full names of a name table (ids 1 and 4, or the typographic family 16), every platform.</summary>
         internal static List<string> Names(byte[] table, bool typographic)
+            => typographic ? NamesOf(table, 16) : NamesOf(table, 1, 4);
+
+        /// <summary>The strings a name table holds under <paramref name="ids"/>, every platform.</summary>
+        private static List<string> NamesOf(byte[] table, params int[] ids)
         {
             var names = new List<string>();
             if (table.Length < 6) return names;
@@ -73,7 +107,7 @@ namespace UnityGameTranslator.Core.Rasterizer
                 if (r + 12 > table.Length) break;
                 int platform = ReadUInt16(table, r), id = ReadUInt16(table, r + 6);
                 int length = ReadUInt16(table, r + 8), at = strings + ReadUInt16(table, r + 10);
-                if (typographic ? id != 16 : id != 1 && id != 4) continue;
+                if (Array.IndexOf(ids, id) < 0) continue;
                 if (at + length > table.Length) continue;
                 string n = platform == 3 || platform == 0 ? System.Text.Encoding.BigEndianUnicode.GetString(table, at, length)
                          : platform == 1 ? System.Text.Encoding.ASCII.GetString(table, at, length)

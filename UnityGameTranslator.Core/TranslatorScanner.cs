@@ -2672,15 +2672,28 @@ namespace UnityGameTranslator.Core
         private static readonly Color DimColor = new Color(1f, 1f, 1f, 0.15f); // Very transparent
 
         /// <summary>
+        /// The colour of a font only HOVERED in the Fonts tab — what a click there would select.
+        /// Light blue, the mod's hover colour, never the selection's magenta: hovered and selected
+        /// must not be mistaken for each other (UIStyles.GameHighlightHover).
+        /// </summary>
+        public static readonly Color PreviewColor = new Color(0.35f, 0.75f, 1f, 1f);
+
+        // The colour the font being shown wears now: the selection's, or the hover's.
+        private static Color _highlightColor = HighlightColor;
+
+        /// <summary>
         /// Highlight all text components using a specific font.
         /// Matching components get a bright color, others get dimmed.
         /// </summary>
-        public static void HighlightFont(string fontName)
+        /// <param name="color">The matching texts' colour: the selection's by default, or
+        /// <see cref="PreviewColor"/> for a font only hovered.</param>
+        public static void HighlightFont(string fontName, Color? color = null)
         {
             if (_highlightedFontName != null)
                 ClearHighlight();
 
             _highlightedFontName = fontName;
+            _highlightColor = color ?? HighlightColor;
             EnsureLateUpdateRunner();
             var processedIds = new HashSet<int>();
 
@@ -2741,7 +2754,7 @@ namespace UnityGameTranslator.Core
                 // ⚠ Its counts join the audit rather than being printed apart: two totals for one
                 // question is how a reader ends up trusting the smaller one.
                 int uitkMatched = UIToolkitSupport.HighlightFont(
-                    fontName, HighlightColor, DimColor, out int uitkReplaced);
+                    fontName, _highlightColor, DimColor, out int uitkReplaced);
                 _hlMatched += uitkMatched;
                 _hlReplaced += uitkReplaced;
 
@@ -2817,7 +2830,7 @@ namespace UnityGameTranslator.Core
                 }
             }
 
-            RecolourForHighlight(component, id, matches ? HighlightColor : DimColor);
+            RecolourForHighlight(component, id, matches ? _highlightColor : DimColor);
         }
 
         /// <summary>
@@ -3605,7 +3618,7 @@ namespace UnityGameTranslator.Core
                         bool matches = string.Equals(settingsFontName, _highlightedFontName, StringComparison.OrdinalIgnoreCase);
                         // Recorded on first touch: a text that appeared during the highlight was
                         // recoloured here with no colour kept, and stayed grey after it (2026-09-28).
-                        RecolourForHighlight(component, id, matches ? HighlightColor : DimColor);
+                        RecolourForHighlight(component, id, matches ? _highlightColor : DimColor);
                     }
                 }
             }

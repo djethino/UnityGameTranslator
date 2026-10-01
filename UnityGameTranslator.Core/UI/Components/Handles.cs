@@ -142,6 +142,24 @@ namespace UnityGameTranslator.Core.UI.Components
         internal abstract GameObject Object { get; }
 
         /// <summary>
+        /// Shown, and the pointer over it now — asked from the tick, as the help zone asks
+        /// (HelpZone.PollHover): pointer events never reach the mod's controls on IL2CPP.
+        /// </summary>
+        public bool UnderPointer
+        {
+            get
+            {
+                var go = Object;
+                if (go == null || !go.activeInHierarchy) return false;
+                var rect = go.GetComponent<RectTransform>();
+                if (rect == null) return false;
+                var canvas = rect.GetComponentInParent<Canvas>();
+                Vector3 mp = UniverseLib.Input.InputManager.MousePosition;
+                return UIHelpers.ContainsScreenPoint(rect, canvas != null ? canvas.rootCanvas : null, new Vector2(mp.x, mp.y));
+            }
+        }
+
+        /// <summary>
         /// Shown or hidden. Hidden takes no room.
         ///
         /// 🔴 **Appearing is a movement, and this is the one place that sees every one of them.**

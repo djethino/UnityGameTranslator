@@ -158,6 +158,11 @@ namespace UnityGameTranslator.Core.UI.Panels
         private string _highlightedFontName = null;
         private ButtonHandle _highlightedButton = null;
 
+        // Each font row's "?" button, by font — polled for the pointer (FollowFacts), and the font
+        // whose "?" the pointer is over now, shown in the preview colour until it leaves.
+        private readonly Dictionary<string, ButtonHandle> _identifyByFont = new Dictionary<string, ButtonHandle>();
+        private string _hoveredFontName;
+
         public TranslationParametersPanel(UIBase owner) : base(owner)
         {
         }
@@ -1737,6 +1742,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _fallbackDropdowns.Clear();
 
             _fontsList.Clear();
+            _identifyByFont.Clear();
 
             var fonts = FontManager.GetDetectedFontsInfo();
             fonts = ApplyStableFontOrder(fonts);
@@ -1851,6 +1857,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                     default: return null;
                 }
             });
+            _identifyByFont[capturedFontName] = row.Button("IdentifyBtn");
 
             _fillingRows = true;
             try
@@ -2050,6 +2057,30 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
         }
 
+        /// <summary>
+        /// Hovering a font's "?" shows that font in game in the preview colour, as a click would but
+        /// without keeping it; leaving it puts back what is selected (or nothing). A click keeps
+        /// working as before (ToggleFontHighlight). Polled from the tick, like the help zone:
+        /// pointer events never reach the mod's controls on IL2CPP.
+        /// </summary>
+        public override void FollowFacts()
+        {
+            base.FollowFacts();
+            string hovered = null;
+            if (_tabBar?.SelectedName == "Fonts")
+                foreach (var kv in _identifyByFont)
+                    if (kv.Value != null && kv.Value.UnderPointer) { hovered = kv.Key; break; }
+            if (hovered == _hoveredFontName) return;
+            _hoveredFontName = hovered;
+
+            if (hovered != null && hovered != _highlightedFontName)
+                TranslatorScanner.HighlightFont(hovered, TranslatorScanner.PreviewColor);
+            else if (_highlightedFontName != null)
+                TranslatorScanner.HighlightFont(_highlightedFontName);
+            else
+                TranslatorScanner.ClearHighlight();
+        }
+
         private void ResetHighlightButton()
         {
             if (_highlightedButton != null)
@@ -2060,6 +2091,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
             _highlightedFontName = null;
             _highlightedButton = null;
+            // Asked again on the next tick: a pointer still over a "?" shows that font as a preview.
+            _hoveredFontName = null;
         }
 
         /// <summary>

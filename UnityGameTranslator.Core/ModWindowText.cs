@@ -22,6 +22,15 @@ namespace UnityGameTranslator.Core
         {
             public GameTextSide Side;
             public UnityEngine.UI.Text Text;   // the component that draws it
+            public Component Field;            // the field it is the text of; null for a label
+        }
+
+        /// <summary>A text of the window showing the game's text: what draws it, its side, and the field it belongs to (null for a label).</summary>
+        public struct Piece
+        {
+            public UnityEngine.UI.Text Text;
+            public GameTextSide Side;
+            public Component Field;
         }
 
         private static readonly Dictionary<int, Entry> _byId = new Dictionary<int, Entry>();
@@ -37,7 +46,7 @@ namespace UnityGameTranslator.Core
         public static void Mark(Component field, UnityEngine.UI.Text drawnBy, GameTextSide side)
         {
             if (drawnBy == null) return;
-            var entry = new Entry { Side = side, Text = drawnBy };
+            var entry = new Entry { Side = side, Text = drawnBy, Field = field };
             _byId[drawnBy.GetInstanceID()] = entry;
             if (field != null) _byId[field.GetInstanceID()] = entry;
         }
@@ -50,16 +59,16 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>Every live text of the window showing the game's text, with its side; the destroyed ones let go.</summary>
-        public static List<KeyValuePair<UnityEngine.UI.Text, GameTextSide>> All()
+        public static List<Piece> All()
         {
-            var live = new List<KeyValuePair<UnityEngine.UI.Text, GameTextSide>>();
+            var live = new List<Piece>();
             var gone = new List<int>();
             var seen = new HashSet<int>();
             foreach (var kv in _byId)
             {
                 if (kv.Value.Text == null) { gone.Add(kv.Key); continue; }
                 if (seen.Add(kv.Value.Text.GetInstanceID()))
-                    live.Add(new KeyValuePair<UnityEngine.UI.Text, GameTextSide>(kv.Value.Text, kv.Value.Side));
+                    live.Add(new Piece { Text = kv.Value.Text, Side = kv.Value.Side, Field = kv.Value.Field });
             }
             foreach (int id in gone) _byId.Remove(id);
             return live;

@@ -1719,6 +1719,8 @@ namespace UnityGameTranslator.Core.UI
                     FontManager.RebackFontToChain(_originalUIFont, chain);
                     UniversalUI.DefaultFont = _originalUIFont;
                     RerenderModUIFont(true);
+                    // The game's text the window shows, shaped again for the chain it now draws from.
+                    GameTextFonts.PutAll();
                     _fontRerenderCountdown = 30;
                 }
                 return;

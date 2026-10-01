@@ -64,10 +64,21 @@ namespace UnityGameTranslator.Core.UI
             text.SetAllDirty();
         }
 
-        /// <summary>Every text of the window showing the game's text, given its side's font — after the window's font changed.</summary>
+        /// <summary>
+        /// Every text of the window showing the game's text, given its side's font — after a font
+        /// changed — and written again: shaping depends on the font (its derived copy, or none), so a
+        /// text shaped for the previous font is presented again from its logical text (RtlPresenter
+        /// knows what each was shaped for), and a font that cannot shape it is said (the window
+        /// notice). A field is redrawn by its own update, from what it holds.
+        /// </summary>
         internal static void PutAll()
         {
-            foreach (var kv in ModWindowText.All()) Put(kv.Key, kv.Value);
+            foreach (var piece in ModWindowText.All())
+            {
+                Put(piece.Text, piece.Side);
+                if (piece.Field is UnityEngine.UI.InputField field) field.ForceLabelUpdate();
+                else if (!string.IsNullOrEmpty(piece.Text.text)) piece.Text.text = piece.Text.text;
+            }
         }
 
         /// <summary>

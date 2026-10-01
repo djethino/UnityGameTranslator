@@ -153,7 +153,7 @@ namespace UnityGameTranslator.Core
             int patchCount = 0;
             int hooked = 0;
             // The machine code already hooked, and by what (IL2CPP only — see the patcher below).
-            var hookedCode = new Dictionary<IntPtr, (string Name, MethodInfo Prefix, MethodInfo Postfix)>();
+            var hookedCode = new Dictionary<IntPtr, (MethodInfo Target, string Name, MethodInfo Prefix, MethodInfo Postfix)>();
             string ParameterList(MethodInfo m) => string.Join(", ", Array.ConvertAll(m.GetParameters(), p => p.ParameterType.Name));
 
             // 🔴 **One hook that fails costs that hook, never the ones after it** (2026-09-30).
@@ -186,7 +186,10 @@ namespace UnityGameTranslator.Core
                     try { code = TypeHelper.Il2CppNativeCode(target); }
                     catch (Exception e) { Faults.Say("Patches.Il2CppNativeCode", e, $"{target?.DeclaringType?.Name}.{target?.Name}"); }
                 }
-                if (code != IntPtr.Zero && hookedCode.TryGetValue(code, out var first))
+                // The SAME method hooked again (two features on Graphic.OnEnable) is one detour with
+                // two postfixes — Harmony's own business, and both must run. Only ANOTHER method on
+                // the same code is a second detour.
+                if (code != IntPtr.Zero && hookedCode.TryGetValue(code, out var first) && !first.Target.Equals(target))
                 {
                     bool sameHooks = first.Prefix == prefix && first.Postfix == postfix;
                     string said = $"[Patches] {target.DeclaringType?.Name}.{target.Name}({ParameterList(target)}) is the same function as "
@@ -201,7 +204,8 @@ namespace UnityGameTranslator.Core
                     hook(target, prefix, postfix);
                     hooked++;
                     if (code != IntPtr.Zero)
-                        hookedCode[code] = (Name: $"{target.DeclaringType?.Name}.{target.Name}({ParameterList(target)})", Prefix: prefix, Postfix: postfix);
+                        if (!hookedCode.ContainsKey(code))
+                            hookedCode[code] = (Target: target, Name: $"{target.DeclaringType?.Name}.{target.Name}({ParameterList(target)})", Prefix: prefix, Postfix: postfix);
                 }
                 catch (Exception e)
                 {

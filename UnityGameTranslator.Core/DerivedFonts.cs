@@ -41,6 +41,7 @@ namespace UnityGameTranslator.Core
     {
         internal const string Folder = ".ugt-derived";
         private const string PoolFolder = "pool";
+        private const string LatePrefix = "late-";
 
         internal sealed class Entry
         {
@@ -125,6 +126,15 @@ namespace UnityGameTranslator.Core
             string folder = Path.Combine(fontsFolder, Folder);
             _folder = folder;
             var translation = ReadTranslation();
+
+            // The copies of fonts added during the last session (LateCopy) served that session only:
+            // those fonts are in fonts/ now, and the engine lists them as they are.
+            if (Directory.Exists(folder))
+                foreach (var stale in Directory.GetFiles(folder, LatePrefix + "*.ttf"))
+                {
+                    try { File.Delete(stale); }
+                    catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException) { Faults.Say("DerivedFonts.Prepare late", ex, Sanitize.Path(stale)); }
+                }
 
             try
             {
@@ -224,7 +234,7 @@ namespace UnityGameTranslator.Core
         {
             realFile = null;
             if (string.IsNullOrEmpty(fontName)) return null;
-            string copyPath = Path.Combine(_folder ?? "", "late-" + Sanitized(fontName) + ".ttf");
+            string copyPath = Path.Combine(_folder ?? "", LatePrefix + Sanitized(fontName) + ".ttf");
             if (_lent.TryGetValue(fontName, out var lent)) { realFile = copyPath; return lent; }
             if (string.IsNullOrEmpty(fontFile) || _refused.Contains(LateKey(fontName))) return null;
             var slot = TakeFromPool(fontName);

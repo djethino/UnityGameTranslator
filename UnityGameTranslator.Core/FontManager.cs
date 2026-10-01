@@ -1066,7 +1066,7 @@ namespace UnityGameTranslator.Core
                     BindingFlags.Public | BindingFlags.Static);
                 if (namesMethod != null)
                 {
-                    var names = namesMethod.Invoke(null, null) as string[];
+                    var names = StringsOf(namesMethod.Invoke(null, null));
                     if (names != null && names.Length > 0)
                     {
                         // 🔴 The engine's list holds what the mod SHOWS it too (FontFolderRedirect):
@@ -1083,7 +1083,7 @@ namespace UnityGameTranslator.Core
                                 BindingFlags.Public | BindingFlags.Static);
                             if (pathsMethod != null)
                             {
-                                var paths = pathsMethod.Invoke(null, null) as string[];
+                                var paths = StringsOf(pathsMethod.Invoke(null, null));
                                 if (paths != null && paths.Length == names.Length)
                                 {
                                     for (int i = 0; i < names.Length; i++)
@@ -1122,6 +1122,22 @@ namespace UnityGameTranslator.Core
 
             // Filesystem fallback for IL2CPP or older Unity
             return TryGetFontNamesFromFilesystem();
+        }
+
+        /// <summary>
+        /// The strings of an engine array answer: a <c>string[]</c> on Mono, an IL2CPP string array
+        /// (enumerable, not a <c>string[]</c>) on IL2CPP — read there with <c>as string[]</c>, the
+        /// installed fonts came back empty and the list fell back to FILE names ("Nirmala" for
+        /// "Nirmala UI"), so a bare installed font named as a fallback was taken for a game font
+        /// (bench, IL2CPP, 2026-10-01).
+        /// </summary>
+        private static string[] StringsOf(object engineArray)
+        {
+            if (engineArray is string[] strings) return strings;
+            if (!(engineArray is System.Collections.IEnumerable items)) return null;
+            var list = new List<string>();
+            foreach (var item in items) list.Add(item as string);
+            return list.ToArray();
         }
 
         /// <summary>

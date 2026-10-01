@@ -849,7 +849,7 @@ namespace UnityGameTranslator.Core
 
                 // Also patch get_text for scanner (catches pre-loaded text)
                 var getMethod = typeInfo.TextProp.GetMethod;
-                if (getMethod != null)
+                if (getMethod != null && FieldGettersPatchable)
                 {
                     var postfix = typeof(TranslatorPatches).GetMethod(nameof(GenericText_GetText_Postfix),
                         BindingFlags.Static | BindingFlags.Public);
@@ -1320,6 +1320,19 @@ namespace UnityGameTranslator.Core
             return count;
         }
 
+        /// <summary>
+        /// Whether a getter that only returns a field may be hooked. Not on IL2CPP: hooking
+        /// <c>UILabel.text</c> (<c>return mText;</c>) killed the game at its first call with an
+        /// access violation inside the hook, and so did <c>tk2dTextMesh.FormattedText</c> once that
+        /// one was left out (bench, NGUI and tk2d stand-ins, 2026-10-01) — the same
+        /// family as the UI.Text <c>fontSize</c> setter kept to Mono below. Such a native body is a few
+        /// bytes, likely shared by every getter of the same shape (the linker folds identical code), so
+        /// the hook lands on code that is not this method's alone. The scanner reads and writes these
+        /// texts itself (<c>TranslatorScanner.GetTextForType</c>), so text that was never set through
+        /// the setter is still found.
+        /// </summary>
+        private static bool FieldGettersPatchable => TranslatorCore.Adapter == null || !TranslatorCore.Adapter.IsIL2CPP;
+
         private static int PatchTk2dTextMesh(Type tk2dTextMeshType, Action<MethodInfo, MethodInfo, MethodInfo> patcher)
         {
             int count = 0;
@@ -1335,14 +1348,14 @@ namespace UnityGameTranslator.Core
             }
 
             // Patch the text property getter (for pre-loaded/deserialized text)
-            if (textProp?.GetMethod != null)
+            if (textProp?.GetMethod != null && FieldGettersPatchable)
             {
                 if (Patch(patcher, textProp.GetMethod, null, getterPostfix)) count++;
             }
 
             // Also patch FormattedText getter (used for display)
             var formattedTextProp = tk2dTextMeshType.GetProperty("FormattedText", BindingFlags.Public | BindingFlags.Instance);
-            if (formattedTextProp?.GetMethod != null)
+            if (formattedTextProp?.GetMethod != null && FieldGettersPatchable)
             {
                 if (Patch(patcher, formattedTextProp.GetMethod, null, getterPostfix)) count++;
             }

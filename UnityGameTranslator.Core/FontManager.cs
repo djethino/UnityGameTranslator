@@ -1318,6 +1318,30 @@ namespace UnityGameTranslator.Core
             return font;
         }
 
+        /// <summary>
+        /// A game legacy font the mod already draws with this reference — the replacement made for a
+        /// game font whose fallback it is (on a runtime that cannot make fonts, the game's own object
+        /// pointed at it) — or null. Read, never changed: what the mod's window can draw the game's
+        /// text with where it cannot make a font of its own (user, 2026-10-01: « on recrée une font
+        /// seulement si elle n'existe pas déjà »). The reference must be the same font, origin
+        /// included: "[Custom] X" is not X installed.
+        /// </summary>
+        internal static Font GameFontDrawing(string reference)
+        {
+            if (string.IsNullOrEmpty(reference) || !TranslatorCore.FontReplacementActive) return null;
+            string wanted = StripOptionMarker(reference);
+            foreach (var kv in TranslatorCore.FontSettingsMap)
+            {
+                var settings = kv.Value;
+                if (settings == null || !settings.enabled || string.IsNullOrEmpty(settings.fallback)) continue;
+                if (!string.Equals(StripOptionMarker(settings.fallback), wanted, StringComparison.Ordinal)) continue;
+                // A legacy game font: a TextMesh Pro asset is no uGUI font.
+                if (!_gameUnityFonts.ContainsKey(kv.Key)) continue;
+                if (_unityFallbackFonts.TryGetValue(kv.Key, out var drawing) && drawing != null) return drawing;
+            }
+            return null;
+        }
+
         /// <summary>A game legacy font loaded right now, by name; null when the game has not loaded it (or unloaded it with its scene).</summary>
         private static Font LoadedGameUnityFont(string name)
         {

@@ -2759,6 +2759,10 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // What an export carries follows what was just applied (fonts, rules, images).
                 RefreshExport();
 
+                // The mod's window may draw the game's text with a game font object a fallback just
+                // pointed elsewhere (GameTextFonts): its fonts are looked at again.
+                GameTextFonts.PutAll();
+
                 UpdateApplyButtonText();
 
                 TranslatorCore.LogInfo("[TranslationParametersPanel] Settings applied successfully");

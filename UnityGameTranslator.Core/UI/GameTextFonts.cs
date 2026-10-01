@@ -11,11 +11,13 @@ namespace UnityGameTranslator.Core.UI
     /// A side with no font of its own draws in the window's font (UniversalUI.DefaultFont).
     ///
     /// ⚠ Where the runtime cannot make a font (IL2CPP builds that stripped CreateDynamicFontFromOSFont)
-    /// the window has ONE font object: a side's font can only join the chain of names that object
-    /// draws from (TranslatorUIManager.ApplyInterfaceFont), so it supplies the characters the
-    /// interface font lacks — a Latin source text stays in the interface font there, and two
-    /// derived copies (source AND target needing shaping) share the private-use range. Said in the
-    /// log when it applies.
+    /// a side's font is drawn with the GAME's font object already pointed at it, when a game font has
+    /// it as its fallback (FontManager.GameFontDrawing — read, never changed). Only a font no game font
+    /// uses joins the chain of names of the window's single font (TranslatorUIManager.ApplyInterfaceFont):
+    /// it then supplies the characters the interface font lacks — a Latin source text stays in the
+    /// interface font, and two derived copies (source AND target needing shaping) share the
+    /// private-use range. Said in the log when it applies. A copy of a font object is no way out:
+    /// on IL2CPP it shares its atlas with the original (FontManager, "NO CLONE").
     /// Main thread.
     /// </summary>
     internal static class GameTextFonts
@@ -37,7 +39,10 @@ namespace UnityGameTranslator.Core.UI
         internal static UnityEngine.Font FontFor(GameTextSide side)
         {
             string own = OwnFontOf(side);
-            if (own == null || _cannotMake.Contains(own)) return UniversalUI.DefaultFont;
+            if (own == null) return UniversalUI.DefaultFont;
+            // A font this runtime cannot make: the game's own object already drawing it, when a game
+            // font has it as its fallback — read, never changed — else the window's (and its chain).
+            if (_cannotMake.Contains(own)) return Shared(own) ?? UniversalUI.DefaultFont;
             if (_made.TryGetValue(own, out var made) && made != null) return made;
             made = FontManager.LoadUIFont(own);
             if (made == null)
@@ -45,11 +50,23 @@ namespace UnityGameTranslator.Core.UI
                 // A game font not loaded right now is asked again at the next scene
                 // (EngineHostAdapter.SceneChanged); an installed or fonts/ font this runtime cannot
                 // make never will be, and joins the window font's chain instead (Unmade).
-                if (!FontManager.IsGameFontRef(own)) _cannotMake.Add(own);
-                return UniversalUI.DefaultFont;
+                if (FontManager.IsGameFontRef(own)) return UniversalUI.DefaultFont;
+                _cannotMake.Add(own);
+                return Shared(own) ?? UniversalUI.DefaultFont;
             }
             _made[own] = made;
             return made;
+        }
+
+        private static readonly HashSet<string> _sharedSaid = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>The game's font object already drawing this font (FontManager.GameFontDrawing), said once when used.</summary>
+        private static UnityEngine.Font Shared(string own)
+        {
+            var shared = FontManager.GameFontDrawing(own);
+            if (shared != null && _sharedSaid.Add(own))
+                TranslatorCore.LogInfo($"[UIManager] '{own}' cannot be made on this runtime: the window draws it with the game's font object already pointed at it ('{shared.name}')");
+            return shared;
         }
 
         /// <summary>Gives one text of the window its side's font.</summary>
@@ -96,7 +113,8 @@ namespace UnityGameTranslator.Core.UI
                 string own = OwnFontOf(side);
                 if (own == null) continue;
                 FontFor(side);   // tries to make it once
-                if (_cannotMake.Contains(own) && !names.Contains(own)) names.Add(own);
+                // Only what neither a font of its own nor a game font object can draw joins the chain.
+                if (_cannotMake.Contains(own) && FontManager.GameFontDrawing(own) == null && !names.Contains(own)) names.Add(own);
             }
             if (names.Count > 0 && !_chainSaid)
             {

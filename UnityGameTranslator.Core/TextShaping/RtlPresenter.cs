@@ -215,7 +215,7 @@ namespace UnityGameTranslator.Core.TextShaping
                         value = known.Final;
                         return;
                     }
-                    if (runAcrossSpace)
+                    if (runAcrossSpace && TypeHelper.IsInScene(instance))
                         _reflows[compId] = new Reflow
                         {
                             Comp = new WeakReference(instance),
@@ -280,6 +280,7 @@ namespace UnityGameTranslator.Core.TextShaping
                     // The alignment does not depend on the lines: mirrored with the text, not
                     // at the end of the reflow.
                     MirrorAlignment(instance, compId, mirror);
+                    if (PresentTemplate(instance, compId, ref value)) return;
                     QueueReflow(instance, compId, ref value, ReflowKind.UGuiText, mirror, "logical+reflow");
                     return;
                 }
@@ -290,6 +291,7 @@ namespace UnityGameTranslator.Core.TextShaping
                 if (ProcessedTextProp(type) != null)
                 {
                     MirrorAlignment(instance, compId, mirror);
+                    if (PresentTemplate(instance, compId, ref value)) return;
                     QueueReflow(instance, compId, ref value, ReflowKind.Ngui, mirror, "logical+reflow/ngui");
                     return;
                 }
@@ -587,7 +589,7 @@ namespace UnityGameTranslator.Core.TextShaping
             // boundaries against that width with the engine's own character advances, the
             // engine's wrapping held off while those lines are displayed. TMP and UI Toolkit
             // break on the boundary themselves.
-            if (needsBreak && compId != -1 && working.IndexOf(WordBreaker.ZeroWidthSpace) >= 0
+            if (needsBreak && compId != -1 && working.IndexOf(WordBreaker.ZeroWidthSpace) >= 0 && TypeHelper.IsInScene(instance)
                 && TypeHelper.UI_TextType != null && TypeHelper.UI_TextType.IsAssignableFrom(instance.GetType()))
             {
                 RestoreRewrap(instance, compId);
@@ -672,6 +674,25 @@ namespace UnityGameTranslator.Core.TextShaping
         /// The visual form is given instead: right the first time for everything that fits on a
         /// line, which is most labels, and a paragraph is corrected on the next frame as before.
         /// </param>
+        /// <summary>
+        /// A TEMPLATE (a prefab the game copies from, never drawn itself): no second pass — it is
+        /// never laid out, so its reflow waited forever, and every copy was born with the measuring
+        /// form (logical order, direction marks drawn as boxes) that the game never wrote again on
+        /// the copy (2026-10-02, a phone's titles; and hundreds of such waits walked every frame).
+        /// The whole-string visual form instead: right for a one-line label, which a copy keeps
+        /// until the game writes it, when the copy is presented on its own.
+        /// </summary>
+        private static bool PresentTemplate(object instance, long compId, ref string value)
+        {
+            if (TypeHelper.IsInScene(instance)) return false;
+            string visual = RtlComposer.Compose(value, RtlOutput.VisualOrder);
+            RegisterShown(compId, visual, value);
+            if (_reflows.ContainsKey(compId)) _reflows.Remove(compId);
+            Log(compId, "visual/template", value, visual);
+            value = visual;
+            return true;
+        }
+
         private static void QueueReflow(object instance, long compId, ref string value,
                                         ReflowKind kind, bool mirror, string logMode,
                                         string logicalForRecord = null, string assignedForm = null)

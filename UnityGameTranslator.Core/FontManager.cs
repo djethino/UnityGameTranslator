@@ -4447,7 +4447,16 @@ namespace UnityGameTranslator.Core
                 }
             }
 
-            // Try game fonts first — already loaded, works on IL2CPP without CreateDynamicFontFromOSFont
+            // 🔴 A bare name is the INSTALLED font first (FontReferences.Order), never a game font that
+            // happens to share it: "Arial" went to the game's own "arial" — a font without Hebrew —
+            // and every translated text drawn with it showed its Latin and digits only (2026-10-02).
+            // Installed here: a fresh OS font, or null — GetUnityReplacementFont then points the
+            // game font's own fontNames at it (where the runtime cannot make fonts).
+            if (!IsGameFontRef(systemFontName) && AssetAvailability.IsSystemFontAvailable(cleanName))
+                return CreateDynamicOSFont(cleanName);
+
+            // Not installed here: a game font of that name (translations written before the origin
+            // marks existed) — already loaded, works on IL2CPP without CreateDynamicFontFromOSFont.
             if (!_gameFontsScanned) ScanGameFonts();
             if (_gameUnityFonts.TryGetValue(cleanName, out var gameFont))
             {

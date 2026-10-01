@@ -42,10 +42,13 @@ namespace UnityGameTranslator.Core.UI
         private static bool _uiFontRebacked;            // true = IL2CPP reback path in effect (vs Mono object swap)
         private static List<string> _pendingRebackChain; // IL2CPP: the font names to reback after the deferred restore→reback gap (window font, then the source/target text fonts it must carry)
         private static int _rebackDelay;                // frames left before the pending reback fires
+        private static string _rebackedChain;           // the chain the window font is rebacked to now (joined), null when not rebacked
+        private static bool _windowFontUsed;            // the window font has drawn: its atlas holds glyphs of whatever it was backed by then
         private static string _missingInterfaceFontReported; // font we already warned about (warn once per value)
         private static string _appliedWindowFont;            // the window font last applied ("" for none); null before the first
-        // The interface font + mod-UI translation are applied lazily on first show: at init the custom
-        // fonts aren't loaded yet and the translation worker isn't ready, so an early pass is a no-op.
+        // The interface font is applied before the first panel, and again at the first show with the
+        // mod-UI translation: custom fonts may only be loaded by then, and the translation worker
+        // only runs by then.
         private static bool _uiFontBootstrapped;
 
         private static bool _initialized;
@@ -580,6 +583,15 @@ namespace UnityGameTranslator.Core.UI
             // token — a 401 on the library, and a state asked for anonymously, which left the
             // corner waiting to know who "you" were until the next scheduled check, an hour later.
             RestoreAccount();
+
+            // 🔴 The window's font BEFORE the first label exists. Applied only at the first opening of
+            // the window, the interface font found an atlas already filled by the corner and every
+            // panel built at start: where fonts cannot be made it is rebacked over that atlas, whose
+            // glyphs stay those of the old backing until rebuilt — the window drew wrong letters
+            // for seconds, until something redrew it (2026-10-01). Before any label, the atlas is
+            // empty and every glyph is drawn from the chosen font from the first.
+            ApplyInterfaceFont();
+            _windowFontUsed = true;
 
             CreatePanels();
 
@@ -1546,7 +1558,10 @@ namespace UnityGameTranslator.Core.UI
         /// UniversalUI.DefaultFont for future text and re-fonts every existing mod UI Text.
         /// Applied separately from the game font pipeline (which never touches our UI).
         /// </summary>
-        public static void ApplyInterfaceFont()
+        /// <param name="keepIfSame">The first opening, after the start applied the same chain: keep
+        /// it. Every other caller asks for a redraw — a derived copy rewritten under the same
+        /// name (EngineHostAdapter.DerivedFontRewritten) is new glyphs behind unchanged names.</param>
+        public static void ApplyInterfaceFont(bool keepIfSame = false)
         {
             if (UiBase?.RootObject == null || _originalUIFont == null) return;
             if (_originalUIFontFamily == null) _originalUIFontFamily = _originalUIFont.name;
@@ -1569,7 +1584,8 @@ namespace UnityGameTranslator.Core.UI
             // is missing, since this window is where the user comes to find out.
             if (!string.IsNullOrEmpty(interfaceFont) && TranslatorCore.InterfaceFontMissing)
             {
-                if (_missingInterfaceFontReported != interfaceFont)
+                // Said once the corner exists to say it: the pass before the panels has nowhere to.
+                if (_missingInterfaceFontReported != interfaceFont && StatusOverlay != null)
                 {
                     _missingInterfaceFontReported = interfaceFont;
                     TranslatorCore.LogWarning($"[UIManager] Interface font '{interfaceFont}' is missing — " +
@@ -1606,10 +1622,31 @@ namespace UnityGameTranslator.Core.UI
                 GameTextFonts.PutAll();
                 InvalidateScopeStrips();
                 _uiFontRebacked = false;
+                _rebackedChain = null;
                 _pendingRebackChain = null;
             }
             else if ((wantCustom && !wantGameFont) || unmadeSideFonts.Count > 0)
             {
+                var chain = new List<string> { wantCustom && !wantGameFont ? requestedFont : _originalUIFontFamily };
+                chain.AddRange(unmadeSideFonts);
+                string chainKey = string.Join("|", chain.ToArray());
+                // Already drawing from this very chain (the start applied it, the first opening asks
+                // again): nothing to redo — a restore→reback cycle would show the old font for a second.
+                if (keepIfSame && _pendingRebackChain == null && _rebackedChain == chainKey)
+                {
+                    GameTextFonts.PutAll();
+                    return;
+                }
+                if (!_windowFontUsed)
+                {
+                    // Nothing has drawn with the window font yet: its atlas is empty, so the chain is
+                    // put straight on it — no stale glyph to flush, no size bump.
+                    _rebackedChain = FontManager.RebackFontToChain(_originalUIFont, chain) ? chainKey : null;
+                    UniversalUI.DefaultFont = _originalUIFont;
+                    _uiFontRebacked = true;
+                    _pendingRebackChain = null;
+                    return;
+                }
                 // IL2CPP: fresh Font creation is stripped, so reback the UI font's OS backing (fontNames).
                 // Rebacking directly over a previous font leaves the atlas stale at runtime — the change
                 // only shows after an off→on toggle (as the user found). So do that cycle automatically:
@@ -1620,8 +1657,8 @@ namespace UnityGameTranslator.Core.UI
                 RerenderModUIFont(false);
                 // The window's font first — the interface font, or its own family when none — then
                 // the side fonts it must carry, in the order Unity tries them for a missing character.
-                _pendingRebackChain = new List<string> { wantCustom && !wantGameFont ? requestedFont : _originalUIFontFamily };
-                _pendingRebackChain.AddRange(unmadeSideFonts);
+                _rebackedChain = null;
+                _pendingRebackChain = chain;
                 _rebackDelay = 60; // ~1s — the slowest atlas we've seen (Frog); LongYin tolerates it too
                 _uiFontRebacked = true;
             }
@@ -1640,6 +1677,7 @@ namespace UnityGameTranslator.Core.UI
                     FontManager.RestoreFontToOriginal(_originalUIFont, _originalUIFontFamily);
                     RerenderModUIFont(false);
                     _uiFontRebacked = false;
+                    _rebackedChain = null;
                 }
                 UniversalUI.DefaultFont = _originalUIFont;
                 int changed = 0;
@@ -1721,7 +1759,7 @@ namespace UnityGameTranslator.Core.UI
                 {
                     var chain = _pendingRebackChain;
                     _pendingRebackChain = null;
-                    FontManager.RebackFontToChain(_originalUIFont, chain);
+                    _rebackedChain = FontManager.RebackFontToChain(_originalUIFont, chain) ? string.Join("|", chain.ToArray()) : null;
                     UniversalUI.DefaultFont = _originalUIFont;
                     RerenderModUIFont(true);
                     // The game's text the window shows, shaped again for the chain it now draws from.
@@ -5719,7 +5757,10 @@ namespace UnityGameTranslator.Core.UI
         {
             if (_uiFontBootstrapped) return;
             _uiFontBootstrapped = true;
-            ApplyInterfaceFont();
+            // The start applied the window font already; asked again now that custom fonts are
+            // loaded — a verdict of "missing" cached before them must not stand.
+            TranslatorCore.InvalidateInterfaceFontAvailability();
+            ApplyInterfaceFont(keepIfSame: true);
             RefreshOwnUITranslation();
         }
 

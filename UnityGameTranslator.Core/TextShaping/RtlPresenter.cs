@@ -757,8 +757,17 @@ namespace UnityGameTranslator.Core.TextShaping
 
             _reflowScratch.Clear();
             _reflowScratch.AddRange(_reflows.Keys);
+            // A uGUI graphic enabled since the last pass may be one of the parked texts: all of them
+            // are looked at again. Nothing enabled: a parked text is still inactive, and is skipped
+            // without asking the engine anything (hundreds of them on a screen filled up front).
+            if (TranslatorScanner.GraphicsEnabled != _parkedAt)
+            {
+                _parked.Clear();
+                _parkedAt = TranslatorScanner.GraphicsEnabled;
+            }
             foreach (long id in _reflowScratch)
             {
+                if (_parked.Contains(id)) continue;
                 var entry = _reflows[id];
                 var comp = entry.Comp.Target;
                 bool dead = comp == null || (comp is UnityEngine.Object uo && uo == null);
@@ -788,6 +797,11 @@ namespace UnityGameTranslator.Core.TextShaping
                     string blocker = RedrawBlocker(comp, entry.Kind);
                     if (blocker != null)
                     {
+                        // Inactive, on a uGUI text, where graphics announce their arrival: parked
+                        // until one is enabled — the event that can change the answer (above).
+                        if (blocker == "inactive" && TranslatorScanner.AppearanceHooked
+                            && (entry.Kind == ReflowKind.UGuiText || entry.Kind == ReflowKind.UGuiWords))
+                            _parked.Add(id);
                         // Debug: a reflow that waits says why, once per component — a text left in
                         // its measuring form (logical order) on screen is read backwards.
                         TraceReflow(id, "waits (" + blocker + ")", comp);
@@ -881,6 +895,10 @@ namespace UnityGameTranslator.Core.TextShaping
 
         private static int _fallbackLogBudget = 5;
         private static readonly HashSet<string> _waitReasons = new HashSet<string>();
+        // Reflows waiting on an inactive uGUI text, skipped until a graphic is enabled (see
+        // ProcessPendingReflows), and the count of enabled graphics they were parked at.
+        private static readonly HashSet<long> _parked = new HashSet<long>();
+        private static int _parkedAt;
         private static int _inactiveTraces;
 
         /// <summary>

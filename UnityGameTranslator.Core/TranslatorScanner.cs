@@ -571,7 +571,15 @@ namespace UnityGameTranslator.Core
         private static bool AnnouncedByGraphic(RegisteredTextType type)
             => _graphicType != null && type.ComponentType != null && _graphicType.IsAssignableFrom(type.ComponentType);
 
-        public static void Graphic_OnEnable_Postfix() { _componentAppeared = true; }
+        public static void Graphic_OnEnable_Postfix() { _componentAppeared = true; GraphicsEnabled++; }
+
+        /// <summary>
+        /// How many uGUI graphics have been enabled so far — what makes a text that was inactive
+        /// worth looking at again (RtlPresenter parks its waiting reflows until it moves). Only
+        /// meaningful when <see cref="AppearanceHooked"/>.
+        /// </summary>
+        internal static int GraphicsEnabled;
+        internal static bool AppearanceHooked => _appearanceHooked;
 
         public static int HookComponentAppearance(Action<MethodInfo, MethodInfo, MethodInfo> patcher)
         {

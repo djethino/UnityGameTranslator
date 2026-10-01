@@ -152,6 +152,9 @@ namespace UnityGameTranslator.Core
         {
             int patchCount = 0;
             int hooked = 0;
+            // The machine code already hooked, and by what (IL2CPP only — see the patcher below).
+            var hookedCode = new Dictionary<IntPtr, (string Name, MethodInfo Prefix, MethodInfo Postfix)>();
+            string ParameterList(MethodInfo m) => string.Join(", ", Array.ConvertAll(m.GetParameters(), p => p.ParameterType.Name));
 
             // 🔴 **One hook that fails costs that hook, never the ones after it** (2026-09-30).
             // Everything below sat in ONE try: a single target Harmony could not rewrite (seen on a
@@ -166,12 +169,39 @@ namespace UnityGameTranslator.Core
             // after the call, and one helper tries a target and falls back on the exception.
             // Swallowing it here would raise those flags over a hook that is not there, and the
             // components would never be found. The name `patcher` is kept so the groups read as before.
+            // 🔴 **One function of the game, one hook.** On IL2CPP the linker folds methods whose machine
+            // code is identical into one function: in one game TMP_Text.SetText(string) and
+            // SetText(string, bool) were the same address, and hooking it twice killed the process
+            // (an access violation in the .NET runtime, no log) the first time the score changed —
+            // measured 2026-10-01, the two methods' Il2CppMethodInfo pointing at the same code. A
+            // second target on code already hooked is covered by the first hook: every call of either
+            // method runs it, with the same native arguments. Said, and counted as in place.
             Action<MethodInfo, MethodInfo, MethodInfo> patcher = (target, prefix, postfix) =>
             {
+                IntPtr code = IntPtr.Zero;
+                // The interop's own lookup, by reflection: a method it cannot answer for is hooked as
+                // before, without the check — said, never in the way of the hook.
+                if (TranslatorCore.Adapter?.IsIL2CPP == true)
+                {
+                    try { code = TypeHelper.Il2CppNativeCode(target); }
+                    catch (Exception e) { Faults.Say("Patches.Il2CppNativeCode", e, $"{target?.DeclaringType?.Name}.{target?.Name}"); }
+                }
+                if (code != IntPtr.Zero && hookedCode.TryGetValue(code, out var first))
+                {
+                    bool sameHooks = first.Prefix == prefix && first.Postfix == postfix;
+                    string said = $"[Patches] {target.DeclaringType?.Name}.{target.Name}({ParameterList(target)}) is the same function as "
+                        + $"{first.Name} in this game (identical code folded into one) — covered by its hook";
+                    if (sameHooks) TranslatorCore.LogInfo(said);
+                    else TranslatorCore.LogWarning(said + $", whose own {(prefix ?? postfix)?.Name} is not placed");
+                    hooked++;
+                    return;
+                }
                 try
                 {
                     hook(target, prefix, postfix);
                     hooked++;
+                    if (code != IntPtr.Zero)
+                        hookedCode[code] = (Name: $"{target.DeclaringType?.Name}.{target.Name}({ParameterList(target)})", Prefix: prefix, Postfix: postfix);
                 }
                 catch (Exception e)
                 {

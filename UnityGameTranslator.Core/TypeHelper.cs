@@ -584,6 +584,34 @@ namespace UnityGameTranslator.Core
             catch (Exception ex) { Faults.Say("TypeHelper.SetTextColor", ex, component.GetType().Name); }
         }
 
+        private static MethodInfo _methodInfoField;
+        private static bool _methodInfoFieldSought;
+
+        /// <summary>
+        /// The machine code an IL2CPP method runs — the first field of its Il2CppMethodInfo, reached
+        /// through the interop's NativeMethodInfoPtr field for it — or zero when this is not an
+        /// IL2CPP interop method. Two methods with the same code are ONE function in the game: the
+        /// linker folds identical bodies (TranslatorPatches, the hooks).
+        /// </summary>
+        public static IntPtr Il2CppNativeCode(MethodBase method)
+        {
+            if (!_methodInfoFieldSought)
+            {
+                _methodInfoFieldSought = true;
+                foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+                {
+                    var utils = asm.GetType("Il2CppInterop.Common.Il2CppInteropUtils");
+                    _methodInfoField = utils?.GetMethod("GetIl2CppMethodInfoPointerFieldForGeneratedMethod", BindingFlags.Public | BindingFlags.Static);
+                    if (_methodInfoField != null) break;
+                }
+            }
+            if (_methodInfoField == null || method == null) return IntPtr.Zero;
+            var field = _methodInfoField.Invoke(null, new object[] { method }) as FieldInfo;
+            if (field == null || field.FieldType != typeof(IntPtr)) return IntPtr.Zero;
+            var info = (IntPtr)field.GetValue(null);
+            return info == IntPtr.Zero ? IntPtr.Zero : System.Runtime.InteropServices.Marshal.ReadIntPtr(info);
+        }
+
         private static Type _classPointerStore;
         private static readonly Dictionary<Type, bool> _absentFromGame = new Dictionary<Type, bool>();
 

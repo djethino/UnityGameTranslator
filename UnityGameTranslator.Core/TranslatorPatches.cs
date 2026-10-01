@@ -3604,6 +3604,10 @@ namespace UnityGameTranslator.Core
 
                 if (fontObj != null)
                 {
+                    // A replacement of ours answers with the game font's name: the settings are the
+                    // game font's (Tk2dFonts).
+                    if (Tk2dFonts.OriginalNameOf(fontObj) is string original && !ReferenceEquals(Tk2dFonts.OriginalOf(fontObj), fontObj))
+                        return original;
                     // Get the name from the font object
                     var fontType = fontObj.GetType();
 
@@ -4329,15 +4333,19 @@ namespace UnityGameTranslator.Core
                 var outcome = RouteText(__instance, component, TypeHelper.GetInstanceID(__instance),
                                         isOwnUI, "tk2d", ref value);
                 if (outcome == RouteOutcome.Stop) return;
-                // Catch-up (user-required): override rules match here too. Only their RTL
-                // alignment can act on tk2d — fonts are baked atlases (documented ceiling) and
+                // Catch-up (user-required): override rules match here too — their RTL alignment;
                 // this path has no scale mechanism.
                 FontOverrideRule tk2dOverride = null;
                 if (TranslatorCore.FontOverrides.Count > 0)
                     tk2dOverride = TranslatorCore.FindFontOverride(TypeHelper.GetInstanceID(__instance),
                         TranslatorCore.GetGameObjectPath(component.gameObject), fontName, gameText);
+                // The game font replaced by a tk2d font made from the replacement's Unity font
+                // (Tk2dFonts) BEFORE the text is presented — presenting asks what it draws from —
+                // and the glyphs the presented text names added to it after.
+                if (fontName != null) Tk2dFonts.Apply(__instance, fontName, value);
                 TextShaping.RtlPresenter.Present(__instance, TypeHelper.GetInstanceID(__instance), ref value,
                                                  fontName, tk2dOverride);
+                Tk2dFonts.EnsureDrawn(__instance, value);
             }
             catch (Exception ex) { Faults.Say("Patches.Tk2dTextMesh_SetText", ex); }
         }

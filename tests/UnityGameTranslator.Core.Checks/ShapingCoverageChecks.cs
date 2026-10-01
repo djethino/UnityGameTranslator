@@ -27,11 +27,7 @@ namespace UnityGameTranslator.Core.Checks
             ["UiText/Game"] = "the game's font has no file — said on the Fonts tab: a fonts/ or installed font must be chosen",
             ["UiToolkit/Game"] = "as UiText/Game",
             ["TextMesh/Game"] = "as UiText/Game",
-            ["Tk2d/FontsFolderTtf"] = "the mod replaces no tk2d font (tk2dFontData, bitmap): studied, not written — analyse/ecritures-complexes-etat-reel.md",
-            ["Tk2d/FontsFolderCff"] = "as Tk2d/FontsFolderTtf",
-            ["Tk2d/SystemTtf"] = "as Tk2d/FontsFolderTtf",
-            ["Tk2d/SystemCff"] = "as Tk2d/FontsFolderTtf",
-            ["Tk2d/Game"] = "as Tk2d/FontsFolderTtf",
+            ["Tk2d/Game"] = "as UiText/Game",
             ["NguiDynamic/Game"] = "as UiText/Game",
             ["NguiBitmap/FontsFolderTtf"] = "the mod does not replace NGUI's bitmap UIFont (only its dynamic trueTypeFont) — same analysis",
             ["NguiBitmap/FontsFolderCff"] = "as NguiBitmap/FontsFolderTtf",
@@ -69,9 +65,10 @@ namespace UnityGameTranslator.Core.Checks
             // installed one too when it needs shaping (FontManager.CreateFallbackFromSystem).
             bool ourAsset = isTmp && hasFile;
             // Re-fonted with a UnityEngine.Font by the mod: uGUI Text, TextMesh (its renderer's material
-            // following the font), UI Toolkit, and an NGUI label on its dynamic trueTypeFont.
+            // following the font), UI Toolkit, an NGUI label on its dynamic trueTypeFont, and a tk2d text
+            // given a tk2d font made from one (Tk2dFonts; Mono — IL2CPP keeps the game's, said in the log).
             bool legacy = engine == Engine.UiText || engine == Engine.UiToolkit || engine == Engine.TextMesh
-                          || engine == Engine.NguiDynamic;
+                          || engine == Engine.NguiDynamic || engine == Engine.Tk2d;
             // A derived copy exists for any font file, fonts/ or installed — CFF outlines are merged into
             // TrueType ones first (DerivedFontWriter.WithTrueTypeOutlines).
             bool derived = legacy && hasFile;

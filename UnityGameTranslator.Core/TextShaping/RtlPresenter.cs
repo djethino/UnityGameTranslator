@@ -364,16 +364,17 @@ namespace UnityGameTranslator.Core.TextShaping
         /// <summary>
         /// A component the mod re-fonts with a UnityEngine.Font — uGUI Text, TextMesh, and a UI Toolkit
         /// text element on its standard generator (the ATG case never reaches here) — the ones that
-        /// take a derived copy (FontManager.GetUnityReplacementFont) — and an NGUI label drawing a
-        /// dynamic font (trueTypeFont). tk2d and NGUI's bitmap UIFont do not: the mod replaces
-        /// neither (analyse/ecritures-complexes-etat-reel.md, tk2d / NGUI).
+        /// take a derived copy (FontManager.GetUnityReplacementFont) — an NGUI label drawing a dynamic
+        /// font (trueTypeFont), and a tk2d text drawing a font the mod made from one (Tk2dFonts).
+        /// NGUI's bitmap UIFont does not: the mod does not replace it.
         /// </summary>
         private static bool DrawsFromLegacyFont(object instance) =>
             instance != null
             && ((TypeHelper.UI_TextType != null && TypeHelper.UI_TextType.IsInstanceOfType(instance))
                 || (TypeHelper.TextMeshType != null && TypeHelper.TextMeshType.IsInstanceOfType(instance))
                 || UIToolkitSupport.IsTextElementInstance(instance)
-                || DrawsDynamicFont(instance));
+                || DrawsDynamicFont(instance)
+                || Tk2dFonts.DrawsReplacement(instance));
 
         private static readonly Dictionary<Type, System.Reflection.PropertyInfo> _trueTypeFontProps = new Dictionary<Type, System.Reflection.PropertyInfo>();
 

@@ -191,6 +191,24 @@ namespace UnityGameTranslator.Core.TextShaping
                     MirrorAlignment(instance, compId, mirror);
                     RegisterShown(compId, flagged, value);
                     Log(compId, "flagged", value, flagged);
+                    // 🔴 The engine wraps the flagged form in ITS order, where a left-to-right run is
+                    // written backwards: a run of several words crossing a line end had its words
+                    // swapped between the lines ("…של Schedule I?" shown "…של I" / "?Schedule",
+                    // 2026-10-01). Only that case: the lines are then cut by us, next frame, in
+                    // logical order, against the width the layout gave this text and with TMP's own
+                    // ruler (BuildTmpLines). A text with no such run is the engine's to wrap.
+                    if (compId != -1 && RtlComposer.HasLtrRunAcrossSpace(value))
+                        _reflows[compId] = new Reflow
+                        {
+                            Comp = new WeakReference(instance),
+                            Logical = value,
+                            Assigned = flagged,
+                            Measure = flagged,
+                            Mirror = mirror,
+                            Kind = ReflowKind.Tmp,
+                        };
+                    else if (_reflows.TryGetValue(compId, out var stale) && stale.Kind == ReflowKind.Tmp)
+                        _reflows.Remove(compId);
                     value = flagged;
                     return;
                 }
@@ -599,7 +617,7 @@ namespace UnityGameTranslator.Core.TextShaping
         // UGuiWords: a UI.Text holding word boundaries (U+200B) the engine does not break on —
         // Thai, Lao, Khmer, Myanmar. Cut on those boundaries by us, against the box width, with
         // the engine's own advance per character (BuildUGuiWordLines).
-        private enum ReflowKind { UGuiText, UGuiWords, Ngui }
+        private enum ReflowKind { UGuiText, UGuiWords, Ngui, Tmp }
 
         private sealed class Reflow
         {
@@ -718,6 +736,8 @@ namespace UnityGameTranslator.Core.TextShaping
                         continue;
 
                     string final = BuildLines(entry, comp, out string whyNot);
+                    // Nothing to change: the engine's own lines were right (one line, no wrap).
+                    if (final != null && final == entry.Assigned) { _reflows.Remove(id); continue; }
                     if (final == null)
                     {
                         // Line source not ready (or unreadable). The engine rebuilds a drawn
@@ -814,6 +834,8 @@ namespace UnityGameTranslator.Core.TextShaping
                     // caller's give-up path is where our own Populate comes in, once the layout
                     // has had its frames.
                     return BuildPerLineVisual(comp, entry.Measure, out whyNot);
+                case ReflowKind.Tmp:
+                    return BuildTmpLines(comp, entry, out whyNot);
                 case ReflowKind.UGuiWords:
                     // The engine must have laid the assigned text out first — same reason as
                     // above, the box has its width for THIS text only then; its generator saying
@@ -824,6 +846,53 @@ namespace UnityGameTranslator.Core.TextShaping
                 default:
                     return BuildNguiLines(comp, entry.Measure, out whyNot);
             }
+        }
+
+        // TMP's wrapping switch (enableWordWrapping, or textWrappingMode in newer TMP), its margins
+        // and its rect — resolved once per type.
+        private static readonly Dictionary<Type, PropertyInfo[]> _tmpLayoutProps = new Dictionary<Type, PropertyInfo[]>();
+
+        /// <summary>
+        /// The lines of a right-to-left TMP text cut in LOGICAL order — the engine wrapping the
+        /// flagged form cuts a left-to-right run of several words backwards (see Present). Cut
+        /// at its spaces against the width the layout gave this text (the rect less TMP's
+        /// margins, read now, a frame after the text was assigned — the reason it is a second
+        /// pass), with TMP's own measure of each candidate line; then composed flagged as one
+        /// string, each line ending with an explicit break the engine keeps. Returns the assigned
+        /// form unchanged when the text is one line or the component does not wrap.
+        /// </summary>
+        private static string BuildTmpLines(object comp, Reflow entry, out string whyNot)
+        {
+            whyNot = null;
+            var type = comp.GetType();
+            if (!_tmpLayoutProps.TryGetValue(type, out var props))
+            {
+                const BindingFlags pub = BindingFlags.Public | BindingFlags.Instance;
+                _tmpLayoutProps[type] = props = new[]
+                {
+                    type.GetProperty("enableWordWrapping", pub),
+                    type.GetProperty("textWrappingMode", pub),
+                    type.GetProperty("margin", pub),
+                    type.GetProperty("rectTransform", pub),
+                };
+            }
+            if (props[0] != null && props[0].GetValue(comp, null) is bool wraps && !wraps) return entry.Assigned;
+            if (props[1] != null && props[1].GetValue(comp, null)?.ToString().IndexOf("NoWrap", StringComparison.Ordinal) >= 0) return entry.Assigned;
+
+            var rect = props[3]?.GetValue(comp, null) as UnityEngine.RectTransform;
+            if (rect == null) { whyNot = "no rectTransform"; return null; }
+            float width = rect.rect.width;
+            if (props[2]?.GetValue(comp, null) is UnityEngine.Vector4 margin) width -= margin.x + margin.z;
+            if (width <= 1f) { whyNot = "no width yet"; return null; }
+
+            // Half a unit of slack: a line measured exactly at the width must not be re-wrapped by
+            // the engine's rounding (the same lesson as UI.Text's DisableRewrap, kept as a margin
+            // here since TMP's own wrapping stays on for a word wider than the box).
+            var lines = GreedyLines.Cut(entry.Logical, width - 0.5f,
+                line => TextMeasure.Measure(comp, RtlComposer.ShapeLogicalOnly(line), null));
+            if (lines == null) { whyNot = "TMP cannot measure here"; return null; }
+            if (lines.Count <= 1) return entry.Assigned;
+            return RtlComposer.Compose(string.Join("\n", lines.ToArray()), RtlOutput.RtlFlagged);
         }
 
         /// <summary>
@@ -848,6 +917,9 @@ namespace UnityGameTranslator.Core.TextShaping
             if (!(comp is UnityEngine.Component c) || c.gameObject == null) return true;
             if (!c.gameObject.activeInHierarchy) return false;
             if (kind == ReflowKind.Ngui) return true;
+            // TMP lays out what it draws; a 3D TextMeshPro is no Graphic, so the canvas gate below
+            // does not apply to it — active and enabled is the question.
+            if (kind == ReflowKind.Tmp) return !(comp is UnityEngine.Behaviour tb) || tb.isActiveAndEnabled;
             if (comp is UnityEngine.Behaviour b && !b.isActiveAndEnabled) return false;
             EnsureGeneratorPlumbing();
             try

@@ -102,45 +102,8 @@ namespace UnityGameTranslator.Core.TextShaping
         {
             if (string.IsNullOrEmpty(logical)) return logical;
 
-            // 1. Protect our tokens, then shape. Both kinds of sentinel sit in the stream here so
-            //    a token inside a word still breaks joining, like the measured implementation.
-            var placeholders = new List<string>();
-            var tags = new List<string>();
-            string sentinelized = Tokenize(logical, placeholders, tags);
-            string shaped = _shaper.Shape(sentinelized);
-
-            // 2. Codepoints; pull the TAG sentinels out of the stream, remembering what each one
-            //    stood before. Structure must not travel as content.
-            var cpsAll = ToCodePoints(shaped);
-            var cps = new List<int>(cpsAll.Length);
-            var tagInfos = new List<TagInfo>();
-            foreach (int cp in cpsAll)
-            {
-                int tagIndex = cp - TagBase;
-                if (tagIndex >= 0 && tagIndex < tags.Count)
-                    tagInfos.Add(new TagInfo { Text = tags[tagIndex], Anchor = cps.Count });
-                else
-                    cps.Add(cp);
-            }
-            MatchTagPairs(tagInfos);
-
-            // 3. UAX#9 on the tagless stream. Paragraph level forced RTL (see summary).
-            var arr = cps.ToArray();
-            // A private glyph codepoint (a positioned mark, a kerned letter — see FontShaping) is
-            // class L in the UCD, which would cut a right-to-left run in two around it. For
-            // the bidi it is read as a non-spacing mark: it takes the direction of what it
-            // follows and travels with it, which is where its glyph belongs — the mark before
-            // its base once the run is reversed, exactly the order its offsets were computed for.
-            var bidiInput = arr;
-            for (int i = 0; i < arr.Length; i++)
-                if (PrivateGlyphs.Contains(arr[i]))
-                {
-                    if (ReferenceEquals(bidiInput, arr)) bidiInput = (int[])arr.Clone();
-                    bidiInput[i] = 0x0300;
-                }
-            _bidiData.Init(new Slice<int>(bidiInput), 1);
-            _bidi.Process(_bidiData);
-            var levels = _bidi.ResolvedLevels;
+            // 1-3. Tokens protected, shaped, tags lifted out, UAX#9 run.
+            var arr = Resolve(logical, out var placeholders, out var tagInfos, out var levels);
 
             // 4. Mirror brackets at RTL levels (L4), drop the X9-removed formatting controls —
             //    keeping the ORIGINAL index of every surviving codepoint: the tags get wrapped
@@ -190,6 +153,69 @@ namespace UnityGameTranslator.Core.TextShaping
             // 8. Re-wrap the tags around the final positions of the glyphs they styled, expand
             //    placeholder sentinels, done.
             return BuildWithTags(kept, keptOrig.Count, posOf, tagInfos, placeholders);
+        }
+
+        /// <summary>
+        /// Steps 1-3 of <see cref="Compose"/>: our tokens protected, then shaped (both kinds of
+        /// sentinel sit in the stream so a token inside a word still breaks joining, like the
+        /// measured implementation); the TAG sentinels pulled out of the stream with what each
+        /// stood before — structure must not travel as content; UAX#9 on the tagless stream,
+        /// paragraph level forced RTL. Returns the tagless codepoints; <paramref name="levels"/>
+        /// are the bidi's own buffer, valid until its next run.
+        /// </summary>
+        private static int[] Resolve(string logical, out List<string> placeholders, out List<TagInfo> tagInfos,
+                                     out Slice<sbyte> levels)
+        {
+            placeholders = new List<string>();
+            var tags = new List<string>();
+            string sentinelized = Tokenize(logical, placeholders, tags);
+            string shaped = _shaper.Shape(sentinelized);
+
+            var cpsAll = ToCodePoints(shaped);
+            var cps = new List<int>(cpsAll.Length);
+            tagInfos = new List<TagInfo>();
+            foreach (int cp in cpsAll)
+            {
+                int tagIndex = cp - TagBase;
+                if (tagIndex >= 0 && tagIndex < tags.Count)
+                    tagInfos.Add(new TagInfo { Text = tags[tagIndex], Anchor = cps.Count });
+                else
+                    cps.Add(cp);
+            }
+            MatchTagPairs(tagInfos);
+
+            var arr = cps.ToArray();
+            // A private glyph codepoint (a positioned mark, a kerned letter — see FontShaping) is
+            // class L in the UCD, which would cut a right-to-left run in two around it. For
+            // the bidi it is read as a non-spacing mark: it takes the direction of what it
+            // follows and travels with it, which is where its glyph belongs — the mark before
+            // its base once the run is reversed, exactly the order its offsets were computed for.
+            var bidiInput = arr;
+            for (int i = 0; i < arr.Length; i++)
+                if (PrivateGlyphs.Contains(arr[i]))
+                {
+                    if (ReferenceEquals(bidiInput, arr)) bidiInput = (int[])arr.Clone();
+                    bidiInput[i] = 0x0300;
+                }
+            _bidiData.Init(new Slice<int>(bidiInput), 1);
+            _bidi.Process(_bidiData);
+            levels = _bidi.ResolvedLevels;
+            return arr;
+        }
+
+        /// <summary>
+        /// Whether a left-to-right run of several words sits in this right-to-left text — a space
+        /// resolved at an EVEN level, between two left-to-right words ("Schedule I" in Hebrew).
+        /// Such a run is what an engine wrapping the flagged form cuts wrongly: it wraps the run
+        /// written backwards, so a word of it lands on the wrong line (RtlPresenter, TMP reflow).
+        /// </summary>
+        internal static bool HasLtrRunAcrossSpace(string logical)
+        {
+            if (string.IsNullOrEmpty(logical) || logical.IndexOf(' ') < 0) return false;
+            var arr = Resolve(logical, out _, out _, out var levels);
+            for (int i = 0; i < arr.Length; i++)
+                if (arr[i] == ' ' && levels[i] > 0 && (levels[i] & 1) == 0) return true;
+            return false;
         }
 
         /// <summary>

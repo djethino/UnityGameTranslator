@@ -289,6 +289,7 @@ namespace UnityGameTranslator.Core.Checks
         private static void HowAStringIsShaped()
         {
             Section("Text shaping", TextShapingChecks.Run);
+            Section("Right-to-left text wrapped by TMP (runs of Latin words across a line end)", RtlWrapChecks.Run);
 
             Section("Right-to-left text in an input field (caret, clicks, arrows)", RtlFieldChecks.Run);
             Section("Shaped text in an input field (units, caret, clicks, arrows)", SyllabicFieldChecks.Run);

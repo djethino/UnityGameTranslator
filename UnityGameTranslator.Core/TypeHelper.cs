@@ -637,7 +637,16 @@ namespace UnityGameTranslator.Core
                     if (_classPointerStore != null) break;
                 }
             var field = _classPointerStore?.MakeGenericType(type).GetField("NativeClassPtr", BindingFlags.Public | BindingFlags.Static);
-            return field != null && (IntPtr)field.GetValue(null) == IntPtr.Zero;
+            if (field == null) return false;
+            // Reading the field runs the interop type's static constructor, which can throw (a type
+            // the game half-has): said, and the type is treated as before this check existed — the
+            // callers' own routes (Il2CppType.Of, the Mono lookup) answer for it, inside their catches.
+            try { return (IntPtr)field.GetValue(null) == IntPtr.Zero; }
+            catch (Exception ex) when (ex is TypeInitializationException || ex is TargetInvocationException)
+            {
+                Faults.Say("TypeHelper.Il2CppClassAbsent", ex, type.Name);
+                return false;
+            }
         }
 
         /// <summary>

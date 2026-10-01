@@ -779,6 +779,8 @@ namespace UnityGameTranslator.Core.TextShaping
                         // settled for THIS text — and whole-string visual order stays the last
                         // resort. Either way SAY so: a silent fallback made the reversed line
                         // stack undiagnosable from a screenshot.
+                        if (TranslatorCore.DebugMode && _waitLogged.Add(-id - 1) && _waitLogged.Count <= 400)
+                            TranslatorCore.LogInfo($"[RtlPresenter] reflow not ready ({whyNot}): comp={id} kind={entry.Kind} attempt={entry.Attempts + 1} @ {(comp is UnityEngine.Component nc ? TranslatorCore.GetGameObjectPath(nc.gameObject) : "?")}");
                         if (++entry.Attempts < 3) continue;
                         // TMP: the flagged form stays — the engine's own wrap, as before this pass
                         // existed. A visual-order fallback would be read backwards under the flag.

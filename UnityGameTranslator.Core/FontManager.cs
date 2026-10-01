@@ -2603,17 +2603,59 @@ namespace UnityGameTranslator.Core
         internal static DerivedFonts.Entry DerivedForInterface() => DerivedForReference(TranslatorCore.EffectiveInterfaceFont);
 
         /// <summary>The derived copy a font reference is drawn from, by the origin serving it; null for a game font or none.</summary>
-        private static DerivedFonts.Entry DerivedForReference(string reference)
+        private static DerivedFonts.Entry DerivedForReference(string reference) =>
+            ServingOf(reference, out string name, out var origin) ? ShownDerived(name, origin) : null;
+
+        /// <summary>
+        /// The font a reference is served by: its name and origin. The same origin rule as
+        /// ResolveSystemFontFamily: "[Custom] X" is fonts/X; a bare name is the installed font first —
+        /// its fonts/ copy only when the system lacks it. False for a game font, or nothing.
+        /// </summary>
+        private static bool ServingOf(string reference, out string name, out UnityGameTranslator.Common.FontSource origin)
         {
-            if (string.IsNullOrEmpty(reference) || IsGameFontRef(reference)) return null;
-            string name = StripFontPrefix(reference);
-            // The same origin rule as ResolveSystemFontFamily: "[Custom] X" is fonts/X; a bare name is
-            // the installed font first — its fonts/ copy only when the system lacks it. Each origin
-            // has its own copy.
+            name = null;
+            origin = default(UnityGameTranslator.Common.FontSource);
+            if (string.IsNullOrEmpty(reference) || IsGameFontRef(reference)) return false;
+            name = StripFontPrefix(reference);
             var served = UnityGameTranslator.Common.FontReferences.Serving(reference,
                 gameHas: IsGameFont(name), customHas: CustomFontLoader.CustomFonts.ContainsKey(name),
                 systemHas: AssetAvailability.IsSystemFontAvailable(name));
-            return served == null ? null : ShownDerived(name, served.Value);
+            if (served == null || served.Value == UnityGameTranslator.Common.FontSource.Game) return false;
+            origin = served.Value;
+            return true;
+        }
+
+        // What the fonts in use were the last time the derived copies were matched to them.
+        private static int _derivedInUseSignature;
+
+        /// <summary>
+        /// The derived copies follow the fonts IN USE — every replacement chosen for a game font, and the
+        /// mod's interface font: a font the user tried and left takes no room (user, 2026-10-01: « une
+        /// font qui n'est plus en fallback, c'est un fichier qui ne sert plus »). Read from the state at
+        /// every pass, as the coverage answers are — the settings change in many places, and none of
+        /// them has to remember to say it. Cheap when nothing changed: a handful of entries hashed.
+        /// </summary>
+        private static void MatchDerivedToFontsInUse()
+        {
+            var references = new List<string>();
+            foreach (var kv in TranslatorCore.FontSettingsMap)
+                if (!string.IsNullOrEmpty(kv.Value?.fallback)) references.Add(kv.Value.fallback);
+            if (!string.IsNullOrEmpty(TranslatorCore.EffectiveInterfaceFont)) references.Add(TranslatorCore.EffectiveInterfaceFont);
+
+            int signature = 17;
+            unchecked
+            {
+                foreach (var r in references) signature = signature * 31 + r.GetHashCode();
+                signature = signature * 31 + CustomFontLoader.CustomFonts.Count;
+            }
+            if (signature == _derivedInUseSignature) return;
+            _derivedInUseSignature = signature;
+
+            var inUse = new List<KeyValuePair<string, UnityGameTranslator.Common.FontSource>>();
+            foreach (var reference in references)
+                if (ServingOf(reference, out string name, out var origin))
+                    inUse.Add(new KeyValuePair<string, UnityGameTranslator.Common.FontSource>(name, origin));
+            DerivedFonts.KeepOnly(inUse);
         }
 
         /// <summary>
@@ -2633,6 +2675,7 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static void ApplyDerivedFontRewrites()
         {
+            MatchDerivedToFontsInUse();
             foreach (var name in DerivedFonts.ProcessPending(TranslatorCore.Adapter?.IsIL2CPP ?? false))
                 OnDerivedFontRewritten(name);
         }

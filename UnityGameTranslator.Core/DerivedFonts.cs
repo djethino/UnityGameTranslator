@@ -58,10 +58,14 @@ namespace UnityGameTranslator.Core
             internal List<FontPool.Slot> Slots = new List<FontPool.Slot>();
             internal int Current;              // the slot the engine draws from now
             internal int Version;              // bumped at each rewrite: replacement fonts made before are stale
-            // The copy's ONE real file, rewritten in place at each version, under the family of the
-            // slot it is for: the engine reads a font into memory when it opens it (probe 2 N_B), so an
-            // older slot is never read again — no file per version.
+            // The copy's real file. ⚠ The engine keeps a font's file OPEN while the font lives and reads
+            // it as it needs (measured 2026-10-01: Windows refuses to delete it, allows a rewrite): a
+            // version still loaded must never see its file rewritten. Mono rewrites in place — the name
+            // the engine listed maps to this path, and a new Font object is made at each version; the
+            // old one is no longer drawn. IL2CPP writes each version to a file of its own, under a pool
+            // name, and removes the older ones once the engine lets them go.
             internal string OwnFile;
+            internal readonly List<string> OlderFiles = new List<string>();
             internal string NamesPath => Path.Combine(_folder, Key + ".names");
             internal string CurrentFamily => Slots[Current].Family;
             /// <summary>The real file of the current version (read by the TMP rasterizer, the coverage probe).</summary>
@@ -79,6 +83,9 @@ namespace UnityGameTranslator.Core
         private static readonly List<Entry> _pending = new List<Entry>();
         // Fonts tried during the session that got no copy (no shaped script, unreadable): tried once.
         private static readonly HashSet<string> _refused = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        // Files of copies no longer needed that the engine still held open: removed when it lets them
+        // go — tried again when the fonts in use change, and at the next launch at the latest.
+        private static readonly List<string> _toRemove = new List<string>();
         // fonts/ files added during the session, shown under a pool name: font name → its slot.
         private static readonly Dictionary<string, FontPool.Slot> _lent = new Dictionary<string, FontPool.Slot>(StringComparer.OrdinalIgnoreCase);
 
@@ -127,15 +134,6 @@ namespace UnityGameTranslator.Core
             _folder = folder;
             var translation = ReadTranslation();
 
-            // The copies of fonts added during the last session (LateCopy) served that session only:
-            // those fonts are in fonts/ now, and the engine lists them as they are.
-            if (Directory.Exists(folder))
-                foreach (var stale in Directory.GetFiles(folder, LatePrefix + "*.ttf"))
-                {
-                    try { File.Delete(stale); }
-                    catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException) { Faults.Say("DerivedFonts.Prepare late", ex, Sanitize.Path(stale)); }
-                }
-
             try
             {
                 var sw = System.Diagnostics.Stopwatch.StartNew();
@@ -149,42 +147,54 @@ namespace UnityGameTranslator.Core
                 _pool = null;
             }
 
-            foreach (var extension in UnityGameTranslator.Common.AssetPacks.FontExtensions)
-            {
-                string[] files;
-                try { files = Directory.GetFiles(fontsFolder, "*" + extension); }
-                catch (Exception ex) { Faults.Say("DerivedFonts.Prepare", ex, Sanitize.Path(fontsFolder)); continue; }
-                foreach (var path in files)
-                {
-                    byte[] bytes;
-                    try { bytes = File.ReadAllBytes(path); }
-                    catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException) { Faults.Say("DerivedFonts.Prepare", ex, Sanitize.Path(path)); continue; }
-                    string name = Path.GetFileNameWithoutExtension(path);
-                    var entry = Build(name, UnityGameTranslator.Common.FontSource.Custom, Sanitized(name), path, bytes, OwnSlot(Sanitized(name)), translation);
-                    if (entry == null) { _refused.Add(Sanitized(name)); continue; }   // not tried again (Ensure)
-                    _byName[entry.Name] = entry;
-                    shown.Add(entry.OwnFile);
-                }
-            }
-
-            var installed = InstalledFontsNamed(translation);
+            // Only the fonts IN USE get a copy (user, 2026-10-01): a replacement the translation names,
+            // the interface font. A font chosen during the session is derived then (Ensure), one left
+            // is removed (KeepOnly) — a font tried and abandoned takes no room.
+            var references = FallbackReferences(translation);
             // The mod's own interface font too: its window shows translation values and takes typed
             // text, in any script (config.json's interface_font wins over the interface file's).
             foreach (var reference in new[] { ReadString(configPath, "interface_font"), ReadString(interfacePath, "_settings", "ui_font") })
-                if (!string.IsNullOrEmpty(reference)
-                    && UnityGameTranslator.Common.FontReferences.Order(reference)[0] == UnityGameTranslator.Common.FontSource.System
-                    && !installed.Contains(UnityGameTranslator.Common.FontReferences.Name(reference), StringComparer.OrdinalIgnoreCase))
-                    installed.Add(UnityGameTranslator.Common.FontReferences.Name(reference));
+                if (!string.IsNullOrEmpty(reference)) references.Add(reference);
 
-            foreach (var name in installed)
+            var customFiles = FontFilesByName(fontsFolder);
+            var wantCustom = new List<string>();
+            var wantSystem = new List<string>();
+            foreach (var reference in references)
+            {
+                var order = UnityGameTranslator.Common.FontReferences.Order(reference);
+                string name = UnityGameTranslator.Common.FontReferences.Name(reference);
+                if (order[0] == UnityGameTranslator.Common.FontSource.Custom) { if (customFiles.ContainsKey(name)) AddOnce(wantCustom, name); }
+                else if (order[0] == UnityGameTranslator.Common.FontSource.System) AddOnce(wantSystem, name);
+            }
+
+            foreach (var name in wantSystem)
             {
                 byte[] bytes = InstalledFont(name, folder, out string path);
-                if (bytes == null) continue;
+                if (bytes == null)
+                {
+                    // A bare name the system lacks is served by its copy in fonts/, when there is one.
+                    if (customFiles.ContainsKey(name)) AddOnce(wantCustom, name);
+                    continue;
+                }
                 var entry = Build(name, UnityGameTranslator.Common.FontSource.System, "sys-" + Sanitized(name), path, bytes, OwnSlot("sys-" + Sanitized(name)), translation);
                 if (entry == null) { _refused.Add("sys-" + Sanitized(name)); continue; }
                 _installedByName[entry.Name] = entry;
                 shown.Add(entry.OwnFile);
             }
+
+            foreach (var name in wantCustom)
+            {
+                string path = customFiles[name];
+                byte[] bytes;
+                try { bytes = File.ReadAllBytes(path); }
+                catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException) { Faults.Say("DerivedFonts.Prepare", ex, Sanitize.Path(path)); continue; }
+                var entry = Build(name, UnityGameTranslator.Common.FontSource.Custom, Sanitized(name), path, bytes, OwnSlot(Sanitized(name)), translation);
+                if (entry == null) { _refused.Add(Sanitized(name)); continue; }   // not tried again (Ensure)
+                _byName[entry.Name] = entry;
+                shown.Add(entry.OwnFile);
+            }
+
+            RemoveWhatNoCopyOwns();
             return shown;
         }
 
@@ -336,25 +346,150 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// The installed fonts the translation replaces a game font with: a bare name in `_fonts`
-        /// (FontReferences — "[Custom] X" is fonts/, "[Game] X" has no file). Read from the file:
-        /// this runs before the translation is loaded.
+        /// Every replacement the translation names in `_fonts` (FontReferences: "[Custom] X" is fonts/,
+        /// a bare name the installed font, "[Game] X" has no file). Read from the file: this runs
+        /// before the translation is loaded.
         /// </summary>
-        private static List<string> InstalledFontsNamed(Newtonsoft.Json.Linq.JObject translation)
+        private static List<string> FallbackReferences(Newtonsoft.Json.Linq.JObject translation)
         {
-            var names = new List<string>();
-            if (!(translation?[UnityGameTranslator.Common.SettingsSections.FontsKey] is Newtonsoft.Json.Linq.JObject fonts)) return names;
+            var references = new List<string>();
+            if (!(translation?[UnityGameTranslator.Common.SettingsSections.FontsKey] is Newtonsoft.Json.Linq.JObject fonts)) return references;
             foreach (var property in fonts.Properties())
             {
                 var fallbackToken = (property.Value as Newtonsoft.Json.Linq.JObject)?["fallback"];
                 if (fallbackToken == null || fallbackToken.Type != Newtonsoft.Json.Linq.JTokenType.String) continue;
                 string fallback = (string)fallbackToken;
-                if (string.IsNullOrEmpty(fallback)) continue;
-                if (UnityGameTranslator.Common.FontReferences.Order(fallback)[0] != UnityGameTranslator.Common.FontSource.System) continue;
-                string name = UnityGameTranslator.Common.FontReferences.Name(fallback);
-                if (!names.Contains(name, StringComparer.OrdinalIgnoreCase)) names.Add(name);
+                if (!string.IsNullOrEmpty(fallback)) AddOnce(references, fallback);
             }
-            return names;
+            return references;
+        }
+
+        private static void AddOnce(List<string> list, string value)
+        {
+            if (!list.Contains(value, StringComparer.OrdinalIgnoreCase)) list.Add(value);
+        }
+
+        /// <summary>The font files of fonts/, by name (the file name without its extension).</summary>
+        private static Dictionary<string, string> FontFilesByName(string fontsFolder)
+        {
+            var files = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var extension in UnityGameTranslator.Common.AssetPacks.FontExtensions)
+            {
+                try
+                {
+                    foreach (var path in Directory.GetFiles(fontsFolder, "*" + extension))
+                    {
+                        string name = Path.GetFileNameWithoutExtension(path);
+                        if (!files.ContainsKey(name)) files[name] = path;
+                    }
+                }
+                catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException) { Faults.Say("DerivedFonts.FontFilesByName", ex, Sanitize.Path(fontsFolder)); }
+            }
+            return files;
+        }
+
+        /// <summary>
+        /// Removes from the copies' folder every file no copy of this launch owns: copies of fonts no
+        /// longer in use, their names, faces taken out of a collection, last session's copies of fonts
+        /// added while it ran. The pool's own folder is left to the pool.
+        /// </summary>
+        private static void RemoveWhatNoCopyOwns()
+        {
+            if (_folder == null || !Directory.Exists(_folder)) return;
+            var owned = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var entry in All())
+            {
+                owned.Add(entry.OwnFile);
+                owned.Add(entry.NamesPath);
+                if (entry.SourcePath != null) owned.Add(entry.SourcePath);
+            }
+            string[] files;
+            try { files = Directory.GetFiles(_folder); }
+            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException) { Faults.Say("DerivedFonts.RemoveWhatNoCopyOwns", ex, Sanitize.Path(_folder)); return; }
+            int removed = 0;
+            foreach (var file in files)
+            {
+                if (owned.Contains(file)) continue;
+                if (Delete(file)) removed++;
+            }
+            if (removed > 0) TranslatorCore.LogInfo($"[DerivedFonts] {removed} file(s) of fonts no longer in use removed");
+        }
+
+        /// <summary>
+        /// Removes a file the engine may still hold open (a font it loaded reads its file as it needs):
+        /// false when it does — that is the engine's state, not a fault, and the file is removed later.
+        /// A missing file counts as removed.
+        /// </summary>
+        private static bool TryRemove(string file)
+        {
+            if (string.IsNullOrEmpty(file) || !File.Exists(file)) return true;
+            try { File.Delete(file); return true; }
+            catch (IOException) { return false; }   // held open by the engine
+            catch (UnauthorizedAccessException ex)
+            {
+                Faults.Say("DerivedFonts.TryRemove", ex, Sanitize.Path(file));
+                return false;
+            }
+        }
+
+        private static bool Delete(string file)
+        {
+            try { File.Delete(file); return true; }
+            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
+            {
+                Faults.Say("DerivedFonts.Delete", ex, Sanitize.Path(file));
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Keeps the copies of the fonts in use and removes the others, files included — called when
+        /// the fonts in use change (FontManager: a replacement chosen or left, the interface font). A
+        /// font chosen again later is derived again, under a pool name (Ensure).
+        /// </summary>
+        internal static void KeepOnly(IList<KeyValuePair<string, UnityGameTranslator.Common.FontSource>> inUse)
+        {
+            _toRemove.RemoveAll(TryRemove);
+            bool Used(string name, UnityGameTranslator.Common.FontSource origin)
+            {
+                foreach (var u in inUse)
+                    if (u.Value == origin && string.Equals(u.Key, name, StringComparison.OrdinalIgnoreCase)) return true;
+                return false;
+            }
+
+            foreach (var entry in _byName.Values.ToList())
+                if (!Used(entry.Name, UnityGameTranslator.Common.FontSource.Custom)) Discard(_byName, entry);
+            foreach (var entry in _installedByName.Values.ToList())
+                if (!Used(entry.Name, UnityGameTranslator.Common.FontSource.System)) Discard(_installedByName, entry);
+            foreach (var name in _lent.Keys.ToList())
+            {
+                if (Used(name, UnityGameTranslator.Common.FontSource.Custom)) continue;
+                _lent.Remove(name);
+                _refused.Remove(LateKey(name));
+                string late = _folder == null ? null : Path.Combine(_folder, LatePrefix + Sanitized(name) + ".ttf");
+                if (late != null && !TryRemove(late)) _toRemove.Add(late);
+                TranslatorCore.LogInfo($"[DerivedFonts] {name}: no longer in use — its copy removed");
+            }
+        }
+
+        /// <summary>
+        /// A copy no font in use needs: forgotten, its files removed. What the engine already loaded
+        /// stays in memory (it reads a font whole when it opens it), so nothing on screen changes.
+        /// </summary>
+        private static void Discard(Dictionary<string, Entry> from, Entry entry)
+        {
+            from.Remove(entry.Name);
+            _pending.Remove(entry);
+            _refused.Remove(entry.Key);   // chosen again: derived again
+            var files = new List<string>(entry.OlderFiles) { entry.OwnFile, entry.NamesPath };
+            if (entry.SourcePath != null && _folder != null
+                && string.Equals(Path.GetDirectoryName(entry.SourcePath), _folder, StringComparison.OrdinalIgnoreCase))
+                files.Add(entry.SourcePath);   // a face taken out of a collection for it
+            int held = 0;
+            foreach (var file in files)
+                if (!TryRemove(file)) { _toRemove.Add(file); held++; }
+            TranslatorCore.LogInfo($"[DerivedFonts] {entry.Name}: no longer in use — its derived copy removed"
+                + (held > 0 ? $" ({held} file(s) still held by the game: removed when it lets them go, at the next launch at the latest)" : ""));
         }
 
         /// <summary>
@@ -567,12 +702,14 @@ namespace UnityGameTranslator.Core
                 _pending.Remove(entry);
                 if (!entry.Namer.Dirty) continue;
                 int target = entry.Current;
+                string file = entry.OwnFile;
                 if (il2cpp)
                 {
                     var slot = TakeFromPool(entry.Name);
                     if (slot == null) continue;   // said once; the new glyphs show at the next launch
                     entry.Slots.Add(slot.Value);
                     target = entry.Slots.Count - 1;
+                    file = Path.Combine(_folder, $"ugt-{entry.Key}-{entry.Version + 1}.ttf");
                 }
                 var into = entry.Slots[target];
                 byte[] derived = DerivedFontWriter.Write(entry.Source, into.Family, entry.Namer.Added, out string refusal);
@@ -583,14 +720,21 @@ namespace UnityGameTranslator.Core
                 }
                 try
                 {
-                    File.WriteAllBytes(entry.OwnFile, derived);
-                    if (_pool != null && _pool.Has(into.Name)) _pool.Fill(into, entry.OwnFile);
+                    File.WriteAllBytes(file, derived);
+                    if (_pool != null && _pool.Has(into.Name)) _pool.Fill(into, file);
                     File.WriteAllText(entry.NamesPath, entry.Namer.Save());
                 }
                 catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
                 {
-                    Faults.Say("DerivedFonts.ProcessPending", ex, Sanitize.Path(entry.OwnFile));
+                    Faults.Say("DerivedFonts.ProcessPending", ex, Sanitize.Path(file));
                     continue;
+                }
+                if (file != entry.OwnFile)
+                {
+                    entry.OlderFiles.Add(entry.OwnFile);
+                    entry.OwnFile = file;
+                    // The versions before: gone at once when the engine no longer holds them.
+                    entry.OlderFiles.RemoveAll(TryRemove);
                 }
                 entry.Namer.MarkWritten();
                 entry.Current = target;

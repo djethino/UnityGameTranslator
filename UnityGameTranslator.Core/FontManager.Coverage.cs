@@ -28,9 +28,10 @@ namespace UnityGameTranslator.Core
         /// (RtlPresenter.Present) before any shaping, with the logical text. Only our translations
         /// count: the game's own texts are its font's business.
         /// </summary>
-        internal static void NoteTextDrawn(string settingsFontName, string text)
+        internal static void NoteTextDrawn(long compId, string settingsFontName, string text)
         {
             if (string.IsNullOrEmpty(settingsFontName) || string.IsNullOrEmpty(text)) return;
+            if (compId != -1) _fontOfComponent[compId] = settingsFontName;
             if (Coverage.Seen(settingsFontName, text)) return;
             if (!TranslatorCore.IsAlreadyTargetText(text))
             {
@@ -40,6 +41,14 @@ namespace UnityGameTranslator.Core
             }
             Coverage.Record(settingsFontName, text);
         }
+
+        // The game font each component last drew a text with, by component: what the inspector asks
+        // for the texts it found (FontOfComponent).
+        private static readonly Dictionary<long, string> _fontOfComponent = new Dictionary<long, string>();
+
+        /// <summary>The game font (its name in the font settings) a component last drew a text with; null when unknown.</summary>
+        internal static string FontOfComponent(long compId) =>
+            _fontOfComponent.TryGetValue(compId, out var font) ? font : null;
 
         // ── the answers, cached until something they depend on changes ──
 

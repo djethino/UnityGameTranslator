@@ -118,7 +118,7 @@ namespace UnityGameTranslator.Core.TextShaping
 
             // Every game text goes out through here, with its font and still logical: the account
             // of what each font must be able to draw (FontManager.Coverage).
-            FontManager.NoteTextDrawn(settingsFontName, value);
+            FontManager.NoteTextDrawn(compId, settingsFontName, value);
 
             long tPerf = Perf.Start();
             try

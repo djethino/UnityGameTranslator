@@ -82,6 +82,10 @@ namespace UnityGameTranslator.Core.UI.Panels
         private Host _textEditRow;
         private ScrollList _textEditList;
         private LabelHandle _textEditCountLabel;
+        // Under the texts found: what their fonts — or this window's — draw wrongly, and the way out
+        // (user, 2026-10-01: the corner notice is less visible than this, where the texts are).
+        private LabelHandle _textFontNoticeLabel;
+        private readonly List<long> _textEditIds = new List<long>();
 
         /// <summary>
         /// The list's floor, and its ceiling once filled. One text needs a small box; a busy screen
@@ -201,6 +205,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _textEditRow = _screen.Host("TextEditRow");
             _textEditCountLabel = _screen.Label("TextEditCount");
             _textEditList = _screen.List("TextEditScroll");
+            _textFontNoticeLabel = _screen.Label("TextFontNotice");
             _cancelBtn = _screen.Button("CancelBtn");
             _statusLabel = _screen.Label("Status");
 
@@ -262,6 +267,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _imagePreview.Visible = isImage;
             _spriteInfoLabel.Visible = isImage;
             _textEditRow.Visible = false; // Shown only after clicking a text
+            _textEditIds.Clear();
 
             // The picker already rebuilt its camera list in Start(); just mirror it into the dropdown.
             _cameraDropdown.SetOptions(_picker.CameraNames);
@@ -309,6 +315,32 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             if (!Enabled) return;
             _picker.Tick();
+            // Follows a fallback set or removed while the texts are on screen.
+            if (_textEditIds.Count > 0) RefreshTextFontNotice();
+        }
+
+        /// <summary>
+        /// The fonts behind the texts found that draw the translation wrongly, one line each, and
+        /// this window when its own font cannot shape what it shows — the corner's sentences
+        /// (FontNotices). Hidden when there is nothing to say.
+        /// </summary>
+        private void RefreshTextFontNotice()
+        {
+            if (_textFontNoticeLabel == null) return;
+            var lines = new List<string>();
+            var fonts = new HashSet<string>(StringComparer.Ordinal);
+            foreach (long id in _textEditIds)
+            {
+                string font = FontManager.FontOfComponent(id);
+                if (font == null || !fonts.Add(font)) continue;
+                var problem = FontManager.ProblemOf(font);
+                if (problem != null) lines.Add(FontNotices.ForFont(problem.Value));
+            }
+            if (FontManager.WindowCannotShape) lines.Add(FontNotices.ForWindow());
+            string text = string.Join("\n", lines);
+            if (text == _textFontNoticeLabel.Value && _textFontNoticeLabel.Visible == (lines.Count > 0)) return;
+            _textFontNoticeLabel.Show(text);
+            _textFontNoticeLabel.Visible = lines.Count > 0;
         }
 
         /// <summary>The hovered path changed (or was cleared: <paramref name="path"/> is empty).</summary>
@@ -443,6 +475,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _pendingRetranslateRows.Clear();
             _textEditRow.Visible = false;
             _textEditList.Clear();
+            _textEditIds.Clear();
         }
 
         private void OnExcludeThisClicked()
@@ -643,6 +676,13 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Show the edit UI
             _textEditRow.Visible = true;
             _textEditCountLabel.Say($"{textEntries.Count} text(s) found:");
+            _textEditIds.Clear();
+            foreach (var entry in textEntries)
+            {
+                long id = TypeHelper.GetInstanceID(entry.component);
+                if (id != -1) _textEditIds.Add(id);
+            }
+            RefreshTextFontNotice();
 
             // Create an editable row for each text
             for (int i = 0; i < textEntries.Count; i++)

@@ -832,20 +832,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (showCoverage)
             {
                 MissingWeight(out var fonts);
-                string language = TranslatorCore.EffectiveTargetLanguage;
-                string what = string.IsNullOrEmpty(language) ? "this translation" : language;
-                // What the player sees on screen (user, 2026-10-01: "cannot display" was read
-                // under Hindi shown on screen). A dynamic legacy font borrows the letters it lacks
-                // from system fonts and Unity counts them as its own (Font.HasCharacter: True for a
-                // letter its file does not hold), so "borrowed" cannot be proved — "draws incorrectly"
-                // is true whether the letters are its own or not. Missing characters are boxes or
-                // nothing: said as such. Then the way out (user, same day: "on ne donne pas de
-                // solution"), in the word of the Fonts tab its button opens ("Fallback:").
-                _fontCoverageLabel?.Show(fonts.Count > 1
-                    ? $"{fonts.Count} fonts draw {what} incorrectly. Set a fallback font for each."
-                    : fonts[0].Missing > 0
-                        ? $"Font \"{fonts[0].Font}\" is missing {(string.IsNullOrEmpty(language) ? "characters of this translation" : language + " characters")}. Set a fallback font for it."
-                        : $"Font \"{fonts[0].Font}\" draws {what} incorrectly. Set a fallback font for it.");
+                // The inspector says the same fact under the texts it found (FontNotices).
+                _fontCoverageLabel?.Show(fonts.Count > 1 ? FontNotices.ForFonts(fonts.Count) : FontNotices.ForFont(fonts[0]));
             }
 
             // 2b ter. This window cannot show the game's text correctly with its font.
@@ -853,9 +841,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (_windowFontBox != null) _windowFontBox.Visible = showWindowFont;
             if (showWindowFont)
             {
-                string language = TranslatorCore.EffectiveTargetLanguage;
-                string what = string.IsNullOrEmpty(language) ? "this translation" : language;
-                _windowFontLabel?.Show($"This window draws {what} incorrectly. Set an interface font.");
+                _windowFontLabel?.Show(FontNotices.ForWindow());
             }
 
             // 2c. A font being converted in the background: the game keeps running, and this says

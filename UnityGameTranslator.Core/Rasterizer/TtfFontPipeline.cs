@@ -18,7 +18,7 @@ namespace UnityGameTranslator.Core.Rasterizer
         /// Higher = better quality but larger atlas. Used as the FLOOR of the automatic
         /// quality ladder (huge CJK charsets) — small charsets get a higher size.
         /// </summary>
-        public const float DefaultRenderSize = 48f;
+        public const float DefaultRenderSize = AtlasSampling.FloorSize;
 
         /// <summary>
         /// Default SDF spread in pixels. Must match the distanceRange used by TMP shaders.
@@ -35,8 +35,10 @@ namespace UnityGameTranslator.Core.Rasterizer
         /// to — the unmapped ones (conjuncts, half forms, ligatures, contextual variants)
         /// get private-use codepoints of ours (see PrivateGlyphBase) and each entry carries
         /// its font glyph index, which is what OpenType shaping needs to name them.
+        /// v6: the automatic sampling size lets a large font reach 96 px/em (see
+        /// ChooseRenderSize) — every cache drawn under the old rule is drawn again once.
         /// </summary>
-        public const int PipelineVersion = 5;
+        public const int PipelineVersion = 6;
 
         /// <summary>
         /// Private-use codepoints handed to the glyphs no codepoint maps to, in glyph-index
@@ -49,43 +51,6 @@ namespace UnityGameTranslator.Core.Rasterizer
         public const int PrivateGlyphBase = TextShaping.PrivateGlyphs.First;
         public const int PrivateGlyphLast = TextShaping.PrivateGlyphs.Last;
 
-        /// <summary>
-        /// Target atlas budget for the automatic quality ladder. Deliberately below GPU
-        /// limits: a 4096² ARGB32 atlas is 64 MB — acceptable; bigger is not, as default.
-        /// </summary>
-        private const int AutoQualityAtlasBudget = 4096;
-
-        /// <summary>
-        /// Pick the largest sampling size whose estimated single atlas fits the budget.
-        /// Small charsets (Latin ≈ a few hundred glyphs) get 96-128px/em — crisp at the
-        /// large on-screen sizes where the historical 48px looked jagged; huge charsets
-        /// (CJK) fall back to the compact default.
-        /// </summary>
-        public static float ChooseRenderSize(int glyphCount, int maxAtlasSize, int atlasBudget = 0)
-        {
-            // atlasBudget 0 = default ceiling; a higher value (config max_font_atlas_size)
-            // lets the picker choose a larger sampling size → crisper at upscaled display
-            // sizes. Always capped by the hardware texture limit.
-            int budget = Math.Min(atlasBudget > 0 ? atlasBudget : AutoQualityAtlasBudget, maxAtlasSize);
-            float side = (float)Math.Ceiling(Math.Sqrt(Math.Max(1, glyphCount)));
-
-            // Largest first: pick the highest sampling size whose atlas fits the budget.
-            // Sizes above 128 only become reachable when the budget is raised above the 4096
-            // default — they let our atlas match (or exceed) the game font's own sampling size
-            // (a test game's own font is sampled at 408 px/em), which is what keeps
-            // replacement text from looking softer than the original at large display sizes.
-            foreach (float size in new[] { 512f, 384f, 256f, 192f, 128f, 96f, 64f })
-            {
-                // Cell estimate: glyph body (~1.3 em worst case) + SDF padding on both
-                // sides + inter-cell spacing (2× distanceRange, see the packing step: covers
-                // the SDF spread AND a drop-shadow offset that reaches into a neighbour cell).
-                float range = (float)Math.Round(size / 6f);
-                float cell = size * 1.3f + 2f * (range + 1f) + 2f * range;
-                if (side * cell <= budget)
-                    return size;
-            }
-            return DefaultRenderSize;
-        }
 
         /// <summary>
         /// Process a TTF/OTF file and generate atlas data compatible with CustomFontLoader.
@@ -153,9 +118,9 @@ namespace UnityGameTranslator.Core.Rasterizer
                 // 48px/8px ratio (1/6 em) so shader gradients stay proportional.
                 if (renderSize <= 0f)
                 {
-                    renderSize = ChooseRenderSize(totalGlyphs, maxAtlasSize, atlasBudget);
+                    renderSize = AtlasSampling.ChooseRenderSize(totalGlyphs, maxAtlasSize, atlasBudget);
                     distanceRange = (float)Math.Round(renderSize / 6f);
-                    TranslatorCore.LogInfo($"[TtfPipeline] Auto quality: {totalGlyphs} glyphs → renderSize={renderSize}px, distanceRange={distanceRange}px (budget={(atlasBudget > 0 ? atlasBudget : 4096)})");
+                    TranslatorCore.LogInfo($"[TtfPipeline] Auto quality: {totalGlyphs} glyphs → renderSize={renderSize}px, distanceRange={distanceRange}px (budget={(atlasBudget > 0 ? atlasBudget.ToString() : "auto")})");
                 }
 
                 int sdfPadding = (int)Math.Ceiling(distanceRange) + 1;

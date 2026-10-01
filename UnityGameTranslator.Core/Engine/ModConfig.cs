@@ -447,7 +447,8 @@ namespace UnityGameTranslator.Core
         public float panel_opacity_unfocused { get; set; } = 0.75f;
 
         // Max SDF atlas dimension the auto-quality picker may use when rasterizing a
-        // replacement font. 0 = automatic default (4096). Raising it (e.g. 8192) renders
+        // replacement font. 0 = automatic (TtfFontPipeline.ChooseRenderSize: 4096, up to 8192
+        // for a font with many glyphs). Raising it (e.g. 8192) renders
         // replacement fonts at a higher SDF resolution → crisper when the translator scales
         // the text up, at a VRAM cost. Capped by SystemInfo.maxTextureSize. LAYOUT-NEUTRAL
         // (TMP normalizes the SDF by pointSize → text size is unchanged, only sharpness),

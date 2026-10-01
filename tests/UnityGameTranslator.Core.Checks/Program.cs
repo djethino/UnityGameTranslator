@@ -306,6 +306,7 @@ namespace UnityGameTranslator.Core.Checks
             Section("Derived font (added glyphs vs the source font)", DerivedFontChecks.Run);
 
             Section("Font pool (names listed at start, filled during the session)", FontPoolChecks.Run);
+            Section("Atlas sampling (the size Auto draws a font at)", AtlasSamplingChecks.Run);
 
             Section("Derived font pipeline (shape, name, write, draw — against HarfBuzz)", DerivedPipelineChecks.Run);
 

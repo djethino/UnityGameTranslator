@@ -213,7 +213,7 @@ namespace UnityGameTranslator.Core
                 if (cfgBudget > 0 && cachedSize > 0.5f &&
                     !string.IsNullOrEmpty(fontInfo.TtfPath) && File.Exists(fontInfo.TtfPath))
                 {
-                    float wouldBe = Rasterizer.TtfFontPipeline.ChooseRenderSize(
+                    float wouldBe = Rasterizer.AtlasSampling.ChooseRenderSize(
                         atlasData.glyphs.Count, maxAtlasSize, cfgBudget);
                     if (Math.Abs(wouldBe - cachedSize) > 0.5f)
                     {
@@ -842,10 +842,10 @@ namespace UnityGameTranslator.Core
                         TranslatorCore.LogWarning($"[CustomFontLoader] Raw atlas cache unusable for {fontName} — dropped, drawing again");
                     }
 
-                    TranslatorCore.LogInfo($"[CustomFontLoader] No usable cache for {fontName}, drawing it (atlas cap {maxAtlasSize}, budget {(atlasBudget > 0 ? atlasBudget.ToString() : "default 4096")})");
+                    TranslatorCore.LogInfo($"[CustomFontLoader] No usable cache for {fontName}, drawing it (atlas cap {maxAtlasSize}, budget {(atlasBudget > 0 ? atlasBudget.ToString() : "auto")})");
 
                     // renderSize 0 = automatic quality (sampling size picked from the charset size +
-                    // atlas budget — see TtfFontPipeline.ChooseRenderSize)
+                    // atlas budget — see AtlasSampling.ChooseRenderSize)
                     var drawn = Rasterizer.TtfFontPipeline.ProcessTtfFont(fontInfo.TtfPath,
                         renderSize: 0f, maxAtlasSize: maxAtlasSize, atlasBudget: atlasBudget, progress: progress);
 

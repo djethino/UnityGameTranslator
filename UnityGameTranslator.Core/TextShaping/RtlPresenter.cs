@@ -97,7 +97,10 @@ namespace UnityGameTranslator.Core.TextShaping
                     return;
                 RestoreIfFlagged(instance, compId, RtlProp(instance));
                 if (_reflows.TryGetValue(compId, out var queued) && queued.Kind != ReflowKind.UGuiWords)
+                {
+                    TraceReflow(compId, "removed: a write not presented");
                     _reflows.Remove(compId);
+                }
             }
             catch (Exception ex) { TranslatorCore.LogDebug($"[RtlPresenter] release failed: {ex.Message}"); }
         }
@@ -153,7 +156,10 @@ namespace UnityGameTranslator.Core.TextShaping
                         // A word reflow queued a moment ago by PresentSyllabic is this text's,
                         // not a leftover: only an RTL reflow is stale here.
                         if (_reflows.TryGetValue(compId, out var queued) && queued.Kind != ReflowKind.UGuiWords)
+                        {
+                            TraceReflow(compId, "removed: left-to-right text");
                             _reflows.Remove(compId);
+                        }
                         return;
                     }
 
@@ -674,6 +680,7 @@ namespace UnityGameTranslator.Core.TextShaping
             string assigned = assignedForm ?? shapedLogical;
             RegisterShown(compId, assigned, logicalForRecord ?? value);
             if (compId != -1)
+            {
                 _reflows[compId] = new Reflow
                 {
                     Comp = new WeakReference(instance),
@@ -683,6 +690,8 @@ namespace UnityGameTranslator.Core.TextShaping
                     Mirror = mirror,
                     Kind = kind,
                 };
+                TraceReflow(compId, "queued " + kind);
+            }
             Log(compId, logMode, value, assigned);
             value = assigned;
         }
@@ -761,8 +770,7 @@ namespace UnityGameTranslator.Core.TextShaping
                     {
                         // Debug: a reflow that waits says why, once per component — a text left in
                         // its measuring form (logical order) on screen is read backwards.
-                        if (TranslatorCore.DebugMode && _waitReasons.Add(id + "|" + blocker) && _waitReasons.Count <= 400)
-                            TranslatorCore.LogInfo($"[RtlPresenter] reflow waits ({blocker}): comp={id} kind={entry.Kind} @ {(comp is UnityEngine.Component wc ? TranslatorCore.GetGameObjectPath(wc.gameObject) : "?")}");
+                        TraceReflow(id, "waits (" + blocker + ")", comp);
                         continue;
                     }
 
@@ -857,6 +865,20 @@ namespace UnityGameTranslator.Core.TextShaping
         private static readonly HashSet<long> _waitLogged = new HashSet<long>();
         private static readonly HashSet<long> _staleLogged = new HashSet<long>();
         private static readonly HashSet<string> _waitReasons = new HashSet<string>();
+        private static int _inactiveTraces;
+
+        /// <summary>
+        /// Debug: what happens to one component's pending reflow, once per state — queued, waiting
+        /// (and why), removed (and by what). Waiting on an inactive component is the common case
+        /// (a hidden screen filled up front): only the first ones are said, so the rest stays readable.
+        /// </summary>
+        private static void TraceReflow(long id, string state, object comp = null)
+        {
+            if (!TranslatorCore.DebugMode || _waitReasons.Count > 4000 || !_waitReasons.Add(id + "|" + state)) return;
+            if (state == "waits (inactive)" && ++_inactiveTraces > 50) return;
+            string where = comp is UnityEngine.Component wc && wc != null ? " @ " + TranslatorCore.GetGameObjectPath(wc.gameObject) : "";
+            TranslatorCore.LogInfo($"[RtlPresenter] reflow {state}: comp={id}{where}");
+        }
 
         // ⚠ No re-cut on box resize. It was tried (a Graphic.OnRectTransformDimensionsChange
         // hook) and it is circular by construction: a ContentSizeFitter sizes the box from the

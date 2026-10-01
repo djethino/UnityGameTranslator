@@ -201,7 +201,7 @@ namespace UnityGameTranslator.Core.TextShaping
             s.Prep = prep;
             s.Layout = prep.Lay(null);          // re-laid with TMP's own lines at the glyph move
             s.Logical = logical;
-            string shown = prep.LabelFor(out var labelIndex, out var labelLength);
+            string shown = s.Layout.MirroredLabel(prep.LabelFor(out var labelIndex, out var labelLength), labelIndex);
             if (tail.Length > 0)
             {
                 // TMP's caret-tracking space stands for the end of the typed text.
@@ -523,6 +523,13 @@ namespace UnityGameTranslator.Core.TextShaping
                 lineOf[k] = Convert.ToInt32(Tmp.Get(Tmp.CiLine, c));
                 if (indexOf[k] >= 0 && indexOf[k] < n) (kOf[indexOf[k]] ?? (kOf[indexOf[k]] = new List<int>())).Add(k);
             }
+            // How far the pen moves past each character as TMP laid the label out: to the next
+            // character's origin on the same line — kerning included, which TMP adds to the NEXT
+            // origin, never to xAdvance — else its own advance. Moved by these widths, a line that
+            // needs no reordering does not move at all (a Latin word kept its kerning: 2026-10-01).
+            var pen = new float[count];
+            for (int k = 0; k < count; k++)
+                pen[k] = k + 1 < count && lineOf[k + 1] == lineOf[k] ? origin[k + 1] - origin[k] : advance[k] - origin[k];
 
             // TMP's own line starts, as typed indices: the soft wraps to lay out against.
             var wraps = new List<int>();
@@ -580,7 +587,7 @@ namespace UnityGameTranslator.Core.TextShaping
                     s.BoxLine[i] = lineOf[kOf[i][0]];
                     foreach (int k in kOf[i])
                     {
-                        float w = advance[k] - origin[k];
+                        float w = pen[k];
                         float delta = cursor - origin[k];
                         if (Math.Abs(delta) > 0.001f)
                         {

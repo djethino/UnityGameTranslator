@@ -420,16 +420,7 @@ namespace UnityGameTranslator.Core.TextShaping
 
                 // Mirroring at odd levels (L4), then the visual order of this line (L2).
                 for (int k = 0; k < cps.Count; k++)
-                {
-                    if ((lv[k] & 1) == 0) continue;
-                    int cp = cps[k];
-                    if (UnicodeClasses.PairedBracketType(cp) != PairedBracketType.n)
-                    {
-                        int opposite = UnicodeClasses.AssociatedBracket(cp);
-                        if (opposite != 0) cps[k] = opposite;
-                    }
-                    else if (RtlComposer.ExtraMirrors.TryGetValue(cp, out int mirrored)) cps[k] = mirrored;
-                }
+                    if ((lv[k] & 1) == 1) cps[k] = Mirrored(cps[k]);
                 RtlComposer.Reorder(cps, lv, orig);
 
                 lineDispStart[L] = display.Length;
@@ -536,6 +527,37 @@ namespace UnityGameTranslator.Core.TextShaping
                 if (d == Directionality.L || d == Directionality.R || d == Directionality.AL) return true;
             }
             return false;
+        }
+
+        /// <summary>
+        /// The character a right-to-left level draws for <paramref name="cp"/> (L4): the other bracket
+        /// of a pair, a guillemet turned round; itself otherwise.
+        /// </summary>
+        internal static int Mirrored(int cp)
+        {
+            if (UnicodeClasses.PairedBracketType(cp) != PairedBracketType.n)
+            {
+                int opposite = UnicodeClasses.AssociatedBracket(cp);
+                return opposite != 0 ? opposite : cp;
+            }
+            return RtlComposer.ExtraMirrors.TryGetValue(cp, out int mirrored) ? mirrored : cp;
+        }
+
+        /// <summary>
+        /// A TMP label (<see cref="Prepared.LabelFor"/>) with the characters a right-to-left level
+        /// draws mirrored — TMP draws the label's characters as they are, so "(" at an RTL level must
+        /// be given as ")" (the uGUI field gets it from <see cref="Display"/>).
+        /// </summary>
+        internal string MirroredLabel(string label, int[] typedIndex)
+        {
+            var sb = new StringBuilder(label);
+            for (int k = 0; k < label.Length && k < typedIndex.Length; k++)
+            {
+                if (char.IsSurrogate(label[k]) || !IsRtl(typedIndex[k])) continue;
+                int m = Mirrored(label[k]);
+                if (m != label[k] && m <= 0xFFFF) sb[k] = (char)m;
+            }
+            return sb.ToString();
         }
 
         private static bool IsWhitespace(int cp) => cp == ' ' || cp == '\t' || cp == 0x3000 || cp == 0x200B;

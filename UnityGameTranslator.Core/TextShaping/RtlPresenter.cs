@@ -123,6 +123,11 @@ namespace UnityGameTranslator.Core.TextShaping
             long tPerf = Perf.Start();
             try
             {
+                // Asked of the text AS IT ARRIVED: PresentSyllabic registers its own shaped form
+                // just below, which is no echo — the right-to-left step still has to lay it out.
+                string arrivedLogical = TranslatorCore.TryGetPresentedLogical(value);
+                bool ownEcho = arrivedLogical != null && arrivedLogical != value;
+
                 PresentSyllabic(instance, compId, ref value, settingsFontName, ownUi);
 
                 var prop = RtlProp(instance);
@@ -150,28 +155,20 @@ namespace UnityGameTranslator.Core.TextShaping
                         return;
                     }
 
-                    // Our own shaped output coming back: a scanner refresh, or Apply in the
-                    // Fonts tab re-setting every text. The TEXT needs nothing — the ALIGNMENT
-                    // choice may have changed since it was presented (per font, per rule), and
-                    // this round-trip is the only way a new choice reaches a component the game
-                    // never re-sets on its own. Without it, "Keep game's" chosen on a screen of
-                    // static buttons changed nothing on that screen (user: "a dead option").
-                    // ⚠ UI Toolkit reads its alignment from the resolved style, which an element
-                    // showing our text has had for a while — safe here, unlike at first set.
-                    bool mirrorNow = TranslatorCore.ShouldMirrorRtlAlignment(settingsFontName, overrideRule);
-                    if (UIToolkitSupport.IsTextElementInstance(instance))
-                        UIToolkitSupport.MirrorAlign(instance, mirrorNow);
-                    else
-                        MirrorAlignment(instance, compId, mirrorNow);
+                    KeepEcho(instance, compId, value, settingsFontName, overrideRule);
+                    return;
+                }
 
-                    if (value.IndexOf("<u", StringComparison.OrdinalIgnoreCase) >= 0 && _underlineDropBudget > 0)
-                    {
-                        // ...and still carrying an underline the guard should have removed. Worth
-                        // a line while this engine's underline defect is being characterised: it
-                        // would mean a write reached the element without going through the guard.
-                        _underlineDropBudget--;
-                        TranslatorCore.LogWarning($"[RtlPresenter] shaped echo still carries an underline tag on comp={compId} — a write bypassed the guard");
-                    }
+                // Our own composed output coming back when nothing in it says so: Hebrew, Adlam and
+                // the other scripts with no presentation forms read as fresh logical text, and
+                // composing it again reversed every left-to-right run inside it once more — a
+                // Latin word or a number in a Hebrew line flipped at each refresh ("Unity" →
+                // "ytinU", "2.5" → "5.2"; bench, mixed corpus, 2026-10-01). The index of what we
+                // presented knows it; a text whose presented form IS its logical one composes to
+                // itself, so it needs no exception.
+                if (ownEcho)
+                {
+                    KeepEcho(instance, compId, value, settingsFontName, overrideRule);
                     return;
                 }
 
@@ -391,6 +388,33 @@ namespace UnityGameTranslator.Core.TextShaping
             if (prop == null) return false;
             try { return prop.GetValue(instance, null) is UnityEngine.Font f && f != null; }
             catch (Exception ex) { Faults.Say("RtlPresenter.DrawsDynamicFont", ex, type.Name); return false; }
+        }
+
+        /// <summary>
+        /// Our own output coming back: a scanner refresh, or Apply in the Fonts tab re-setting every
+        /// text. The TEXT needs nothing — the ALIGNMENT choice may have changed since it was
+        /// presented (per font, per rule), and this round-trip is the only way a new choice reaches
+        /// a component the game never re-sets on its own. Without it, "Keep game's" chosen on a
+        /// screen of static buttons changed nothing on that screen (user: "a dead option").
+        /// ⚠ UI Toolkit reads its alignment from the resolved style, which an element showing our
+        /// text has had for a while — safe here, unlike at first set.
+        /// </summary>
+        private static void KeepEcho(object instance, long compId, string value, string settingsFontName, FontOverrideRule overrideRule)
+        {
+            bool mirrorNow = TranslatorCore.ShouldMirrorRtlAlignment(settingsFontName, overrideRule);
+            if (UIToolkitSupport.IsTextElementInstance(instance))
+                UIToolkitSupport.MirrorAlign(instance, mirrorNow);
+            else
+                MirrorAlignment(instance, compId, mirrorNow);
+
+            if (value.IndexOf("<u", StringComparison.OrdinalIgnoreCase) >= 0 && _underlineDropBudget > 0)
+            {
+                // ...and still carrying an underline the guard should have removed. Worth a line
+                // while this engine's underline defect is being characterised: it would mean a
+                // write reached the element without going through the guard.
+                _underlineDropBudget--;
+                TranslatorCore.LogWarning($"[RtlPresenter] echo still carries an underline tag on comp={compId} — a write bypassed the guard");
+            }
         }
 
         private static void PresentSyllabic(object instance, long compId, ref string value, string settingsFontName, bool ownUi)

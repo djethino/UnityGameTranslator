@@ -52,6 +52,23 @@ namespace UnityGameTranslator.Core.Checks
                 "a lam-alef: the ligature in the lam's slot, a zero-width space in the alef's",
                 "the glyph where it is drawn, nothing visible where it merged");
 
+            // Brackets in a right-to-left field: TMP draws its label's characters as they are, so the
+            // label gives "(" mirrored where the uGUI field's display mirrors it (found on the bench:
+            // "(שמור)" shown with its brackets backwards, 2026-10-01).
+            foreach (var text in new[] { "(שמור) את המשחק", "(احفظ) اللعبة" })
+            {
+                var bracketed = RtlFieldLayout.Prepare(text);
+                var lay = bracketed.Lay(null);
+                string tmpLabel = lay.MirroredLabel(bracketed.LabelFor(out var at, out _), at);
+                var drawn = new System.Text.StringBuilder();
+                foreach (int i in lay.LogicalOnScreen(0))
+                    for (int k = 0; k < tmpLabel.Length; k++)
+                        if (at[k] == i && tmpLabel[k] != RtlFieldLayout.ZeroWidthSpace) drawn.Append(tmpLabel[k]);
+                check(drawn.ToString() == lay.Display.Replace(RtlFieldLayout.ZeroWidthSpace.ToString(), ""),
+                    "brackets in a right-to-left field: TMP's label, moved into screen order, shows what the uGUI field shows",
+                    drawn + " vs " + lay.Display);
+            }
+
             var mixed = RtlFieldLayout.Prepare("abc مرحبا");
             check(mixed.LabelFor(out _, out _).StartsWith("abc "),
                 "Latin stays as typed",

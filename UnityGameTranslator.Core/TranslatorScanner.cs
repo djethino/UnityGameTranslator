@@ -62,6 +62,15 @@ namespace UnityGameTranslator.Core
                     return;
             }
 
+            // A type IL2CPP left out of the game whole has no instance to find — scanning for it would
+            // only send every lookup down the slower routes (TextMesh in a game that never used it:
+            // a Fault at registration, then a fallback warning, 2026-10-01). Said once, not scanned.
+            if (TranslatorCore.Adapter?.IsIL2CPP == true && TypeHelper.Il2CppClassAbsent(type.ComponentType))
+            {
+                TranslatorCore.LogInfo($"[Scanner] {type.Name}: not in this game (IL2CPP has no class for it) — not scanned");
+                return;
+            }
+
             // Set up IL2CPP cache for this type if available
             if (il2cppScanAvailable && il2cppTypeOfMethod != null)
             {
@@ -86,6 +95,7 @@ namespace UnityGameTranslator.Core
             _registeredTypes.Add(type);
             TranslatorCore.LogDebug($"[Scanner] Registered type: {type.Name} (Category={type.Category})");
         }
+
 
         #endregion
 

@@ -584,6 +584,25 @@ namespace UnityGameTranslator.Core
             catch (Exception ex) { Faults.Say("TypeHelper.SetTextColor", ex, component.GetType().Name); }
         }
 
+        private static Type _classPointerStore;
+
+        /// <summary>
+        /// The interop knows the type but the game's IL2CPP build has no class for it: the
+        /// interop's class pointer for it is zero (Il2CppClassPointerStore&lt;T&gt;.NativeClassPtr).
+        /// No instance of it can exist, and no hook on it can be placed. False whenever that cannot be read — the type is then scanned as before.
+        /// </summary>
+        public static bool Il2CppClassAbsent(Type type)
+        {
+            if (_classPointerStore == null)
+                foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+                {
+                    _classPointerStore = asm.GetType("Il2CppInterop.Runtime.Il2CppClassPointerStore`1");
+                    if (_classPointerStore != null) break;
+                }
+            var field = _classPointerStore?.MakeGenericType(type).GetField("NativeClassPtr", BindingFlags.Public | BindingFlags.Static);
+            return field != null && (IntPtr)field.GetValue(null) == IntPtr.Zero;
+        }
+
         /// <summary>
         /// Get the text value from a component.
         /// </summary>

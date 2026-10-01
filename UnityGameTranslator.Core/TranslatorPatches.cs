@@ -397,8 +397,11 @@ namespace UnityGameTranslator.Core
 
             Group("TextMesh", () =>
             {
-                // TextMesh.text setter (legacy 3D text)
-                if (TypeHelper.TextMeshType != null)
+                // TextMesh.text setter (legacy 3D text). Not where the game's IL2CPP build has no
+                // TextMesh at all: nothing to hook, and the refusal read as an error (the scanner says
+                // it once, TranslatorScanner.RegisterType).
+                if (TypeHelper.TextMeshType != null
+                    && !(TranslatorCore.Adapter?.IsIL2CPP == true && TypeHelper.Il2CppClassAbsent(TypeHelper.TextMeshType)))
                 {
                     var textMeshProp = TypeHelper.TextMeshType.GetProperty("text", BindingFlags.Public | BindingFlags.Instance);
                     if (textMeshProp?.SetMethod != null)

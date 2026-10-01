@@ -617,12 +617,13 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// Set the text value on a component.
+        /// Set the text value on a component. False when the write threw (said) — a setter IL2CPP
+        /// stripped, which the interop could not restore, throws at every call.
         /// </summary>
-        public static void SetText(object component, string text)
+        public static bool SetText(object component, string text)
         {
             // Destroyed: its properties would throw. Recognised, not caught.
-            if (!IsUnityObjectAlive(component)) return;
+            if (!IsUnityObjectAlive(component)) return true;
 
             try
             {
@@ -635,7 +636,7 @@ namespace UnityGameTranslator.Core
                         setter.Invoke(component, new object[] { text });
                     else
                         TMP_TextProp.SetValue(component, text, null);
-                    return;
+                    return true;
                 }
 
                 if (UI_TextType != null && UI_TextType.IsAssignableFrom(type) && UI_TextProp != null && UI_TextProp.CanWrite)
@@ -647,7 +648,7 @@ namespace UnityGameTranslator.Core
                         setter.Invoke(component, new object[] { text });
                     else
                         UI_TextProp.SetValue(component, text, null);
-                    return;
+                    return true;
                 }
 
                 if (TextMeshType != null && TextMeshType.IsAssignableFrom(type) && TextMesh_TextProp != null && TextMesh_TextProp.CanWrite)
@@ -657,7 +658,7 @@ namespace UnityGameTranslator.Core
                         setter.Invoke(component, new object[] { text });
                     else
                         TextMesh_TextProp.SetValue(component, text, null);
-                    return;
+                    return true;
                 }
 
                 // Fallback
@@ -665,11 +666,12 @@ namespace UnityGameTranslator.Core
                 if (textProp != null && textProp.CanWrite)
                 {
                     textProp.SetValue(component, text, null);
-                    return;
+                    return true;
                 }
             }
             // The component's own code, reached by reflection: said.
-            catch (Exception ex) { Faults.Say("TypeHelper.SetText", ex, component.GetType().Name); }
+            catch (Exception ex) { Faults.Say("TypeHelper.SetText", ex, component.GetType().Name); return false; }
+            return true;
         }
 
         /// <summary>

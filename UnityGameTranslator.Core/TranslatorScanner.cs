@@ -829,10 +829,30 @@ namespace UnityGameTranslator.Core
                 });
             }
 
-            // TextMesh and alternate TMP (TMProOld) are NOT registered for scanning.
-            // They are fully covered by Harmony patches (TextMesh_SetText_Prefix,
-            // AlternateTMP_SetText_Prefix) which handle real-time text interception.
-            // The old code (pre-refactor) also did not scan them — only TMP_Text + UI.Text.
+            // TextMesh (legacy 3D text): scanned like UI.Text. Its setter hook sees only the texts the
+            // game's CODE writes; a text written in the scene by its author is never set at run time,
+            // and was translated on no game (2026-10-01). And where IL2CPP stripped the setter —
+            // no game code calls it — the hook cannot be placed at all, so the scanner is the only
+            // way in; its writes go through the interop's own body of the setter.
+            if (TypeHelper.TextMeshType != null && TypeHelper.TextMesh_TextProp != null)
+            {
+                RegisterType(new RegisteredTextType
+                {
+                    Name = "TextMesh",
+                    Category = "TextMesh",
+                    ComponentType = TypeHelper.TextMeshType,
+                    TextProp = TypeHelper.TextMesh_TextProp,
+                    FontProp = TypeHelper.TextMesh_FontProp,
+                    FontSizeProp = TypeHelper.TextMeshType.GetProperty("fontSize", pubInst),
+                    ColorProp = TypeHelper.TextMeshType.GetProperty("color", pubInst),
+                    FontTypeName = "TextMesh",
+                    NeedsForceMeshUpdate = false,
+                    NeedsSetAllDirty = false
+                });
+            }
+
+            // Alternate TMP (TMProOld) is NOT registered for scanning: covered by its Harmony
+            // patch (AlternateTMP_SetText_Prefix).
 
             // Register generic types already detected by TranslatorPatches (NGUI, etc.)
             // These have no Harmony coverage and need scanner discovery.
@@ -1456,7 +1476,17 @@ namespace UnityGameTranslator.Core
         private static void SetTextForType(object component, RegisteredTextType type, string text)
         {
             if (type.Category == "TMP" || type.Category == "Unity" || type.Category == "TextMesh")
-                TypeHelper.SetText(component, text);
+            {
+                // A TextMesh's setter runs no game code: one that throws is one IL2CPP stripped and
+                // the interop could not restore — it will throw for every TextMesh, at every pass
+                // (the text stays the source, so the component is taken up again). Said once; the
+                // components are still seen (texts-seen.json), never written.
+                if (!TypeHelper.SetText(component, text) && type.Category == "TextMesh" && !type.WriteRefused)
+                {
+                    type.WriteRefused = true;
+                    TranslatorCore.LogWarning("[Scanner] TextMesh: this game cannot write a TextMesh's text (its setter is missing from the game) — its 3D texts stay untranslated");
+                }
+            }
             else
                 type.TextProp?.SetValue(component, text, null);
         }
@@ -1580,7 +1610,10 @@ namespace UnityGameTranslator.Core
                 // any setter firing: static labels, scenes loaded with their words in place.
                 if (type.Category == "TMP") NoteShown(comp, Common.TextSystem.Tmp);
                 else if (type.Category == "Unity") NoteShown(comp, Common.TextSystem.UiText);
+                else if (type.Category == "TextMesh") NoteShown(comp, Common.TextSystem.TextMesh);
                 else Engine.TextsSeen.NoteGeneric(type.ComponentType?.Name);
+
+                if (type.WriteRefused) return;
 
                 // Skip mirrors of the user's typed input (game echoing the typed value
                 // into a display text). Transient skip — NOT a permanent exclusion:

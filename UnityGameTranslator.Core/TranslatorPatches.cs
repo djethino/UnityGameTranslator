@@ -31,6 +31,9 @@ namespace UnityGameTranslator.Core
         internal UnityEngine.Object[] CachedComponents;
         internal int BatchIndex;
         internal bool LoggedOnce;
+        // The engine refused to write this type's text once, and will every time: a TextMesh
+        // setter IL2CPP stripped (TranslatorScanner.SetTextForType). Its components are still seen.
+        internal bool WriteRefused;
 
         // The engine itself was asked for every instance of this type, this refresh, and said
         // none — the answer the component filter cannot improve on (TranslatorScanner, Phase 2).

@@ -1251,7 +1251,7 @@ namespace UnityGameTranslator.Core
             var resolved = _resolvedStyleProp?.GetValue(element, null);
             if (resolved == null) return;
 
-            var currentFont = ReadResolvedFont(resolved, out _);
+            var currentFont = CurrentFontOf(element, resolved, out _);
             if (currentFont == null || string.IsNullOrEmpty(currentFont.name)) return;
 
             RestoreOriginalFont(element, settingsName, currentFont);
@@ -1897,10 +1897,23 @@ namespace UnityGameTranslator.Core
             try
             {
                 var resolved = _resolvedStyleProp?.GetValue(element, null);
-                if (resolved == null) return true;
+                if (resolved == null)
+                {
+                    if (DiagnosticOnce.First("UIToolkit.noResolvedStyle", element.GetType().FullName))
+                        TranslatorCore.LogWarning($"[UIToolkit] {element.GetType().Name}: no resolved style — its font cannot be read, so it is not replaced");
+                    return true;
+                }
 
-                var currentFont = ReadResolvedFont(resolved, out bool isSdf);
-                if (currentFont == null || string.IsNullOrEmpty(currentFont.name)) return true;
+                var currentFont = CurrentFontOf(element, resolved, out bool isSdf);
+                if (currentFont == null || string.IsNullOrEmpty(currentFont.name))
+                {
+                    // 🔴 Said, not skipped in silence: on a game where this read fails, no element is
+                    // ever registered, replaced or highlighted, and nothing else in the log says why
+                    // (2026-10-02, a UI Toolkit game on Unity 6000.5: every font "0 in scene").
+                    if (DiagnosticOnce.First("UIToolkit.noFont", element.GetType().FullName))
+                        TranslatorCore.LogWarning($"[UIToolkit] {element.GetType().Name}: its font cannot be read — {DescribeFontRead(resolved)}");
+                    return true;
+                }
 
                 if (!_originalFontName.TryGetValue(element, out var settingsName))
                 {
@@ -2161,6 +2174,112 @@ namespace UnityGameTranslator.Core
             return null;
         }
 
+        /// <summary>
+        /// The font an element draws with: the one its resolved style names, else the default font of
+        /// its document's panel text settings.
+        ///
+        /// 🔴 **A style that names no font is not a text with no font.** A game can set its fonts
+        /// once, as the default of its PanelSettings' text settings, and never in a style sheet: every
+        /// element then resolves an empty FontDefinition (no font, no asset) while drawing that default.
+        /// Read from the style alone, such a game showed every font "0 in scene", lit nothing in the
+        /// highlight and replaced nothing (2026-10-02, Unity 6000.5: "unityFont: null;
+        /// unityFontDefinition: FontDefinition (fontAsset: null, font: null)" on every element).
+        /// An inline font written on the element still wins over that default: replacing works the same.
+        /// </summary>
+        private static UnityEngine.Object CurrentFontOf(object element, object resolvedStyle, out bool isSdf)
+        {
+            var font = ReadResolvedFont(resolvedStyle, out isSdf);
+            if (font != null && !string.IsNullOrEmpty(font.name)) return font;
+
+            var panelDefault = PanelDefaultFont(element);
+            if (panelDefault == null) return null;
+            isSdf = true;   // a text settings' default is a TextCore font asset
+            return panelDefault;
+        }
+
+        /// <summary>The default font of the text settings of the document holding this element; null when none is set or readable.</summary>
+        private static UnityEngine.Object PanelDefaultFont(object element)
+        {
+            if (_parentProp == null || _rootProp == null || _documents.Count == 0) return null;
+
+            // Climbed to the first ancestor that is a document's root: documents can share a panel,
+            // so the panel's own top is not the document's.
+            var roots = new List<KeyValuePair<object, int>>(_documents.Count);
+            foreach (var entry in _documents)
+            {
+                object root = null;
+                try { root = _rootProp.GetValue(entry.Value, null); }
+                catch (Exception ex) { Faults.Say("UIToolkit.PanelDefaultFont root", ex); }
+                if (root != null) roots.Add(new KeyValuePair<object, int>(root, entry.Key));
+            }
+
+            object at = element;
+            while (at != null)
+            {
+                foreach (var r in roots)
+                    if (ReferenceEquals(r.Key, at)) return DefaultFontOfDocument(r.Value);
+                try { at = _parentProp.GetValue(at, null); }
+                catch (Exception ex) { Faults.Say("UIToolkit.PanelDefaultFont parent", ex); return null; }
+            }
+            return null;
+        }
+
+        // A document's default font, read once (the panel settings of a document do not change under it).
+        private static readonly Dictionary<int, UnityEngine.Object> _documentDefaultFont = new Dictionary<int, UnityEngine.Object>();
+
+        private static UnityEngine.Object DefaultFontOfDocument(int documentId)
+        {
+            if (_documentDefaultFont.TryGetValue(documentId, out var known)) return known;
+            if (!_documents.TryGetValue(documentId, out var document)) return null;
+
+            UnityEngine.Object found = null;
+            string step = "panelSettings";
+            try
+            {
+                object settings = document.GetType().GetProperty("panelSettings", BindingFlags.Public | BindingFlags.Instance)?.GetValue(document, null);
+                if (settings != null)
+                {
+                    step = "textSettings";
+                    object text = settings.GetType().GetProperty("textSettings", BindingFlags.Public | BindingFlags.Instance)?.GetValue(settings, null);
+                    if (text != null)
+                    {
+                        step = "defaultFontAsset";
+                        found = text.GetType().GetProperty("defaultFontAsset", BindingFlags.Public | BindingFlags.Instance)?.GetValue(text, null) as UnityEngine.Object;
+                    }
+                }
+            }
+            catch (Exception ex) { Faults.Say("UIToolkit.DefaultFontOfDocument", ex, step); }
+
+            _documentDefaultFont[documentId] = found;
+            TranslatorCore.LogInfo(found != null
+                ? $"[UIToolkit] document {documentId}: panel text settings default font '{found.name}' — elements whose style names no font draw with it"
+                : $"[UIToolkit] document {documentId}: no default font readable from its panel text settings (stopped at {step})");
+            return found;
+        }
+
+        /// <summary>What each member <see cref="ReadResolvedFont"/> asks gave back, for the line saying why it found nothing.</summary>
+        private static string DescribeFontRead(object resolvedStyle)
+        {
+            string Read(System.Reflection.PropertyInfo p, object on)
+            {
+                if (p == null) return "member absent";
+                try
+                {
+                    object v = p.GetValue(on, null);
+                    if (v == null) return "null";
+                    if (v is UnityEngine.Object o) return o == null ? "destroyed" : $"{v.GetType().Name} '{o.name}'";
+                    return v.GetType().Name;
+                }
+                catch (Exception ex) { return "threw " + (ex.InnerException ?? ex).GetType().Name; }
+            }
+
+            object definition = null;
+            try { definition = _resolvedFontDefProp?.GetValue(resolvedStyle, null); }
+            catch (Exception ex) { Faults.Say("UIToolkit.DescribeFontRead", ex); }
+            return $"unityFont: {Read(_resolvedFontProp, resolvedStyle)}; unityFontDefinition: {Read(_resolvedFontDefProp, resolvedStyle)}"
+                 + (definition == null ? "" : $" (fontAsset: {Read(_fontDefAssetProp, definition)}, font: {Read(_fontDefFontProp, definition)})");
+        }
+
         /// <summary>Replacement fonts already turned into SDF assets, by font name.</summary>
         private static readonly Dictionary<string, object> _sdfCache =
             new Dictionary<string, object>();
@@ -2244,9 +2363,16 @@ namespace UnityGameTranslator.Core
             int wearing = 0;
             replaced = 0;
 
-            if (!Available || _styleColorProp == null || _styleColorType == null) return 0;
+            if (!Available || _styleColorProp == null || _styleColorType == null)
+            {
+                // A highlight that lights nothing must say why (asked by a click: said each time).
+                if (Available)
+                    TranslatorCore.LogWarning($"[UIToolkit] highlight unavailable — style colour member {(_styleColorProp == null ? "absent" : "found")}, StyleColor type {(_styleColorType == null ? "absent" : "found")}");
+                return 0;
+            }
 
             ClearHighlight();
+            int documentCount = 0, rootCount = 0, walked = 0, unnamed = 0;
 
             try
             {
@@ -2256,14 +2382,18 @@ namespace UnityGameTranslator.Core
                 foreach (var document in documents)
                 {
                     if (document == null) continue;
+                    documentCount++;
 
                     object root = null;
                     try { root = _rootProp.GetValue(document, null); }
                     catch (Exception ex) { Faults.Say("UIToolkit.HighlightFont", ex); }
                     if (root == null) continue;
+                    rootCount++;
 
                     Walk(root, MaxElementsPerPass, element =>
                     {
+                        walked++;
+                        if (string.IsNullOrEmpty(SettingsFontNameOf(element))) unnamed++;
                         string settingsName = SettingsFontNameOf(element);
                         bool matches = !string.IsNullOrEmpty(settingsName)
                                        && string.Equals(settingsName, fontName,
@@ -2293,6 +2423,10 @@ namespace UnityGameTranslator.Core
                 TranslatorCore.LogWarning($"[UIToolkit] HighlightFont error: {ex.Message}");
             }
 
+            // What the walk met, beside the audit's counts: "0 component(s)" alone cannot tell no
+            // document, no element and elements whose font could not be read apart.
+            TranslatorCore.LogInfo($"[UIToolkit] highlight '{fontName}': {documentCount} document(s), {rootCount} with a root, {walked} element(s) walked, {unnamed} with no readable font");
+
             replaced = wearing;
             return matched;
         }
@@ -2305,7 +2439,7 @@ namespace UnityGameTranslator.Core
                 var resolved = _resolvedStyleProp?.GetValue(element, null);
                 if (resolved == null) return null;
 
-                return ReadResolvedFont(resolved, out _)?.name;
+                return CurrentFontOf(element, resolved, out _)?.name;
             }
             catch (Exception ex) { Faults.Say("UIToolkit.ResolvedFontNameOf", ex); return null; }
         }
@@ -2340,7 +2474,7 @@ namespace UnityGameTranslator.Core
                 var resolved = _resolvedStyleProp?.GetValue(element, null);
                 if (resolved == null) return null;
 
-                return ReadResolvedFont(resolved, out _)?.name;
+                return CurrentFontOf(element, resolved, out _)?.name;
             }
             catch (Exception ex) { Faults.Say("UIToolkit.SettingsFontNameOf", ex); return null; }
         }

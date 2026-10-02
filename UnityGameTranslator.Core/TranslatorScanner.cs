@@ -1604,7 +1604,11 @@ namespace UnityGameTranslator.Core
                 // question the setter prefix asks — the uncached one walked the parent chain of
                 // every component on every pass, for an answer that is stable ("no InputField
                 // ancestor") for nearly all of them.
-                if (type.Category != "TextMesh" && TranslatorPatches.IsInputFieldTextComponentCached(component))
+                long tInput = Perf.Start();
+                bool inputText;
+                try { inputText = type.Category != "TextMesh" && TranslatorPatches.IsInputFieldTextComponentCached(component); }
+                finally { Perf.Stop(Perf.ScanInput, tInput); }
+                if (inputText)
                 {
                     // What this game shows (texts-seen.json): an input field, here as surely as
                     // when the player types into it.
@@ -1626,17 +1630,26 @@ namespace UnityGameTranslator.Core
 
                 // What this game shows (texts-seen.json) — the texts the scanner finds without
                 // any setter firing: static labels, scenes loaded with their words in place.
-                if (type.Category == "TMP") NoteShown(comp, Common.TextSystem.Tmp);
-                else if (type.Category == "Unity") NoteShown(comp, Common.TextSystem.UiText);
-                else if (type.Category == "TextMesh") NoteShown(comp, Common.TextSystem.TextMesh);
-                else Engine.TextsSeen.NoteGeneric(type.ComponentType?.Name);
+                long tSeen = Perf.Start();
+                try
+                {
+                    if (type.Category == "TMP") NoteShown(comp, Common.TextSystem.Tmp);
+                    else if (type.Category == "Unity") NoteShown(comp, Common.TextSystem.UiText);
+                    else if (type.Category == "TextMesh") NoteShown(comp, Common.TextSystem.TextMesh);
+                    else Engine.TextsSeen.NoteGeneric(type.ComponentType?.Name);
+                }
+                finally { Perf.Stop(Perf.ScanSeen, tSeen); }
 
                 if (type.WriteRefused) return;
 
                 // Skip mirrors of the user's typed input (game echoing the typed value
                 // into a display text). Transient skip — NOT a permanent exclusion:
                 // the same component may show normal game text later.
-                if (TranslatorPatches.IsUserInputMirror(component, currentText))
+                tInput = Perf.Start();
+                bool mirror;
+                try { mirror = TranslatorPatches.IsUserInputMirror(component, currentText); }
+                finally { Perf.Stop(Perf.ScanInput, tInput); }
+                if (mirror)
                     return;
 
                 int textHash = currentText.GetHashCode();
@@ -1659,7 +1672,11 @@ namespace UnityGameTranslator.Core
                 }
 
                 // Check if text changed since last seen
-                if (TranslatorCore.HasSeenText(instanceId, currentText, out _))
+                tSeen = Perf.Start();
+                bool seen;
+                try { seen = TranslatorCore.HasSeenText(instanceId, currentText, out _); }
+                finally { Perf.Stop(Perf.ScanSeen, tSeen); }
+                if (seen)
                 {
                     if (watching) ScanProbe.Say(instanceId, "ALREADY-SEEN", currentText);
                     processedTextHashes[instanceId] = textHash;
@@ -1669,7 +1686,10 @@ namespace UnityGameTranslator.Core
                 if (watching) ScanProbe.Say(instanceId, "REACHES-TRANSLATE", currentText);
 
                 // Check if own UI (use UI-specific prompt)
-                bool isOwnUI = TranslatorCore.IsOwnUITranslatable(comp);
+                tSeen = Perf.Start();
+                bool isOwnUI;
+                try { isOwnUI = TranslatorCore.IsOwnUITranslatable(comp); }
+                finally { Perf.Stop(Perf.ScanSeen, tSeen); }
 
                 // ...of which: looking this text up and, when it is not known, putting it in the
                 // queue. It normalises, hashes, consults the caches and the patterns.

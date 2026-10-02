@@ -70,7 +70,11 @@ namespace UnityGameTranslator.Core
         // Every uGUI graphic the game enables passes through the Graphic.OnEnable postfix (and every
         // TMP text through its own): a panel opening enables hundreds at once, in the same frame.
         internal const int TextEnable = 26;      // TranslatorPatches.Graphic_OnEnable_Postfix + TMPText_OnEnable_Postfix
-        private const int SlotCount = 27;
+        // The rest of a scanned component's call, which the four slots above left out: a single
+        // call of 82 ms on a game, of which those four held 13 (2026-10-02).
+        internal const int ScanInput = 27;       // ...of which: is it an input field's text, or an echo of typing
+        internal const int ScanSeen = 28;        // ...of which: was this text seen on it already, is it the mod's own
+        private const int SlotCount = 29;
 
         private static readonly string[] Names =
         {
@@ -79,7 +83,7 @@ namespace UnityGameTranslator.Core
             "Scan.Find", "UITK.Cycle", "UITK.Setter", "Scan.Process", "Scan.Text",
             "Scan.Gate", "Scan.Translate", "Scan.Apply",
             "Setter", "Setter.Note", "Setter.Release", "TMP.Layout", "Reveal", "RenderWatch",
-            "Find.All", "Scene.Read", "Text.OnEnable",
+            "Find.All", "Scene.Read", "Text.OnEnable", "Scan.Input", "Scan.Seen",
         };
 
         private static readonly long[] _ticks = new long[SlotCount];

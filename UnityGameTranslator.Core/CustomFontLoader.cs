@@ -678,9 +678,9 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// Try to find a .ttf/.otf file for a system font name on the filesystem.
-        /// Handles display names like "Adobe Devanagari Italic" → "AdobeDevanagari-Italic.otf"
-        /// by normalizing names (stripping spaces, checking with style suffixes).
+        /// The .ttf/.otf file of an installed font, by its name: a file the name names, else the
+        /// file whose name table carries it ("Segoe UI Historic" is seguihis.ttf — no rule on file
+        /// names could find it).
         /// </summary>
         public static string FindSystemTtfPath(string fontName)
         {
@@ -697,46 +697,21 @@ namespace UnityGameTranslator.Core
                 return null;
             }
 
-            var dirs = SystemFontDirectories();
-
-            // Build candidate filenames from the display name
-            // "Adobe Devanagari Italic" → try: "Adobe Devanagari Italic", "AdobeDevanagari-Italic",
-            //   "AdobeDevanagariItalic", "AdobeDevanagari-Italic", etc.
-            // ⚠ The socle's rules, shared with the Manager's export — which must pick this same file.
-            var candidates = UnityGameTranslator.Common.SystemFontNames.Candidates(fontName);
-
-            foreach (var dir in dirs)
+            // ⚠ The socle's rule, shared with the Manager's export — which must pick this same file:
+            // a file the name names, else the one whose name table carries it (FontFileNames). A
+            // single font only: callers read the file as one font.
+            // Remembered for the session: the name-table search opens the system's font files, and
+            // the same name is asked again for every component drawn with it.
+            lock (_systemPathOf)
             {
-                // 1. Try exact candidates
-                foreach (var candidate in candidates)
-                {
-                    foreach (var ext in new[] { ".ttf", ".otf" })
-                    {
-                        var path = Path.Combine(dir, candidate + ext);
-                        if (File.Exists(path)) return path;
-                    }
-                }
-
-                // 2. Fuzzy match: scan all font files and compare normalized names
-                try
-                {
-                    string normalizedSearch = UnityGameTranslator.Common.SystemFontNames.Normalize(fontName);
-                    foreach (var ext in new[] { "*.ttf", "*.otf" })
-                    {
-                        foreach (var file in Directory.GetFiles(dir, ext, SearchOption.AllDirectories))
-                        {
-                            string fileName = Path.GetFileNameWithoutExtension(file);
-                            if (string.Equals(UnityGameTranslator.Common.SystemFontNames.Normalize(fileName), normalizedSearch,
-                                StringComparison.OrdinalIgnoreCase))
-                                return file;
-                        }
-                    }
-                }
-                catch (Exception _e) { TranslatorCore.LogDebug($"[CustomFontLoader] suppressed: {_e.GetType().Name}: {_e.Message}"); }
+                if (_systemPathOf.TryGetValue(fontName, out var known)) return known;
+                string path = UnityGameTranslator.Common.FontFileNames.FindFile(fontName, SystemFontDirectories(), collections: false, out _);
+                _systemPathOf[fontName] = path;
+                return path;
             }
-
-            return null;
         }
+
+        private static readonly Dictionary<string, string> _systemPathOf = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
         /// <summary>
         /// Rasterize a system font by name. Called as fallback when CreateDynamicFontFromOSFont fails.

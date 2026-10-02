@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using UnityGameTranslator.Common;
 using UnityGameTranslator.Core.Rasterizer;
 
 namespace UnityGameTranslator.Core.Checks
@@ -344,11 +345,34 @@ namespace UnityGameTranslator.Core.Checks
             var khmer = new TtfParser(b);
             using (var stream = new MemoryStream(ttc))
             {
-                check(FontCollection.FindFace(stream, khmer.Metrics.FontName) == 1, "collection: the face named like the second font is found", khmer.Metrics.FontName);
-                check(FontCollection.FindFace(stream, "No Such Font") == -1, "collection: an absent name finds no face", "");
+                check(FontFileNames.FindFace(stream, khmer.Metrics.FontName, out _) == 1, "collection: the face named like the second font is found", khmer.Metrics.FontName);
+                check(FontFileNames.FindFace(stream, "No Such Font", out _) == -1, "collection: an absent name finds no face", "");
             }
+            // A single font is read by its name table too: its file name says nothing ("Segoe UI
+            // Historic" is seguihis.ttf), and it was the one format searched by file name (2026-10-02).
             using (var single = new MemoryStream(b))
-                check(FontCollection.FindFace(single, khmer.Metrics.FontName) == -1, "collection: a single font is not searched as a collection", "");
+                check(FontFileNames.FindFace(single, khmer.Metrics.FontName, out _) == 0, "a single font carrying the name is found by its name table", "");
+            using (var single = new MemoryStream(b))
+                check(FontFileNames.FindFace(single, "No Such Font", out _) == -1, "and one that does not carry it is not", "");
+            string folder = Path.Combine(Path.GetTempPath(), "ugt-fontnames-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(folder);
+            try
+            {
+                File.WriteAllBytes(Path.Combine(folder, "abbrev.ttf"), b);
+                string found = FontFileNames.FindFile(khmer.Metrics.FontName, new[] { folder }, collections: false, out int at);
+                check(found != null && Path.GetFileName(found) == "abbrev.ttf" && at == 0,
+                    "an installed font whose file name says nothing is found by the name inside it", found == null ? "none" : Path.GetFileName(found));
+                File.WriteAllBytes(Path.Combine(folder, "pair.ttc"), ttc);
+                File.Delete(Path.Combine(folder, "abbrev.ttf"));
+                check(FontFileNames.FindFile(khmer.Metrics.FontName, new[] { folder }, collections: false, out _) == null,
+                    "a collection is not offered to a caller that reads one font", "it would read the whole file as a font");
+                found = FontFileNames.FindFile(khmer.Metrics.FontName, new[] { folder }, collections: true, out at);
+                check(found != null && at == 1, "and is, with its face, to one that takes the face out", $"face {at}");
+            }
+            finally
+            {
+                try { Directory.Delete(folder, recursive: true); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+            }
             check(ReferenceEquals(FontCollection.Face(b, 0), b), "collection: a single font is its own face", "");
 
             var face = new TtfParser(FontCollection.Face(ttc, 1));
@@ -398,9 +422,9 @@ namespace UnityGameTranslator.Core.Checks
             SetName(regular, 4, "Yu Tesr");
             using (var stream = new MemoryStream(Ttc(bold, regular)))
             {
-                int face = FontCollection.FindFace(stream, "Yu Test", out int rank);
+                int face = FontFileNames.FindFace(stream, "Yu Test", out int rank);
                 check(face == 1 && rank == 1, "collection: a family's Regular wins over its Bold listed first", $"face {face}, rank {rank}");
-                face = FontCollection.FindFace(stream, "Yu Tesb", out rank);
+                face = FontFileNames.FindFace(stream, "Yu Tesb", out rank);
                 check(face == 0 && rank == 0, "collection: a full name finds its own face", $"face {face}, rank {rank}");
             }
         }

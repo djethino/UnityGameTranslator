@@ -502,36 +502,28 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// An installed font's bytes, as a single font: its .ttf/.otf (CustomFontLoader's search), or
-        /// its face in a collection of the system's font folders — taken out and kept in the copies'
+        /// An installed font's bytes, as a single font: its .ttf/.otf, or its face in a collection of
+        /// the system's font folders (the socle's search, FontFileNames) — taken out and kept in the copies'
         /// folder, since the rasterizer of TMP text reads a single font from a path
         /// (<see cref="SourcePathOfInstalled"/>). Null, and said, when not found.
         /// </summary>
         private static byte[] InstalledFont(string name, string folder, out string path)
         {
-            path = CustomFontLoader.FindSystemTtfPath(name);
+            path = null;
+            // A name, never a location (CustomFontLoader.FindSystemTtfPath's guard, same reason: the
+            // name comes from a translation somebody else wrote).
+            if (!PlainFileName.Accepts(name)) return null;
+            // The socle's search, collections included: the best face of ALL the files, read by
+            // their name tables (FontFileNames) — a family's Bold file carries its family name too
+            // and is listed before its Regular.
+            path = UnityGameTranslator.Common.FontFileNames.FindFile(name, CustomFontLoader.SystemFontDirectories(), collections: true, out int face);
             try
             {
-                if (path != null) return File.ReadAllBytes(path);
-                // The best face of ALL the collections, not the first file's: a family's Bold file
-                // carries its family name too and is listed before its Regular (FontCollection.FindFace).
-                string bestFile = null;
-                int bestFace = -1, bestRank = int.MaxValue;
-                foreach (var dir in CustomFontLoader.SystemFontDirectories())
+                if (path != null)
                 {
-                    foreach (var file in Directory.GetFiles(dir, "*.ttc", SearchOption.AllDirectories))
-                    {
-                        int face, rank;
-                        using (var stream = File.OpenRead(file)) face = FontCollection.FindFace(stream, name, out rank);
-                        if (face < 0 || rank >= bestRank) continue;
-                        bestFile = file; bestFace = face; bestRank = rank;
-                        if (rank == 0) break;
-                    }
-                    if (bestRank == 0) break;
-                }
-                if (bestFile != null)
-                {
-                    byte[] bytes = FontCollection.Face(File.ReadAllBytes(bestFile), bestFace);
+                    byte[] file = File.ReadAllBytes(path);
+                    if (!FontCollection.IsCollection(file)) return file;
+                    byte[] bytes = FontCollection.Face(file, face);
                     Directory.CreateDirectory(folder);
                     path = Path.Combine(folder, "sys-" + Sanitized(name) + ".ttf");
                     File.WriteAllBytes(path, bytes);

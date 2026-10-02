@@ -11,6 +11,7 @@ namespace UnityGameTranslator.Core
     /// characters, with a way to the font replacement and an Ignore). The characters are those the
     /// translation actually wrote with the font (FontCoverage, fed by the text hooks); whether the
     /// font that draws them has them is answered here, from what can be PROVED:
+    /// - a replacement legacy text is drawn with as a GAME font object: that object's own answer;
     /// - a replacement with a file (fonts/, or installed): the file's character map;
     /// - the game's TextMesh Pro asset: its own HasCharacter, fallbacks included, adding the
     ///   character when the asset is dynamic — what drawing it would do;
@@ -60,7 +61,7 @@ namespace UnityGameTranslator.Core
 
         /// <summary>
         /// What the answers depend on besides the texts: the replacements chosen, whether replacing is
-        /// on, the fonts/ files known and the game fonts loaded. Read at every ask — a handful of
+        /// on, the fonts/ files known, the game fonts loaded and the objects drawing legacy text. Read at every ask — a handful of
         /// entries — so no change of setting, file or scene has to remember to say it (the answers
         /// follow the state, not the events that changed it).
         /// </summary>
@@ -74,6 +75,9 @@ namespace UnityGameTranslator.Core
                 h = h * 31 + _gameUnityFonts.Count;
                 foreach (var kv in TranslatorCore.FontSettingsMap)
                     h = h * 31 + (kv.Key.GetHashCode() ^ (kv.Value?.fallback ?? "").GetHashCode());
+                // The objects legacy text is drawn with (DrawingGameFont): made as texts need them.
+                foreach (var kv in _unityFallbackFonts)
+                    h = h * 31 + (kv.Key.GetHashCode() ^ (kv.Value != null ? kv.Value.GetInstanceID() : 0));
                 return h;
             }
         }
@@ -228,7 +232,18 @@ namespace UnityGameTranslator.Core
             var sources = new List<Func<int, bool?>>();
             TranslatorCore.FontSettingsMap.TryGetValue(settingsFontName, out var settings);
             string fallback = settings?.fallback;
-            if (TranslatorCore.FontReplacementActive && !string.IsNullOrEmpty(fallback))
+            if (TranslatorCore.FontReplacementActive && !string.IsNullOrEmpty(fallback)
+                && DrawingGameFont(settingsFontName) is Font drawing)
+            {
+                // 🔴 The object that DRAWS, not the font the reference names: legacy text got a GAME
+                // font for its replacement (another game font of that name, an older build's
+                // lookup order), and the file the reference resolves to was judged instead — an
+                // installed Arial with Hebrew vouched for the game's "arial" without it, and the
+                // translation showed Latin and digits only, without a word (2026-10-02).
+                var own = ObjectCoverage(drawing);
+                if (own != null) sources.Add(own);
+            }
+            else if (TranslatorCore.FontReplacementActive && !string.IsNullOrEmpty(fallback))
             {
                 string path = FileOfReference(fallback, out string name, out var served);
                 var cmap = CharacterMap(path);
@@ -245,6 +260,20 @@ namespace UnityGameTranslator.Core
             var game = ObjectCoverage(gameFont);
             if (game != null) sources.Add(game);
             return sources;
+        }
+
+        /// <summary>
+        /// The game font legacy text of this game font is drawn with in its place, when the mod's
+        /// replacement for it is one (GetUnityReplacementFont). Null when there is none yet, or when
+        /// it is a font made from a file — then the file speaks for it — or the game font itself
+        /// pointed at an installed one (fontNames): its own HasCharacter counts the letters it
+        /// borrows, the file does not.
+        /// </summary>
+        private static Font DrawingGameFont(string settingsFontName)
+        {
+            if (!_unityFallbackFonts.TryGetValue(settingsFontName, out var drawing) || drawing == null) return null;
+            if (_gameUnityFonts.TryGetValue(settingsFontName, out var own) && own == drawing) return null;
+            return IsLoadedGameUnityFont(drawing) ? drawing : null;
         }
 
         private static string InstalledFontPath(string name)

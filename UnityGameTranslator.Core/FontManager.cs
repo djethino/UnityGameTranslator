@@ -4087,19 +4087,22 @@ namespace UnityGameTranslator.Core
             // Get or create the replacement font (keyed by original font name — each game font gets its own clone)
             if (!_unityFallbackFonts.TryGetValue(originalFontName, out var replacementFont))
             {
-                replacementFont = CreateUnityFontFromSystem(settings.fallback);
+                // The reference as the shared rule serves it (FontReferences.Order): a bare name not
+                // installed here but present in fonts/ is fonts/'s.
+                string drawRef = LegacyServedReference(settings.fallback);
+                replacementFont = CreateUnityFontFromSystem(drawRef);
 
                 // 🔴 A game font the game has not loaded yet: nothing to do NOW, and nothing to
                 // remember as a failure — the next text that needs it asks again. Neither the
                 // fontNames trick below (it asks the OPERATING SYSTEM for that name, which has no
                 // such font) nor a blacklist entry (the fallback would never apply this session)
                 // fits a font that simply is not in memory yet (2026-09-28).
-                if (replacementFont == null && IsGameFontRef(settings.fallback)) return null;
+                if (replacementFont == null && IsGameFontRef(drawRef)) return null;
 
                 // A fonts/ file the engine cannot open by name in this session: neither a new font
                 // nor the fontNames trick can draw it, and it is not a failure to remember — the same
                 // font may serve TextMeshPro now, and legacy text from the next launch.
-                if (replacementFont == null && CustomNotDrawableYet(settings.fallback)) return null;
+                if (replacementFont == null && CustomNotDrawableYet(drawRef)) return null;
 
                 // IL2CPP fallback: modify the ORIGINAL font's fontNames to point to the system font
                 // This avoids clone atlas sharing issues — Unity re-rasterizes using the new font
@@ -4126,11 +4129,11 @@ namespace UnityGameTranslator.Core
                 }
                 if (replacementFont == null && originalGameFont != null)
                 {
-                    string cleanFallback = StripFontPrefix(settings.fallback);
+                    string cleanFallback = StripFontPrefix(drawRef);
 
                     // Real font family name (+ TTF path for the cmap probe below) — shared resolver,
                     // also used by the mod window's fonts (LoadUIFont, RebackFontToChain).
-                    string realFontName = ResolveSystemFontFamily(settings.fallback, out string ttfPath);
+                    string realFontName = ResolveSystemFontFamily(drawRef, out string ttfPath);
 
                     // Save original fontNames BEFORE modifying (only first time)
                     if (!_originalFontNames.ContainsKey(originalFontName))
@@ -4487,6 +4490,22 @@ namespace UnityGameTranslator.Core
             // On IL2CPP, CreateDynamicFontFromOSFont is stripped.
             // Return null here — GetUnityReplacementFont will modify the original font's fontNames instead.
             return null;
+        }
+
+        /// <summary>
+        /// A reference as the shared rule serves it to legacy text (FontReferences.Order): a bare
+        /// name is the installed font, failing that a copy of it in fonts/ — returned as
+        /// "[Custom] X", which every step of the legacy path then treats as fonts/'s — failing that
+        /// the game's. The legacy path skipped the second line and went from the installed font to
+        /// a game font, while the coverage check (FileOfReference) followed the rule: the two spoke
+        /// of different fonts (an asset pack's installed font, imported into fonts/).
+        /// </summary>
+        private static string LegacyServedReference(string reference)
+        {
+            if (UnityGameTranslator.Common.FontReferences.Order(reference).Length == 1) return reference;   // marked: [Game] / [Custom]
+            string name = UnityGameTranslator.Common.FontReferences.Name(reference);
+            if (AssetAvailability.IsSystemFontAvailable(name) || !CustomFontLoader.CustomFonts.ContainsKey(name)) return reference;
+            return UnityGameTranslator.Common.AssetPacks.CustomFontPrefix + name;
         }
 
         /// <summary>

@@ -184,9 +184,15 @@ namespace UnityGameTranslator.Core.UI.Components
             return area != null && area.velocity.sqrMagnitude > 1f;
         }
 
+        /// <summary>
+        /// The pointer is on this rail, and nothing is drawn over it there: an open list's popup
+        /// covering the rail belongs to the list, and its wheel scrolls the list, never the rail
+        /// behind (user, 2026-10-02: a font size moved while scrolling the font list above it).
+        /// </summary>
         private static bool Over(SliderHandle handle, Vector2 screen)
         {
             if (handle.Slider == null || !handle.Slider.gameObject.activeInHierarchy) return false;
+            if (SearchableDropdown.PopupCovers(screen)) return false;
             var rect = handle.Slider.GetComponent<RectTransform>();
             var canvas = rect.GetComponentInParent<Canvas>();
             return UIHelpers.ContainsScreenPoint(rect, canvas != null ? canvas.rootCanvas : null, screen);

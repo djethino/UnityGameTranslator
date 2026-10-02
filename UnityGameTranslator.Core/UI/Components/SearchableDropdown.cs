@@ -369,6 +369,18 @@ namespace UnityGameTranslator.Core.UI.Components
             open.ClosePopup();
         }
 
+        /// <summary>
+        /// Whether an open list's popup lies under this screen point. The popup is drawn over the
+        /// window, so whatever sits behind it there (a slider rail) must not answer the pointer.
+        /// Between components only: a panel never asks it.
+        /// </summary>
+        internal static bool PopupCovers(Vector2 screen)
+        {
+            var open = _openOne;
+            return open != null && open._popupRoot != null && open._popupRoot.activeInHierarchy
+                   && Holds(open._popupRoot, screen);
+        }
+
         private static bool Holds(GameObject obj, Vector2 screen)
         {
             var rect = obj.GetComponent<RectTransform>();

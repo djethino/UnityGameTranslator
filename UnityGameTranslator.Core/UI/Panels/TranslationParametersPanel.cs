@@ -1762,6 +1762,25 @@ namespace UnityGameTranslator.Core.UI.Panels
                             _pendingFontOverrides[capturedIndex].size_multiplier = rounded;
                             UpdateApplyButtonText();
                         }
+                        ShowOverrideSizeButtons(row, rule, initial);
+                    };
+                    // Undo: back to the size this rule was saved with (a rule added since has
+                    // nothing saved, and shows no Undo).
+                    case "sizeUndo": return () =>
+                    {
+                        if (initial == null || capturedIndex >= _pendingFontOverrides.Count) return;
+                        SetOverrideSizeSlider(row, initial.size_multiplier);
+                        rule.size_multiplier = initial.size_multiplier;
+                        UpdateApplyButtonText();
+                        ShowOverrideSizeButtons(row, rule, initial);
+                    };
+                    case "sizeDefault": return () =>
+                    {
+                        if (capturedIndex >= _pendingFontOverrides.Count) return;
+                        SetOverrideSizeSlider(row, 1f);
+                        rule.size_multiplier = 1f;
+                        UpdateApplyButtonText();
+                        ShowOverrideSizeButtons(row, rule, initial);
                     };
                     case "rtlChanged": return () =>
                     {
@@ -1790,6 +1809,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 sizeSlider.Value = rule.size_multiplier > 0.001f ? rule.size_multiplier : 1.0f;
                 if (initial != null)
                     Pending.Track(sizeSlider, () => Math.Abs(rule.size_multiplier - initial.size_multiplier) > 0.001f, "overrides");
+                ShowOverrideSizeButtons(row, rule, initial);
 
                 // RTL alignment for the matched components (only when this translation involves
                 // right-to-left text): inherit the font's setting, or force mirror/keep here — the
@@ -1810,6 +1830,24 @@ namespace UnityGameTranslator.Core.UI.Panels
                 }
             }
             finally { _fillingRows = false; }
+        }
+
+        /// <summary>Moves a rule's size slider without its move being taken as the user's.
+        /// A rule with no size of its own (0) is drawn at 100%, as when the row is built.</summary>
+        private void SetOverrideSizeSlider(BuiltScreen row, float sizeMultiplier)
+        {
+            _fillingRows = true;
+            try { row.Slider("OverrideSize").Value = sizeMultiplier > 0.001f ? sizeMultiplier : 1.0f; }
+            finally { _fillingRows = false; }
+        }
+
+        /// <summary>Undo when the rule's size differs from the one it was saved with; 100% when
+        /// the size shown is not already 100%.</summary>
+        private static void ShowOverrideSizeButtons(BuiltScreen row, FontOverrideRule rule, FontOverrideRule initial)
+        {
+            float shown = (float)Math.Round(row.Slider("OverrideSize").Value * 20) / 20f;
+            row.Button("SizeUndoBtn").Visible = initial != null && Math.Abs(rule.size_multiplier - initial.size_multiplier) > 0.001f;
+            row.Button("SizeDefaultBtn").Visible = Math.Abs(shown - 1f) > 0.001f;
         }
 
         private void RefreshFontsList()
@@ -1938,7 +1976,35 @@ namespace UnityGameTranslator.Core.UI.Panels
                         string fallback = selectedValue == "(None)" ? null : selectedValue;
                         OnFontFallbackChanged(capturedFontName, fallback);
                     };
-                    case "scaleChanged": return () => { if (!_fillingRows) OnFontScaleChanged(capturedFontName, (float)Math.Round(row.Slider("Scale").Value, 2)); };
+                    case "scaleChanged": return () =>
+                    {
+                        if (_fillingRows) return;
+                        OnFontScaleChanged(capturedFontName, (float)Math.Round(row.Slider("Scale").Value, 2));
+                        ShowScaleButtons(row, capturedFontName);
+                    };
+                    // Undo: back to the size saved for this font, nothing left waiting.
+                    case "scaleUndo": return () =>
+                    {
+                        float saved = SavedFontSizePercent(capturedFontName);
+                        SetScaleSlider(row, saved);
+                        var cur = GetEffectiveFontSettings(capturedFontName);
+                        _pendingFontSettings[capturedFontName] = (cur.enabled, cur.fallback, saved, cur.scaleAuto, cur.mirrorRtl);
+                        if (_fontsStatus != null)
+                        {
+                            _fontsStatus.Show($"Font size of {capturedFontName} back to {(int)Math.Round(saved * 100f)}%");
+                            _fontsStatus.Tone = Tone.Secondary;
+                        }
+                        UpdateApplyButtonText();
+                        ShowScaleButtons(row, capturedFontName);
+                    };
+                    // 100%: the slider's wheel and drag move in small steps, so the exact native
+                    // size is hard to land on by hand. Waits for Apply like any other move.
+                    case "scaleDefault": return () =>
+                    {
+                        SetScaleSlider(row, 1f);
+                        OnFontScaleChanged(capturedFontName, 1f);
+                        ShowScaleButtons(row, capturedFontName);
+                    };
                     case "autoScaleChanged": return () => { if (!_fillingRows) OnFontAutoScaleChanged(capturedFontName, row.Toggle("AutoScale").IsOn); };
                     default: return null;
                 }
@@ -2010,6 +2076,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 var scaleSlider = row.Slider("Scale");
                 scaleSlider.Value = Math.Min(2.0f, FontManager.GetFontSizePercent(capturedFontName));
                 Pending.Track(scaleSlider, () => FontFieldChanged(capturedFontName, (p, i) => Math.Abs(p.sizePercent - i.sizePercent) > 0.001f), "fonts");
+                ShowScaleButtons(row, capturedFontName);
 
                 // Auto design-scale toggle — folds the font's native design-scale into the size as a
                 // baseline (so an imported font matches the game's original size), on top of which the
@@ -2113,6 +2180,29 @@ namespace UnityGameTranslator.Core.UI.Panels
                            !string.Equals(settings?.rtl_alignment, "keep", StringComparison.OrdinalIgnoreCase));
             }
             return differs(pending, initial);
+        }
+
+        /// <summary>The size percent saved for a font: the snapshot taken at opening, else what is stored now.</summary>
+        private float SavedFontSizePercent(string fontName) =>
+            _initialFontSettings.TryGetValue(fontName, out var initial) ? initial.sizePercent : FontManager.GetFontSizePercent(fontName);
+
+        /// <summary>Moves a font row's size slider without its move being taken as the user's.</summary>
+        private void SetScaleSlider(BuiltScreen row, float sizePercent)
+        {
+            _fillingRows = true;
+            try { row.Slider("Scale").Value = Math.Min(2.0f, sizePercent); }
+            finally { _fillingRows = false; }
+        }
+
+        /// <summary>
+        /// Undo when the size waiting differs from the saved one; 100% when the size shown is not
+        /// already 100%. Neither shows when its verb could do nothing.
+        /// </summary>
+        private void ShowScaleButtons(BuiltScreen row, string fontName)
+        {
+            float shown = GetEffectiveFontSettings(fontName).sizePercent;
+            row.Button("ScaleUndoBtn").Visible = Math.Abs(shown - SavedFontSizePercent(fontName)) > 0.001f;
+            row.Button("ScaleDefaultBtn").Visible = Math.Abs(shown - 1f) > 0.001f;
         }
 
         /// <summary>

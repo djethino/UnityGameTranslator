@@ -2520,11 +2520,10 @@ namespace UnityGameTranslator.Core
 
                 // Fast exit: only process types we know are text components.
                 // 🔴 On IL2CPP the instance arrives wrapped as the PATCHED type (Graphic), whatever
-                // it really is: the type test answers "not a text" for every UI.Text there. Asked
-                // of the object itself (TryCast) for the copies below.
+                // it really is: the type test answered "not a text" for every UI.Text there, and
+                // nothing below had ever run on IL2CPP. Asked of the object itself (TryCast).
                 if (__instance == null || TypeHelper.UI_TextType == null) return;
-                bool typed = TypeHelper.UI_TextType.IsInstanceOfType(__instance);
-                object asText = typed ? __instance
+                object asText = TypeHelper.UI_TextType.IsInstanceOfType(__instance) ? __instance
                     : TranslatorCore.Adapter.IsIL2CPP ? TypeHelper.Il2CppCast(__instance, TypeHelper.UI_TextType) : null;
                 if (asText == null || !TypeHelper.UI_TextType.IsInstanceOfType(asText)) return;
                 __instance = asText;
@@ -2538,11 +2537,6 @@ namespace UnityGameTranslator.Core
                 // A copy of a template still wearing the template's right-to-left form: presented
                 // on its own at the next pass.
                 TextShaping.RtlPresenter.NoteEnabled(__instance);
-
-                // ⚠ The font re-apply below has only ever run where the type test above passed
-                // (Mono): on IL2CPP a UI.Text's replacement is the game font's own fontNames, and
-                // turning this on there is a change of its own, to be proven by itself.
-                if (!typed) return;
 
                 int compId = TypeHelper.GetInstanceID(__instance);
                 if (compId == -1) return;

@@ -104,6 +104,15 @@ namespace UnityGameTranslator.Core
         private readonly ConcurrentDictionary<string, string> _presentedToLogical =
             new ConcurrentDictionary<string, string>();
 
+        // The same, EXACTLY, for a presented form too short for the decoration-insensitive key
+        // (NormalizeForReadbackMatch wants a run of letters): a line of one-glyph conjuncts — "ष्ट
+        // ट्ठ द्म" shaped is one private codepoint per word — or a short right-to-left word. Matched
+        // as written only: a form only our presentation produces cannot be met by chance, which
+        // is what the length threshold guards the loose key against. Without it such a text was
+        // never known as ours (a copy of a template drew nothing, 2026-10-02).
+        private readonly ConcurrentDictionary<string, string> _presentedExact =
+            new ConcurrentDictionary<string, string>();
+
         /// <summary>How many exact translated values one side holds — for the load log.</summary>
         public int TargetCount(bool ownUi) => Of(ownUi).Target.Count;
 
@@ -119,6 +128,7 @@ namespace UnityGameTranslator.Core
         {
             _game.Clear();
             _presentedToLogical.Clear();
+            _presentedExact.Clear();
             _skipLogCount = 0;
         }
 
@@ -173,7 +183,12 @@ namespace UnityGameTranslator.Core
                 }
             }
             string n = NormalizeForReadbackMatch(presented);
-            if (n == null) return;
+            if (n == null)
+            {
+                if (!string.IsNullOrEmpty(logical) && !string.Equals(presented, logical, StringComparison.Ordinal))
+                    _presentedExact[presented] = PresentedLogical(logical) ?? logical;
+                return;
+            }
             // The GAME's index: the RTL presentation pass runs on the game's components and skips
             // ours outright (RtlPresenter checks IsOwnUI), so nothing shaped here
             // ever belongs to the interface.
@@ -191,9 +206,9 @@ namespace UnityGameTranslator.Core
         /// <summary>The logical string behind a presented one, or null when the text is not ours.</summary>
         public string PresentedLogical(string displayed)
         {
-            if (string.IsNullOrEmpty(displayed) || _presentedToLogical.IsEmpty) return null;
+            if (string.IsNullOrEmpty(displayed)) return null;
             string n = NormalizeForReadbackMatch(displayed);
-            if (n == null) return null;
+            if (n == null) return _presentedExact.TryGetValue(displayed, out var exact) ? exact : null;
             return _presentedToLogical.TryGetValue(n, out var logical) ? logical : null;
         }
 
@@ -337,6 +352,9 @@ namespace UnityGameTranslator.Core
         public bool IsReadback(string text, bool ownUi)
         {
             if (string.IsNullOrEmpty(text)) return false;
+            // A short presented form of ours, as written (_presentedExact): the game's side only,
+            // like every presented form.
+            if (!ownUi && _presentedExact.ContainsKey(text)) return true;
             var index = Of(ownUi).Readback;
             if (index.Count == 0) return IsFragmentOfPresentedText(text);
             string n = NormalizeForReadbackMatch(text);

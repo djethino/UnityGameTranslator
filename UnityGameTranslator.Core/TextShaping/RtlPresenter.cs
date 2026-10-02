@@ -55,28 +55,32 @@ namespace UnityGameTranslator.Core.TextShaping
 
         private static int _logBudget = 8;
 
-        // Components whose right-to-left text went through Present (or came back to it as an
-        // echo), and those just enabled still wearing a template's form without having done so
-        // (NoteEnabled → AdoptCopies).
-        private static readonly HashSet<long> _presentedRtl = new HashSet<long>();
+        // Components whose text went through Present, and those just enabled still wearing a
+        // template's presented form without having done so (NoteEnabled → AdoptCopies).
+        private static readonly HashSet<long> _presented = new HashSet<long>();
         private static readonly List<object> _appeared = new List<object>();
         private static readonly List<object> _adoptScratch = new List<object>();
 
         /// <summary>
         /// A text component enabled (Graphic.OnEnable, TMP's OnEnable). A COPY of a template is
-        /// born with the template's text — our whole-string visual form (PresentTemplate) — and
-        /// nothing else: a template is no scene object, so it is neither mirrored nor laid out, and
-        /// a game that never writes the copy again left it with the game's alignment (2026-10-02).
-        /// Such a copy is noted here and presented on its own at the next pass (AdoptCopies) — not
-        /// inside OnEnable, where the game is about to give it its own text, font and material.
+        /// born with the template's text — our presented form — and nothing else: a template is no
+        /// scene object, so it keeps the game's font, alignment and wrapping (TypeHelper.IsInScene),
+        /// and a game that never writes the copy again left it that way (2026-10-02): a Hebrew
+        /// row aligned the game's way, a Hindi row drawn with nothing at all — its shaped glyphs
+        /// exist only in the replacement font the copy never got. Such a copy is noted here and
+        /// presented on its own at the next pass (AdoptCopies) — not inside OnEnable, where the
+        /// game is about to give it its own text, font and material.
         /// </summary>
         internal static void NoteEnabled(object instance)
         {
             if (instance == null || !TranslatorCore.IsMainThread) return;
             long compId = TypeHelper.GetInstanceID(instance);
-            if (compId == -1 || _presentedRtl.Contains(compId)) return;
+            if (compId == -1 || _presented.Contains(compId)) return;
             string text = TypeHelper.GetText(instance);
-            if (string.IsNullOrEmpty(text) || !RtlText.NeedsPresentation(TranslatorCore.TryGetPresentedLogical(text) ?? "")) return;
+            if (string.IsNullOrEmpty(text)) return;
+            // Ours, and not its own logical text: a form only a presentation produces.
+            string logical = TranslatorCore.TryGetPresentedLogical(text);
+            if (logical == null || logical == text) return;
             _appeared.Add(instance);
         }
 
@@ -95,7 +99,7 @@ namespace UnityGameTranslator.Core.TextShaping
             {
                 if (comp == null || (comp is UnityEngine.Object uo && uo == null)) continue;
                 long compId = TypeHelper.GetInstanceID(comp);
-                if (_presentedRtl.Contains(compId) || !TypeHelper.IsInScene(comp)) continue;
+                if (_presented.Contains(compId) || !TypeHelper.IsInScene(comp)) continue;
                 string text = TypeHelper.GetText(comp);
                 string logical = string.IsNullOrEmpty(text) ? null : TranslatorCore.TryGetPresentedLogical(text);
                 if (logical == null) continue;
@@ -168,6 +172,7 @@ namespace UnityGameTranslator.Core.TextShaping
             // logical text alone rather than corrupt another call's.
             if (!TranslatorCore.IsMainThread) return;
             PresentCount++;
+            if (compId != -1) _presented.Add(compId);
 
             // Every game text goes out through here, with its font and still logical: the account
             // of what each font must be able to draw (FontManager.Coverage).
@@ -230,7 +235,6 @@ namespace UnityGameTranslator.Core.TextShaping
                     return;
                 }
 
-                if (compId != -1) _presentedRtl.Add(compId);
                 bool mirror = TranslatorCore.ShouldMirrorRtlAlignment(settingsFontName, overrideRule);
 
                 DescribeFont(instance, compId, settingsFontName);
@@ -492,7 +496,6 @@ namespace UnityGameTranslator.Core.TextShaping
         /// </summary>
         private static void KeepEcho(object instance, long compId, string value, string settingsFontName, FontOverrideRule overrideRule)
         {
-            if (compId != -1) _presentedRtl.Add(compId);
             bool mirrorNow = TranslatorCore.ShouldMirrorRtlAlignment(settingsFontName, overrideRule);
             if (UIToolkitSupport.IsTextElementInstance(instance))
                 UIToolkitSupport.MirrorAlign(instance, mirrorNow);

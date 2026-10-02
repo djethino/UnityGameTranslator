@@ -178,6 +178,20 @@ namespace UnityGameTranslator.Core.Checks
                 "and null for a text that is not ours",
                 "a caller reads null as 'resolve the displayed text as it is'");
 
+            // One glyph per word (conjuncts shaped to a private codepoint each): too short for the
+            // decoration-insensitive key, still ours and still resolvable — as written.
+            var shortForms = new ReadbackIndex();
+            string g0 = new string((char)(TextShaping.PrivateGlyphs.First + 20), 1);
+            string g1 = new string((char)(TextShaping.PrivateGlyphs.First + 21), 1);
+            string oneGlyphWords = g0 + " " + g1 + " " + g0;
+            shortForms.RegisterPresented(oneGlyphWords, "ष्ट ट्ठ ष्ट");
+            check(shortForms.PresentedLogical(oneGlyphWords) == "ष्ट ट्ठ ष्ट" && shortForms.IsReadback(oneGlyphWords, ownUi: false),
+                "a presented form of one-glyph words is ours, with its logical text",
+                "a copy of a template wearing it was never recognised, kept the game's font and drew nothing");
+            check(shortForms.PresentedLogical(g1 + " " + g0) == null && !shortForms.IsReadback("ab", ownUi: false),
+                "matched as written only",
+                "the loose key's length threshold exists so a short text is not met by chance; an exact presented form cannot be");
+
             // Two stages in a row: a font's shaping, then the right-to-left pass on its output.
             var chain = new ReadbackIndex();
             string stage1 = glyphs + " logical";

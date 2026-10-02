@@ -627,17 +627,26 @@ namespace UnityGameTranslator.Core
         /// </summary>
         internal static Font NewFontFromFile(string path)
         {
-            if (string.IsNullOrEmpty(path) || !System.IO.File.Exists(path)) return null;
+            // Every way out that makes no font is said, once per file and reason: a replacement that
+            // silently fell back to the fontNames trick looked like it had worked (2026-10-02).
+            Font Refused(string why)
+            {
+                if (DiagnosticOnce.First("TypeHelper.NewFontFromFile", (path ?? "") + "\u0001" + why))
+                    TranslatorCore.LogWarning($"[TypeHelper] no font made from file '{(path == null ? "(none)" : System.IO.Path.GetFileName(path))}': {why}");
+                return null;
+            }
+            if (string.IsNullOrEmpty(path)) return Refused("no file found for it");
+            if (!System.IO.File.Exists(path)) return Refused("the file is not there");
             var fontType = typeof(Font);
             try
             {
                 var byPath = fontType.GetConstructor(new[] { typeof(string) });
-                if (byPath != null) return byPath.Invoke(new object[] { path }) as Font;
+                if (byPath != null) return byPath.Invoke(new object[] { path }) as Font ?? Refused("Font(path) gave nothing");
 
                 var make = fontType.GetMethod("Internal_CreateFontFromPath", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static,
                     null, new[] { fontType, typeof(string) }, null);
                 var fromPointer = fontType.GetConstructor(new[] { typeof(IntPtr) });
-                if (make == null || fromPointer == null) return null;
+                if (make == null || fromPointer == null) return Refused($"no Font(path) and {(make == null ? "no Internal_CreateFontFromPath" : "no pointer constructor")} on this runtime");
 
                 if (_classPointerStore == null)
                     foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
@@ -650,10 +659,11 @@ namespace UnityGameTranslator.Core
                     if ((il2cpp = asm.GetType("Il2CppInterop.Runtime.IL2CPP")) != null) break;
                 var classPtr = _classPointerStore?.MakeGenericType(fontType).GetField("NativeClassPtr", BindingFlags.Public | BindingFlags.Static)?.GetValue(null);
                 var objectNew = il2cpp?.GetMethod("il2cpp_object_new", BindingFlags.Public | BindingFlags.Static, null, new[] { typeof(IntPtr) }, null);
-                if (!(classPtr is IntPtr cls) || cls == IntPtr.Zero || objectNew == null) return null;
+                if (!(classPtr is IntPtr cls) || cls == IntPtr.Zero || objectNew == null)
+                    return Refused(objectNew == null ? "no il2cpp_object_new found" : "no IL2CPP class pointer for Font");
 
                 var font = fromPointer.Invoke(new object[] { (IntPtr)objectNew.Invoke(null, new object[] { cls }) }) as Font;
-                if (font == null) return null;
+                if (font == null) return Refused("the bare Font could not be made");
                 make.Invoke(null, new object[] { font, path });
                 return font;
             }

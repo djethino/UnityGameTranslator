@@ -4548,6 +4548,9 @@ namespace UnityGameTranslator.Core
 
             // On IL2CPP, CreateDynamicFontFromOSFont is stripped.
             // Return null here — GetUnityReplacementFont will modify the original font's fontNames instead.
+            // Said, with what was asked: the trick puts ours BEHIND a game font that has its own glyphs.
+            if (DiagnosticOnce.First("FontManager.noFontObject", cleanName))
+                TranslatorCore.LogWarning($"[FontManager] '{cleanName}': no font object made (listed as installed: {AssetAvailability.IsSystemFontAvailable(cleanName)}, file: {System.IO.Path.GetFileName(CustomFontLoader.FindSystemTtfPath(cleanName) ?? "(none)")}) — the game font's names are pointed at it instead");
             return null;
         }
 

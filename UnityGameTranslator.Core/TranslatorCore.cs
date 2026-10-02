@@ -1001,27 +1001,23 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// Whether this game's translation involves right-to-left text AT ALL, in either
-        /// direction: RTL values (an LTR game translated to Arabic) or RTL source keys (an RTL
-        /// game translated out). Gates the RTL controls in the Fonts tab — they are noise for
-        /// everyone else (user-arbitrated: "seulement quand utile"). Scanned on demand; callers
-        /// are screens, not hot paths.
+        /// Whether this translation crosses writing directions — left-to-right into right-to-left
+        /// or the reverse — as the language catalogue says of its two languages. Gates the RTL
+        /// controls in the Fonts tab: they are noise for everyone else (user-arbitrated:
+        /// "seulement quand utile").
+        ///
+        /// 🔴 The catalogue's answer, never the letters the file holds (user, 2026-10-02: « le thaï
+        /// n'est pas une langue RTL… je devrais avoir l'option que dans le cas ltr→rtl et rtl→ltr »).
+        /// It used to scan every line for a right-to-left letter: a French→Thai translation of a
+        /// game whose language menu lists "العربية" and "עברית" showed the mirroring controls. A
+        /// source not settled yet counts as left to right — the common case of a game translated
+        /// INTO a right-to-left language still shows them.
         /// </summary>
-        public static bool TranslationTouchesRtl()
+        public static bool TranslationCrossesDirection()
         {
-            // Under the cache's lock: the worker adds lines while this reads. It used to be caught
-            // instead — a read that met a write answered "no right-to-left text" without a word.
-            lock (lockObj)
-            {
-                foreach (var kvp in TranslationCache)
-                {
-                    if (TextShaping.RtlText.ContainsStrongRtl(kvp.Key)
-                        || TextShaping.RtlText.ContainsPresentationForms(kvp.Key)) return true;
-                    string v = kvp.Value?.Value;
-                    if (v != null && TextShaping.RtlText.ContainsStrongRtl(v)) return true;
-                }
-            }
-            return false;
+            bool target = TargetIsRightToLeft;
+            bool source = UnityGameTranslator.Common.Languages.IsRightToLeft(EffectiveSourceLanguage) == true;
+            return target != source;
         }
 
         /// <summary>

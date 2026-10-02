@@ -1662,7 +1662,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             if (_fontOverridesList == null) return;
 
-            _rtlControlsVisible = TranslatorCore.TranslationTouchesRtl();
+            _rtlControlsVisible = TranslatorCore.TranslationCrossesDirection();
 
             foreach (var dropdown in _overrideRtlDropdowns)
                 dropdown.Destroy();
@@ -1803,7 +1803,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             if (_fontsList == null) return;
 
-            _rtlControlsVisible = TranslatorCore.TranslationTouchesRtl();
+            _rtlControlsVisible = TranslatorCore.TranslationCrossesDirection();
             TranslatorCore.LogInfo($"[TranslationParametersPanel] RefreshFontsList called");
             Pending.ClearGroup("fonts");
 

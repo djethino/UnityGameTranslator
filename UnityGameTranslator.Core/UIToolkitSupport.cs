@@ -2014,6 +2014,7 @@ namespace UnityGameTranslator.Core
 
             _styleFontProp.SetValue(style, styleValue, null);
             _fontStyleWritten = true;
+            ShapeAgainForNewFont(element, settingsName);
 
             // ⚠ Said once PER FONT, not once ever: the one-shot flag hid every later change and
             // made a working replacement look like a dead one in the log.
@@ -2057,6 +2058,7 @@ namespace UnityGameTranslator.Core
 
                 _styleFontProp.SetValue(style, styleValue, null);
                 _fontStyleWritten = true;
+                ShapeAgainForNewFont(element, settingsName);
 
                 if (_restoreLogged.Add(settingsName))
                     TranslatorCore.LogInfo($"[UIToolkit] Font restored: back to {settingsName}");
@@ -2065,6 +2067,32 @@ namespace UnityGameTranslator.Core
         }
 
         private static readonly HashSet<string> _restoreLogged = new HashSet<string>();
+
+        /// <summary>
+        /// An element whose font just changed, showing a text WE shaped: shaped again, for the font
+        /// it wears now.
+        ///
+        /// 🔴 A shaped text is written in the private names of ONE font's derived copy. The element
+        /// kept the names of the copy it was shaped for while it drew with the new one: Tahoma Bold
+        /// changed to Tahoma left every shaped glyph a box, the plain letters drawn (2026-10-02).
+        /// The presenter already shapes its own output again when the font it was made for is no
+        /// longer the one drawing (PresentSyllabic) — it is asked here, as a write would ask it.
+        /// A text of the game's (not presented by us) is left to its next write.
+        /// </summary>
+        private static void ShapeAgainForNewFont(object element, string settingsName)
+        {
+            if (_textProp == null) return;
+            string current;
+            try { current = _textProp.GetValue(element, null) as string; }
+            catch (Exception ex) { Faults.Say("UIToolkit.ShapeAgainForNewFont read", ex); return; }
+            if (string.IsNullOrEmpty(current) || TranslatorCore.TryGetPresentedLogical(current) == null) return;
+
+            string value = current;
+            FontOverrideRule rule = TranslatorCore.FontOverrides.Count > 0
+                ? TranslatorCore.FindFontOverride(IdFor(element), PathOf(element), settingsName, null) : null;
+            TextShaping.RtlPresenter.Present(element, IdFor(element), ref value, settingsName, rule);
+            if (!string.Equals(value, current, StringComparison.Ordinal)) WriteBack(element, value);
+        }
 
         /// <summary>Elements whose original size we hold, so a scale can be undone.</summary>
         private static readonly ConditionalWeakTable<object, object> _originalFontSize =

@@ -16,7 +16,9 @@ namespace UnityGameTranslator.Core.Checks
     /// </summary>
     internal static class DiagnosticCapChecks
     {
-        private static readonly Regex Counter = new Regex(@"\b_?\w*(LogBudget|Budget|Said|Logged|LogCount|WarnCount|Refusals)\b\s*(--|\+\+|<|<=|>=|>)");
+        // `_dbg…` too: four counters named that way (and a 2000-component ceiling beside one) were
+        // missed by the first sweep, whose pattern knew only the names it had been written from.
+        private static readonly Regex Counter = new Regex(@"\b_?\w*(LogBudget|Budget|Said|Logged|LogCount|WarnCount|Refusals)\b\s*(--|\+\+|<|<=|>=|>)|\b_dbg\w*\b\s*(--|\+\+|<|<=|>=|>|\.Count\s*>=)");
 
         // Budgets that are not about logs: an atlas size budget, a frame time budget.
         private static readonly HashSet<string> NotLogs = new HashSet<string>(StringComparer.Ordinal)

@@ -3291,9 +3291,8 @@ namespace UnityGameTranslator.Core
                     {
                         // SetFont was missed — apply it now
                         TypeHelper.SetFont(__instance, unityCloneFont);
-                        if (_dbgMissedSetFont < 10)
+                        if (DiagnosticOnce.First("Patches.missedSetFont", compId.ToString()))
                         {
-                            _dbgMissedSetFont++;
                             TranslatorCore.LogInfo($"[MISSED-SETFONT] comp={compId} text='{(preTranslateText.Length > 30 ? preTranslateText.Substring(0,30) : preTranslateText)}' HasCached was false but translated!");
                         }
                     }
@@ -3390,44 +3389,24 @@ namespace UnityGameTranslator.Core
         [ThreadStatic] private static bool _bypassFontSizePrefix;
         // Components that inherited a clone font from template — skip ApplyFontScale (already scaled)
         private static readonly HashSet<int> _inheritedCloneComponents = new HashSet<int>();
-        private static int _dbgMissedSetFont = 0;
-
         /// <summary>
-        /// How many times each component has been seen writing text — the setter probe's quota.
+        /// Say that this component wrote text — once per component, whenever that is.
         ///
         /// 🔴 **Per component, and that is the whole point.** A single session-wide budget is
         /// unusable for the question it answers: a game writes hundreds of texts on the way to
         /// wherever the thing being investigated lives, so the quota is gone before anybody gets
-        /// there — "you cannot teleport into the game at the spot you want to test".
+        /// there — "you cannot teleport into the game at the spot you want to test". A ceiling on
+        /// the number of components (2000 until 2026-10-02) was the same quota one level up: the
+        /// component looked for, met late in a long session, was never said (DiagnosticOnce).
         ///
-        /// ⚠ Capped in size as well as per entry: a game that creates text components without end
-        /// must not turn a diagnostic into a leak.
-        /// </summary>
-        private static readonly Dictionary<long, int> _dbgSetterSeen = new Dictionary<long, int>();
-
-        private const int SetterProbePerComponent = 2;
-        private const int SetterProbeComponents = 2000;
-
-        /// <summary>
-        /// Say that this component wrote text — the first couple of times it does, whenever that is.
-        ///
-        /// ⚠ Two lines are enough for what is asked: does the game write through here AT ALL for
-        /// this component. A third would only repeat the answer.
+        /// ⚠ One line is enough for what is asked: does the game write through here AT ALL for
+        /// this component.
         /// </summary>
         private static void NoteSetterFired(object instance, string textValue, string componentType)
         {
             long probeId = TypeHelper.GetInstanceID(instance);
             if (probeId == -1) return;
-
-            int seen;
-            if (!_dbgSetterSeen.TryGetValue(probeId, out seen))
-            {
-                if (_dbgSetterSeen.Count >= SetterProbeComponents) return;
-                seen = 0;
-            }
-
-            if (seen >= SetterProbePerComponent) return;
-            _dbgSetterSeen[probeId] = seen + 1;
+            if (!DiagnosticOnce.First("Patches.setter", probeId.ToString())) return;
 
             string head = textValue.Length > 40 ? textValue.Substring(0, 40) + "…" : textValue;
             TranslatorCore.LogDebug($"[SETTER] {componentType} comp={probeId} '{head}'");

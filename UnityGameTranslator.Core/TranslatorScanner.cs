@@ -2847,8 +2847,10 @@ namespace UnityGameTranslator.Core
                 _hlMatched++;
                 bool replaced = !string.Equals(compFont, settingsFont, StringComparison.OrdinalIgnoreCase);
                 if (replaced) _hlReplaced++;
-                else if (_hlLaggards.Count < 8)
+                else
                 {
+                    // Every one of them: the audit is asked for by a click on one font, and the
+                    // laggard looked for is not necessarily among the first few.
                     string path = comp != null ? TranslatorCore.GetGameObjectPath(comp.gameObject) : "(no path)";
                     string text = TypeHelper.GetText(component) ?? "";
                     if (text.Length > 32) text = text.Substring(0, 32) + "...";

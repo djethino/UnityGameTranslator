@@ -3210,10 +3210,10 @@ namespace UnityGameTranslator.Core
                 SetFieldValue(glyph, "xAdvance", xAdvance);
                 SetFieldValue(glyph, "scale", 1f);
 
-                // Log first few glyphs for debugging (Latin A-C and first Devanagari)
-                bool shouldLog = (glyphInfo.unicode >= 65 && glyphInfo.unicode <= 67) // A, B, C
-                    || (glyphInfo.unicode >= 2309 && glyphInfo.unicode <= 2315); // First Devanagari consonants
-                if (shouldLog)
+                // One glyph per atlas, to read its metrics against the atlas's — whichever glyph
+                // comes first. (It used to be A–C and the first Devanagari consonants: a sample
+                // chosen for one script, and nothing at all for an atlas holding neither.)
+                if (DiagnosticOnce.First("CustomFontLoader.glyph", System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(atlas).ToString()))
                 {
                     TranslatorCore.LogInfo($"[CustomFontLoader] Glyph U+{glyphInfo.unicode:X4}: x={x}, y={y}, w={width}, h={height}, xOff={xOffset}, yOff={yOffset}, xAdv={xAdvance}");
                 }

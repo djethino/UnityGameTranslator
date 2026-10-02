@@ -3168,16 +3168,16 @@ namespace UnityGameTranslator.Core
                 // now, but a file polluted before those doors existed (it happened once) would
                 // otherwise sit silent — and its entries re-apply at every startup. This is how
                 // such lines are identified for cleaning.
-                int shapedKeys = 0, shapedValues = 0, shapedNamed = 0;
+                // Every one of them, not the first five: the point is to find the lines to clean.
+                int shapedKeys = 0, shapedValues = 0;
                 foreach (var kvp in TranslationCache)
                 {
                     bool badKey = TextShaping.RtlText.ContainsPresentationForms(kvp.Key);
                     bool badValue = kvp.Value?.Value != null && TextShaping.RtlText.ContainsPresentationForms(kvp.Value.Value);
                     if (badKey) shapedKeys++;
                     if (badValue) shapedValues++;
-                    if ((badKey || badValue) && shapedNamed < 5)
+                    if (badKey || badValue)
                     {
-                        shapedNamed++;
                         string k = kvp.Key.Length > 40 ? kvp.Key.Substring(0, 40) + "…" : kvp.Key;
                         Adapter.LogWarning($"[Cache audit] Presentation forms in {(badKey ? "KEY" : "value")}: '{k}' — display output saved as data; remove or re-enter this line (see issue #24).");
                     }

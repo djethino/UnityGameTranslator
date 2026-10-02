@@ -2,11 +2,6 @@ namespace UnityGameTranslator.Core
 {
     public sealed partial class TextRouter
     {
-        // Bounded debug lines: each says something worth seeing once, never worth a flooded log.
-        private int _dbgTwCacheHit;
-        private int _dbgCacheHitNormLog;
-        private int _dbgReverseMiss;
-
         /// <summary>
         /// Translate with component tracking for async updates: the answer to show now, the line
         /// queued when nobody has it. Treats multiline text as a single unit to ensure proper
@@ -138,9 +133,9 @@ namespace UnityGameTranslator.Core
                     // a component whose reveal is still in flight. It is normal — recognition
                     // arrives before the last character, since the numbers are lifted out — and it
                     // is only harmless because the reveal was told at the top of this method.
-                    if (_dbgTwCacheHit < 20 && compId != -1 && IsInTypewritingState(compId))
+                    if (compId != -1 && IsInTypewritingState(compId)
+                        && DiagnosticOnce.First("Router.twCacheHit", compId + "\u0001" + text))
                     {
-                        _dbgTwCacheHit++;
                         _host.LogDebug($"[TW-CACHEHIT] comp={compId} text='{Head40(text)}' → known while a reveal is in flight");
                     }
                     if (_host.DebugMode && text.Length > 100)
@@ -148,18 +143,15 @@ namespace UnityGameTranslator.Core
                 }
                 else if (look.Stage == GateStage.Normalized)
                 {
-                    // 🔴 **Said a few times, then not again.** This dumps the whole text TWICE —
-                    // original and normalised, newlines and markup included — on every cache hit
-                    // over a hundred characters. On a game whose long tooltips are on screen
-                    // continuously that is 780 dumps in one session: a log nobody can read, in
-                    // which a real warning is invisible, written by the thing being diagnosed.
-                    //
-                    // ⚠ Bounded rather than removed: what it shows — which text produced which
-                    // key — is exactly what a normalisation defect looks like, and it is worth
-                    // seeing once.
-                    if (_host.DebugMode && text.Length > 100 && _dbgCacheHitNormLog < 10)
+                    // 🔴 **Said once per text.** This dumps the whole text TWICE — original and
+                    // normalised, newlines and markup included — on every cache hit over a hundred
+                    // characters. On a game whose long tooltips are on screen continuously that was
+                    // 780 dumps in one session: the same few texts, again and again. Once per
+                    // distinct text keeps what it shows — which text produced which key, exactly
+                    // what a normalisation defect looks like — without the repetition (and without
+                    // the "first ten" that fell silent before the text looked for).
+                    if (_host.DebugMode && text.Length > 100 && DiagnosticOnce.First("Router.cacheHitNorm", text))
                     {
-                        _dbgCacheHitNormLog++;
                         _host.LogDebug($"[CACHE-HIT-NORM] comp={compId} orig({text.Length}c) norm→key({look.NormalizedText.Length}c)\n  orig='{text}'\n  norm='{look.NormalizedText}'");
                     }
                 }
@@ -264,7 +256,7 @@ namespace UnityGameTranslator.Core
         /// </summary>
         private void NoteReverseMiss(string text, string trimmedNormalized)
         {
-            if (_dbgReverseMiss < 20 && text.Length > 5)
+            if (text.Length > 5)
             {
                 bool hasLatin = false;
                 foreach (char c in text)
@@ -272,9 +264,8 @@ namespace UnityGameTranslator.Core
                     if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'))
                     { hasLatin = true; break; }
                 }
-                if (hasLatin)
+                if (hasLatin && DiagnosticOnce.First("Router.reverseMiss", text))
                 {
-                    _dbgReverseMiss++;
                     _host.LogDebug($"[REVERSE-MISS] orig({text.Length}c)='{text}'\n  norm({trimmedNormalized.Length}c)='{trimmedNormalized}'");
                 }
             }

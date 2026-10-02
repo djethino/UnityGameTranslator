@@ -104,6 +104,18 @@ namespace UnityGameTranslator.Core
                 if (dt > 0.0333f) _rebuildsInSlowFrames++;
                 _rebuiltThisFrame = false;
             }
+            long heap = GameHeapUsed();
+            if (heap >= 0)
+            {
+                // Between two collections the used size only grows: a drop is a collection, made
+                // while the frame now measured ran.
+                if (_gameHeapLast >= 0 && heap < _gameHeapLast)
+                {
+                    _gameGcs++;
+                    if (dt > 0.0333f) _gameGcsInSlowFrames++;
+                }
+                _gameHeapLast = heap;
+            }
             if (dt > _frameMax)
             {
                 _frameMax = dt;
@@ -150,6 +162,40 @@ namespace UnityGameTranslator.Core
             string name = font != null ? font.name : "?";
             _rebuiltFonts.TryGetValue(name, out int n);
             _rebuiltFonts[name] = n + 1;
+        }
+
+        // 🔴 **The GAME's garbage collections (IL2CPP).** The "GC gen0" of the report counts the
+        // runtime the mod runs in; under IL2CPP the game's objects live in another heap, collected
+        // by its own collector, which stops everything and walks the whole heap — hundreds of
+        // milliseconds on a game holding several hundred thousand objects, again in the middle of
+        // a frame no hook of ours can time. Seen from the runtime's own export, the heap's used size
+        // (il2cpp_gc_get_used_size, through Il2CppInterop): it only grows between two collections,
+        // so a drop from one frame to the next is one. The game's GC.CollectionCount was the first
+        // choice — and stripped from the bench's build. Absent on Mono, where the mod and the game
+        // share one heap and "GC gen0" already is the game's.
+        private static bool _gameHeapResolved;
+        private static System.Reflection.MethodInfo _gameHeapUsed;
+        private static long _gameHeapLast = -1;
+        private static int _gameGcs, _gameGcsInSlowFrames;
+
+        private static long GameHeapUsed()
+        {
+            if (!_gameHeapResolved)
+            {
+                _gameHeapResolved = true;
+                if (TranslatorCore.Adapter == null || !TranslatorCore.Adapter.IsIL2CPP) return -1;
+                var il2cpp = AssemblyTypes.Find("Il2CppInterop.Runtime.IL2CPP");
+                _gameHeapUsed = il2cpp?.GetMethod("il2cpp_gc_get_used_size", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+                if (_gameHeapUsed == null) TranslatorCore.LogDebug("[PASS-PERF] il2cpp_gc_get_used_size not found — the game's collections are not counted");
+            }
+            if (_gameHeapUsed == null) return -1;
+            try { return System.Convert.ToInt64(_gameHeapUsed.Invoke(null, null)); }
+            catch (System.Exception ex)
+            {
+                _gameHeapUsed = null;
+                Faults.Say("Perf.GameHeapUsed", ex);
+                return -1;
+            }
         }
 
         /// <summary>Unsubscribes the atlas-rebuild count (shutdown).</summary>
@@ -288,6 +334,11 @@ namespace UnityGameTranslator.Core
                     fonts.Append(fonts.Length == 0 ? "" : ", ").Append(kv.Key).Append(" x").Append(kv.Value);
                 frames += $", font atlas rebuilds: {_rebuilds} ({fonts}), in frames over 33ms: {_rebuildsInSlowFrames}";
                 _rebuilds = 0; _rebuildsInSlowFrames = 0; _rebuiltFonts.Clear();
+            }
+            if (_gameHeapUsed != null)
+            {
+                frames += $", game GC: {_gameGcs}, in frames over 33ms: {_gameGcsInSlowFrames}";
+                _gameGcs = 0; _gameGcsInSlowFrames = 0;
             }
 
             if (sb.Length == 0) { TranslatorCore.LogDebug($"[PASS-PERF] over {window:F1}s | {frames}"); return; }

@@ -28,8 +28,13 @@ namespace UnityGameTranslator.Core
         private static Type _wrapperType;
         private static FieldInfo _wrapperBegin, _wrapperLength;
 
+        /// <summary>Puts these characters, at the font's own size and normal style, into the font's atlas.</summary>
+        // ⚠ An overload, not optional parameters: a default value of an engine enum (FontStyle) is a
+        // constant the IL2CPP adapter's reference rewrite (Cecil) must resolve, and cannot.
+        internal static void Request(Font font, string characters) => Request(font, characters, 0, FontStyle.Normal);
+
         /// <summary>Puts these characters, at this size and style (0 = the font's own size), into the font's atlas.</summary>
-        internal static void Request(Font font, string characters, int size = 0, FontStyle style = FontStyle.Normal)
+        internal static void Request(Font font, string characters, int size, FontStyle style)
         {
             if (font == null || string.IsNullOrEmpty(characters)) return;
             Resolve();

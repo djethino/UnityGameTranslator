@@ -1193,6 +1193,67 @@ namespace UnityGameTranslator.Core
         /// fontType: "TMP", "Unity", "TextMesh", "TMP (alt)", etc.
         /// fontObj: optional font object (TMP_FontAsset or Font) for fallback injection.
         /// </summary>
+        // Fonts named by a <font="…"> tag already looked for, found or not: each name is asked once.
+        private static readonly HashSet<string> _tagFontsAsked = new HashSet<string>(StringComparer.Ordinal);
+
+        /// <summary>
+        /// The fonts a TMP text names in its own <font="name"> tags, detected like the fonts a
+        /// component wears (<see cref="RegisterFontObject"/>): listed in the Fonts tab, and given their
+        /// fallback in their fallback list. No component ever wears such a font — the tag switches to
+        /// it mid-text — so it was never seen, and a translation's letters inside the tag were drawn
+        /// from another font, without the tag's look (2026-10-03: an Arabic word left black where the
+        /// game's word was purple). Found as TMP finds it: loaded already, else from Resources under
+        /// TMP's own font path.
+        /// </summary>
+        internal static void NoteFontTags(string text)
+        {
+            if (string.IsNullOrEmpty(text) || TypeHelper.TMP_FontAssetType == null) return;
+            int at = 0;
+            while ((at = text.IndexOf("<font", at, StringComparison.OrdinalIgnoreCase)) >= 0)
+            {
+                at += 5;
+                if (at >= text.Length || text[at] != '=') continue;   // <font-weight>, <font> alone
+                int start = at + 1, end;
+                if (start < text.Length && (text[start] == '"' || text[start] == '\''))
+                {
+                    char quote = text[start++];
+                    end = text.IndexOf(quote, start);
+                }
+                else end = text.IndexOfAny(new[] { '>', ' ' }, start);
+                if (end <= start) continue;
+                string name = text.Substring(start, end - start);
+                at = end;
+                // <font=default> is TMP's way back to the text's own font, no font of its own.
+                if (string.Equals(name, "default", StringComparison.OrdinalIgnoreCase) || !_tagFontsAsked.Add(name)) continue;
+
+                var asset = FindTagFontAsset(name);
+                if (asset == null)
+                {
+                    TranslatorCore.LogInfo($"[FontManager] '{name}', named by a <font> tag, is not loaded and not in Resources — the tag's letters keep TMP's own fallbacks");
+                    continue;
+                }
+                TranslatorCore.LogInfo($"[FontManager] '{name}', named by a <font> tag, detected as a game font");
+                RegisterFontObject(asset, TypeHelper.UseAlternateTMP ? "TMP (alt)" : "TMP");
+            }
+        }
+
+        /// <summary>A TMP font asset by the name a tag gives it: one loaded already, else TMP's own Resources path.</summary>
+        private static object FindTagFontAsset(string name)
+        {
+            var loaded = TypeHelper.FindAllObjectsOfType(TypeHelper.TMP_FontAssetType);
+            if (loaded != null)
+                foreach (var asset in loaded)
+                    if (TypeHelper.FontNameOf(asset) == name) return asset;
+
+            var settings = TypeHelper.TMP_FontAssetType.Assembly.GetType(TypeHelper.TMP_FontAssetType.Namespace + ".TMP_Settings");
+            var pathProp = settings?.GetProperty("defaultFontAssetPath", BindingFlags.Public | BindingFlags.Static);
+            string path = pathProp?.GetValue(null, null) as string;
+            if (path == null) return null;
+            var found = Resources.Load(path + name);
+            if (found == null) return null;
+            return TypeHelper.TMP_FontAssetType.IsInstanceOfType(found) ? found : TypeHelper.Il2CppCast(found, TypeHelper.TMP_FontAssetType);
+        }
+
         public static void RegisterFontObject(object fontObj, string fontType)
         {
             if (fontObj == null) return;

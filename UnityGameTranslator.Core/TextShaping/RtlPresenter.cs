@@ -241,6 +241,16 @@ namespace UnityGameTranslator.Core.TextShaping
 
                 if (prop != null)
                 {
+                    // 🔴 Never the flag on a TEMPLATE: every copy is born with it, and the game's own
+                    // text written into a copy — a Latin word, a resolution, a count, set while the
+                    // copy is still inactive, so before anything of ours sees it — read backwards:
+                    // "VSync" as "cnySV", "3440x1440" as "0441x0443" (2026-10-02, a settings screen;
+                    // proven by the log, then on the bench). This component's flag was never ours to
+                    // record, so nothing could put it back. The template gets the visual form like
+                    // any other engine's (no state, right for a one-line label from the copy's first
+                    // frame), and each copy is presented on its own — by the game's write, or by
+                    // AdoptCopies when it never writes it.
+                    if (PresentTemplate(instance, compId, ref value)) return;
                     string flagged = RtlComposer.Compose(value, RtlOutput.RtlFlagged);
                     if (compId != -1 && !_flaggedOriginal.ContainsKey(compId))
                     {
@@ -735,7 +745,9 @@ namespace UnityGameTranslator.Core.TextShaping
         /// form (logical order, direction marks drawn as boxes) that the game never wrote again on
         /// the copy (2026-10-02, a phone's titles; and hundreds of such waits walked every frame).
         /// The whole-string visual form instead: right for a one-line label, which a copy keeps
-        /// until the game writes it, when the copy is presented on its own.
+        /// until the game writes it, when the copy is presented on its own. Nothing else is set on
+        /// a template — no flag, alignment or wrap: a copy inherits every one of them, and the
+        /// game's own text written into the copy then wears state this component never recorded.
         /// </summary>
         private static bool PresentTemplate(object instance, long compId, ref string value)
         {

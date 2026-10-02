@@ -50,8 +50,32 @@ namespace UnityGameTranslator.Core
                 string logical = TranslatorCore.TryGetPresentedLogical(text);
                 if (logical != null) source = TranslatorCore.SourceOfTranslation(logical);
             }
+            if (source != null && !_crossingFonts.Contains(settingsFontName))
+            {
+                int from = TextShaping.RtlText.ParagraphDirection(UnityGameTranslator.Common.Markup.Strip(source));
+                int to = TextShaping.RtlText.ParagraphDirection(UnityGameTranslator.Common.Markup.Strip(text));
+                if (from != 0 && to != 0 && from != to) _crossingFonts.Add(settingsFontName);
+            }
             Coverage.Record(settingsFontName, text, source);
         }
+
+        // Fonts that drew a translation written in the other direction than its source line.
+        private static readonly HashSet<string> _crossingFonts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// Whether this font drew a translated text whose direction differs from the game's line it
+        /// replaces — each by Unicode's paragraph rule (RtlText.ParagraphDirection), measured on the
+        /// texts themselves: it needs no language, and holds when the source is "auto" (user,
+        /// 2026-10-02). Forgotten with the translation (TranslatorCore's reload clears Coverage and this).
+        /// </summary>
+        internal static bool DrawsCrossedDirection(string settingsFontName) =>
+            !string.IsNullOrEmpty(settingsFontName) && _crossingFonts.Contains(settingsFontName);
+
+        /// <summary>Whether any font drew such a text.</summary>
+        internal static bool AnyFontCrossesDirection => _crossingFonts.Count > 0;
+
+        /// <summary>The account belongs to the translation it was taken on.</summary>
+        internal static void ForgetCrossedDirections() => _crossingFonts.Clear();
 
         /// <summary>
         /// A font the mod made — a derived copy or pool name ("UGT …"), a replacement it created. The

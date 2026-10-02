@@ -1000,25 +1000,6 @@ namespace UnityGameTranslator.Core
             return !string.Equals(choice, "keep", StringComparison.OrdinalIgnoreCase);
         }
 
-        /// <summary>
-        /// Whether this translation crosses writing directions — left-to-right into right-to-left
-        /// or the reverse — as the language catalogue says of its two languages. Gates the RTL
-        /// controls in the Fonts tab: they are noise for everyone else (user-arbitrated:
-        /// "seulement quand utile").
-        ///
-        /// 🔴 The catalogue's answer, never the letters the file holds (user, 2026-10-02: « le thaï
-        /// n'est pas une langue RTL… je devrais avoir l'option que dans le cas ltr→rtl et rtl→ltr »).
-        /// It used to scan every line for a right-to-left letter: a French→Thai translation of a
-        /// game whose language menu lists "العربية" and "עברית" showed the mirroring controls. A
-        /// source not settled yet counts as left to right — the common case of a game translated
-        /// INTO a right-to-left language still shows them.
-        /// </summary>
-        public static bool TranslationCrossesDirection()
-        {
-            bool target = TargetIsRightToLeft;
-            bool source = UnityGameTranslator.Common.Languages.IsRightToLeft(EffectiveSourceLanguage) == true;
-            return target != source;
-        }
 
         /// <summary>
         /// Replace all font override rules at once (called by Apply in UI).
@@ -2855,6 +2836,7 @@ namespace UnityGameTranslator.Core
 
             // Which characters each font has drawn is an account of THIS translation's texts.
             FontManager.Coverage.Clear();
+            FontManager.ForgetCrossedDirections();
 
             // The mod's own interface lives in its own file and is read first: the game file below
             // may still carry interface lines (written before the split, or arrived with somebody

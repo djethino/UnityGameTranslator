@@ -80,10 +80,23 @@ namespace UnityGameTranslator.Core.UI.Panels
         private Dictionary<string, (bool enabled, string fallback, float sizePercent, bool scaleAuto, bool mirrorRtl)> _pendingFontSettings = new Dictionary<string, (bool, string, float, bool, bool)>();
         private Dictionary<string, (bool enabled, string fallback, float sizePercent, bool scaleAuto, bool mirrorRtl)> _initialFontSettings = new Dictionary<string, (bool, string, float, bool, bool)>();
 
-        // Whether the RTL controls (per-font mirror toggle, per-rule alignment) are shown at all:
-        // only when this game's translation involves right-to-left text in either direction —
-        // they are noise for everyone else (user-arbitrated). Recomputed at each list refresh.
+        // Whether the per-RULE alignment control is shown: when any font is (RtlControlsFor), noise
+        // for everyone else (user-arbitrated). Recomputed at each list refresh.
         private bool _rtlControlsVisible;
+
+        /// <summary>
+        /// Whether a font's mirroring control is shown. Two facts, either enough (user, 2026-10-02):
+        /// - the translation's language is written right to left (catalogue): every text of a
+        ///   mirroring font is then mirrored, Latin and figures included (VSync), so the choice must
+        ///   be offered on every font, even one that draws only those;
+        /// - this font drew a translation written the other way than its source line, measured on
+        ///   the texts (FontManager.DrawsCrossedDirection) — a game in Hebrew or Arabic translated
+        ///   out of it, with a source left on "auto".
+        /// Never the letters a file holds: a French→Thai translation of a game whose language menu
+        /// lists "العربية" showed it.
+        /// </summary>
+        private static bool RtlControlsFor(string settingsFontName) =>
+            TranslatorCore.TargetIsRightToLeft || FontManager.DrawsCrossedDirection(settingsFontName);
 
         /// <summary>
         /// True while a row is being filled from what is stored. Writing a value into a piece fires
@@ -1662,7 +1675,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             if (_fontOverridesList == null) return;
 
-            _rtlControlsVisible = TranslatorCore.TranslationCrossesDirection();
+            _rtlControlsVisible = TranslatorCore.TargetIsRightToLeft || FontManager.AnyFontCrossesDirection;
 
             foreach (var dropdown in _overrideRtlDropdowns)
                 dropdown.Destroy();
@@ -1803,7 +1816,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             if (_fontsList == null) return;
 
-            _rtlControlsVisible = TranslatorCore.TranslationCrossesDirection();
+            _rtlControlsVisible = TranslatorCore.TargetIsRightToLeft || FontManager.AnyFontCrossesDirection;
             TranslatorCore.LogInfo($"[TranslationParametersPanel] RefreshFontsList called");
             Pending.ClearGroup("fonts");
 
@@ -1971,7 +1984,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // RTL alignment (only when this translation involves right-to-left text): mirror the
                 // component's alignment to follow the reading direction, or keep the game's own —
                 // per font and shared with the translation, refinable per rule below.
-                if (_rtlControlsVisible)
+                if (RtlControlsFor(capturedFontName))
                 {
                     row.Host("RtlRow").Visible = true;
                     var rtlToggle = row.Toggle("RtlMirrorToggle");

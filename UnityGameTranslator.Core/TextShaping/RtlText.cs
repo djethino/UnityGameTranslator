@@ -79,6 +79,31 @@ namespace UnityGameTranslator.Core.TextShaping
             => ContainsStrongRtl(text) && !ContainsPresentationForms(text);
 
         /// <summary>
+        /// The direction a paragraph takes by Unicode's own rule (UAX #9, P2): its first character of
+        /// bidi class L, R or AL, skipping what an isolate holds — 1 left to right, -1 right to left,
+        /// 0 when it has no such character (digits, punctuation). The caller strips markup first: a
+        /// tag's letters are Latin.
+        /// </summary>
+        public static int ParagraphDirection(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return 0;
+            int isolates = 0;
+            for (int i = 0; i < text.Length; i++)
+            {
+                int cp = char.IsHighSurrogate(text[i]) && i + 1 < text.Length && char.IsLowSurrogate(text[i + 1])
+                    ? char.ConvertToUtf32(text[i], text[++i]) : text[i];
+                var direction = Topten.RichTextKit.UnicodeClasses.Directionality(cp);
+                if (direction == Topten.RichTextKit.Directionality.LRI || direction == Topten.RichTextKit.Directionality.RLI
+                    || direction == Topten.RichTextKit.Directionality.FSI) { isolates++; continue; }
+                if (direction == Topten.RichTextKit.Directionality.PDI) { if (isolates > 0) isolates--; continue; }
+                if (isolates > 0) continue;
+                if (direction == Topten.RichTextKit.Directionality.L) return 1;
+                if (direction == Topten.RichTextKit.Directionality.R || direction == Topten.RichTextKit.Directionality.AL) return -1;
+            }
+            return 0;
+        }
+
+        /// <summary>
         /// A strong right-to-left letter in base form: Unicode's bidi class R or AL, for every
         /// script written right to left (Hebrew, Arabic, Syriac, Thaana, N'Ko, Adlam, Samaritan…).
         /// 🔴 Not a list of blocks: one typed here once said Hebrew and Arabic only, and every

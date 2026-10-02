@@ -82,6 +82,20 @@ namespace UnityGameTranslator.Core.Checks
                 "the fast path must reject everything below U+0590");
             check(!RtlText.IsStrongRtl('ﻣ'), "a presentation form is NOT a strong trigger",
                 "U+FEE3 means 'already shaped' — that question has its own answer");
+            // A paragraph's direction by UAX #9 P2: its first strong letter, isolates skipped. What
+            // the Fonts tab asks of a game line and its translation (a crossed direction).
+            foreach (var (text, want, what) in new[]
+            {
+                ("Options", 1, "Latin"), ("خيارات", -1, "Arabic"),
+                ("ת 1920x1080", -1, "Hebrew first, figures after"), ("12:30 / 45%", 0, "figures and punctuation alone"),
+                ("⁧עברית⁩ menu", 1, "an isolate's content skipped"),
+                ("ߒߞߏ", -1, "N'Ko"),
+            })
+            {
+                int got = RtlText.ParagraphDirection(text);
+                check(got == want, $"a paragraph takes the direction of its first strong letter: {what}",
+                    $"expected {want}, got {got}");
+            }
             // Every script written right to left, from Unicode's bidi class — not two of them.
             check(RtlText.IsStrongRtl(0x0710) && RtlText.IsStrongRtl(0x0780) && RtlText.IsStrongRtl(0x07CA)
                   && RtlText.IsStrongRtl(0x1E900) && RtlText.IsStrongRtl(0x0800),

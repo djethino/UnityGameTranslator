@@ -164,7 +164,7 @@ namespace UnityGameTranslator.Core
                 // Filling the clone's atlas: a refusal means characters missing on screen — said.
                 try
                 {
-                    kvp.Value.RequestCharactersInTexture(charString);
+                    FontAtlas.Request(kvp.Value, charString);
                 }
                 catch (Exception ex) { Faults.Say("FontManager.ProtectCloneAtlases", ex, kvp.Key); }
             }
@@ -240,7 +240,7 @@ namespace UnityGameTranslator.Core
                 _knownCharsStringCache[componentFallback] = allChars;
 
                 // Filling the clone's atlas: a refusal means characters missing on screen — said.
-                try { componentClone.RequestCharactersInTexture(allChars); }
+                try { FontAtlas.Request(componentClone, allChars); }
                 catch (Exception ex) { Faults.Say("FontManager.EnsureCharsInCloneAtlasInternal", ex); }
 
                 MarkCloneComponentsDirty(componentClone);
@@ -436,7 +436,7 @@ namespace UnityGameTranslator.Core
                 try
                 {
                     var allChars = new string(new System.Collections.Generic.List<char>(known).ToArray());
-                    clone.RequestCharactersInTexture(allChars);
+                    FontAtlas.Request(clone, allChars);
                 }
                 catch (Exception ex) { Faults.Say("FontManager.EnsureComponentGlyphs", ex, fallback); }
             }
@@ -643,7 +643,7 @@ namespace UnityGameTranslator.Core
                 // Filling the clone's atlas: a refusal means characters missing on screen — said.
                 try
                 {
-                    clone.RequestCharactersInTexture(existing);
+                    FontAtlas.Request(clone, existing);
                     TranslatorCore.LogDebug($"[FontManager] PreWarm '{originalFontName}' with {existing.Length} known chars");
                 }
                 catch (Exception ex) { Faults.Say("FontManager.PreWarmCloneAtlas known", ex, originalFontName); }
@@ -675,7 +675,7 @@ namespace UnityGameTranslator.Core
             // Filling the clone's atlas: a refusal means characters missing on screen — said.
             try
             {
-                clone.RequestCharactersInTexture(charString, 0, FontStyle.Normal);
+                FontAtlas.Request(clone, charString, 0, FontStyle.Normal);
                 int excludedCount = excluded != null ? excluded.Count : 0;
                 TranslatorCore.LogInfo($"[FontManager] PreWarm '{originalFontName}' with {cacheChars.Count} chars (excluded {excludedCount} non-renderable)");
             }
@@ -716,7 +716,7 @@ namespace UnityGameTranslator.Core
                 // Filling the clone's atlas: a refusal means characters missing on screen — said.
                 try
                 {
-                    clone.RequestCharactersInTexture(charString, 0, FontStyle.Normal);
+                    FontAtlas.Request(clone, charString, 0, FontStyle.Normal);
                     TranslatorCore.LogDebug($"[FontManager] Pre-populated atlas for '{kvp.Key}' with {cloneChars.Count} chars from cache");
                 }
                 catch (Exception ex) { Faults.Say("FontManager.PrePopulateCloneAtlasFromCache", ex, kvp.Key); }
@@ -829,7 +829,7 @@ namespace UnityGameTranslator.Core
                     if (_knownCharsStringCache.TryGetValue(match.Key, out string charString) && charString != null)
                     {
                         // Filling the clone's atlas: a refusal means characters missing on screen — said.
-                        try { match.Value.RequestCharactersInTexture(charString); }
+                        try { FontAtlas.Request(match.Value, charString); }
                         catch (Exception ex) { Faults.Say("FontManager.OnFontTextureRebuilt", ex, match.Key); }
                     }
 

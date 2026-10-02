@@ -81,7 +81,7 @@ namespace UnityGameTranslator.Core.UI
             text.font = font;
             if (!string.IsNullOrEmpty(text.text))
             {
-                try { font.RequestCharactersInTexture(text.text, text.fontSize, text.fontStyle); }
+                try { FontAtlas.Request(font, text.text, text.fontSize, text.fontStyle); }
                 catch (Exception ex) { Faults.Say("GameTextFonts.Put", ex, font.name); }
             }
             text.SetAllDirty();

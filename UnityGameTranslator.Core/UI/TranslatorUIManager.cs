@@ -1729,7 +1729,7 @@ namespace UnityGameTranslator.Core.UI
                 text.font = font;
                 if (!string.IsNullOrEmpty(text.text))
                 {
-                    try { font.RequestCharactersInTexture(text.text, text.fontSize, text.fontStyle); }
+                    try { FontAtlas.Request(font, text.text, text.fontSize, text.fontStyle); }
                     catch (Exception ex) { Faults.Say("TranslatorUIManager.SwapModUIFont", ex, font.name); }
                 }
                 text.SetAllDirty();
@@ -1828,7 +1828,7 @@ namespace UnityGameTranslator.Core.UI
                 if (sizeDelta != 0) text.fontSize += sizeDelta;
                 if (!string.IsNullOrEmpty(text.text))
                 {
-                    try { text.font.RequestCharactersInTexture(text.text, text.fontSize, text.fontStyle); }
+                    try { FontAtlas.Request(text.font, text.text, text.fontSize, text.fontStyle); }
                     catch (Exception ex) { Faults.Say("TranslatorUIManager.RerenderModUIWalk", ex); }
                 }
                 text.SetAllDirty();

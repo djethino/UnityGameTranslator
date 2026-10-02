@@ -204,9 +204,9 @@ namespace UnityGameTranslator.Core.Checks
 
             var same = new ReadbackIndex();
             same.RegisterPresented("plain text", "plain text");
-            check(same.PresentedLogical("plain text") == null && same.IsReadback("plain text", false),
-                "a presented string equal to its logical form is refused but has no truth to recover",
-                "the map only says 'and HERE is its truth' when the two differ");
+            check(same.PresentedLogical("plain text") == null && !same.IsReadback("plain text", false),
+                "a presented string equal to its logical form is not ours",
+                "the presenter passes the game's own texts too: one left unchanged and kept here read as our translation — never queued, and counted by the font notice");
 
             check(index.IsReadback(glyphs, ownUi: true),
                 "a fragment carrying our private glyphs is ours whichever side asks",

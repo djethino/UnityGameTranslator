@@ -67,7 +67,7 @@ namespace UnityGameTranslator.Core
         private static float? MeasureWithFont(Font font, string line, int size, FontStyle style)
         {
             if (font == null) return null;
-            font.RequestCharactersInTexture(line, size, style);
+            FontAtlas.Request(font, line, size, style);
             float width = 0f;
             for (int i = 0; i < line.Length; i++)
             {

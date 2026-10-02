@@ -203,7 +203,7 @@ namespace UnityGameTranslator.Core
             foreach (char c in text)
                 if (!replacement.Known.Contains(c)) { added = true; break; }
             if (!added) return;
-            replacement.Font.RequestCharactersInTexture(text, replacement.PixelSize, FontStyle.Normal);
+            FontAtlas.Request(replacement.Font, text, replacement.PixelSize, FontStyle.Normal);
             foreach (char c in text)
             {
                 if (replacement.Known.Contains(c)) continue;
@@ -301,7 +301,7 @@ namespace UnityGameTranslator.Core
                     if (r.FontId != fontId) continue;
                     var known = new System.Text.StringBuilder(r.Known.Count);
                     foreach (int c in r.Known) if (c != 0) known.Append((char)c);
-                    if (known.Length > 0) font.RequestCharactersInTexture(known.ToString(), r.PixelSize, FontStyle.Normal);
+                    if (known.Length > 0) FontAtlas.Request(font, known.ToString(), r.PixelSize, FontStyle.Normal);
                 }
                 foreach (var r in _byData.Values)
                 {

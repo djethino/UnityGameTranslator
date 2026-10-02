@@ -174,6 +174,13 @@ namespace UnityGameTranslator.Core
         public void RegisterPresented(string presented, string logical)
         {
             if (string.IsNullOrEmpty(presented)) return;
+            // 🔴 A text the presentation left as it was holds nothing of ours. The presenter passes
+            // the GAME's own texts too (a word-broken Thai label, a game's list of languages): kept
+            // here, such a text read as "already our translation" — not queued for translation,
+            // and counted by the font notice as translated text (Thai letters reported as missing
+            // Arabic ones, 2026-10-02). A translation the same as its display form is recognised
+            // by its own index (Target); this registry is for forms only the presentation makes.
+            if (string.Equals(presented, logical, StringComparison.Ordinal)) return;
             if (HasPrivateGlyphCodepoint(presented))
             {
                 lock (_presentedWithPrivate)

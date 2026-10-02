@@ -167,8 +167,15 @@ namespace UnityGameTranslator.Core
         /// (ShapingRoute "reorder only" for its own text): its translated labels in the interface font,
         /// or the game's text in the source or target text font. Said once per part and font.
         /// </summary>
-        internal static void NoteWindowUnshaped(GameTextSide? side)
+        internal static void NoteWindowUnshaped(GameTextSide? side, string text)
         {
+            // 🔴 The interface part speaks of the window's OWN words — its labels, translated into
+            // the target language. A game text the window happens to show there (the corner's
+            // "Translating: …" names the game's lines, a game's own list of languages among them)
+            // is no label: counted as one, a French translation got "This window's labels draw
+            // French incorrectly" (2026-10-02). The source/target/object-name parts are game text
+            // by definition and keep reporting it.
+            if (side == null && !TranslatorCore.IsAlreadyTargetText(text, ownUi: true)) return;
             string font = TranslatorCore.WindowFontFor(side) ?? "";
             string key = WindowKey(side);
             if (_windowUnshapedWith.TryGetValue(key, out var was) && was == font) return;

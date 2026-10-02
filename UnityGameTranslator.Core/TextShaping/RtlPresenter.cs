@@ -612,7 +612,7 @@ namespace UnityGameTranslator.Core.TextShaping
                         // the interface's Arial has none of Hindi. Said as unshaped (the window
                         // notice); a game font lacking them is the coverage notice's.
                         if (ownUi && FontManager.Covers(TranslatorCore.WindowFontFor(ModWindowText.SideOf(instance)), logical) == false)
-                            FontManager.NoteWindowUnshaped(ModWindowText.SideOf(instance));
+                            FontManager.NoteWindowUnshaped(ModWindowText.SideOf(instance), logical);
                         break;
                     }
                     case ShapingRoute.Route.ReorderOnly:
@@ -620,7 +620,7 @@ namespace UnityGameTranslator.Core.TextShaping
                         // text of the translation (FontManager.Coverage).
                         // The mod's own window: said in the corner while it is open, for the part that
                         // shows it (FontManager.WindowCannotShape).
-                        if (ownUi) FontManager.NoteWindowUnshaped(ModWindowText.SideOf(instance));
+                        if (ownUi) FontManager.NoteWindowUnshaped(ModWindowText.SideOf(instance), logical);
                         else if (TranslatorCore.IsAlreadyTargetText(logical)) FontManager.NoteUnshaped(settingsFontName, logical);
                         break;
                 }

@@ -106,7 +106,7 @@ namespace UnityGameTranslator.Core.TextShaping
         private static void NoteIfUnshaped(bool canShape, string value, string settingsFontName, bool ownUi, GameTextSide? side)
         {
             if (canShape || string.IsNullOrEmpty(value) || !TextShaping.OpenTypeText.NeedsShaping(value)) return;
-            if (ownUi) FontManager.NoteWindowUnshaped(side);
+            if (ownUi) FontManager.NoteWindowUnshaped(side, value);
             else if (TranslatorCore.IsAlreadyTargetText(value)) FontManager.NoteUnshaped(settingsFontName, value);
         }
 

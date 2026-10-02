@@ -3828,9 +3828,23 @@ namespace UnityGameTranslator.Core
             //    replacement variant and the loss of per-component original tracking.
             if (_settingsFontNamePerComponent.TryGetValue(instanceId, out var stable) && !string.IsNullOrEmpty(stable))
                 return stable;
-            // 4. Unknown — fall back to the raw current name (may be a replacement variant).
+            // 4. The current font is one WE made to replace a game font: that game font. A component
+            //    first met already wearing it (a copy of a replaced label, a font handed on by the game)
+            //    was read as a game font of that name — with no settings, no derived copy, and the
+            //    notice "'UGT Pool 0003 #2' draws Hindi incorrectly" about our own copy (2026-10-02).
+            if (!string.IsNullOrEmpty(currentFontName) && _gameFontOfCreated.TryGetValue(currentFontName, out var replaced))
+            {
+                _settingsFontNamePerComponent[instanceId] = replaced;
+                return replaced;
+            }
+            // 5. Unknown — the raw current name.
             return currentFontName;
         }
+
+        // Every font WE created to replace a game font, by its name, with the game font it replaces.
+        // Names are unique per version (a derived copy's "#N"), so a component still wearing an older
+        // version resolves too; never one of the game's own fonts used as a replacement.
+        private static readonly Dictionary<string, string> _gameFontOfCreated = new Dictionary<string, string>(StringComparer.Ordinal);
 
         /// <summary>
         /// Check if a component's font matches a set of font names (for refresh/restore operations).
@@ -4279,7 +4293,10 @@ namespace UnityGameTranslator.Core
                     // ours hid it from the game fonts ever after — "(incompatible)" (2026-09-28).
                     if ((originalGameFont == null || replacementFont != originalGameFont)
                         && !IsLoadedGameUnityFont(replacementFont))
+                    {
                         _createdFallbackFontNames.Add(replacementFont.name);
+                        _gameFontOfCreated[replacementFont.name] = originalFontName;
+                    }
                 }
                 else
                 {

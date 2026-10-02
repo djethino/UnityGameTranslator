@@ -5069,17 +5069,25 @@ namespace UnityGameTranslator.Core
         {
             if (string.IsNullOrEmpty(path) || fontAssetType == null || !System.IO.File.Exists(path)) return null;
 
-            // ⚠ The public path overload, which makes a Dynamic asset. Read in Unity 6000.5's FontAsset
-            // (LoadFontFace, 2026-10-02): a Dynamic asset reloads its face from its source Font, else
-            // from the FILE it was made from; a DynamicOS one reloads it by family and style — and a
-            // derived copy's family is not unique (the copies of Tahoma and of Tahoma Bold are both
-            // "UGT Sys Tahoma"), so it can reopen the other file, whose private names are different.
+            // 🔴 DynamicOS, through the overload that takes the population mode — what TextCore's own
+            // CreateFontAssetFromFamilyName does with a file. Read in Unity 6000.5 (2026-10-02):
+            // - the public path overload makes a DYNAMIC asset with no source Font; the Advanced Text
+            //   Generator refuses it outright — Player.log: "FontAsset is invalid. Please assign a
+            //   Source Font File." — and every text drawn with it was empty, though it took its glyphs;
+            // - a DynamicOS asset reloads its face by family AND style (LoadFontFace), which the engine
+            //   finds among the fonts it lists — the derived copies included (FontFolderRedirect).
+            //   Tried before the unload shield existed: the text showed, then vanished with the asset.
+            // Private on that engine, hence NonPublic.
             MethodInfo chosen = null;
-            foreach (var method in fontAssetType.GetMethods(BindingFlags.Public | BindingFlags.Static))
+            bool withMode = false;
+            foreach (var method in fontAssetType.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static))
             {
                 if (method.Name != "CreateFontAsset" || method.IsGenericMethod) continue;
                 var ps = method.GetParameters();
-                if (ps.Length >= 7 && ps[0].ParameterType == typeof(string) && ps[1].ParameterType == typeof(int)) { chosen = method; break; }
+                if (ps.Length < 7 || ps[0].ParameterType != typeof(string) || ps[1].ParameterType != typeof(int)) continue;
+                bool hasMode = Array.Exists(ps, p => p.ParameterType.Name.Contains("AtlasPopulationMode"));
+                if (chosen == null || hasMode) { chosen = method; withMode = hasMode; }
+                if (hasMode) break;
             }
             if (chosen == null) return null;
 
@@ -5088,12 +5096,19 @@ namespace UnityGameTranslator.Core
             args[0] = path;
             args[1] = 0;   // face: a derived copy is a single face
             int ints = 0;
+            bool dynamicOs = false;
             int atlasSide = AtlasFloor(ExpectedGlyphCount(), SdfSampling, SdfPadding, false);
             for (int i = 2; i < parameters.Length; i++)
             {
                 var pType = parameters[i].ParameterType;
                 if (pType.Name.Contains("GlyphRenderMode")) args[i] = pType.IsEnum ? Enum.ToObject(pType, 4166) : (object)4166;   // SDFAA_HINTED
+                else if (pType.Name.Contains("AtlasPopulationMode") && pType.IsEnum && Enum.IsDefined(pType, "DynamicOS"))
+                {
+                    args[i] = Enum.Parse(pType, "DynamicOS");
+                    dynamicOs = true;
+                }
                 else if (pType == typeof(int)) { args[i] = ints == 0 ? SdfSampling : ints == 1 ? SdfPadding : atlasSide; ints++; }
+                else if (pType == typeof(bool)) args[i] = true;   // multi-atlas
                 else args[i] = parameters[i].HasDefaultValue ? parameters[i].DefaultValue : null;
             }
 
@@ -5103,7 +5118,18 @@ namespace UnityGameTranslator.Core
                 if (result is UnityEngine.Object made && made != null)
                 {
                     made.name = name;
-                    TranslatorCore.LogInfo($"[FontManager] SDF asset made from the file of '{name}' ({System.IO.Path.GetFileName(path)})");
+                    // As CreateFontAssetFromFamilyName marks its own (a FIELD on that engine).
+                    if (dynamicOs)
+                    {
+                        try
+                        {
+                            var internalOs = fontAssetType.GetField("InternalDynamicOS", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                            if (internalOs != null) internalOs.SetValue(result, true);
+                            else fontAssetType.GetProperty("InternalDynamicOS", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?.SetValue(result, true, null);
+                        }
+                        catch (Exception ex) { Faults.Say("FontManager.CreateSdfFontAssetFromFile InternalDynamicOS", ex); }
+                    }
+                    TranslatorCore.LogInfo($"[FontManager] SDF asset made from the file of '{name}' ({System.IO.Path.GetFileName(path)}, {(dynamicOs ? "DynamicOS" : withMode ? "no DynamicOS on this engine" : "Dynamic, no source font")})");
                     SayWhatTheAssetDraws(result, name, probe);
                     return result;
                 }

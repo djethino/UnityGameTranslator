@@ -2232,19 +2232,29 @@ namespace UnityGameTranslator.Core
             if (_documentDefaultFont.TryGetValue(documentId, out var known)) return known;
             if (!_documents.TryGetValue(documentId, out var document)) return null;
 
+            // ⚠ A property OR a field: PanelSettings.textSettings is a public FIELD (Unity 6000.5),
+            // and a property lookup alone found nothing there.
+            object Member(object on, string name)
+            {
+                var type = on.GetType();
+                var p = type.GetProperty(name, BindingFlags.Public | BindingFlags.Instance);
+                if (p != null) return p.GetValue(on, null);
+                return type.GetField(name, BindingFlags.Public | BindingFlags.Instance)?.GetValue(on);
+            }
+
             UnityEngine.Object found = null;
             string step = "panelSettings";
             try
             {
-                object settings = document.GetType().GetProperty("panelSettings", BindingFlags.Public | BindingFlags.Instance)?.GetValue(document, null);
+                object settings = Member(document, "panelSettings");
                 if (settings != null)
                 {
                     step = "textSettings";
-                    object text = settings.GetType().GetProperty("textSettings", BindingFlags.Public | BindingFlags.Instance)?.GetValue(settings, null);
+                    object text = Member(settings, "textSettings");
                     if (text != null)
                     {
                         step = "defaultFontAsset";
-                        found = text.GetType().GetProperty("defaultFontAsset", BindingFlags.Public | BindingFlags.Instance)?.GetValue(text, null) as UnityEngine.Object;
+                        found = Member(text, "defaultFontAsset") as UnityEngine.Object;
                     }
                 }
             }

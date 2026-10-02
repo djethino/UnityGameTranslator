@@ -275,6 +275,15 @@ namespace UnityGameTranslator.Core.TextShaping
         /// <summary>Is this a script HarfBuzz sends to the universal engine? (its list, generated)</summary>
         internal static bool IsUseScript(int script) => Array.BinarySearch(ShapingTables.UseScripts, script) >= 0;
 
+        /// <summary>Is this a script HarfBuzz shapes with its Arabic shaper — cursive joining? (read from its source, generated)</summary>
+        internal static bool IsArabicShaperScript(int script) => Array.BinarySearch(ShapingTables.ArabicShaperScripts, script) >= 0;
+
+        /// <summary>Does CLDR say this script cannot be shown without shaping? (scriptMetadata shapingReq, generated)</summary>
+        internal static bool IsShapingRequired(int script) => Array.BinarySearch(ShapingTables.ShapingRequiredScripts, script) >= 0;
+
+        /// <summary>Is this a virama a conjunct joins across — Unicode's InCB=Linker? (generated)</summary>
+        internal static bool IsLinker(int cp) => Array.BinarySearch(ShapingTables.Linkers, cp) >= 0;
+
         /// <summary>The OpenType script tag of a script (the generated table); "DFLT" for one that has none.</summary>
         internal static string ScriptTag(int script)
         {

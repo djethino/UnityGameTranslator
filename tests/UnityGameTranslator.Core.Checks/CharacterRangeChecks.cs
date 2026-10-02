@@ -75,16 +75,12 @@ namespace UnityGameTranslator.Core.Checks
         /// </summary>
         private static readonly Dictionary<string, (string[] found, string entry)> KnownFaults = new Dictionary<string, (string[], string)>
         {
-            ["TextShaping/RtlText.cs"] = (new[] { "U+FB1D", "U+FB4F", "U+FB50", "U+FDFF", "U+FE70", "U+0590", "U+05FF", "U+0600", "U+06FF", "U+0750", "U+077F", "U+0870", "U+08FF", "U+06CC" },
-                "A1 (strong RTL by Hebrew and Arabic blocks), A9 (Persian guessed from a letter); presentation-form blocks: B"),
-            ["TextShaping/OpenTypeText.cs"] = (new[] { "U+094D", "U+09CD", "U+0ACD", "U+0B4D", "U+0C4D", "U+0D4D", "U+0300", "U+036F", "Script.Latin", "Script.Arabic", "Script.Han", "Script.Hiragana", "Script.Katakana", "Script.Hangul", "Script.Cyrillic", "Script.Greek" },
-                "A5 (viramas copied from InCB=Linker), A4 (scripts excluded from a run by name)"),
+            ["TextShaping/RtlText.cs"] = (new[] { "U+06CC" },
+                "A9 (Persian guessed from a letter)"),
             ["Engine/TextRouter.Fit.cs"] = (new[] { "U+3040", "U+30FF", "U+3400", "U+9FFF", "U+F900", "U+FAFF", "U+3000", "U+303F", "U+FF00", "U+FFEF", "STRING" },
                 "A6 (line breaking by CJK ranges and a punctuation list, instead of UAX #14)"),
             ["TextShaping/RtlFieldLayout.cs"] = (new[] { "U+3000" },
                 "A7 (whitespace by a list of four characters)"),
-            ["TextShaping/OpenTypeShaping.cs"] = (new[] { "U+0590", "Script.Hebrew", "Script.Thai", "Script.Lao" },
-                "A8 (no shaped script below U+0590, assumed), A3 (default engine shapes three named scripts)"),
             ["TextShaping/RtlComposer.cs"] = (new[] { "U+00AB", "U+00BB", "U+2039", "U+203A" },
                 "A10 (four mirrored characters by hand, beside Unicode's BidiMirroring.txt)"),
             ["TextShaping/WordBreaker.cs"] = (new[] { "U+0E01", "U+0E5B", "U+0E81", "U+0EDF", "U+1000", "U+109F", "U+1780", "U+17F9", "U+A9E0", "U+A9FE", "U+AA60", "U+AA7F" },
@@ -100,6 +96,12 @@ namespace UnityGameTranslator.Core.Checks
         {
             ["TextShaping/RtlComposer.cs"] = new Dictionary<int, string> { [0x0300] = "stands in for a lifted tag in the bidi run: any character of class NSM would" },
             ["TextShaping/ShapingCommon.cs"] = new Dictionary<int, string> { [0x25CC] = "the dotted circle every shaper puts under a lone mark" },
+            ["TextShaping/RtlText.cs"] = new Dictionary<int, string>
+            {
+                // Presentation-form blocks: Unicode gives them to Hebrew and Arabic only, by design.
+                [0xFB1D] = "presentation forms", [0xFB4F] = "presentation forms", [0xFB50] = "presentation forms",
+                [0xFDFF] = "presentation forms", [0xFE70] = "presentation forms",
+            },
         };
 
         private static bool PrivateUse(int cp) => (cp >= 0xE000 && cp <= 0xF8FF) || cp >= 0xF0000;
@@ -139,7 +141,8 @@ namespace UnityGameTranslator.Core.Checks
                 {
                     string body = m.Groups[1].Value;
                     int cp = body.StartsWith("\\u") ? int.Parse(body.Substring(2), NumberStyles.HexNumber, CultureInfo.InvariantCulture) : body[0];
-                    if (cp < 0x80 || UnicodeStructure.Contains(cp)) continue;
+                    if (cp < 0x80 || UnicodeStructure.Contains(cp) || PrivateUse(cp)) continue;
+                    if (AllowedIn.TryGetValue(rel, out var allowedHere) && allowedHere.ContainsKey(cp)) continue;
                     here.Add("U+" + cp.ToString("X4"));
                 }
                 if (SearchedString.IsMatch(source)) here.Add("STRING");

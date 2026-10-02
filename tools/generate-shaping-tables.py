@@ -42,7 +42,10 @@ import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(HERE, "..", "UnityGameTranslator.Core", "TextShaping", "ShapingTables.g.cs")
-UCD = "https://www.unicode.org/Public/UCD/latest/ucd/"
+# ⚠ PINNED, not "latest": "latest" moved to 18.0.0 under a regeneration meant to change one table
+# (2026-10-02), which would have renumbered every script and mixed two versions with IndicTables.g.cs
+# (17.0.0). Moving to a new Unicode is its own change: this line and generate-indic-tables.py together.
+UCD = "https://www.unicode.org/Public/17.0.0/ucd/"
 HB = "https://raw.githubusercontent.com/harfbuzz/harfbuzz/main/src/ms-use/"
 FILES = ["IndicSyllabicCategory.txt", "IndicPositionalCategory.txt", "ArabicShaping.txt",
          "DerivedCoreProperties.txt", "UnicodeData.txt", "Blocks.txt", "Scripts.txt", "PropertyValueAliases.txt"]
@@ -247,23 +250,62 @@ SYLLABIC_NAMES = ["X", "C", "V", "N", "H", "ZWNJ", "ZWJ", "M", "SM", "A", "VD", 
                   "As", "MH", "MR", "MW", "MY", "PT", "VS", "ML"]
 MYANMAR_KHMER_BLOCKS = {"Myanmar", "Myanmar Extended-A", "Myanmar Extended-B", "Myanmar Extended-C", "Khmer"}
 
-# The scripts HarfBuzz routes to the universal engine (hb-ot-shaper.hh, hb_ot_shaper_categorize),
-# in its order, all planes. Sinhala is on its list and not on this one: the classic Indic shaper
-# keeps it here (its own configuration line, HarfBuzz's). A name absent from Scripts.txt is a
-# script newer than the UCD in hand — reported, not fatal.
-USE_SCRIPTS = [
-    "Tibetan", "Mongolian", "Buhid", "Hanunoo", "Tagalog", "Tagbanwa", "Limbu", "Tai_Le", "Buginese",
-    "Kharoshthi", "Syloti_Nagri", "Tifinagh", "Balinese", "Nko", "Phags_Pa", "Cham", "Kayah_Li", "Lepcha",
-    "Rejang", "Saurashtra", "Sundanese", "Egyptian_Hieroglyphs", "Javanese", "Kaithi", "Meetei_Mayek",
-    "Tai_Tham", "Tai_Viet", "Batak", "Brahmi", "Mandaic", "Chakma", "Miao", "Sharada", "Takri", "Duployan",
-    "Grantha", "Khojki", "Khudawadi", "Mahajani", "Manichaean", "Modi", "Pahawh_Hmong", "Psalter_Pahlavi",
-    "Siddham", "Tirhuta", "Ahom", "Multani", "Adlam", "Bhaiksuki", "Marchen", "Newa", "Masaram_Gondi",
-    "Soyombo", "Zanabazar_Square", "Dogra", "Gunjala_Gondi", "Hanifi_Rohingya", "Makasar", "Medefaidrin",
-    "Old_Sogdian", "Sogdian", "Elymaic", "Nandinagari", "Nyiakeng_Puachue_Hmong", "Wancho", "Chorasmian",
-    "Dives_Akuru", "Khitan_Small_Script", "Yezidi", "Cypro_Minoan", "Old_Uyghur", "Tangsa", "Toto",
-    "Vithkuqi", "Kawi", "Nag_Mundari", "Garay", "Gurung_Khema", "Kirat_Rai", "Ol_Onal", "Sunuwar", "Todhri",
-    "Tulu_Tigalari", "Beria_Erfe", "Sidetic", "Tai_Yo", "Tolong_Siki",
-]
+# Which shaper HarfBuzz gives each script is READ from its source (hb-ot-shaper.hh,
+# hb_ot_shaper_categorize), not copied here: a list typed from it once left a script without a
+# shaper — Syriac, which HarfBuzz shapes with Arabic, went nowhere (2026-10-02). Sinhala is on
+# HarfBuzz's universal list and kept by the classic Indic shaper here (its own configuration line,
+# HarfBuzz's): the one decision of ours.
+HB_SRC = "https://raw.githubusercontent.com/harfbuzz/harfbuzz/main/src/"
+KEPT_BY_INDIC = {"Sinhala"}
+
+# Whether a script cannot be shown without shaping: CLDR's script metadata (shapingReq). Read, never
+# typed — the answer to "must a run of this script go through the font's tables at all".
+CLDR = "https://raw.githubusercontent.com/unicode-org/cldr-json/main/cldr-json/cldr-core/"
+
+
+def parse_hb_categorize(text, script_names):
+    """hb_ot_shaper_categorize's switch -> {shaper: [Scripts.txt names]}.
+
+    Cases fall through to the code that follows them; a group's shaper is the specific one its code
+    returns (default is only the fallback every group has). HB_SCRIPT_NKO is Scripts.txt's Nko: names
+    compare without case or underscores."""
+    body = text[text.index("hb_ot_shaper_categorize"):]
+    body = body[body.index("switch"):]
+    by_key = {n.replace("_", "").lower(): n for n in script_names}
+    groups, cases, code = {}, [], []
+    import re
+    for line in body.splitlines():
+        m = re.match(r"\s*case HB_SCRIPT_(\w+)\s*:", line)
+        if m:
+            if code:
+                flush_group(groups, cases, code, by_key)
+                cases, code = [], []
+            cases.append(m.group(1))
+            continue
+        # Blank lines and comments between cases ("/* Unicode-2.0 additions */") are not code: the
+        # cases around them still fall through to the same group.
+        if not line.strip() or line.strip().startswith(("/*", "*", "//")):
+            continue
+        code.append(line)
+        if re.match(r"^  \}", line):
+            break
+    if cases:
+        flush_group(groups, cases, code, by_key)
+    return groups
+
+
+def flush_group(groups, cases, code, by_key):
+    import re
+    shapers = set(re.findall(r"_hb_ot_shaper_(\w+)", "\n".join(code))) - {"default"}
+    if not shapers:
+        return
+    # A group may name several (the Indic scripts fall back to the universal engine for a font with
+    # USE-style tags): the specific one is the first that is not "use", else "use".
+    named = sorted(shapers - {"use"}) or ["use"]
+    for hb in cases:
+        name = by_key.get(hb.replace("_", "").lower())
+        if name:
+            groups.setdefault(named[0], []).append(name)
 
 # hb-ot-tag.cc hb_ot_old_tag_from_script: the ISO 15924 code in lower case, except these.
 SCRIPT_TAG_EXCEPTIONS = {"Hiragana": "kana", "Lao": "lao ", "Yi": "yi  ", "Nko": "nko ", "Vai": "vai "}
@@ -392,9 +434,28 @@ def main():
 
     script_names = sorted(set(scripts.values()) | {"Unknown"})
     script_index = {name: i for i, name in enumerate(script_names)}
-    use_names = [s for s in USE_SCRIPTS if s in script_index]
-    missing_use = [s for s in USE_SCRIPTS if s not in script_index]
+    categorized = parse_hb_categorize(load("hb-ot-shaper.hh", src_dir, HB_SRC), script_names)
+    use_names = [s for s in categorized.get("use", []) if s not in KEPT_BY_INDIC]
+    arabic_names = categorized.get("arabic", [])
+    if not use_names or not arabic_names or "Syriac" not in arabic_names:
+        sys.exit(f"hb-ot-shaper.hh no longer reads as expected: {sorted(categorized)}")
     use_set = set(use_names)
+    joining_set = use_set | set(arabic_names)
+
+    # CLDR's shapingReq, by ISO 15924 code -> script name.
+    import json
+    metadata = json.loads(load("scriptMetadata.json", src_dir, CLDR))["scriptMetadata"]
+    name_of_iso = {code: name for name, code in iso_codes.items()}
+    shaping_required = sorted(name_of_iso[c] for c, m in metadata.items()
+                              if m.get("shapingReq") == "YES" and c in name_of_iso and name_of_iso[c] in script_index)
+
+    # InCB=Linker (DerivedCoreProperties): the viramas a conjunct joins across (UAX #29 GB9c).
+    linkers = []
+    for line in load(FILES[3], src_dir, UCD).splitlines():
+        fields = [x.strip() for x in line.split("#")[0].split(";")]
+        if len(fields) == 3 and fields[1] == "InCB" and fields[2] == "Linker":
+            parts = fields[0].split("..")
+            linkers.extend(range(int(parts[0], 16), int(parts[-1], 16) + 1))
 
     # 1. Combining classes, HarfBuzz-modified, every plane.
     ccc = {}
@@ -457,15 +518,16 @@ def main():
     for vs in range(0xFE00, 0xFE10):
         use[vs] = USE_VALUES["CGJ"]
 
-    # 6. Joining types of the USE scripts that join (Arabic-style forms), every plane.
+    # 6. Joining types of the scripts that join (Arabic-style forms) — the universal engine's, and
+    #    those HarfBuzz shapes with Arabic (Syriac) — every plane.
     JT_VALUES = {"U": 0, "C": 1, "D": 2, "L": 3, "R": 4, "T": 5}
     jt = {}
     for cp, t in ajt.items():
-        if scripts.get(cp) not in use_set or t == "U":
+        if scripts.get(cp) not in joining_set or t == "U":
             continue
         jt[cp] = JT_VALUES.get(t, 0)
     for cp in code_points():
-        if scripts.get(cp) in use_set and gc.get(cp) in ("Mn", "Me", "Cf") and cp not in jt:
+        if scripts.get(cp) in joining_set and gc.get(cp) in ("Mn", "Me", "Cf") and cp not in jt:
             jt[cp] = JT_VALUES["T"]
 
     # 7. Scripts of every code point, as runs; names as constants; their OpenType tags.
@@ -503,7 +565,8 @@ def main():
     w("// <auto-generated>")
     w(f"//   By tools/generate-shaping-tables.py from Unicode {version} (IndicSyllabicCategory,")
     w("//   IndicPositionalCategory, ArabicShaping, DerivedCoreProperties, UnicodeData, Blocks, Scripts,")
-    w("//   PropertyValueAliases), HarfBuzz's ms-use files, and Python's unicodedata. Do not edit: rerun the generator.")
+    w("//   PropertyValueAliases), HarfBuzz's ms-use files and hb-ot-shaper.hh, CLDR's scriptMetadata, and Python's")
+    w("//   unicodedata. Do not edit: rerun the generator.")
     w("// </auto-generated>")
     w("namespace UnityGameTranslator.Core.TextShaping")
     w("{")
@@ -561,7 +624,7 @@ def main():
         w("            " + ", ".join(f"0x{a:04X}, 0x{b:04X}, {v}" for a, b, v in use_runs[i:i + 6]) + ",")
     w("        };")
     w("")
-    w("        /// <summary>Joining types of the USE scripts that join — runs (first, last, type): U=0 C=1 D=2 L=3 R=4 T=5.</summary>")
+    w("        /// <summary>Joining types of the scripts that join (the universal engine's, and those HarfBuzz shapes with Arabic) — runs (first, last, type): U=0 C=1 D=2 L=3 R=4 T=5.</summary>")
     w("        internal static readonly int[] JoiningTypes =")
     w("        {")
     for i in range(0, len(jt_runs), 6):
@@ -596,6 +659,23 @@ def main():
         w("            " + ", ".join(str(v) for v in use_indices[i:i + 16]) + ",")
     w("        };")
     w("")
+    for title, names in (("The scripts HarfBuzz shapes with its Arabic shaper (hb-ot-shaper.hh): cursive joining through the font's tables", arabic_names),
+                         ("The scripts CLDR says cannot be shown without shaping (scriptMetadata shapingReq = YES)", shaping_required)):
+        w(f"        /// <summary>{title} (script indices, sorted).</summary>")
+        w("        internal static readonly int[] " + ("ArabicShaperScripts" if names is arabic_names else "ShapingRequiredScripts") + " =")
+        w("        {")
+        indices = sorted(script_index[s] for s in names)
+        for i in range(0, len(indices), 16):
+            w("            " + ", ".join(str(v) for v in indices[i:i + 16]) + ",")
+        w("        };")
+        w("")
+    w("        /// <summary>InCB=Linker (DerivedCoreProperties): the viramas a conjunct joins across — UAX #29 GB9c (code points, sorted).</summary>")
+    w("        internal static readonly int[] Linkers =")
+    w("        {")
+    for i in range(0, len(linkers), 8):
+        w("            " + ", ".join(f"0x{cp:04X}" for cp in sorted(linkers)[i:i + 8]) + ",")
+    w("        };")
+    w("")
     w("        /// <summary>The scripts whose letters carry a right-to-left bidi class (script indices, sorted).</summary>")
     w("        internal static readonly int[] RightToLeftScripts =")
     w("        {")
@@ -619,8 +699,8 @@ def main():
           f"{': ' + ', '.join('%04X' % u for u in unresolved[:8]) if unresolved else ''}), "
           f"{len(jt_runs)} joining runs, {len(script_runs)} script runs, {len(script_names)} scripts, "
           f"{len(rtl_indices)} right-to-left, {len(kept)} vowel constraints, Unicode {version}")
-    if missing_use:
-        print(f"USE scripts not in this UCD (newer than {version}): {', '.join(missing_use)}")
+    print(f"HarfBuzz: arabic shaper {', '.join(arabic_names)}; CLDR shaping required: {', '.join(shaping_required)}; "
+          f"{len(linkers)} linkers")
 
 
 if __name__ == "__main__":

@@ -11,8 +11,10 @@ namespace UnityGameTranslator.Core.TextShaping
     ///   • the ten classic Indic scripts → <see cref="IndicShaper"/>;
     ///   • Myanmar → <see cref="MyanmarShaper"/>; Khmer → <see cref="KhmerShaper"/>;
     ///   • the universal-engine scripts (Tibetan, Javanese, Balinese, Mongolian, Adlam, Chakma…
-    ///     — HarfBuzz's list, generated, every plane) → <see cref="UseShaper"/>;
-    ///   • Thai, Lao, Hebrew, and any other script → <see cref="DefaultShaper"/>.
+    ///     — HarfBuzz's list, read from its source, every plane), and the joining scripts its
+    ///     Arabic shaper takes besides Arabic (Syriac) → <see cref="UseShaper"/>;
+    ///   • any other script → <see cref="DefaultShaper"/>, when CLDR says it needs shaping or
+    ///     where a letter carries combining marks.
     /// Arabic is not routed here: it goes through the presentation-form path, the only one
     /// that reaches engines whose font we do not control.
     ///
@@ -29,8 +31,14 @@ namespace UnityGameTranslator.Core.TextShaping
                 return Engine.Indic;
             if (script == S.Myanmar) return Engine.Myanmar;
             if (script == S.Khmer) return Engine.Khmer;
-            if (script == S.Arabic || script == S.Syriac) return Engine.None;
-            if (ShapingCommon.IsUseScript(script)) return Engine.Use;
+            // Arabic goes through Unicode's presentation forms — the one path that reaches engines
+            // whose font we do not control.
+            if (script == S.Arabic) return Engine.None;
+            // The other scripts HarfBuzz joins with its Arabic shaper (Syriac) have no presentation
+            // forms: their joined letters come from the font's tables, through the universal
+            // engine's joining step (their joining types are generated with its own). Sent nowhere
+            // until 2026-10-02 — "Arabic and Syriac have their own path", and Syriac had none.
+            if (ShapingCommon.IsArabicShaperScript(script) || ShapingCommon.IsUseScript(script)) return Engine.Use;
             return Engine.Default;
         }
 
@@ -41,31 +49,57 @@ namespace UnityGameTranslator.Core.TextShaping
         internal static bool NeedsShaping(string text)
         {
             if (string.IsNullOrEmpty(text)) return false;
+            int baseCp = -1;
             for (int i = 0; i < text.Length; i++)
             {
                 char c = text[i];
-                if (c < 0x0590) continue;
+                // ASCII holds no combining mark and no letter of a script that needs shaping
+                // (Unicode's own layout of its first block): the common case costs one compare.
+                if (c < 0x80) { baseCp = c; continue; }
                 int cp = c;
                 if (char.IsHighSurrogate(c) && i + 1 < text.Length && char.IsLowSurrogate(text[i + 1])) { cp = char.ConvertToUtf32(c, text[i + 1]); i++; }
                 if (IsShapedScript(ShapingCommon.ScriptOf(cp))) return true;
+                if (ShapingCommon.IsUnicodeMark(cp))
+                {
+                    if (MarksPlacedByFont(baseCp)) return true;
+                    continue;
+                }
+                baseCp = cp;
             }
             return false;
         }
 
         /// <summary>
-        /// The scripts a run is shaped for: the ones with a syllabic engine, the universal
-        /// engine's, and the three the default engine is asked for — Hebrew, Thai and Lao,
-        /// whose marks a font positions and whose vowels it substitutes. Every other script
-        /// is left as written: Latin, Cyrillic, Greek, CJK and Arabic have their own paths.
+        /// The scripts whose every run is shaped: the ones with a syllabic engine, the universal
+        /// engine's (joining scripts included), and — for the default engine — those CLDR says
+        /// cannot be shown without shaping (Thaana, Lao…) and those whose HarfBuzz shaper the
+        /// default one transcribes (<see cref="DefaultShaper.HasScriptRules"/>). Never a script
+        /// named here: the rest is shaped only where it carries a combining mark
+        /// (<see cref="MarksPlacedByFont"/>).
         /// </summary>
-        private static bool IsShapedScript(int script)
+        internal static bool IsShapedScript(int script)
         {
             switch (EngineOf(script))
             {
                 case Engine.Indic: case Engine.Myanmar: case Engine.Khmer: case Engine.Use: return true;
-                case Engine.Default: return script == S.Hebrew || script == S.Thai || script == S.Lao;
+                case Engine.Default: return ShapingCommon.IsShapingRequired(script) || DefaultShaper.HasScriptRules(script);
                 default: return false;
             }
+        }
+
+        /// <summary>
+        /// A combining mark after this base is placed by the font's tables. 🔴 Measured, not
+        /// assumed (bench, 2026-10-02): a game's engine draws a combining mark as a character of
+        /// its own, BESIDE the letter — Vietnamese "Nhấn" written decomposed showed "Nhâ˜n",
+        /// Russian stress "Нажми́те" showed "Нажми´те", in UI.Text and TextMesh Pro alike. So any
+        /// script's letter carrying one is shaped, except Arabic's, whose marks the
+        /// presentation-form path handles (<see cref="EngineOf"/>).
+        /// </summary>
+        internal static bool MarksPlacedByFont(int baseCp)
+        {
+            if (baseCp < 0) return false;
+            int script = ShapingCommon.ScriptOf(baseCp);
+            return EngineOf(script) != Engine.None;
         }
 
         /// <summary>

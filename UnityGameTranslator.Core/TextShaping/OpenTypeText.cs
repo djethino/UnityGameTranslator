@@ -44,10 +44,11 @@ namespace UnityGameTranslator.Core.TextShaping
             while (i < text.Length)
             {
                 int cp = CodePointAt(text, i, out int width);
-                if (!InRun(cp)) { i += width; continue; }
+                if (!StartsRun(cp)) { i += width; continue; }
                 int start = i;
-                while (i < text.Length && InRun(CodePointAt(text, i, out width))) i += width;
-                // A run made only of joiners, spaces or marks has nothing to shape.
+                i = RunEnd(text, i);
+                // A run whose script needs nothing and that carries no combining mark is left as
+                // written — the engine draws it, in the game's own font and fallbacks.
                 if (!OpenTypeShaping.NeedsShaping(text.Substring(start, i - start))) continue;
 
                 string run = text.Substring(start, i - start);
@@ -97,9 +98,9 @@ namespace UnityGameTranslator.Core.TextShaping
             while (i < text.Length)
             {
                 int cp = CodePointAt(text, i, out int width);
-                if (!InRun(cp)) { i += width; continue; }
+                if (!StartsRun(cp)) { i += width; continue; }
                 int start = i;
-                while (i < text.Length && InRun(CodePointAt(text, i, out width))) i += width;
+                i = RunEnd(text, i);
                 string run = text.Substring(start, i - start);
                 if (!OpenTypeShaping.NeedsShaping(run)) continue;
 
@@ -158,9 +159,10 @@ namespace UnityGameTranslator.Core.TextShaping
             var category = System.Globalization.CharUnicodeInfo.GetUnicodeCategory(char.ConvertFromUtf32(cp), 0);
             if (category == System.Globalization.UnicodeCategory.NonSpacingMark || category == System.Globalization.UnicodeCategory.SpacingCombiningMark
                 || category == System.Globalization.UnicodeCategory.EnclosingMark) return false;
-            // GB9c: Linker (the viramas of InCB=Linker), then a consonant.
-            int prev = text[i - 1];
-            bool linker = prev == 0x094D || prev == 0x09CD || prev == 0x0ACD || prev == 0x0B4D || prev == 0x0C4D || prev == 0x0D4D;
+            // GB9c: Linker (InCB=Linker, generated — six viramas were copied here by hand, and
+            // Unicode 17 lists twenty), then a consonant.
+            int before = char.IsLowSurrogate(text[i - 1]) && i > 1 && char.IsHighSurrogate(text[i - 2]) ? i - 2 : i - 1;
+            bool linker = ShapingCommon.IsLinker(CodePointAt(text, before, out _));
             return !(linker && category == System.Globalization.UnicodeCategory.OtherLetter);
         }
 
@@ -184,19 +186,49 @@ namespace UnityGameTranslator.Core.TextShaping
             return false;
         }
 
-        private static bool InRun(int cp)
+        /// <summary>
+        /// A run opens on a letter of any script, a combining mark, a joiner or the dotted circle —
+        /// never on a space, a digit, punctuation or a tag (Unicode's Common script), which a font's
+        /// rules never cross.
+        /// </summary>
+        private static bool StartsRun(int cp)
         {
             if (cp == 0x200C || cp == 0x200D || cp == 0x25CC) return true;
-            if (cp < 0x0300) return false;
-            if (cp >= 0x0300 && cp <= 0x036F) return true;
             int script = ShapingCommon.ScriptOf(cp);
-            if (script == ShapingTables.Script.Inherited) return true;
-            if (script == ShapingTables.Script.Common || script == ShapingTables.Script.Unknown || script == ShapingTables.Script.Latin
-                || script == ShapingTables.Script.Arabic || script == ShapingTables.Script.Han || script == ShapingTables.Script.Hiragana
-                || script == ShapingTables.Script.Katakana || script == ShapingTables.Script.Hangul || script == ShapingTables.Script.Cyrillic
-                || script == ShapingTables.Script.Greek)
-                return false;
-            return true;
+            return script != ShapingTables.Script.Common && script != ShapingTables.Script.Unknown;
+        }
+
+        /// <summary>
+        /// Where the run opened at <paramref name="i"/> ends: at a Common character or at a letter
+        /// of another script. A word of ONE script, its marks and joiners with it — the unit the
+        /// font's rules work on. Whether it is shaped is the shaper's own question, asked of the
+        /// whole run (<see cref="OpenTypeShaping.NeedsShaping"/>): its script needs it, or one of
+        /// its letters carries a combining mark. 🔴 A whole word, not the marked letter alone: cut
+        /// at the marks, a Hebrew word lost the ligatures between its letters and a Thai one its
+        /// kerning (checks, 2026-10-02). And never a run of a script that needs nothing and carries
+        /// no mark: its letters would be renamed to a font of ours that may not hold them (a
+        /// Chinese word next to a Hindi one). One decision, the shaper's — a second list here
+        /// named the scripts left out, and could contradict it.
+        /// </summary>
+        private static int RunEnd(string text, int i)
+        {
+            int runScript = -1;
+            while (i < text.Length)
+            {
+                int cp = CodePointAt(text, i, out int width);
+                if (cp != 0x200C && cp != 0x200D && cp != 0x25CC)
+                {
+                    int script = ShapingCommon.ScriptOf(cp);
+                    if (script == ShapingTables.Script.Common || script == ShapingTables.Script.Unknown) break;
+                    if (script != ShapingTables.Script.Inherited && !ShapingCommon.IsUnicodeMark(cp))
+                    {
+                        if (runScript == -1) runScript = script;
+                        else if (script != runScript) break;
+                    }
+                }
+                i += width;
+            }
+            return i;
         }
 
         /// <summary>The code point at <paramref name="i"/> and how many chars it takes (a surrogate pair is one).</summary>

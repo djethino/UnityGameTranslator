@@ -47,6 +47,14 @@ namespace UnityGameTranslator.Core.TextShaping
             return plan;
         }
 
+        /// <summary>
+        /// The scripts whose HarfBuzz shaper this one carries the particulars of (above): every
+        /// run of theirs is shaped, marks or not — a SARA AM with no mark around it is still cut
+        /// (checks, 2026-10-02: Thai words drawn whole by the engine differed from HarfBuzz).
+        /// </summary>
+        internal static bool HasScriptRules(int script)
+            => script == ShapingTables.Script.Thai || script == ShapingTables.Script.Lao || script == ShapingTables.Script.Hebrew;
+
         /// <summary>Shape one run of a script this shaper covers; the result is appended.</summary>
         internal static void Shape(List<int> cps, List<int> clusters, int script, IShapingFont font, List<ShapedGlyph> result)
         {

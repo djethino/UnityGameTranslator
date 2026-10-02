@@ -81,6 +81,27 @@ namespace UnityGameTranslator.Core.Checks
                 "the fast path must reject everything below U+0590");
             check(!RtlText.IsStrongRtl('ﻣ'), "a presentation form is NOT a strong trigger",
                 "U+FEE3 means 'already shaped' — that question has its own answer");
+            // Every script written right to left, from Unicode's bidi class — not two of them.
+            check(RtlText.IsStrongRtl(0x0710) && RtlText.IsStrongRtl(0x0780) && RtlText.IsStrongRtl(0x07CA)
+                  && RtlText.IsStrongRtl(0x1E900) && RtlText.IsStrongRtl(0x0800),
+                "Syriac, Thaana, N'Ko, Adlam and Samaritan are strong RTL",
+                "the list that said Hebrew and Arabic showed every other right-to-left script left to right");
+            check(RtlText.ContainsStrongRtl("x\U0001E900"), "a right-to-left letter beyond U+FFFF is found",
+                "Adlam is in a supplementary plane: read as one code point, not two halves");
+            check(!RtlText.IsStrongRtl(0x0915) && !RtlText.IsStrongRtl(0x4E2D) && !RtlText.IsStrongRtl(0x0416),
+                "Devanagari, Han and Cyrillic are not", "");
+
+            // What goes through the font's own tables: a script that needs it (CLDR), or a letter
+            // carrying combining marks — never a script named in the code.
+            check(OpenTypeText.NeedsShaping("ހެލޯ") && OpenTypeText.NeedsShaping("ܫܠܡܐ"),
+                "Thaana and Syriac are shaped", "both were left as written: Syriac had no engine, Thaana no place on a list of three");
+            check(OpenTypeText.NeedsShaping("Nhấn") && OpenTypeText.NeedsShaping("ми́р"),
+                "a Latin or Cyrillic letter carrying combining marks is shaped",
+                "measured: the game's engine draws such a mark beside its letter");
+            check(!OpenTypeText.NeedsShaping("Nhấn Start") && !OpenTypeText.NeedsShaping("中文 テスト") && !OpenTypeText.NeedsShaping("Привет"),
+                "precomposed Latin, CJK and plain Cyrillic are left alone", "nothing in them needs the font's tables");
+            check(!OpenTypeText.NeedsShaping("مَرْحَبًا"),
+                "vowelled Arabic stays on the presentation-form path", "its marks are that path's, not the font's tables'");
 
             check(RtlText.NeedsPresentation(ShortLogical), "logical Arabic needs the pass",
                 "this is the string the pipeline must transform");

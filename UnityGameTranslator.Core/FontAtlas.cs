@@ -1,6 +1,5 @@
 using System;
 using System.Reflection;
-using System.Runtime.InteropServices;
 using UnityEngine;
 
 namespace UnityGameTranslator.Core
@@ -25,8 +24,7 @@ namespace UnityGameTranslator.Core
     {
         private static bool _resolved;
         private static MethodInfo _injected, _marshalFont;
-        private static Type _wrapperType;
-        private static FieldInfo _wrapperBegin, _wrapperLength;
+        private static SpanWrappers.Shape _wrapper;
 
         /// <summary>Puts these characters, at the font's own size and normal style, into the font's atlas.</summary>
         // ⚠ An overload, not optional parameters: a default value of an engine enum (FontStyle) is a
@@ -44,28 +42,16 @@ namespace UnityGameTranslator.Core
                 return;
             }
 
-            var pinned = GCHandle.Alloc(characters, GCHandleType.Pinned);
-            try
-            {
-                var nativeFont = (IntPtr)_marshalFont.Invoke(null, new object[] { font });
-                if (nativeFont == IntPtr.Zero) return;   // a destroyed font: nothing to fill
-                object wrapper = Activator.CreateInstance(_wrapperType);
-                _wrapperBegin.SetValue(wrapper, pinned.AddrOfPinnedObject());
-                _wrapperLength.SetValue(wrapper, characters.Length);
-                _injected.Invoke(null, new object[] { nativeFont, wrapper, size, style });
-            }
-            finally
-            {
-                pinned.Free();
-            }
+            var nativeFont = (IntPtr)_marshalFont.Invoke(null, new object[] { font });
+            if (nativeFont == IntPtr.Zero) return;   // a destroyed font: nothing to fill
+            SpanWrappers.WithText(_wrapper, characters, wrapper => _injected.Invoke(null, new object[] { nativeFont, wrapper, size, style }));
         }
 
         /// <summary>
         /// The 2023.1+ IL2CPP shape, all or nothing: the injected entry made public by the interop,
-        /// the wrapper's two fields, and the font's native pointer
-        /// (<c>Object.MarshalledUnityObject.MarshalNotNull&lt;Font&gt;</c>, what the rebuilt body
-        /// starts with). On Mono the entry is private and never matches; below 2023.1 it does not
-        /// exist — the public method is then the right one.
+        /// the wrapper (SpanWrappers), and the font's native pointer (what the rebuilt body starts
+        /// with). On Mono the entry is private and never matches; below 2023.1 it does not exist —
+        /// the public method is then the right one.
         /// </summary>
         private static void Resolve()
         {
@@ -77,8 +63,7 @@ namespace UnityGameTranslator.Core
             {
                 if (method.Name != "RequestCharactersInTexture_Injected") continue;
                 var p = method.GetParameters();
-                if (p.Length == 4 && p[0].ParameterType == typeof(IntPtr) && p[1].ParameterType.IsByRef
-                    && p[1].ParameterType.GetElementType()?.Name == "ManagedSpanWrapper"
+                if (p.Length == 4 && p[0].ParameterType == typeof(IntPtr) && SpanWrappers.IsWrapperParameter(p[1])
                     && p[2].ParameterType == typeof(int) && p[3].ParameterType == typeof(FontStyle))
                 {
                     injected = method;
@@ -87,38 +72,19 @@ namespace UnityGameTranslator.Core
             }
             if (injected == null) return;
 
-            var wrapperType = injected.GetParameters()[1].ParameterType.GetElementType();
-            var begin = wrapperType.GetField("begin", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-            var length = wrapperType.GetField("length", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-
-            MethodInfo marshal = null;
-            var marshaller = typeof(UnityEngine.Object).GetNestedType("MarshalledUnityObject", BindingFlags.Public | BindingFlags.NonPublic);
-            if (marshaller != null)
-            {
-                foreach (var method in marshaller.GetMethods(BindingFlags.Public | BindingFlags.Static))
-                {
-                    if (method.Name == "MarshalNotNull" && method.IsGenericMethodDefinition
-                        && method.GetParameters().Length == 1 && method.ReturnType == typeof(IntPtr))
-                    {
-                        marshal = method.MakeGenericMethod(typeof(Font));
-                        break;
-                    }
-                }
-            }
-
-            if (begin == null || begin.FieldType != typeof(IntPtr) || length == null || length.FieldType != typeof(int) || marshal == null)
+            var wrapper = SpanWrappers.Of(injected, 1);
+            var marshal = SpanWrappers.NativePointerOf(typeof(Font));
+            if (wrapper == null || marshal == null)
             {
                 // The public method would throw at every call here: said once, and kept as the path
                 // so each caller's own handling says what it could not do.
-                TranslatorCore.LogWarning($"[FontAtlas] RequestCharactersInTexture_Injected found without its parts (begin={begin != null}, length={length != null}, marshal={marshal != null}) — dynamic font atlases are filled through the public method");
+                TranslatorCore.LogWarning($"[FontAtlas] RequestCharactersInTexture_Injected found without its parts (wrapper={wrapper != null}, marshal={marshal != null}) — dynamic font atlases are filled through the public method");
                 return;
             }
 
             _injected = injected;
             _marshalFont = marshal;
-            _wrapperType = wrapperType;
-            _wrapperBegin = begin;
-            _wrapperLength = length;
+            _wrapper = wrapper;
             TranslatorCore.LogInfo("[FontAtlas] Found Font.RequestCharactersInTexture_Injected (Unity 2023.1+ IL2CPP) — the public method is not used");
         }
     }

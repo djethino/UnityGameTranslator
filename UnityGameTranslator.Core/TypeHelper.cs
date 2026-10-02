@@ -643,8 +643,7 @@ namespace UnityGameTranslator.Core
                 var byPath = fontType.GetConstructor(new[] { typeof(string) });
                 if (byPath != null) return byPath.Invoke(new object[] { path }) as Font ?? Refused("Font(path) gave nothing");
 
-                var make = fontType.GetMethod("Internal_CreateFontFromPath", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static,
-                    null, new[] { fontType, typeof(string) }, null);
+                var make = FontFromPathCall(fontType);
                 var fromPointer = fontType.GetConstructor(new[] { typeof(IntPtr) });
                 if (make == null || fromPointer == null) return Refused($"no Font(path) and {(make == null ? "no Internal_CreateFontFromPath" : "no pointer constructor")} on this runtime");
 
@@ -667,7 +666,7 @@ namespace UnityGameTranslator.Core
                 // Internal_CreateFontFromPath makes it — every Font was refused here (2026-10-02).
                 var font = fromPointer.Invoke(new object[] { (IntPtr)objectNew.Invoke(null, new object[] { cls }) }) as Font;
                 if (ReferenceEquals(font, null)) return Refused("the bare Font could not be made");
-                make.Invoke(null, new object[] { font, path });
+                make(font, path);
                 return font != null ? font : Refused("Internal_CreateFontFromPath made no font of it");
             }
             catch (Exception ex)
@@ -725,6 +724,27 @@ namespace UnityGameTranslator.Core
                 Faults.Say("TypeHelper.NewDynamicFont", ex, key);
                 return null;
             }
+        }
+
+        /// <summary>
+        /// Font.Internal_CreateFontFromPath as this runtime can call it: on Unity 2023.1+ under IL2CPP
+        /// its native entry with the path in a wrapper (SpanWrappers — the interop's own body throws
+        /// MissingMethodException there, 2026-10-02), else the method itself. Null when neither exists.
+        /// </summary>
+        private static Action<Font, string> FontFromPathCall(Type fontType)
+        {
+            foreach (var method in fontType.GetMethods(BindingFlags.Public | BindingFlags.Static))
+            {
+                if (method.Name != "Internal_CreateFontFromPath_Injected") continue;
+                var p = method.GetParameters();
+                if (p.Length != 2 || p[0].ParameterType != fontType) continue;
+                var shape = SpanWrappers.Of(method, 1);
+                if (shape == null) continue;
+                return (font, path) => SpanWrappers.WithText(shape, path, wrapper => method.Invoke(null, new object[] { font, wrapper }));
+            }
+            var plain = fontType.GetMethod("Internal_CreateFontFromPath", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static,
+                null, new[] { fontType, typeof(string) }, null);
+            return plain == null ? null : (Action<Font, string>)((font, path) => plain.Invoke(null, new object[] { font, path }));
         }
 
         private static Type _classPointerStore;

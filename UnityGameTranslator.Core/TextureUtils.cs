@@ -20,9 +20,7 @@ namespace UnityGameTranslator.Core
         // Unity 2023.1+ on IL2CPP — see LoadImageThroughSpanWrapper
         private static MethodInfo _loadImageInjected;
         private static MethodInfo _marshalTexture;
-        private static Type _spanWrapperType;
-        private static FieldInfo _spanWrapperBegin;
-        private static FieldInfo _spanWrapperLength;
+        private static SpanWrappers.Shape _spanWrapper;
 
         // Cached for MakeReadableCopy
         private static MethodInfo _blitMethod;
@@ -333,9 +331,7 @@ namespace UnityGameTranslator.Core
                     return false;
                 }
 
-                object wrapper = Activator.CreateInstance(_spanWrapperType);
-                _spanWrapperBegin.SetValue(wrapper, pinned.AddrOfPinnedObject());
-                _spanWrapperLength.SetValue(wrapper, data.Length);
+                object wrapper = SpanWrappers.Wrap(_spanWrapper, pinned.AddrOfPinnedObject(), data.Length);
 
                 var result = _loadImageInjected.Invoke(null, new object[] { nativeTexture, wrapper, false });
                 return result is bool b && b;
@@ -367,8 +363,7 @@ namespace UnityGameTranslator.Core
             {
                 if (method.Name != "LoadImage_Injected") continue;
                 var p = method.GetParameters();
-                if (p.Length == 3 && p[0].ParameterType == typeof(IntPtr) && p[1].ParameterType.IsByRef
-                    && p[1].ParameterType.GetElementType()?.Name == "ManagedSpanWrapper"
+                if (p.Length == 3 && p[0].ParameterType == typeof(IntPtr) && SpanWrappers.IsWrapperParameter(p[1])
                     && p[2].ParameterType == typeof(bool) && method.ReturnType == typeof(bool))
                 {
                     injected = method;
@@ -377,36 +372,17 @@ namespace UnityGameTranslator.Core
             }
             if (injected == null) return false;
 
-            var wrapperType = injected.GetParameters()[1].ParameterType.GetElementType();
-            var begin = wrapperType.GetField("begin", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-            var length = wrapperType.GetField("length", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-
-            MethodInfo marshal = null;
-            var marshaller = typeof(UnityEngine.Object).GetNestedType("MarshalledUnityObject", BindingFlags.Public | BindingFlags.NonPublic);
-            if (marshaller != null)
+            var wrapper = SpanWrappers.Of(injected, 1);
+            var marshal = SpanWrappers.NativePointerOf(typeof(Texture2D));
+            if (wrapper == null || marshal == null)
             {
-                foreach (var method in marshaller.GetMethods(BindingFlags.Public | BindingFlags.Static))
-                {
-                    if (method.Name == "MarshalNotNull" && method.IsGenericMethodDefinition
-                        && method.GetParameters().Length == 1 && method.ReturnType == typeof(IntPtr))
-                    {
-                        marshal = method.MakeGenericMethod(typeof(Texture2D));
-                        break;
-                    }
-                }
-            }
-
-            if (begin == null || begin.FieldType != typeof(IntPtr) || length == null || length.FieldType != typeof(int) || marshal == null)
-            {
-                TranslatorCore.LogWarning($"[TextureUtils] LoadImage_Injected found without its parts (begin={begin != null}, length={length != null}, marshal={marshal != null}) — images will not load in this game");
+                TranslatorCore.LogWarning($"[TextureUtils] LoadImage_Injected found without its parts (wrapper={wrapper != null}, marshal={marshal != null}) — images will not load in this game");
                 return true;
             }
 
             _loadImageInjected = injected;
             _marshalTexture = marshal;
-            _spanWrapperType = wrapperType;
-            _spanWrapperBegin = begin;
-            _spanWrapperLength = length;
+            _spanWrapper = wrapper;
             TranslatorCore.LogInfo("[TextureUtils] Found ImageConversion.LoadImage_Injected (Unity 2023.1+ IL2CPP) — the public LoadImage is not used");
             return true;
         }

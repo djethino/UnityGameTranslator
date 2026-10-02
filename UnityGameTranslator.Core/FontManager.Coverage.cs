@@ -32,6 +32,7 @@ namespace UnityGameTranslator.Core
         internal static void NoteTextDrawn(long compId, string settingsFontName, string text)
         {
             if (string.IsNullOrEmpty(settingsFontName) || string.IsNullOrEmpty(text)) return;
+            if (IsOurFont(settingsFontName)) return;
             if (compId != -1) _fontOfComponent[compId] = settingsFontName;
             if (Coverage.Seen(settingsFontName, text)) return;
             if (!TranslatorCore.IsAlreadyTargetText(text))
@@ -42,6 +43,16 @@ namespace UnityGameTranslator.Core
             }
             Coverage.Record(settingsFontName, text);
         }
+
+        /// <summary>
+        /// A font the mod made — a derived copy or pool name ("UGT …"), a replacement it created. The
+        /// notice is about the GAME's fonts: one of ours reaching here is a component whose game font
+        /// could not be told (GetSettingsFontName), and naming our own copy to the player — "'UGT Sys
+        /// Adobe Devanagari #0' draws Hindi incorrectly" (2026-10-02) — sends them to a font they
+        /// cannot set.
+        /// </summary>
+        private static bool IsOurFont(string fontName) =>
+            DerivedFonts.IsOurFamily(fontName) || _createdFallbackFontNames.Contains(fontName);
 
         // The game font each component last drew a text with, by component: what the inspector asks
         // for the texts it found (FontOfComponent).
@@ -120,6 +131,7 @@ namespace UnityGameTranslator.Core
         /// </summary>
         internal static void NoteUnshaped(string settingsFontName, string text)
         {
+            if (IsOurFont(settingsFontName)) return;
             if (Coverage.NoteUnshaped(settingsFontName))
                 TranslatorCore.LogInfo($"[FontManager] '{settingsFontName}' draws text that needs shaping without it — a font file (Custom or System) shapes it{LegacyFontFacts(settingsFontName, text)}");
         }

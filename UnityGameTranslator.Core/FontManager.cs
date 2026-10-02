@@ -3811,7 +3811,9 @@ namespace UnityGameTranslator.Core
         public static string GetSettingsFontName(int instanceId, string currentFontName)
         {
             // 1. Live tracking is authoritative — the game original captured at replacement time.
-            string tracked = GetOriginalFontName(instanceId);
+            //    ⚠ Captured from what the component wore THEN: one already wearing a font of ours
+            //    had ours recorded as its "original" — read through to the game font it replaces.
+            string tracked = GameFontOf(GetOriginalFontName(instanceId));
             if (!string.IsNullOrEmpty(tracked))
             {
                 _settingsFontNamePerComponent[instanceId] = tracked;
@@ -3832,7 +3834,8 @@ namespace UnityGameTranslator.Core
             //    first met already wearing it (a copy of a replaced label, a font handed on by the game)
             //    was read as a game font of that name — with no settings, no derived copy, and the
             //    notice "'UGT Pool 0003 #2' draws Hindi incorrectly" about our own copy (2026-10-02).
-            if (!string.IsNullOrEmpty(currentFontName) && _gameFontOfCreated.TryGetValue(currentFontName, out var replaced))
+            string replaced = GameFontOf(currentFontName);
+            if (!string.IsNullOrEmpty(replaced) && replaced != currentFontName)
             {
                 _settingsFontNamePerComponent[instanceId] = replaced;
                 return replaced;
@@ -3840,6 +3843,10 @@ namespace UnityGameTranslator.Core
             // 5. Unknown — the raw current name.
             return currentFontName;
         }
+
+        /// <summary>The game font a font of ours replaces (<see cref="_gameFontOfCreated"/>); any other name as it is.</summary>
+        private static string GameFontOf(string fontName) =>
+            !string.IsNullOrEmpty(fontName) && _gameFontOfCreated.TryGetValue(fontName, out var game) ? game : fontName;
 
         // Every font WE created to replace a game font, by its name, with the game font it replaces.
         // Names are unique per version (a derived copy's "#N"), so a component still wearing an older

@@ -97,6 +97,13 @@ namespace UnityGameTranslator.Core
         internal static void Frame(float dt)
         {
             if (!TranslatorCore.DebugMode) return;
+            HookAtlasRebuilds();
+            if (_rebuiltThisFrame)
+            {
+                // The rebuild happened while the frame now measured was drawn.
+                if (dt > 0.0333f) _rebuildsInSlowFrames++;
+                _rebuiltThisFrame = false;
+            }
             if (dt > _frameMax)
             {
                 _frameMax = dt;
@@ -109,6 +116,48 @@ namespace UnityGameTranslator.Core
             // (an early return), which must not stop the next frame from counting.
             _frameModTicks = 0;
             _depth = 0;
+        }
+
+        // 🔴 **Font atlas rebuilds — engine work no slot can time.** A dynamic font draws from a
+        // texture holding only the glyphs asked so far; when a text needs ones that do not fit, the
+        // engine rebuilds the whole texture while drawing — every glyph in it rasterized again,
+        // thousands for a CJK font. It happens in the engine's render, after every hook of ours has
+        // returned, so a frame frozen by it reads "timed mod work ~0 ms" (a game whose tooltips
+        // froze the first time each was shown, translated, 2026-10-02). Counted here, with the
+        // fonts, and how many fell in a frame over 33 ms. Debug only, like the rest.
+        private static object _rebuiltHandler;
+        private static bool _rebuiltHooked, _rebuiltThisFrame;
+        private static int _rebuilds, _rebuildsInSlowFrames;
+        private static readonly System.Collections.Generic.Dictionary<string, int> _rebuiltFonts =
+            new System.Collections.Generic.Dictionary<string, int>();
+
+        private static void HookAtlasRebuilds()
+        {
+            if (_rebuiltHooked) return;
+            _rebuiltHooked = true;
+            try
+            {
+                _rebuiltHandler = EngineEvents.Add(typeof(UnityEngine.Font), "textureRebuilt", (System.Action<UnityEngine.Font>)OnAtlasRebuilt);
+                if (_rebuiltHandler == null) TranslatorCore.LogDebug("[PASS-PERF] Font.textureRebuilt not found — atlas rebuilds are not counted");
+            }
+            catch (System.Exception ex) { Faults.Say("Perf.HookAtlasRebuilds", ex); }
+        }
+
+        private static void OnAtlasRebuilt(UnityEngine.Font font)
+        {
+            _rebuilds++;
+            _rebuiltThisFrame = true;
+            string name = font != null ? font.name : "?";
+            _rebuiltFonts.TryGetValue(name, out int n);
+            _rebuiltFonts[name] = n + 1;
+        }
+
+        /// <summary>Unsubscribes the atlas-rebuild count (shutdown).</summary>
+        internal static void Shutdown()
+        {
+            if (_rebuiltHandler == null) return;
+            EngineEvents.Remove(typeof(UnityEngine.Font), "textureRebuilt", _rebuiltHandler);
+            _rebuiltHandler = null;
         }
 
         // 🔴 **The mod's own share of a slow frame.** Every slot says its longest single call, and
@@ -232,6 +281,14 @@ namespace UnityGameTranslator.Core
             string frames = $"frames: max {_frameMax * 1000:F1}ms (timed mod work in it {_worstFrameModTicks * 1000.0 / Stopwatch.Frequency:F1}ms), "
                             + $">33ms: {_framesOver33}, 16-33ms: {_framesOver16}, GC gen0: {gcDelta}";
             _frameMax = 0f; _framesOver16 = 0; _framesOver33 = 0; _worstFrameModTicks = 0;
+            if (_rebuilds > 0)
+            {
+                var fonts = new System.Text.StringBuilder();
+                foreach (var kv in _rebuiltFonts)
+                    fonts.Append(fonts.Length == 0 ? "" : ", ").Append(kv.Key).Append(" x").Append(kv.Value);
+                frames += $", font atlas rebuilds: {_rebuilds} ({fonts}), in frames over 33ms: {_rebuildsInSlowFrames}";
+                _rebuilds = 0; _rebuildsInSlowFrames = 0; _rebuiltFonts.Clear();
+            }
 
             if (sb.Length == 0) { TranslatorCore.LogDebug($"[PASS-PERF] over {window:F1}s | {frames}"); return; }
             TranslatorCore.LogDebug($"[PASS-PERF] over {window:F1}s | {frames} | {sb}");

@@ -831,6 +831,10 @@ namespace UnityGameTranslator.Core
         internal static string TryGetPresentedLogical(string displayed)
             => _readback.PresentedLogical(displayed);
 
+        /// <inheritdoc cref="ReadbackIndex.SourceOf"/>
+        internal static string SourceOfTranslation(string text)
+            => _readback.SourceOf(text, Config != null && Config.normalize_numbers);
+
         /// <inheritdoc cref="ReadbackIndex.Index"/>
         private static void IndexTranslatedValue(string key, string value, bool ownUi)
             => _readback.Index(key, value, ownUi, Config != null && Config.normalize_numbers);

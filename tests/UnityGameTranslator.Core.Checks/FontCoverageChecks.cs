@@ -31,6 +31,21 @@ namespace UnityGameTranslator.Core.Checks
             var some = c.Missing("Title", cp => cp == 'é' ? false : true);
             check(some.Count == 1 && some[0] == 'é', "a character a font says it lacks is missing", string.Join(",", some));
 
+            // Only what a translation brings: a language name the game wrote in its own script, a
+            // name kept in Latin, are the source's letters, not the translation's.
+            c.Record("Menu", "اللغة: 한국어 Zed", "Language: 한국어 Zed");
+            var menu = c.Missing("Menu", cp => cp >= 0x600 && cp <= 0x6FF);   // a font with Arabic and nothing else
+            check(menu.Count == 0, "the letters of the line's own source are not asked of the font",
+                string.Join(",", menu));
+            var brought = c.Missing("Menu", cp => cp > 0x6FF || cp == ' ' || cp == ':');
+            check(brought.Count == 4 && brought.Contains(0x627) && brought.Contains(0x644),
+                "the letters the translation brings are", string.Join(",", brought));
+            c.Record("Menu2", "a\U0001F600", "\U0001F600");
+            var pair = c.Missing("Menu2", cp => false);
+            check(pair.Count == 1 && pair[0] == 'a', "a source character above U+FFFF is found whole", string.Join(",", pair));
+            c.Record("Menu3", "\U0001F601", "\uD83D");
+            check(c.Missing("Menu3", cp => false).Count == 1, "half a pair in the source is not the character", "");
+
             int before = c.Version;
             c.Record("Title", "H");
             check(c.Version == before, "a text with nothing new asks nothing again", "");

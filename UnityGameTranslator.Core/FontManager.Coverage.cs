@@ -41,7 +41,16 @@ namespace UnityGameTranslator.Core
                 Coverage.Record(settingsFontName, "");
                 return;
             }
-            Coverage.Record(settingsFontName, text);
+            // Only what the translation BRINGS is judged: the letters of its own source line are the
+            // game's, drawn by this font before the mod came (FontCoverage.Record). A shaped text is
+            // found through the logical line it presents.
+            string source = TranslatorCore.SourceOfTranslation(text);
+            if (source == null)
+            {
+                string logical = TranslatorCore.TryGetPresentedLogical(text);
+                if (logical != null) source = TranslatorCore.SourceOfTranslation(logical);
+            }
+            Coverage.Record(settingsFontName, text, source);
         }
 
         /// <summary>

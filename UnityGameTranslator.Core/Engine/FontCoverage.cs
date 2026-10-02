@@ -57,7 +57,16 @@ namespace UnityGameTranslator.Core
         /// Account for one text drawn with a font. Returns true when the font now needs a character
         /// it did not.
         /// </summary>
-        internal bool Record(string font, string text)
+        /// <param name="source">
+        /// 🔴 The source line this text translates, when known: only the characters the translation
+        /// BRINGS are counted — those its own source did not have (user's decision, 2026-10-02).
+        /// A language name or a developer's placeholder kept as written, a Latin name left in an
+        /// Arabic sentence, came from the game's own text: counted, they reported "Arabic
+        /// characters missing" for Thai or Korean letters the notice was never about. Per line, not
+        /// per translation: a game offering Arabic in its menu holds "العربية" among its sources,
+        /// and a translation-wide rule would never have judged Arabic again.
+        /// </param>
+        internal bool Record(string font, string text, string source = null)
         {
             if (string.IsNullOrEmpty(font) || string.IsNullOrEmpty(text)) return false;
             if (!_seen.TryGetValue(font, out var seen)) _seen[font] = seen = new HashSet<int>();
@@ -72,10 +81,19 @@ namespace UnityGameTranslator.Core
                     cp = char.ConvertToUtf32(text[i], text[i + 1]);
                     i++;
                 }
-                if (Counts(cp) && needed.Add(cp)) added = true;
+                if (!Counts(cp)) continue;
+                if (source != null && SourceHas(source, cp)) continue;
+                if (needed.Add(cp)) added = true;
             }
             if (added) Version++;
             return added;
+        }
+
+        /// <summary>Whether the source line holds this codepoint (a surrogate pair read as one).</summary>
+        private static bool SourceHas(string source, int cp)
+        {
+            if (cp <= 0xFFFF) return source.IndexOf((char)cp) >= 0;
+            return source.IndexOf(char.ConvertFromUtf32(cp), StringComparison.Ordinal) >= 0;
         }
 
         /// <summary>A character a font must draw for the text to show.</summary>

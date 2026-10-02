@@ -129,6 +129,7 @@ namespace UnityGameTranslator.Core
             _game.Clear();
             _presentedToLogical.Clear();
             _presentedExact.Clear();
+            _sourceOfTarget.Clear();
             _skipLogCount = 0;
         }
 
@@ -257,8 +258,26 @@ namespace UnityGameTranslator.Core
                 normalized = ExtractNumbersToPlaceholders(normalized, out _);
 
             Of(ownUi).Target.TryAdd(normalized.TrimEnd(), 0);
+            if (!ownUi) _sourceOfTarget[normalized.TrimEnd()] = key;
             IndexReadback(key, value, ownUi);
             IndexLines(key, value, ownUi);
+        }
+
+        // The game's translations, by value (the exact index's key shape) → the source line they
+        // translate. What a translation BRINGS is its letters its own source did not have: the font
+        // notice judges only those (FontCoverage.Record).
+        private readonly ConcurrentDictionary<string, string> _sourceOfTarget = new ConcurrentDictionary<string, string>();
+
+        /// <summary>
+        /// The source line a translation of the game was made from, or null when this text is not
+        /// one (or not in the shape the exact index holds).
+        /// </summary>
+        public string SourceOf(string text, bool normalizeNumbers)
+        {
+            if (string.IsNullOrEmpty(text)) return null;
+            string normalized = NormalizeLineEndings(text);
+            if (normalizeNumbers) normalized = ExtractNumbersToPlaceholders(normalized, out _);
+            return _sourceOfTarget.TryGetValue(normalized.TrimEnd(), out var key) ? key : null;
         }
 
         /// <summary>The lines of a translated value of several lines — see <see cref="IsLineOfOurs"/>.</summary>

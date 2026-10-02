@@ -2005,7 +2005,7 @@ namespace UnityGameTranslator.Core
             string wanted = replacement.name;
             if (string.Equals(currentFont.name, wanted, StringComparison.Ordinal)) return;
 
-            object definition = BuildDefinition(replacement, isSdf);
+            object definition = BuildDefinition(replacement, isSdf, settingsName);
             if (definition == null) return;
 
             var styleValue = Activator.CreateInstance(_styleFontDefinitionType, definition);
@@ -2305,7 +2305,7 @@ namespace UnityGameTranslator.Core
         /// ⚠ Cached by name: creating a font asset rasterises an atlas, and doing it once per scan
         /// pass would be the kind of leak that only shows up after twenty minutes of play.
         /// </summary>
-        private static object BuildDefinition(Font replacement, bool isSdf)
+        private static object BuildDefinition(Font replacement, bool isSdf, string settingsName)
         {
             if (isSdf && _textCoreFontAssetType != null && _fromSdfFontMethod != null)
             {
@@ -2313,13 +2313,18 @@ namespace UnityGameTranslator.Core
 
                 if (!_sdfCache.TryGetValue(key, out var asset))
                 {
-                    // ⚠ FontManager's creators, not new ones here — and BOTH, in its order. The
+                    // ⚠ FontManager's creators, not new ones here — ALL of them, in its order. The
                     // first hands the engine a Font; when that comes back null (a dynamic OS font
                     // with no usable data) the second asks by family name and often succeeds on the
                     // very same font. Using only the first is what made some fonts work and others
                     // not: Ebrima and Lato went through, Liberation Sans and the Adobe faces did not.
+                    // The third reads the derived copy's FILE: a copy is known by no family the
+                    // system lists, and both others failed on it. Named as the Font it stands for,
+                    // so the element wearing it is recognised as wearing the replacement.
                     asset = FontManager.CreateSdfFontAsset(replacement, _textCoreFontAssetType)
-                            ?? FontManager.CreateSdfFontAssetByFamily(replacement, _textCoreFontAssetType);
+                            ?? FontManager.CreateSdfFontAssetByFamily(replacement, _textCoreFontAssetType)
+                            ?? FontManager.CreateSdfFontAssetFromFile(FontManager.DerivedForSettings(settingsName)?.CurrentFile,
+                                                                       _textCoreFontAssetType, replacement.name);
 
                     _sdfCache[key] = asset;
 
@@ -2367,6 +2372,42 @@ namespace UnityGameTranslator.Core
         /// are wearing the replacement. Reported so the audit line does not say "0 component(s)"
         /// about a game where every piece of text matched — a count that is wrong in the reassuring
         /// direction is worse than no count.</returns>
+        /// <summary>
+        /// Adds the UI Toolkit text elements on screen to the Fonts tab's "N in scene", by the font
+        /// each is filed under (the one it started with). False when no document could be walked.
+        ///
+        /// ⚠ The count walked only TMP and uGUI components: a game drawn in UI Toolkit showed
+        /// "0 in scene" on every font while the highlight lit its texts (2026-10-02).
+        /// </summary>
+        internal static bool CountFontsInto(Dictionary<string, int> counts)
+        {
+            if (!Available || _rootProp == null) return false;
+            bool walkedAny = false;
+            try
+            {
+                var documents = TypeHelper.FindAllObjectsOfType(UIDocumentType);
+                if (documents == null) return false;
+                foreach (var document in documents)
+                {
+                    if (document == null) continue;
+                    object root = null;
+                    try { root = _rootProp.GetValue(document, null); }
+                    catch (Exception ex) { Faults.Say("UIToolkit.CountFontsInto", ex); }
+                    if (root == null) continue;
+                    walkedAny = true;
+                    Walk(root, MaxElementsPerPass, element =>
+                    {
+                        string name = SettingsFontNameOf(element);
+                        if (string.IsNullOrEmpty(name)) return;
+                        counts.TryGetValue(name, out int n);
+                        counts[name] = n + 1;
+                    });
+                }
+            }
+            catch (Exception ex) { Faults.Say("UIToolkit.CountFontsInto", ex); }
+            return walkedAny;
+        }
+
         public static int HighlightFont(string fontName, Color highlight, Color dim, out int replaced)
         {
             int matched = 0;

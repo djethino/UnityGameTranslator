@@ -207,7 +207,8 @@ namespace UnityGameTranslator.Core.TextShaping
                         // there let it re-cut our explicit lines by character in a box the
                         // layout had just shrunk to them (bench: a Thai label in three pieces).
                         if (TranslatorCore.TryGetPresentedLogical(value) == null)
-                            RestoreIfFlagged(instance, compId, prop);
+                            RestoreIfFlagged(instance, compId, prop,
+                                             keepMirrored: !ownUi && MirrorsEveryText(settingsFontName, overrideRule));
                         // A word reflow queued a moment ago by PresentSyllabic is this text's,
                         // not a leftover: only an RTL reflow is stale here.
                         if (_reflows.TryGetValue(compId, out var queued) && queued.Kind != ReflowKind.UGuiWords)
@@ -1847,12 +1848,28 @@ namespace UnityGameTranslator.Core.TextShaping
             return ComposeLines(logical.Split('\n'));
         }
 
-        private static void RestoreIfFlagged(object instance, long compId, PropertyInfo prop)
+        /// <summary>
+        /// Whether every text drawn with this font is aligned the reading way, not only the
+        /// right-to-left ones: the translation's language is written right to left (the language
+        /// catalogue, from CLDR) and the font's setting — or the override rule matching the
+        /// component — says mirror. 🔴 The setting belongs to the FONT, not to the text (user,
+        /// 2026-10-02: « le mirror rtl s'applique à une font, pas à la traduction »): a Latin
+        /// "VSync" among Arabic labels of the same font stayed on the game's side. A place where
+        /// that is wrong gets an override rule — what the rules are for.
+        /// </summary>
+        private static bool MirrorsEveryText(string settingsFontName, FontOverrideRule overrideRule)
+            => TranslatorCore.TargetIsRightToLeft && TranslatorCore.ShouldMirrorRtlAlignment(settingsFontName, overrideRule);
+
+        /// <param name="keepMirrored">The component leaves right-to-left text but stays aligned the
+        /// reading way (<see cref="MirrorsEveryText"/>): its flag and wrap go back, its alignment
+        /// stays mirrored.</param>
+        private static void RestoreIfFlagged(object instance, long compId, PropertyInfo prop, bool keepMirrored = false)
         {
             if (UIToolkitSupport.IsTextElementInstance(instance))
             {
                 UIToolkitSupport.RestoreRtlAdjustments(instance);
                 UIToolkitSupport.ForgetPending(instance);
+                if (keepMirrored) UIToolkitSupport.MirrorAlign(instance, true);
             }
 
             if (compId == -1) return;
@@ -1861,7 +1878,8 @@ namespace UnityGameTranslator.Core.TextShaping
                 _flaggedOriginal.Remove(compId);
                 try { prop.SetValue(instance, original, null); } catch (Exception ex) { Faults.Say("RtlPresenter.RestoreIfFlagged", ex); }
             }
-            RestoreAlignment(instance, compId);
+            if (keepMirrored) MirrorAlignment(instance, compId, true);
+            else RestoreAlignment(instance, compId);
             RestoreRewrap(instance, compId);
         }
 

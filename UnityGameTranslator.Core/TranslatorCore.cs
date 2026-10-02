@@ -598,6 +598,29 @@ namespace UnityGameTranslator.Core
         /// <inheritdoc cref="LanguageState.Conflict"/>
         public static string LanguageConflict => _languages.Conflict;
 
+        /// <summary>
+        /// Whether the translation's language is written right to left — the language catalogue's
+        /// answer (Common.Languages.IsRightToLeft, from CLDR), never a guess from the letters a
+        /// translation holds. False while no target is settled or for a name the catalogue does
+        /// not hold. Asked for every text presented: the answer is kept per language name.
+        /// </summary>
+        public static bool TargetIsRightToLeft
+        {
+            get
+            {
+                string target = EffectiveTargetLanguage;
+                if (!string.Equals(target, _rtlTargetOf, StringComparison.Ordinal))
+                {
+                    _rtlTarget = UnityGameTranslator.Common.Languages.IsRightToLeft(target) == true;
+                    _rtlTargetOf = target;
+                }
+                return _rtlTarget;
+            }
+        }
+
+        private static string _rtlTargetOf;
+        private static bool _rtlTarget;
+
         /// <inheritdoc cref="LanguageState.Locked"/>
         public static bool AreLanguagesLocked =>
             LanguageState.Locked(ServerState != null && ServerState.Exists, TranslationCache.Count);

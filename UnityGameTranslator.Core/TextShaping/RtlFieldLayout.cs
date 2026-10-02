@@ -548,15 +548,7 @@ namespace UnityGameTranslator.Core.TextShaping
         /// The character a right-to-left level draws for <paramref name="cp"/> (L4): the other bracket
         /// of a pair, a guillemet turned round; itself otherwise.
         /// </summary>
-        internal static int Mirrored(int cp)
-        {
-            if (UnicodeClasses.PairedBracketType(cp) != PairedBracketType.n)
-            {
-                int opposite = UnicodeClasses.AssociatedBracket(cp);
-                return opposite != 0 ? opposite : cp;
-            }
-            return RtlComposer.ExtraMirrors.TryGetValue(cp, out int mirrored) ? mirrored : cp;
-        }
+        internal static int Mirrored(int cp) => UnicodeInfo.MirrorOf(cp);
 
         /// <summary>
         /// A TMP label (<see cref="Prepared.LabelFor"/>) with the characters a right-to-left level
@@ -575,7 +567,28 @@ namespace UnityGameTranslator.Core.TextShaping
             return sb.ToString();
         }
 
-        private static bool IsWhitespace(int cp) => cp == ' ' || cp == '\t' || cp == 0x3000 || cp == 0x200B;
+        /// <summary>
+        /// What rule L1 sends back to the paragraph level at a line's end — by bidi class, as UAX #9
+        /// defines it: whitespace (WS), segment separators such as the tab (S), the isolate
+        /// controls, and the boundary neutrals X9 leaves (a zero width space). A list of four
+        /// characters typed here before (2026-10-02) left out every other space Unicode has.
+        /// </summary>
+        private static bool IsWhitespace(int cp)
+        {
+            switch (Topten.RichTextKit.UnicodeClasses.Directionality(cp))
+            {
+                case Topten.RichTextKit.Directionality.WS:
+                case Topten.RichTextKit.Directionality.S:
+                case Topten.RichTextKit.Directionality.BN:
+                case Topten.RichTextKit.Directionality.LRI:
+                case Topten.RichTextKit.Directionality.RLI:
+                case Topten.RichTextKit.Directionality.FSI:
+                case Topten.RichTextKit.Directionality.PDI:
+                    return true;
+                default:
+                    return false;
+            }
+        }
 
         // ── Questions an input field asks ──────────────────────────────────────────────────
 

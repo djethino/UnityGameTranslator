@@ -86,6 +86,10 @@ namespace UnityGameTranslator.Core.Checks
                   && RtlText.IsStrongRtl(0x1E900) && RtlText.IsStrongRtl(0x0800),
                 "Syriac, Thaana, N'Ko, Adlam and Samaritan are strong RTL",
                 "the list that said Hebrew and Arabic showed every other right-to-left script left to right");
+            check(UnicodeInfo.MirrorOf('(') == ')' && UnicodeInfo.MirrorOf(0x00AB) == 0x00BB && UnicodeInfo.MirrorOf(0x2264) == 0x2265
+                  && UnicodeInfo.MirrorOf('A') == 'A',
+                "a right-to-left level mirrors what Unicode pairs: brackets, guillemets, ≤ and ≥",
+                "four characters were typed here; Unicode's BidiMirroring.txt lists hundreds");
             check(RtlText.ContainsStrongRtl("x\U0001E900"), "a right-to-left letter beyond U+FFFF is found",
                 "Adlam is in a supplementary plane: read as one code point, not two halves");
             check(!RtlText.IsStrongRtl(0x0915) && !RtlText.IsStrongRtl(0x4E2D) && !RtlText.IsStrongRtl(0x0416),

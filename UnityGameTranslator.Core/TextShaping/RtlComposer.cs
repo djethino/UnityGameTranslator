@@ -75,15 +75,6 @@ namespace UnityGameTranslator.Core.TextShaping
         /// </summary>
         internal const int TagSpan = 128;
 
-        // Mirrored by RTL convention though not Bidi_Mirrored in the UCD — guillemets read
-        // outward-in in RTL text. Borrowed from RTLTMPro's table; real brackets are NOT here,
-        // the UAX#9 paired-bracket data answers those.
-        internal static readonly Dictionary<int, int> ExtraMirrors = new Dictionary<int, int>
-        {
-            [0x00AB] = 0x00BB, [0x00BB] = 0x00AB,   // « »
-            [0x2039] = 0x203A, [0x203A] = 0x2039,   // ‹ ›
-        };
-
         private sealed class TagInfo
         {
             public string Text;
@@ -117,17 +108,7 @@ namespace UnityGameTranslator.Core.TextShaping
 
                 int cp = arr[i];
                 if ((levels[i] & 1) == 1)
-                {
-                    if (UnicodeClasses.PairedBracketType(cp) != PairedBracketType.n)
-                    {
-                        int opposite = UnicodeClasses.AssociatedBracket(cp);
-                        if (opposite != 0) cp = opposite;
-                    }
-                    else if (ExtraMirrors.TryGetValue(cp, out int mirrored))
-                    {
-                        cp = mirrored;
-                    }
-                }
+                    cp = UnicodeInfo.MirrorOf(cp);
                 kept.Add(cp);
                 keptLevels.Add(levels[i]);
                 keptOrig.Add(i);

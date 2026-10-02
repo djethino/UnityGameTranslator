@@ -79,10 +79,6 @@ namespace UnityGameTranslator.Core.Checks
                 "A9 (Persian guessed from a letter)"),
             ["Engine/TextRouter.Fit.cs"] = (new[] { "U+3040", "U+30FF", "U+3400", "U+9FFF", "U+F900", "U+FAFF", "U+3000", "U+303F", "U+FF00", "U+FFEF", "STRING" },
                 "A6 (line breaking by CJK ranges and a punctuation list, instead of UAX #14)"),
-            ["TextShaping/RtlFieldLayout.cs"] = (new[] { "U+3000" },
-                "A7 (whitespace by a list of four characters)"),
-            ["TextShaping/RtlComposer.cs"] = (new[] { "U+00AB", "U+00BB", "U+2039", "U+203A" },
-                "A10 (four mirrored characters by hand, beside Unicode's BidiMirroring.txt)"),
             ["TextShaping/WordBreaker.cs"] = (new[] { "U+0E01", "U+0E5B", "U+0E81", "U+0EDF", "U+1000", "U+109F", "U+1780", "U+17F9", "U+A9E0", "U+A9FE", "U+AA60", "U+AA7F" },
                 "B (one ICU dictionary per script), its ranges copied by hand instead of read from ShapingCommon.ScriptOf"),
         };

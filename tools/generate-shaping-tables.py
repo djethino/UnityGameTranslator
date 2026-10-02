@@ -31,7 +31,7 @@ every table covers the whole code space, the supplementary planes included:
 Inputs (downloaded from the pinned UCD below unless given a dir):
   IndicSyllabicCategory.txt IndicPositionalCategory.txt ArabicShaping.txt
   DerivedCoreProperties.txt UnicodeData.txt Blocks.txt Scripts.txt PropertyValueAliases.txt
-  DerivedNormalizationProps.txt PropList.txt
+  DerivedNormalizationProps.txt PropList.txt BidiMirroring.txt
 plus HarfBuzz's three ms-use files (from its repository, MIT): the two "Additional" property
 files and IndicShapingInvalidCluster.txt, and hb-ot-shaper.hh; CLDR's scriptMetadata.json.
 Every Unicode fact comes from the UCD of ONE version — never from Python's unicodedata, which is
@@ -435,6 +435,15 @@ def main():
     # White_Space (PropList): what "is a space" means — a property, not a category (tab and line
     # feed are controls, yet spaces).
     white_space = ranges(parse_derived(load("PropList.txt", src_dir, UCD), "White_Space"))
+    # Bidi_Mirroring_Glyph (BidiMirroring.txt): the character drawn for another at a right-to-left
+    # level — brackets, quotation marks, mathematical symbols (≤ ≥, ∈ ∋…), every pair Unicode lists.
+    mirrors = []
+    for line in load("BidiMirroring.txt", src_dir, UCD).splitlines():
+        body = line.split("#")[0].strip()
+        if body:
+            a, b = [int(x.strip(), 16) for x in body.split(";")]
+            mirrors.append((a, b))
+    mirrors.sort()
     blocks = parse_blocks(load(FILES[5], src_dir, UCD))
     scripts, _ = parse_props(load(FILES[6], src_dir, UCD))
     iso_codes = parse_script_aliases(load(FILES[7], src_dir, UCD))
@@ -706,6 +715,13 @@ def main():
     w("        {")
     for i in range(0, len(gc_runs), 6):
         w("            " + ", ".join(f"0x{a:04X}, 0x{b:04X}, {v}" for a, b, v in gc_runs[i:i + 6]) + ",")
+    w("        };")
+    w("")
+    w("        /// <summary>Bidi_Mirroring_Glyph (BidiMirroring.txt) — flattened (code point, its mirror), sorted.</summary>")
+    w("        internal static readonly int[] BidiMirrors =")
+    w("        {")
+    for i in range(0, len(mirrors), 8):
+        w("            " + ", ".join(f"0x{a:04X}, 0x{b:04X}" for a, b in mirrors[i:i + 8]) + ",")
     w("        };")
     w("")
     w("        /// <summary>White_Space (PropList) — inclusive ranges, sorted, as (first, last) pairs.</summary>")

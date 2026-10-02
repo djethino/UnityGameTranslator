@@ -69,6 +69,26 @@ namespace UnityGameTranslator.Core.TextShaping
             return false;
         }
 
+        /// <summary>
+        /// The character drawn in place of this one at a right-to-left level (rule L4) — Unicode's
+        /// Bidi_Mirroring_Glyph: brackets, quotation marks, mathematical symbols; the code point
+        /// itself when it has none.
+        /// </summary>
+        internal static int MirrorOf(int cp)
+        {
+            var pairs = ShapingTables.BidiMirrors;
+            int lo = 0, hi = pairs.Length / 2 - 1;
+            while (lo <= hi)
+            {
+                int mid = (lo + hi) >> 1;
+                int key = pairs[mid * 2];
+                if (cp < key) hi = mid - 1;
+                else if (cp > key) lo = mid + 1;
+                else return pairs[mid * 2 + 1];
+            }
+            return cp;
+        }
+
         private static int CodePointAt(string s, int i)
         {
             char c = s[i];

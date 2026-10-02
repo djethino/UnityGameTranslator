@@ -1407,7 +1407,10 @@ namespace UnityGameTranslator.Core
         /// where the game's build stripped it, the two engine calls it is made of. Null when the
         /// runtime can do neither (legacy text then rewrites the game font's own fontNames).
         /// </summary>
-        private static Font CreateDynamicOSFont(string family)
+        /// <param name="engineCalls">false for a font that only feeds a TMP asset: the font the engine
+        /// calls make carries no data CreateFontAsset can read (it refused one, 2026-10-02) — the
+        /// caller reads the file instead.</param>
+        private static Font CreateDynamicOSFont(string family, bool engineCalls = true)
         {
             if (string.IsNullOrEmpty(family) || !_dynamicFontCreationAvailable) return null;
             if (!_osFontShortcutStripped)
@@ -1438,6 +1441,7 @@ namespace UnityGameTranslator.Core
                 }
                 TranslatorCore.LogInfo("[FontManager] CreateDynamicFontFromOSFont stripped from this game — fonts by name are made by the engine calls it is made of");
             }
+            if (!engineCalls) return null;
 
             var made = Kept(TypeHelper.NewDynamicFont(new[] { family }, 32));
             if (made != null) TranslatorCore.LogDebug($"[FontManager] Created dynamic Unity font (engine calls): {family}");
@@ -4751,9 +4755,11 @@ namespace UnityGameTranslator.Core
             // search read file names only and missed "Comic Sans MS" (comic.ttf), then it made an EMPTY
             // font of that name (Internal_CreateFont: Unity's new Font(name), which looks nothing up),
             // which the legacy path later took for a game font — "no glyph for 'P'" (bench, 2026-10-02).
-            var made = CreateDynamicOSFont(fontName);
+            // ⚠ Not by the engine calls (CreateDynamicOSFont's stand-in for a stripped shortcut): that
+            // font has no data CreateFontAsset reads — the file does.
+            var made = CreateDynamicOSFont(fontName, engineCalls: false);
             if (made != null) return made;
-            made = TypeHelper.NewFontFromFile(CustomFontLoader.FindSystemTtfPath(fontName));
+            made = Kept(TypeHelper.NewFontFromFile(CustomFontLoader.FindSystemTtfPath(fontName)));
             if (made != null)
             {
                 made.name = fontName;

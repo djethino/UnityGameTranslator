@@ -20,6 +20,22 @@ namespace UnityGameTranslator.Core
     /// a fact the engine holds itself (<see cref="TranslatorCore.HostReady"/>), because the patches
     /// can fire before the host exists.
     /// </summary>
+    /// <summary>
+    /// What a reload of the translation file brought in — the answer a screen holding unapplied
+    /// choices needs (user, 2026-10-02: the font and rule settings travel with the translation
+    /// they were made on; a change of translation not applied first is a change not wanted).
+    /// </summary>
+    public enum TranslationReload
+    {
+        /// <summary>Another file in place of this one — downloaded, installed, put back from a
+        /// backup: everything it carries besides its lines may differ.</summary>
+        Replaced,
+
+        /// <summary>Lines merged into this same translation (a browser edit, the Main's lines):
+        /// its settings are the ones it had, written back unchanged.</summary>
+        LinesOnly,
+    }
+
     public interface IEngineHost
     {
         /// <summary>The interface is built and can be drawn on.</summary>
@@ -35,7 +51,13 @@ namespace UnityGameTranslator.Core
         void Warn(string message);
 
         /// <summary>The translation on disk was reloaded: what is on screen describes the previous file.</summary>
-        void TranslationReloaded();
+        void TranslationReloaded(TranslationReload what);
+
+        /// <summary>
+        /// Settings sections the translation carries (fonts, rules, exclusions…) were replaced from
+        /// another file's — after a download, the arbitration of whose settings to keep.
+        /// </summary>
+        void TranslationSettingsReplaced();
 
         /// <summary>The local file was written: a browser editor, if one is open, is to be told.</summary>
         void LocalFileChanged();

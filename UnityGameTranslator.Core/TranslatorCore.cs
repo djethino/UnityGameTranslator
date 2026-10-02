@@ -1404,6 +1404,10 @@ namespace UnityGameTranslator.Core
             SetMetadataDirty();
 
             LogInfo($"[Settings] Replaced sections: {string.Join(", ", changed.ToArray())}");
+
+            // A screen holding unapplied choices about these sections compared them to what was
+            // there before: they were made on settings that have just been replaced.
+            Host?.TranslationSettingsReplaced();
         }
 
         /// <summary>
@@ -3358,7 +3362,7 @@ namespace UnityGameTranslator.Core
         /// Reload the cache from disk. Call this after downloading a translation
         /// to apply it immediately without requiring a game restart.
         /// </summary>
-        public static void ReloadCache()
+        public static void ReloadCache(TranslationReload what)
         {
             LogDebug("[TranslatorCore] Reloading cache from disk...");
 
@@ -3416,7 +3420,7 @@ namespace UnityGameTranslator.Core
             // What is on screen still describes the file that was there a moment ago. Said HERE
             // and not by the callers: it was one of five, and the four that forgot included
             // putting a backup back.
-            Host?.TranslationReloaded();
+            Host?.TranslationReloaded(what);
         }
 
         /// <summary>

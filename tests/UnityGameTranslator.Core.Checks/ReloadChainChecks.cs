@@ -41,8 +41,8 @@ namespace UnityGameTranslator.Core.Checks
                 "this check reads them; without them, it proves nothing");
             if (coreFile == null || uiFile == null) return;
 
-            string reload = BodyOf(File.ReadAllText(coreFile), "public static void ReloadCache()");
-            string notify = BodyOf(File.ReadAllText(uiFile), "public static void NotifyTranslationReloaded()");
+            string reload = BodyOf(File.ReadAllText(coreFile), "public static void ReloadCache(TranslationReload what)");
+            string notify = BodyOf(File.ReadAllText(uiFile), "public static void NotifyTranslationReloaded(TranslationReload what)");
             string watch = BodyOf(File.ReadAllText(uiFile), "public static void StartSyncWatch()");
 
             check(reload != null && notify != null && watch != null,
@@ -65,7 +65,7 @@ namespace UnityGameTranslator.Core.Checks
                 ("ReapplyFontSettings(",
                  "changing a font is a transition off the old one — applying the new map alone leaves the components wearing what the previous translation asked for"),
 
-                ("Host?.TranslationReloaded()",
+                ("Host?.TranslationReloaded(what)",
                  "said here rather than by the callers: it was one of five, and the four that forgot included putting a backup back — to the host, never to a manager by name"),
             };
 
@@ -82,7 +82,7 @@ namespace UnityGameTranslator.Core.Checks
                 ("MainPanel?.RefreshUI()",
                  "the card describes a file that is no longer there"),
 
-                ("TranslationParamsPanel?.RefreshFromTranslation()",
+                ("TranslationParamsPanel?.RefreshFromTranslation(what)",
                  "its lists are otherwise built when their tab opens and never again — it went on listing an image the game had taken back off"),
 
                 ("OptionsPanel?.RefreshFromConfig()",
@@ -100,6 +100,43 @@ namespace UnityGameTranslator.Core.Checks
                 check(notify.Contains(link.Call, StringComparison.Ordinal),
                     $"a reload runs {link.Call}",
                     link.Cost);
+            }
+
+            // ── Unapplied choices go with the file they were made on. ──
+            //
+            // 🔴 User, 2026-10-02: the font and rule settings travel with the translation they were
+            // made with; a change of translation not applied first is a change not wanted. The
+            // Tools window redrew its lists on a reload and kept its pending answers, still compared
+            // to the previous file — its Overrides tab listed the previous file's rules.
+            string panelFile = Find("UnityGameTranslator.Core", "UI", "Panels", "TranslationParametersPanel.cs");
+            string panel = panelFile == null ? null : File.ReadAllText(panelFile);
+            string refresh = panel == null ? null : BodyOf(panel, "public void RefreshFromTranslation(TranslationReload what)");
+            string loadState = panel == null ? null : BodyOf(panel, "private void LoadCurrentState()");
+            string afterSections = BodyOf(File.ReadAllText(coreFile), "internal static void AfterSettingsSectionsChanged(");
+
+            check(refresh != null && refresh.Contains("TranslationReload.Replaced", StringComparison.Ordinal)
+                  && refresh.Contains("LoadCurrentState();", StringComparison.Ordinal),
+                "another file in place drops the Tools window's unapplied answers",
+                "they were made on the previous file: an Apply would write its rules into the new one");
+
+            check(afterSections != null && afterSections.Contains("Host?.TranslationSettingsReplaced()", StringComparison.Ordinal),
+                "settings sections replaced after a download are said to the host",
+                "the arbitration of whose settings to keep runs after the reload: the window's snapshot would describe the moment between");
+
+            // ⚠ A row reads its value from the pending answer, else from the snapshot: dropping
+            // them AFTER building the list shows the previous file's values.
+            foreach (var (drop, build) in new[]
+            {
+                ("_pendingFontSettings.Clear();", "RefreshFontsList();"),
+                ("InitPendingFontOverrides();", "RefreshFontOverridesList();"),
+                ("_pendingExclusionAdds.Clear();", "RefreshExclusionsList();"),
+            })
+            {
+                int d = loadState == null ? -1 : loadState.IndexOf(drop, StringComparison.Ordinal);
+                int b = loadState == null ? -1 : loadState.IndexOf(build, StringComparison.Ordinal);
+                check(d >= 0 && b > d,
+                    $"the window forgets ({drop}) before it builds ({build})",
+                    "built first, the list shows the answers and the snapshot of the file that was there before");
             }
 
             // ── The interface file is per LANGUAGE, and the language is settled halfway. ──

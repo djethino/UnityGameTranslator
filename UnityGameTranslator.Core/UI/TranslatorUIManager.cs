@@ -3838,7 +3838,7 @@ namespace UnityGameTranslator.Core.UI
             System.IO.File.WriteAllText(TranslatorCore.CachePath, content);
 
             // Reload cache to apply new content immediately
-            TranslatorCore.ReloadCache();
+            TranslatorCore.ReloadCache(TranslationReload.Replaced);
 
             ReconcileSettings(ourSettings, TranslationSettings.FromJsonText(content),
                 ancestorSettings, incomingAlreadyApplied: true, sourceLabel: "the version you just validated");
@@ -3921,7 +3921,7 @@ namespace UnityGameTranslator.Core.UI
         ///
         /// ⚠ Null-safe on purpose: the first load happens before any panel exists.
         /// </summary>
-        public static void NotifyTranslationReloaded()
+        public static void NotifyTranslationReloaded(TranslationReload what)
         {
             MainPanel?.RefreshUI();
 
@@ -3929,7 +3929,7 @@ namespace UnityGameTranslator.Core.UI
             // fonts, its rules, its exclusions, its images, its variables — is shown by the
             // parameters panel, whose lists are otherwise built when their tab is opened and never
             // again. That panel went on listing an image the game had already taken back off.
-            TranslationParamsPanel?.RefreshFromTranslation();
+            TranslationParamsPanel?.RefreshFromTranslation(what);
 
             // The options screen reads the configuration, which the load may have moved: the file
             // decides the languages, and the setting follows it.
@@ -5071,7 +5071,7 @@ namespace UnityGameTranslator.Core.UI
             // (RestoreAllOriginals + LoadCache + ClearProcessingCaches). SaveCache also
             // schedules a push of the merged file back to the browser.
             TranslatorCore.SaveCache();
-            TranslatorCore.ReloadCache();
+            TranslatorCore.ReloadCache(TranslationReload.LinesOnly);
 
             // New baseline = the SERVER content we just merged against, NOT the merged cache.
             // The merged cache holds captures not yet pushed to the server (push is debounced);
@@ -5186,7 +5186,7 @@ namespace UnityGameTranslator.Core.UI
                         System.IO.File.WriteAllText(TranslatorCore.CachePath, content);
 
                         // Reload cache to apply new content immediately
-                        TranslatorCore.ReloadCache();
+                        TranslatorCore.ReloadCache(TranslationReload.Replaced);
 
                         // Update server state hash in memory
                         var currentServerState = TranslatorCore.ServerState;
@@ -5374,7 +5374,7 @@ namespace UnityGameTranslator.Core.UI
             PendingUpdateDirection = HasPendingUpdate ? UpdateDirection.Upload : UpdateDirection.None;
             NotificationDismissed = false;
 
-            TranslatorCore.ReloadCache();
+            TranslatorCore.ReloadCache(TranslationReload.LinesOnly);
             MainPanel?.RefreshUI();
 
             TranslatorCore.LogInfo($"[MainMerge] Applied: {TranslatorCore.LocalChangesCount} line(s) now waiting to be uploaded");
@@ -5545,7 +5545,7 @@ namespace UnityGameTranslator.Core.UI
 
                         // Write content to file
                         System.IO.File.WriteAllText(TranslatorCore.CachePath, content);
-                        TranslatorCore.ReloadCache();
+                        TranslatorCore.ReloadCache(TranslationReload.Replaced);
 
                         // Update server state
                         TranslatorCore.SourceSiteId = translationId;

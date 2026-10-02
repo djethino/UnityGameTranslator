@@ -2572,13 +2572,31 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// ⚠ Seen on a real install (2026-09-08): a Chinese→English translation restored over a
         /// Chinese→French one. The game was right — the log says the image was taken back off the
         /// scene — and the Images tab went on listing it, because nobody had told the panel.
+        ///
+        /// 🔴 **And every answer not yet applied is dropped with the file it was made on** (user,
+        /// 2026-10-02: « si l'utilisateur change de traduction et qu'il a pas validé c'est qu'il en
+        /// veut plus. les règles d'override et de fonts voyagent avec la traduction avec laquelle
+        /// elles ont été faites »). Only the lists were redrawn before: the pending rules and the
+        /// snapshots they are compared to still described the previous file, so the Overrides tab
+        /// listed its rules — and an Apply would have written them into the new one.
+        ///
+        /// ⚠ Not on <see cref="TranslationReload.LinesOnly"/>: a browser edit or the Main's lines
+        /// merged in leave the settings as they were, and a live edit session reloads at every
+        /// save — dropping the answers there would erase them while the person is still choosing.
         /// </summary>
-        public void RefreshFromTranslation()
+        public void RefreshFromTranslation(TranslationReload what)
         {
-            RefreshFromConfig();
-            RefreshFontsList();
-            RefreshFontOverridesList();
-            RefreshExclusionsList();
+            if (what == TranslationReload.Replaced)
+            {
+                LoadCurrentState();
+            }
+            else
+            {
+                RefreshFromConfig();
+                RefreshFontsList();
+                RefreshFontOverridesList();
+                RefreshExclusionsList();
+            }
             RefreshImageReplacementsList();
             RefreshVariablesList();
         }
@@ -2625,15 +2643,10 @@ namespace UnityGameTranslator.Core.UI.Panels
                 _enableImageReplacementToggle.IsOn = TranslatorCore.Config.enable_image_replacement;
             _pendingAtlasSize = TranslatorCore.Config.max_font_atlas_size;
 
-            // Refresh UI lists
-            try { RefreshExclusionsList(); }
-            catch (Exception ex) { TranslatorCore.LogWarning($"[TranslationParametersPanel] RefreshExclusionsList failed: {ex.Message}"); }
-
-            // Opening the panel is the other moment a fresh ranking is expected.
-            InvalidateFontOrder();
-            try { RefreshFontsList(); }
-            catch (Exception ex) { TranslatorCore.LogWarning($"[TranslationParametersPanel] RefreshFontsList failed: {ex.Message}"); }
-
+            // ⚠ Every pending answer is dropped and every snapshot taken BEFORE a list is built: a
+            // row reads its value from the pending answer, else from the snapshot. Built first, the
+            // fonts list showed the previous snapshot — the previous FILE's settings, when the
+            // translation had been replaced since (RefreshFromTranslation).
             // Capture initial font settings for change tracking
             _initialFontSettings.Clear();
             _pendingFontSettings.Clear();
@@ -2667,6 +2680,15 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // Capture initial font overrides for change tracking
             InitPendingFontOverrides();
+
+            try { RefreshExclusionsList(); }
+            catch (Exception ex) { TranslatorCore.LogWarning($"[TranslationParametersPanel] RefreshExclusionsList failed: {ex.Message}"); }
+
+            // Opening the panel is the other moment a fresh ranking is expected.
+            InvalidateFontOrder();
+            try { RefreshFontsList(); }
+            catch (Exception ex) { TranslatorCore.LogWarning($"[TranslationParametersPanel] RefreshFontsList failed: {ex.Message}"); }
+
             try { RefreshFontOverridesList(); }
             catch (Exception ex) { TranslatorCore.LogWarning($"[TranslationParametersPanel] RefreshFontOverridesList failed: {ex.Message}"); }
 

@@ -17,7 +17,10 @@ namespace UnityGameTranslator.Core.UI
         public void Warn(string message)
             => TranslatorUIManager.RunOnMainThread(() => Intents.Toast(message, ToastTone.Off));
 
-        public void TranslationReloaded() => TranslatorUIManager.NotifyTranslationReloaded();
+        public void TranslationReloaded(TranslationReload what) => TranslatorUIManager.NotifyTranslationReloaded(what);
+
+        public void TranslationSettingsReplaced()
+            => TranslatorUIManager.TranslationParamsPanel?.RefreshFromTranslation(TranslationReload.Replaced);
 
         public void LocalFileChanged() => TranslatorUIManager.NotifyLocalFileChanged();
 

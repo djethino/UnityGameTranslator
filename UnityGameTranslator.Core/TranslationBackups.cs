@@ -666,7 +666,7 @@ namespace UnityGameTranslator.Core
                     var stale = TranslationFiles.AncestorOf(TranslatorCore.CachePath);
                     if (File.Exists(stale)) File.Delete(stale);
 
-                    TranslatorCore.ReloadCache();
+                    TranslatorCore.ReloadCache(TranslationReload.Replaced);
                     TranslatorCore.LogInfo($"[Backups] Put {id} back");
                     return true;
                 }
@@ -689,7 +689,7 @@ namespace UnityGameTranslator.Core
 
                 // Straight into the running game, exactly as a downloaded translation is: a file on
                 // disk the game has not read is a restore that appears not to have happened.
-                TranslatorCore.ReloadCache();
+                TranslatorCore.ReloadCache(TranslationReload.Replaced);
 
                 TranslatorCore.LogInfo($"[Backups] Put {id} back");
                 return true;

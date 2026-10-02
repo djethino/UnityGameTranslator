@@ -81,12 +81,13 @@ internal static class Program
                           + (sample.Count > 0 ? ": " + string.Join(", ", sample) : ""));
 
         // 4. The conformance files the checks replay (gzipped, as the checks read them).
-        foreach (var name in new[] { "BidiTest.txt", "BidiCharacterTest.txt" })
+        foreach (var source in new[] { "BidiTest.txt", "BidiCharacterTest.txt", "auxiliary/LineBreakTest.txt" })
         {
+            string name = Path.GetFileName(source);
             string target = Path.Combine(checks, "TestData", name + ".gz");
             using var output = File.Create(target);
             using var gzip = new System.IO.Compression.GZipStream(output, System.IO.Compression.CompressionLevel.Optimal);
-            var bytes = http.GetByteArrayAsync(Ucd + name).GetAwaiter().GetResult();
+            var bytes = http.GetByteArrayAsync(Ucd + source).GetAwaiter().GetResult();
             gzip.Write(bytes, 0, bytes.Length);
             Console.WriteLine($"{target}: {bytes.Length} bytes of Unicode's {name}");
         }

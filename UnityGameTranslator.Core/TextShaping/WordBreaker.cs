@@ -36,20 +36,16 @@ namespace UnityGameTranslator.Core.TextShaping
 
         private sealed class Script
         {
-            public int First, Last;
             public string Resource;
         }
 
-        // Unicode blocks → ICU dictionary. Myanmar's extension blocks belong to its dictionary.
-        private static readonly Script[] Scripts =
-        {
-            new Script { First = 0x0E01, Last = 0x0E5B, Resource = "thaidict" },
-            new Script { First = 0x0E81, Last = 0x0EDF, Resource = "laodict" },
-            new Script { First = 0x1000, Last = 0x109F, Resource = "burmesedict" },
-            new Script { First = 0x1780, Last = 0x17F9, Resource = "khmerdict" },
-            new Script { First = 0xA9E0, Last = 0xA9FE, Resource = "burmesedict" },
-            new Script { First = 0xAA60, Last = 0xAA7F, Resource = "burmesedict" },
-        };
+        // The dictionaries ICU ships, by the script they cut — Myanmar's extension blocks are
+        // Myanmar script, so its dictionary serves them. Which characters need one at all is
+        // Unicode's answer, not a range typed here (ScriptOf).
+        private static readonly Script Thai = new Script { Resource = "thaidict" };
+        private static readonly Script Lao = new Script { Resource = "laodict" };
+        private static readonly Script Burmese = new Script { Resource = "burmesedict" };
+        private static readonly Script Khmer = new Script { Resource = "khmerdict" };
 
         private sealed class Dictionary
         {
@@ -167,10 +163,19 @@ namespace UnityGameTranslator.Core.TextShaping
             return Array.BinarySearch(IndicTables.VisualOrderLeft, (int)text[at - 1]) < 0;
         }
 
+        /// <summary>
+        /// The dictionary a character is cut with: one Unicode says needs a dictionary to find its
+        /// line breaks (Line_Break SA, "complex context dependent", UAX #14 — never a block range
+        /// typed by hand, 2026-10-02), of a script ICU ships one for. Null otherwise.
+        /// </summary>
         private static Script ScriptOf(char c)
         {
-            for (int s = 0; s < Scripts.Length; s++)
-                if (c >= Scripts[s].First && c <= Scripts[s].Last) return Scripts[s];
+            if (!LineBreaker.NeedsDictionary(c)) return null;
+            int script = ShapingCommon.ScriptOf(c);
+            if (script == ShapingTables.Script.Thai) return Thai;
+            if (script == ShapingTables.Script.Lao) return Lao;
+            if (script == ShapingTables.Script.Myanmar) return Burmese;
+            if (script == ShapingTables.Script.Khmer) return Khmer;
             return null;
         }
 

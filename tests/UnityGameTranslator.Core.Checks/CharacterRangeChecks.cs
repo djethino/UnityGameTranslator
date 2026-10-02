@@ -61,6 +61,7 @@ namespace UnityGameTranslator.Core.Checks
             ["TextShaping/UseShaper.cs"] = "transcribes the Universal Shaping Engine specification",
             ["TextShaping/DefaultShaper.cs"] = "Thai and Lao SARA AM, as HarfBuzz hb-ot-shaper-thai does",
             ["TextShaping/PresentationFormsShaper.cs"] = "Unicode's Arabic presentation forms: a fallback that exists for that script only, by Unicode's design",
+            ["TextShaping/WordBreaker.cs"] = "names the script each ICU dictionary it ships was made for; which characters need one is Unicode's Line_Break SA",
         };
 
         /// <summary>
@@ -75,10 +76,6 @@ namespace UnityGameTranslator.Core.Checks
         /// </summary>
         private static readonly Dictionary<string, (string[] found, string entry)> KnownFaults = new Dictionary<string, (string[], string)>
         {
-            ["Engine/TextRouter.Fit.cs"] = (new[] { "U+3040", "U+30FF", "U+3400", "U+9FFF", "U+F900", "U+FAFF", "U+3000", "U+303F", "U+FF00", "U+FFEF", "STRING" },
-                "A6 (line breaking by CJK ranges and a punctuation list, instead of UAX #14)"),
-            ["TextShaping/WordBreaker.cs"] = (new[] { "U+0E01", "U+0E5B", "U+0E81", "U+0EDF", "U+1000", "U+109F", "U+1780", "U+17F9", "U+A9E0", "U+A9FE", "U+AA60", "U+AA7F" },
-                "B (one ICU dictionary per script), its ranges copied by hand instead of read from ShapingCommon.ScriptOf"),
         };
 
         // A comparison, a case, a dictionary key — and an assignment or initializer: a range kept as

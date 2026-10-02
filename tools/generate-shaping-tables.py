@@ -31,7 +31,8 @@ every table covers the whole code space, the supplementary planes included:
 Inputs (downloaded from the pinned UCD below unless given a dir):
   IndicSyllabicCategory.txt IndicPositionalCategory.txt ArabicShaping.txt
   DerivedCoreProperties.txt UnicodeData.txt Blocks.txt Scripts.txt PropertyValueAliases.txt
-  DerivedNormalizationProps.txt PropList.txt BidiMirroring.txt
+  DerivedNormalizationProps.txt PropList.txt BidiMirroring.txt LineBreak.txt EastAsianWidth.txt
+  emoji/emoji-data.txt
 plus HarfBuzz's three ms-use files (from its repository, MIT): the two "Additional" property
 files and IndicShapingInvalidCluster.txt, and hb-ot-shaper.hh; CLDR's scriptMetadata.json.
 Every Unicode fact comes from the UCD of ONE version — never from Python's unicodedata, which is
@@ -102,6 +103,29 @@ def parse_derived(text, wanted):
         for cp in range(a, b + 1):
             table[cp] = True
     return table
+
+
+def parse_with_defaults(text, field=1):
+    """A UCD property file over the WHOLE code space: its '# @missing' defaults first, in order (the
+    later ones narrower), then its explicit lines — unassigned code points get the value Unicode gives
+    them (an unassigned CJK code point is ID for line breaking, W for East Asian Width)."""
+    values = [None] * CODE_SPACE
+    def fill(rng, value):
+        parts = rng.strip().split("..")
+        a = int(parts[0], 16)
+        b = int(parts[1], 16) if len(parts) > 1 else a
+        for cp in range(a, b + 1):
+            values[cp] = value
+    for line in text.splitlines():
+        if line.startswith("# @missing:"):
+            fields = [x.strip() for x in line[len("# @missing:"):].split(";")]
+            fill(fields[0], fields[field])
+    for line in text.splitlines():
+        body = line.split("#")[0].strip()
+        if body:
+            fields = [x.strip() for x in body.split(";")]
+            fill(fields[0], fields[field])
+    return values
 
 
 def parse_unicode_data(text):
@@ -444,6 +468,17 @@ def main():
             a, b = [int(x.strip(), 16) for x in body.split(";")]
             mirrors.append((a, b))
     mirrors.sort()
+
+    # UAX #14's inputs: the Line_Break class of every code point (LineBreak.txt), the East Asian
+    # Width set its rules call $EastAsian (F, W, H — EastAsianWidth.txt) and Extended_Pictographic
+    # (emoji-data.txt). Class names are Unicode's short aliases, numbered here in their sorted order.
+    line_break = parse_with_defaults(load("LineBreak.txt", src_dir, UCD))
+    lb_names = sorted(set(v for v in line_break if v is not None))
+    lb_index = {n: i for i, n in enumerate(lb_names)}
+    lb_runs = runs({cp: lb_index[v] for cp, v in enumerate(line_break) if v is not None})
+    east_asian_width = parse_with_defaults(load("EastAsianWidth.txt", src_dir, UCD))
+    east_asian = ranges(cp for cp, v in enumerate(east_asian_width) if v in ("F", "W", "H"))
+    pictographic = ranges(parse_derived(load("emoji/emoji-data.txt", src_dir, UCD), "Extended_Pictographic"))
     blocks = parse_blocks(load(FILES[5], src_dir, UCD))
     scripts, _ = parse_props(load(FILES[6], src_dir, UCD))
     iso_codes = parse_script_aliases(load(FILES[7], src_dir, UCD))
@@ -717,6 +752,29 @@ def main():
         w("            " + ", ".join(f"0x{a:04X}, 0x{b:04X}, {v}" for a, b, v in gc_runs[i:i + 6]) + ",")
     w("        };")
     w("")
+    w("        /// <summary>Line_Break classes (UAX #14), Unicode's short aliases.</summary>")
+    w("        internal static class LineBreak")
+    w("        {")
+    for name in lb_names:
+        w(f"            internal const int {name} = {lb_index[name]};")
+    w("        }")
+    w("")
+    w("        /// <summary>Line_Break of every code point (defaults of unassigned ones included) — runs (first, last, class), sorted.</summary>")
+    w("        internal static readonly int[] LineBreakClasses =")
+    w("        {")
+    for i in range(0, len(lb_runs), 6):
+        w("            " + ", ".join(f"0x{a:04X}, 0x{b:04X}, {v}" for a, b, v in lb_runs[i:i + 6]) + ",")
+    w("        };")
+    w("")
+    for title, name, rngs in (("East_Asian_Width F, W or H — UAX #14's $EastAsian", "EastAsianWide", east_asian),
+                              ("Extended_Pictographic (emoji-data.txt)", "ExtendedPictographic", pictographic)):
+        w(f"        /// <summary>{title} — inclusive ranges, sorted, as (first, last) pairs.</summary>")
+        w(f"        internal static readonly int[] {name} =")
+        w("        {")
+        for i in range(0, len(rngs), 4):
+            w("            " + ", ".join(f"0x{a:04X}, 0x{b:04X}" for a, b in rngs[i:i + 4]) + ",")
+        w("        };")
+        w("")
     w("        /// <summary>Bidi_Mirroring_Glyph (BidiMirroring.txt) — flattened (code point, its mirror), sorted.</summary>")
     w("        internal static readonly int[] BidiMirrors =")
     w("        {")

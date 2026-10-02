@@ -303,6 +303,8 @@ namespace UnityGameTranslator.Core.Checks
             Section("Word breaking (Thai, Lao, Khmer, Myanmar)", WordBreakerChecks.Run);
 
             Section("Bidi conformance (Unicode suite)", BidiConformanceChecks.Run);
+            Section("Line break conformance (Unicode suite)", LineBreakConformanceChecks.Run);
+            Section("A late translation wrapped the way the game wraps", LineFitChecks.Run);
 
             Section("OpenType layout (GSUB/GPOS/GDEF on a real font)", OpenTypeLayoutChecks.Run);
 

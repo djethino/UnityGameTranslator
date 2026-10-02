@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using System.Text;
 
 namespace UnityGameTranslator.Core
@@ -200,11 +199,17 @@ namespace UnityGameTranslator.Core
         /// </summary>
         internal static string WrapLikeTheGame(string text, LineFit fit, Func<string, float?> measure)
         {
-            var units = BreakUnits(text);
             var sb = new StringBuilder();
             string line = "";
-            foreach (string unit in units)
+            int start = 0;
+            // Where a line may break: Unicode's line breaking algorithm (TextShaping.LineBreaker,
+            // UAX #14) — after a space, between ideographs, never before a closing mark or a small
+            // kana, whatever the script; a unit keeps the spaces that follow it. A mandatory break
+            // (a newline the text holds) ends the line where the text ends it.
+            foreach (var opportunity in TextShaping.LineBreaker.Opportunities(text))
             {
+                string unit = text.Substring(start, opportunity.Key - start);
+                start = opportunity.Key;
                 string candidate = line + unit;
                 float? w = measure(candidate.TrimEnd());
                 if (w == null) return null;
@@ -215,47 +220,14 @@ namespace UnityGameTranslator.Core
                     line = unit.TrimStart();
                 }
                 else line = candidate;
+                if (opportunity.Value == TextShaping.LineBreaker.Break.Mandatory && opportunity.Key < text.Length)
+                {
+                    sb.Append(line);
+                    line = "";
+                }
             }
             sb.Append(line);
             return sb.ToString();
         }
-
-        /// <summary>
-        /// Where a line may be broken: after a space or a zero-width space (which WordBreaker puts
-        /// between the words of scripts written without spaces), and between two characters of
-        /// scripts that break anywhere (Han, kana) — except before the punctuation that must not
-        /// start a line. Each unit keeps its trailing space.
-        /// </summary>
-        private static List<string> BreakUnits(string text)
-        {
-            var units = new List<string>();
-            int start = 0;
-            for (int i = 0; i < text.Length; i++)
-            {
-                char c = text[i];
-                bool endHere = c == ' ' || c == '​';
-                if (!endHere && i + 1 < text.Length && BreaksAnywhere(c) && BreaksAnywhere(text[i + 1])
-                    && !NoLineStart(text[i + 1]))
-                    endHere = true;
-                if (endHere)
-                {
-                    // Spaces that follow stay with this unit.
-                    while (i + 1 < text.Length && text[i + 1] == ' ') i++;
-                    units.Add(text.Substring(start, i + 1 - start));
-                    start = i + 1;
-                }
-            }
-            if (start < text.Length) units.Add(text.Substring(start));
-            return units;
-        }
-
-        private static bool BreaksAnywhere(char c) =>
-            (c >= '぀' && c <= 'ヿ')    // hiragana, katakana
-            || (c >= '㐀' && c <= '鿿') // CJK ideographs
-            || (c >= '豈' && c <= '﫿')
-            || (c >= '　' && c <= '〿') // CJK punctuation
-            || (c >= '＀' && c <= '￯');
-
-        private static bool NoLineStart(char c) => "、。，．！？：；」』）】〉》ー…・".IndexOf(c) >= 0;
     }
 }

@@ -5038,37 +5038,61 @@ namespace UnityGameTranslator.Core
         {
             if (string.IsNullOrEmpty(path) || fontAssetType == null || !System.IO.File.Exists(path)) return null;
 
-            foreach (var method in fontAssetType.GetMethods(BindingFlags.Public | BindingFlags.Static))
+            // 🔴 The overload that takes the population mode, with DynamicOS — what TextCore's own
+            // CreateFontAssetFromFamilyName does with a file. The public 7-parameter overload passes
+            // Dynamic, which adds glyphs later from a SOURCE FONT OBJECT a path-made asset does not
+            // have: the asset was made, and every text drawn with it came out empty (read in Unity
+            // 6000.5's FontAsset, 2026-10-02). Private on that engine, hence NonPublic.
+            MethodInfo chosen = null;
+            foreach (var method in fontAssetType.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static))
             {
                 if (method.Name != "CreateFontAsset" || method.IsGenericMethod) continue;
-                var parameters = method.GetParameters();
-                if (parameters.Length < 7 || parameters[0].ParameterType != typeof(string) || parameters[1].ParameterType != typeof(int)) continue;
-
-                var args = new object[parameters.Length];
-                args[0] = path;
-                args[1] = 0;   // face: a derived copy is a single face
-                int ints = 0;
-                int atlasSide = AtlasFloor(ExpectedGlyphCount(), SdfSampling, SdfPadding, false);
-                for (int i = 2; i < parameters.Length; i++)
-                {
-                    var pType = parameters[i].ParameterType;
-                    if (pType.Name.Contains("GlyphRenderMode")) args[i] = pType.IsEnum ? Enum.ToObject(pType, 4166) : (object)4166;   // SDFAA_HINTED
-                    else if (pType == typeof(int)) { args[i] = ints == 0 ? SdfSampling : ints == 1 ? SdfPadding : atlasSide; ints++; }
-                    else args[i] = parameters[i].HasDefaultValue ? parameters[i].DefaultValue : null;
-                }
-
-                try
-                {
-                    var result = method.Invoke(null, args);
-                    if (result is UnityEngine.Object made && made != null)
-                    {
-                        made.name = name;
-                        TranslatorCore.LogInfo($"[FontManager] SDF asset made from the file of '{name}' ({System.IO.Path.GetFileName(path)})");
-                        return result;
-                    }
-                }
-                catch (Exception ex) { Faults.Say("FontManager.CreateSdfFontAssetFromFile", ex, System.IO.Path.GetFileName(path)); }
+                var ps = method.GetParameters();
+                if (ps.Length < 7 || ps[0].ParameterType != typeof(string) || ps[1].ParameterType != typeof(int)) continue;
+                bool hasMode = Array.Exists(ps, p => p.ParameterType.Name.Contains("AtlasPopulationMode"));
+                if (chosen == null || hasMode) chosen = method;
+                if (hasMode) break;
             }
+            if (chosen == null) return null;
+
+            var parameters = chosen.GetParameters();
+            var args = new object[parameters.Length];
+            args[0] = path;
+            args[1] = 0;   // face: a derived copy is a single face
+            int ints = 0;
+            bool dynamicOs = false;
+            int atlasSide = AtlasFloor(ExpectedGlyphCount(), SdfSampling, SdfPadding, false);
+            for (int i = 2; i < parameters.Length; i++)
+            {
+                var pType = parameters[i].ParameterType;
+                if (pType.Name.Contains("GlyphRenderMode")) args[i] = pType.IsEnum ? Enum.ToObject(pType, 4166) : (object)4166;   // SDFAA_HINTED
+                else if (pType.Name.Contains("AtlasPopulationMode") && pType.IsEnum && Enum.IsDefined(pType, "DynamicOS"))
+                {
+                    args[i] = Enum.Parse(pType, "DynamicOS");
+                    dynamicOs = true;
+                }
+                else if (pType == typeof(int)) { args[i] = ints == 0 ? SdfSampling : ints == 1 ? SdfPadding : atlasSide; ints++; }
+                else if (pType == typeof(bool)) args[i] = true;   // multi-atlas
+                else args[i] = parameters[i].HasDefaultValue ? parameters[i].DefaultValue : null;
+            }
+
+            try
+            {
+                var result = chosen.Invoke(null, args);
+                if (result is UnityEngine.Object made && made != null)
+                {
+                    made.name = name;
+                    // As CreateFontAssetFromFamilyName marks its own.
+                    if (dynamicOs)
+                    {
+                        try { fontAssetType.GetProperty("InternalDynamicOS", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?.SetValue(result, true, null); }
+                        catch (Exception ex) { Faults.Say("FontManager.CreateSdfFontAssetFromFile InternalDynamicOS", ex); }
+                    }
+                    TranslatorCore.LogInfo($"[FontManager] SDF asset made from the file of '{name}' ({System.IO.Path.GetFileName(path)}, {(dynamicOs ? "DynamicOS" : "Dynamic — glyphs may not be added later")})");
+                    return result;
+                }
+            }
+            catch (Exception ex) { Faults.Say("FontManager.CreateSdfFontAssetFromFile", ex, System.IO.Path.GetFileName(path)); }
             return null;
         }
 

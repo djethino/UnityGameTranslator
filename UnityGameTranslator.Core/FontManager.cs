@@ -4740,22 +4740,20 @@ namespace UnityGameTranslator.Core
             if (!SystemFonts.Contains(cleanName) && CustomFontLoader.FindSystemTtfPath(cleanName) == null)
                 return null;
 
-            // An installed font carrying a script that needs shaping — the translation named it at
-            // start and it has a derived copy: TMP text is drawn by our rasterizer from its file, as a
-            // fonts/ font's, so its OpenType tables shape the text (ShapingFontAsset). A Unity-built
-            // asset would leave conjuncts apart. Not ready yet (drawn in the background) is not a
-            // failure: asked again when it is, like a fonts/ font.
-            if (DerivedFonts.SourcePathOfInstalled(cleanName) != null)
+            // 🔴 Our rasterizer FIRST, for every installed font (user, 2026-10-02): the same atlas as a
+            // fonts/ font's — whole, cached, shaped by the font's own tables (ShapingFontAsset) where
+            // the script needs it. A Unity-built asset fills its atlas while the game runs, and in one
+            // game its letters were drawn away from their place mid-game, a hole where they belonged
+            // (Arabic, a 2023 IL2CPP build; the same text right with ours). Not ready yet (drawn in the
+            // background) is not a failure: asked again when it is, like a fonts/ font.
+            var ours = CustomFontLoader.LoadSystemTtfFont(cleanName);
+            if (ours != null)
             {
-                var ours = CustomFontLoader.LoadSystemTtfFont(cleanName);
-                if (ours != null)
-                {
-                    if (ours is UnityEngine.Object created) _createdFallbackFontNames.Add(created.name);
-                    return ours;
-                }
-                if (CustomFontLoader.IsFontDeferred(cleanName)) return null;
-                TranslatorCore.LogWarning($"[FontManager] '{cleanName}': our atlas could not be built — TMP text in it keeps Unity's, unshaped");
+                if (ours is UnityEngine.Object created) _createdFallbackFontNames.Add(created.name);
+                return ours;
             }
+            if (CustomFontLoader.IsFontDeferred(cleanName)) return null;
+            TranslatorCore.LogWarning($"[FontManager] '{cleanName}': our atlas could not be built — TMP text in it is drawn by Unity's asset instead");
 
             // Create a Unity Font from system font name
             Font unityFont = SystemFonts.Contains(cleanName) ? CreateUnityFont(cleanName) : null;
@@ -4777,14 +4775,6 @@ namespace UnityGameTranslator.Core
                     TranslatorCore.LogDebug($"[FontManager] Created legacy TMP_FontAsset from: {cleanName}");
                     return legacyAsset;
                 }
-            }
-
-            // Last resort: try TTF rasterizer (finds the .ttf on disk and rasterizes to SDF)
-            var rasterizedAsset = CustomFontLoader.LoadSystemTtfFont(cleanName);
-            if (rasterizedAsset != null)
-            {
-                TranslatorCore.LogDebug($"[FontManager] Created TMP_FontAsset via TTF rasterizer: {cleanName}");
-                return rasterizedAsset;
             }
 
             return null;

@@ -390,16 +390,33 @@ namespace UnityGameTranslator.Core.UI.Components
             BuildCategories();
             bool showCategories = _categories.Count > 1;
 
-            // 🔴 Decided here, on what the list actually holds, rather than passed in by whoever
-            // built the screen — see the note on _showSearch. `Overflows` rather than `NeedsSearch`
-            // because the popup's height is settled below by our own geometry: it opens downwards
-            // from the button and nothing flips it, so the socle is asked the question it can
-            // answer and not the one it cannot.
-            _showSearch = DropdownFit.Overflows(_options.Length, ITEM_HEIGHT + ITEM_SPACING,
-                                                _popupHeight);
+            // 🔴 Where it opens, and how tall: below the button when the list fits there, above it
+            // when it does not and there is more room above, and never past the screen's edge on
+            // the side it opens — cut to the room there, never under the socle's fewest rows. It
+            // used to open downwards whatever the room, and a dropdown low in a window ran off the
+            // bottom of the screen with its last entries out of reach (2026-10-02).
+            //
+            // 🔴 The search field is decided here, on what the list holds against the height it
+            // actually gets — see the note on _showSearch. `Overflows` rather than `NeedsSearch`:
+            // the height is this popup's geometry (the caller's wish, cut to the room), not the
+            // socle's share of a window.
+            float rowHeight = ITEM_HEIGHT + ITEM_SPACING;
+            float categoriesHeight = showCategories ? CHIP_HEIGHT + 4f : 0f;
+            MeasureVerticalRoom(out float roomBelow, out float roomAbove);
 
-            float popupHeight = _popupHeight + (_showSearch ? 35 : 10)
-                + (showCategories ? CHIP_HEIGHT + 4f : 0f);
+            float ListHeightIn(float room, bool search) =>
+                Mathf.Min(_popupHeight, Mathf.Max(DropdownFit.LeastRows * rowHeight,
+                                                  room - (search ? 35f : 10f) - categoriesHeight));
+
+            bool fitsBelow = _popupHeight + 10f + categoriesHeight <= roomBelow;
+            bool opensUp = !fitsBelow && roomAbove > roomBelow;
+            float room = opensUp ? roomAbove : roomBelow;
+
+            float listHeight = ListHeightIn(room, search: false);
+            _showSearch = DropdownFit.Overflows(_options.Length, rowHeight, listHeight);
+            if (_showSearch) listHeight = ListHeightIn(room, search: true);
+
+            float popupHeight = listHeight + (_showSearch ? 35 : 10) + categoriesHeight;
 
             // Create popup as child of the button
             _popupRoot = UIFactory.CreateUIObject($"SearchableDropdown_Popup_{_name}", _rootObject);
@@ -410,15 +427,17 @@ namespace UnityGameTranslator.Core.UI.Components
             popupCanvas.sortingOrder = 32000; // Above panel content but reasonable
             _popupRoot.AddComponent<GraphicRaycaster>();
 
-            // Position below the button
+            // Below the button (top-left corner on its bottom-left), or above it (bottom-left corner
+            // on its top-left)
             RectTransform popupRect = _popupRoot.GetComponent<RectTransform>();
-            popupRect.anchorMin = new Vector2(0f, 0f);
-            popupRect.anchorMax = new Vector2(0f, 0f);
-            popupRect.pivot = new Vector2(0f, 1f); // Top-left pivot
-            popupRect.anchoredPosition = Vector2.zero; // At button's bottom-left
+            float edge = opensUp ? 1f : 0f;
+            popupRect.anchorMin = new Vector2(0f, edge);
+            popupRect.anchorMax = new Vector2(0f, edge);
+            popupRect.pivot = new Vector2(0f, opensUp ? 0f : 1f);
+            popupRect.anchoredPosition = Vector2.zero;
             popupRect.sizeDelta = new Vector2(buttonWidth, popupHeight);
 
-            TranslatorCore.LogDebug($"[SearchableDropdown] Popup created with overrideSorting, size=({buttonWidth}, {popupHeight})");
+            TranslatorCore.LogDebug($"[SearchableDropdown] Popup created with overrideSorting, size=({buttonWidth}, {popupHeight}), {(opensUp ? "above" : "below")} (room below {roomBelow:F0}, above {roomAbove:F0})");
 
             // Add background to popup root
             Image bgImage = _popupRoot.AddComponent<Image>();
@@ -700,6 +719,40 @@ namespace UnityGameTranslator.Core.UI.Components
             float available = canvasRect.rect.xMax - leftEdge - 12f;
 
             return Mathf.Max(fallbackWidth, available);
+        }
+
+        /// <summary>
+        /// Vertical room from the button's bottom edge to the canvas's bottom, and from its top edge
+        /// to the canvas's top, less the same margin as <see cref="GetAvailableWidth"/>. Same means:
+        /// TransformPoint/InverseTransformPoint only (RectTransformUtility crashes on IL2CPP).
+        /// Unknown canvas → all the room in the world below, which is what the popup did before.
+        /// </summary>
+        private void MeasureVerticalRoom(out float below, out float above)
+        {
+            var rootRect = _rootObject.GetComponent<RectTransform>();
+            var canvas = _rootObject.GetComponentInParent<Canvas>();
+            var canvasRect = canvas != null ? canvas.rootCanvas.GetComponent<RectTransform>() : null;
+            if (rootRect == null || canvasRect == null)
+            {
+                below = float.MaxValue;
+                above = 0f;
+                return;
+            }
+
+            Rect own = rootRect.rect;
+            float bottom = canvasRect.InverseTransformPoint(rootRect.TransformPoint(new Vector3(own.xMin, own.yMin, 0f))).y;
+            float top = canvasRect.InverseTransformPoint(rootRect.TransformPoint(new Vector3(own.xMin, own.yMax, 0f))).y;
+            below = Mathf.Max(0f, bottom - canvasRect.rect.yMin - 12f);
+            above = Mathf.Max(0f, canvasRect.rect.yMax - top - 12f);
+
+            // Measured in the canvas's units; the popup is sized in the button's, which differ when
+            // a window between them is scaled.
+            float scale = canvasRect.lossyScale.y > 0f ? rootRect.lossyScale.y / canvasRect.lossyScale.y : 1f;
+            if (scale > 0f && !Mathf.Approximately(scale, 1f))
+            {
+                below /= scale;
+                above /= scale;
+            }
         }
 
         private void ScrollToSelectedItem()

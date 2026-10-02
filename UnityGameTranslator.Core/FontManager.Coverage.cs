@@ -58,7 +58,8 @@ namespace UnityGameTranslator.Core
         /// notice is about the GAME's fonts: one of ours reaching here is a component whose game font
         /// could not be told (GetSettingsFontName), and naming our own copy to the player — "'UGT Sys
         /// Adobe Devanagari #0' draws Hindi incorrectly" (2026-10-02) — sends them to a font they
-        /// cannot set.
+        /// cannot set. Also the one test the detection asks (Register*, the game font lists): the
+        /// copy drawing the mod's window was listed as a game font and offered as "[Game] UGT Sys …".
         /// </summary>
         private static bool IsOurFont(string fontName) =>
             DerivedFonts.IsOurFamily(fontName) || _createdFallbackFontNames.Contains(fontName);

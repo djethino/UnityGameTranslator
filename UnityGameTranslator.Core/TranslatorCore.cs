@@ -1180,6 +1180,11 @@ namespace UnityGameTranslator.Core
 
             foreach (var fontProp in obj.Properties())
             {
+                // One of the mod's own copies ("UGT …") is no font of the game: a file written while
+                // the mod's window registered its own font holds one, and it is dropped here so the
+                // next save no longer carries it.
+                if (DerivedFonts.IsOurFamily(fontProp.Name)) continue;
+
                 var settings = new FontSettings();
                 var fontObj = fontProp.Value as JObject;
                 if (fontObj != null)

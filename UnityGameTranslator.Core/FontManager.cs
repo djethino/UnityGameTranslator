@@ -1167,8 +1167,9 @@ namespace UnityGameTranslator.Core
             string fontName = (fontObj is UnityEngine.Object uobj) ? uobj.name : null;
             if (string.IsNullOrEmpty(fontName)) return;
 
-            // Don't register fonts we created for fallback — unless it's also a real game font
-            if (_createdFallbackFontNames.Contains(fontName)
+            // Don't register fonts we created (a fallback, a derived copy "UGT …" drawing the mod's own
+            // window) — unless it's also a real game font
+            if (IsOurFont(fontName)
                 && !_gameUnityFonts.ContainsKey(fontName)
                 && !_gameTMPFonts.ContainsKey(fontName))
                 return;
@@ -1215,6 +1216,10 @@ namespace UnityGameTranslator.Core
         public static void RegisterUnityFontObject(string fontName, object fontObj)
         {
             if (string.IsNullOrEmpty(fontName) || fontObj == null) return;
+            // 🔴 Never one of ours: the mod's window drawn with a System font wears a derived copy
+            // ("UGT Sys X"), its texts pass through the same setter, and the copy was then offered as
+            // a [Game] font and listed in the Fonts tab as a font of the game (2026-10-02).
+            if (IsOurFont(fontName)) return;
             var font = fontObj as Font;
             if (font == null) font = TypeHelper.Il2CppCast(fontObj, typeof(Font)) as Font;
 
@@ -1238,8 +1243,9 @@ namespace UnityGameTranslator.Core
         {
             if (string.IsNullOrEmpty(fontName)) return;
 
-            // Don't register fonts we created for fallback — unless it's also a real game font
-            if (_createdFallbackFontNames.Contains(fontName)
+            // Don't register fonts we created (a fallback, a derived copy "UGT …" drawing the mod's own
+            // window) — unless it's also a real game font
+            if (IsOurFont(fontName)
                 && !_gameUnityFonts.ContainsKey(fontName)
                 && !_gameTMPFonts.ContainsKey(fontName))
                 return;
@@ -4418,7 +4424,7 @@ namespace UnityGameTranslator.Core
             {
                 var font = obj as Font ?? TypeHelper.Il2CppCast(obj, typeof(Font)) as Font;
                 if (font == null || !string.Equals(font.name, name, StringComparison.OrdinalIgnoreCase)) continue;
-                if (IsClonedFont(font) || _createdFallbackFontNames.Contains(font.name)) continue;
+                if (IsClonedFont(font) || IsOurFont(font.name)) continue;
 
                 _gameUnityFonts[font.name] = font;
                 TranslatorCore.LogDebug($"[FontManager] Found game Unity font by name: {font.name}");
@@ -5448,7 +5454,7 @@ namespace UnityGameTranslator.Core
                     if (string.IsNullOrEmpty(name)) continue;
 
                     // Skip fonts we created
-                    if (_createdFallbackFontNames.Contains(name)) continue;
+                    if (IsOurFont(name)) continue;
 
                     if (!_gameTMPFonts.ContainsKey(name))
                     {

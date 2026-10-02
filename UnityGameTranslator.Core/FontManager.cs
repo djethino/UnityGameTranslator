@@ -5024,17 +5024,6 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// An SDF asset made from the font FILE — CreateFontAsset(path, face, sampling, padding,
-        /// render mode, width, height), TextCore's overload since Unity 2023 — same sampling, padding,
-        /// render mode and atlas floor as the Font overloads below. Named <paramref name="name"/>.
-        ///
-        /// 🔴 The road for a DERIVED copy (DerivedFonts). Its Font object is an OS font with no data
-        /// the Font overload can use, and its name ("UGT Sys Tahoma #0") is no family the system
-        /// lists, so both other creators fail on it — while its file is ours and on disk (2026-10-02,
-        /// a UI Toolkit game: "'UGT Sys Tahoma #0' cannot be turned into an SDF asset").
-        /// Null when the engine has no such overload or the file is missing.
-        /// </summary>
-        /// <summary>
         /// Asks a freshly made SDF asset to take <paramref name="probe"/> and says what it could not, its
         /// atlas size and its material's shader — once per asset. A text drawn with an asset that holds
         /// no glyph shows NOTHING, with no error anywhere (2026-10-02, a UI Toolkit game: texts empty
@@ -5065,77 +5054,44 @@ namespace UnityGameTranslator.Core
             TranslatorCore.LogInfo($"[FontManager] '{name}' asked for {probe.Length} character(s): {added}; atlas {atlas}; shader {shader}");
         }
 
+        /// <summary>
+        /// An SDF asset made from a font FILE: a Font made from the file (new Font(path), the engine's
+        /// Internal_CreateFontFromPath), then the asset from that Font by the creators below — a
+        /// Dynamic asset WITH its source font. Named <paramref name="name"/>; the Font is kept out of
+        /// UnloadUnusedAssets with it. Null when the engine cannot make a Font from a path.
+        ///
+        /// 🔴 The road for a DERIVED copy (DerivedFonts), and the only one that draws on Unity 6's
+        /// text system (measured at the bench, Unity 6000.6, 2026-10-02 — banc-unity -probeMode
+        /// uitkfile, one label per way):
+        /// - the copy's OS Font object has no data, and its name is no family the system lists: the
+        ///   Font and family creators fail on it;
+        /// - an asset made from the PATH (TextCore's path overload) is Dynamic with no source Font:
+        ///   "FontAsset is invalid. Please assign a Source Font File." — nothing drawn;
+        /// - DynamicOS from the path reloads the face by family, which the engine's font engine does
+        ///   not find for our copy (nor after AddFontResourceEx): nothing drawn;
+        /// - frozen Static: "Advanced text system cannot use static font asset";
+        /// - a Font made from the file, then its asset: drawn.
+        /// </summary>
         internal static object CreateSdfFontAssetFromFile(string path, Type fontAssetType, string name, string probe = null)
         {
             if (string.IsNullOrEmpty(path) || fontAssetType == null || !System.IO.File.Exists(path)) return null;
 
-            // 🔴 DynamicOS, through the overload that takes the population mode — what TextCore's own
-            // CreateFontAssetFromFamilyName does with a file. Read in Unity 6000.5 (2026-10-02):
-            // - the public path overload makes a DYNAMIC asset with no source Font; the Advanced Text
-            //   Generator refuses it outright — Player.log: "FontAsset is invalid. Please assign a
-            //   Source Font File." — and every text drawn with it was empty, though it took its glyphs;
-            // - a DynamicOS asset reloads its face by family AND style (LoadFontFace), which the engine
-            //   finds among the fonts it lists — the derived copies included (FontFolderRedirect).
-            //   Tried before the unload shield existed: the text showed, then vanished with the asset.
-            // Private on that engine, hence NonPublic.
-            MethodInfo chosen = null;
-            bool withMode = false;
-            foreach (var method in fontAssetType.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static))
-            {
-                if (method.Name != "CreateFontAsset" || method.IsGenericMethod) continue;
-                var ps = method.GetParameters();
-                if (ps.Length < 7 || ps[0].ParameterType != typeof(string) || ps[1].ParameterType != typeof(int)) continue;
-                bool hasMode = Array.Exists(ps, p => p.ParameterType.Name.Contains("AtlasPopulationMode"));
-                if (chosen == null || hasMode) { chosen = method; withMode = hasMode; }
-                if (hasMode) break;
-            }
-            if (chosen == null) return null;
+            Font fromFile;
+            try { fromFile = new Font(path); }
+            catch (Exception ex) { Faults.Say("FontManager.CreateSdfFontAssetFromFile Font", ex, System.IO.Path.GetFileName(path)); return null; }
+            if (fromFile == null) return null;
+            fromFile.hideFlags |= HideFlags.DontUnloadUnusedAsset;
 
-            var parameters = chosen.GetParameters();
-            var args = new object[parameters.Length];
-            args[0] = path;
-            args[1] = 0;   // face: a derived copy is a single face
-            int ints = 0;
-            bool dynamicOs = false;
-            int atlasSide = AtlasFloor(ExpectedGlyphCount(), SdfSampling, SdfPadding, false);
-            for (int i = 2; i < parameters.Length; i++)
+            var result = CreateSdfFontAsset(fromFile, fontAssetType);
+            if (!(result is UnityEngine.Object made) || made == null)
             {
-                var pType = parameters[i].ParameterType;
-                if (pType.Name.Contains("GlyphRenderMode")) args[i] = pType.IsEnum ? Enum.ToObject(pType, 4166) : (object)4166;   // SDFAA_HINTED
-                else if (pType.Name.Contains("AtlasPopulationMode") && pType.IsEnum && Enum.IsDefined(pType, "DynamicOS"))
-                {
-                    args[i] = Enum.Parse(pType, "DynamicOS");
-                    dynamicOs = true;
-                }
-                else if (pType == typeof(int)) { args[i] = ints == 0 ? SdfSampling : ints == 1 ? SdfPadding : atlasSide; ints++; }
-                else if (pType == typeof(bool)) args[i] = true;   // multi-atlas
-                else args[i] = parameters[i].HasDefaultValue ? parameters[i].DefaultValue : null;
+                TranslatorCore.LogWarning($"[FontManager] no SDF asset from the file of '{name}' ({System.IO.Path.GetFileName(path)}) — this engine made no usable Font from it");
+                return null;
             }
-
-            try
-            {
-                var result = chosen.Invoke(null, args);
-                if (result is UnityEngine.Object made && made != null)
-                {
-                    made.name = name;
-                    // As CreateFontAssetFromFamilyName marks its own (a FIELD on that engine).
-                    if (dynamicOs)
-                    {
-                        try
-                        {
-                            var internalOs = fontAssetType.GetField("InternalDynamicOS", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-                            if (internalOs != null) internalOs.SetValue(result, true);
-                            else fontAssetType.GetProperty("InternalDynamicOS", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?.SetValue(result, true, null);
-                        }
-                        catch (Exception ex) { Faults.Say("FontManager.CreateSdfFontAssetFromFile InternalDynamicOS", ex); }
-                    }
-                    TranslatorCore.LogInfo($"[FontManager] SDF asset made from the file of '{name}' ({System.IO.Path.GetFileName(path)}, {(dynamicOs ? "DynamicOS" : withMode ? "no DynamicOS on this engine" : "Dynamic, no source font")})");
-                    SayWhatTheAssetDraws(result, name, probe);
-                    return result;
-                }
-            }
-            catch (Exception ex) { Faults.Say("FontManager.CreateSdfFontAssetFromFile", ex, System.IO.Path.GetFileName(path)); }
-            return null;
+            made.name = name;
+            TranslatorCore.LogInfo($"[FontManager] SDF asset made from the file of '{name}' ({System.IO.Path.GetFileName(path)})");
+            SayWhatTheAssetDraws(result, name, probe);
+            return result;
         }
 
         internal static object CreateSdfFontAsset(Font font, Type fontAssetType)

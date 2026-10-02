@@ -458,6 +458,7 @@ namespace UnityGameTranslator.Core.Rasterizer
             // Look for nameID 4 (Full Name) or nameID 1 (Family Name)
             string familyName = null;
             string fullName = null;
+            bool familyEnglish = false, fullEnglish = false;
 
             for (int i = 0; i < count; i++)
             {
@@ -490,10 +491,12 @@ namespace UnityGameTranslator.Core.Rasterizer
                     // name for Mac only, and only a typographic family, id 16, for Windows).
                     if (!Metrics.Names.Contains(name)) Metrics.Names.Add(name);
 
-                    if (nameID == 1 && familyName == null)
-                        familyName = name;
-                    else if (nameID == 4 && fullName == null)
-                        fullName = name;
+                    // English first (Windows 0x409, Mac 0): the first record can be any language —
+                    // Tahoma Bold's full name came out "Tahoma Negreta" (Catalan, 2026-10-02).
+                    int languageID = ReadUInt16(nameRecOff + 4);
+                    bool english = (platformID == 3 && languageID == 0x409) || (platformID == 1 && languageID == 0);
+                    if (nameID == 1 && (familyName == null || (english && !familyEnglish))) { familyName = name; familyEnglish = english; }
+                    else if (nameID == 4 && (fullName == null || (english && !fullEnglish))) { fullName = name; fullEnglish = english; }
                 }
             }
 

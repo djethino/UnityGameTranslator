@@ -73,7 +73,7 @@ namespace UnityGameTranslator.Core
                     if (close > i && close - i <= 64)
                     {
                         char next = text[i + 1];
-                        if (next == '/' || char.IsLetter(next)) { i = close; continue; }
+                        if (next == '/' || TextShaping.UnicodeInfo.IsLetter(next)) { i = close; continue; }
                     }
                 }
 
@@ -87,18 +87,18 @@ namespace UnityGameTranslator.Core
                         sb.Append('#'); lastWasSpace = false; run = 0; i = close; continue;
                     }
                 }
-                if (char.IsDigit(c))
+                if (TextShaping.UnicodeInfo.IsDigit(c))
                 {
                     while (i + 1 < text.Length)
                     {
                         char nx = text[i + 1];
-                        if (char.IsDigit(nx)) { i++; continue; }
+                        if (TextShaping.UnicodeInfo.IsDigit(nx)) { i++; continue; }
                         // A separator belongs to the number only when a digit follows it: "3,5" is
                         // one number, "= 3, les points" is a number then punctuation. Swallowing that
                         // comma made the SAME sentence normalise differently depending on whether the
                         // slot still held our placeholder or the value the game had re-injected — so
                         // the guards upstream never recognised what the storage guard did.
-                        if ((nx == '.' || nx == ',') && i + 2 < text.Length && char.IsDigit(text[i + 2])) { i += 2; continue; }
+                        if ((nx == '.' || nx == ',') && i + 2 < text.Length && TextShaping.UnicodeInfo.IsDigit(text[i + 2])) { i += 2; continue; }
                         break;
                     }
                     if (i + 1 < text.Length && text[i + 1] == '%') i++;
@@ -108,7 +108,7 @@ namespace UnityGameTranslator.Core
                 // Decoration the game adds or removes around the same words
                 if (c == '{' || c == '}' || c == '[' || c == ']' || c == '*') continue;
 
-                if (char.IsWhiteSpace(c))
+                if (TextShaping.UnicodeInfo.IsWhiteSpace(c))
                 {
                     if (!lastWasSpace) { sb.Append(' '); lastWasSpace = true; }
                     run = 0;
@@ -149,10 +149,10 @@ namespace UnityGameTranslator.Core
             return sb.Length == 0 ? null : sb.ToString();
         }
 
-        internal static bool IsWordCharacter(char c) => IsWordCategory(System.Globalization.CharUnicodeInfo.GetUnicodeCategory(c));
+        internal static bool IsWordCharacter(char c) => IsWordCategory(TextShaping.UnicodeInfo.CategoryOf(c));
 
         /// <summary>The same question for the code point at <paramref name="i"/>, a surrogate pair read as one.</summary>
-        internal static bool IsWordCharacter(string s, int i) => IsWordCategory(System.Globalization.CharUnicodeInfo.GetUnicodeCategory(s, i));
+        internal static bool IsWordCharacter(string s, int i) => IsWordCategory(TextShaping.UnicodeInfo.CategoryOf(s, i));
 
         internal static bool IsWordCategory(System.Globalization.UnicodeCategory category)
         {
@@ -306,7 +306,7 @@ namespace UnityGameTranslator.Core
                     for (int j = index; j < Math.Min(text.Length, index + 4); j++)
                     {
                         if (text[j] == ']') return true;
-                        if (!char.IsDigit(text[j])) break;
+                        if (!TextShaping.UnicodeInfo.IsDigit(text[j])) break;
                     }
                 }
                 // Check for [!STR* (6 chars)
@@ -316,7 +316,7 @@ namespace UnityGameTranslator.Core
                     for (int j = index; j < Math.Min(text.Length, index + 4); j++)
                     {
                         if (text[j] == ']') return true;
-                        if (!char.IsDigit(text[j])) break;
+                        if (!TextShaping.UnicodeInfo.IsDigit(text[j])) break;
                     }
                 }
             }
@@ -402,7 +402,7 @@ namespace UnityGameTranslator.Core
             {
                 // By code point: a letter outside the basic plane arrives as a surrogate pair, and
                 // judging its halves separately would read an emoji and an astral letter alike.
-                var category = System.Globalization.CharUnicodeInfo.GetUnicodeCategory(trimmed, i);
+                var category = TextShaping.UnicodeInfo.CategoryOf(trimmed, i);
                 if (char.IsHighSurrogate(trimmed[i]) && i + 1 < trimmed.Length
                     && char.IsLowSurrogate(trimmed[i + 1])) i++;
 
@@ -434,7 +434,7 @@ namespace UnityGameTranslator.Core
             bool anyPrivate = false;
             for (int i = 0; i < trimmed.Length; i++)
             {
-                var category = System.Globalization.CharUnicodeInfo.GetUnicodeCategory(trimmed, i);
+                var category = TextShaping.UnicodeInfo.CategoryOf(trimmed, i);
                 if (char.IsHighSurrogate(trimmed[i]) && i + 1 < trimmed.Length
                     && char.IsLowSurrogate(trimmed[i + 1])) i++;
 
@@ -449,69 +449,6 @@ namespace UnityGameTranslator.Core
             }
 
             return anyPrivate;
-        }
-
-        /// <summary>
-        /// Whether this runtime classifies characters the way the Unicode tables say, in one line
-        /// fit for the startup log: "ok" or what it got wrong.
-        ///
-        /// 🔴 **Because a whole family of this file's answers rests on a table nobody has ever
-        /// checked is there.** An earlier version of <see cref="IsNumericOrSymbol"/> carried seven
-        /// Unicode blocks written out by hand, against a suspicion that char.IsLetter fails for CJK
-        /// on some IL2CPP runtime — documented nowhere, measured never. The suspicion is not
-        /// absurd: this project has already met a game shipping a corlib trimmed to half its size,
-        /// missing members every mod loader needs (Beacon Pines, see CLAUDE.md). A runtime that
-        /// ships without its character tables would answer wrongly here, in
-        /// <see cref="NormalizeForReadbackMatch"/>, and in every shaper that asks what a code point
-        /// is — quietly, everywhere at once.
-        ///
-        /// ⚠ Pure, so its own answers are checked here rather than trusted. It reports; it decides
-        /// nothing. The shape of <see cref="IsNumericOrSymbol"/> already survives a broken table by
-        /// translating too much rather than going quiet.
-        /// </summary>
-        public static string DescribeUnicodeSupport()
-        {
-            // One per family this file actually leans on, with the answer the standard gives.
-            var expected = new (int codePoint, System.Globalization.UnicodeCategory category, string what)[]
-            {
-                ('A', System.Globalization.UnicodeCategory.UppercaseLetter, "Latin"),
-                ('7', System.Globalization.UnicodeCategory.DecimalDigitNumber, "digit"),
-                (0x4E2D, System.Globalization.UnicodeCategory.OtherLetter, "Han"),
-                (0x3042, System.Globalization.UnicodeCategory.OtherLetter, "kana"),
-                (0xD55C, System.Globalization.UnicodeCategory.OtherLetter, "hangul"),
-                (0x0416, System.Globalization.UnicodeCategory.UppercaseLetter, "Cyrillic"),
-                (0x0627, System.Globalization.UnicodeCategory.OtherLetter, "Arabic"),
-                (0x05D0, System.Globalization.UnicodeCategory.OtherLetter, "Hebrew"),
-                (0x0915, System.Globalization.UnicodeCategory.OtherLetter, "Devanagari"),
-                (0x0E01, System.Globalization.UnicodeCategory.OtherLetter, "Thai"),
-                (0x093F, System.Globalization.UnicodeCategory.SpacingCombiningMark, "Indic vowel sign"),
-                (0x0E49, System.Globalization.UnicodeCategory.NonSpacingMark, "Thai tone mark"),
-                (0xE000, System.Globalization.UnicodeCategory.PrivateUse, "private use"),
-                (0x20000, System.Globalization.UnicodeCategory.OtherLetter, "Han beyond the basic plane"),
-            };
-
-            var wrong = new List<string>();
-            foreach (var probe in expected)
-            {
-                System.Globalization.UnicodeCategory got;
-                try
-                {
-                    got = probe.codePoint <= 0xFFFF
-                        ? System.Globalization.CharUnicodeInfo.GetUnicodeCategory((char)probe.codePoint)
-                        : System.Globalization.CharUnicodeInfo.GetUnicodeCategory(char.ConvertFromUtf32(probe.codePoint), 0);
-                }
-                catch (Exception e)
-                {
-                    wrong.Add($"{probe.what} threw {e.GetType().Name}");
-                    continue;
-                }
-
-                if (got != probe.category) wrong.Add($"{probe.what} read as {got}");
-            }
-
-            return wrong.Count == 0
-                ? $"ok ({expected.Length} checked)"
-                : $"{wrong.Count} of {expected.Length} misread — {string.Join(", ", wrong.ToArray())}";
         }
 
         /// <summary>

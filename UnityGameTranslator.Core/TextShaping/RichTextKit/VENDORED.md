@@ -24,6 +24,16 @@ classes LineBreak/WordBoundary/GraphemeCluster (autres tries, autres sujets).
 2. `Unicode/UnicodeClasses.cs` — réécrit élagué : charge le SEUL trie bidi, depuis
    `typeof(UnicodeClasses).Assembly` (l'original nommait `LineBreaker`, hors lot, et chargeait
    4 tries dont 3 pour d'autres sujets).
+3. `BidiAlgorithm/Bidi.cs` (2026-10-02, marqué « UGT: ») — les neutres de frontière conservés (BN,
+   le ZWJ par exemple) rendus transparents comme le demande UAX #9 §5.2 : en W1 (une NSM après un BN
+   prend le type d'avant le BN), en N0 (les NSM qui suivent une parenthèse, BN sautés) et en N1/N2
+   (les voisins forts d'une suite de neutres cherchés par-delà les BN). Le `BidiCharacterTest.txt`
+   d'Unicode 18.0 vérifie ces cas (8 divergences avant, 0 après).
+
+**Données régénérées** (2026-10-02) : `Resources/BidiClasses.trie` n'est plus celui de RichTextKit
+(Unicode non noté) mais celui que produit `tools/generate-bidi-trie` depuis l'UCD 18.0.0
+(`DerivedBidiClass.txt`, `BidiBrackets.txt`), la même version que toutes les autres tables du mod ;
+le même outil rafraîchit les fichiers de conformité des contrôles.
 
 Les suites de conformité Unicode officielles (`BidiTest.txt`, `BidiCharacterTest.txt`) sont dans
 `tests/UnityGameTranslator.Core.Checks/TestData/*.gz` (gzippées : 15 Mo → 1,7 Mo) — elles NE sont

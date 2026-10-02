@@ -138,11 +138,7 @@ namespace UnityGameTranslator.Core.TextShaping
             return ShapingTables.Syllabic.X;
         }
 
-        internal static bool IsUnicodeMark(int cp)
-        {
-            var cat = cp <= 0xFFFF ? CharUnicodeInfo.GetUnicodeCategory((char)cp) : CharUnicodeInfo.GetUnicodeCategory(char.ConvertFromUtf32(cp), 0);
-            return cat == UnicodeCategory.NonSpacingMark || cat == UnicodeCategory.SpacingCombiningMark || cat == UnicodeCategory.EnclosingMark;
-        }
+        internal static bool IsUnicodeMark(int cp) => UnicodeInfo.IsMark(cp);
 
         // ───────────────────────────── normalization ─────────────────────────────
 

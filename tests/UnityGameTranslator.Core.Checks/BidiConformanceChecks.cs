@@ -109,6 +109,7 @@ namespace UnityGameTranslator.Core.Checks
             }
 
             int cases = 0, failed = 0;
+            var firstFailures = new List<string>();
             var bidi = new Bidi();
             var bidiData = new BidiData();
 
@@ -142,14 +143,20 @@ namespace UnityGameTranslator.Core.Checks
                             if (levels[i] != expectedLevels[i]) { ok = false; break; }
                         }
                     }
-                    if (!ok) failed++;
+                    if (!ok)
+                    {
+                        failed++;
+                        if (firstFailures.Count < 3)
+                            firstFailures.Add(line + " → got " + bidi.ResolvedParagraphEmbeddingLevel + "; "
+                                              + string.Join(" ", bidi.ResolvedLevels.ToArray()));
+                    }
                 }
             }
 
             check(failed == 0 && cases > 50000,
                 $"Unicode BidiCharacterTest: {cases} cases",
                 failed == 0 ? "every resolved level agrees with the Unicode Consortium's data"
-                            : $"{failed} case(s) diverge");
+                            : $"{failed} case(s) diverge — " + string.Join(" | ", firstFailures));
         }
 
         private static int[] ParseHexList(string field)

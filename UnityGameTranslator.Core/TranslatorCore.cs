@@ -2574,12 +2574,10 @@ namespace UnityGameTranslator.Core
             sb.AppendLine($"[Env]  maxTextureSize={Safe(() => UnityEngine.SystemInfo.maxTextureSize.ToString())}  supportsAlpha8={Safe(() => UnityEngine.SystemInfo.SupportsTextureFormat(UnityEngine.TextureFormat.Alpha8).ToString())}  supportsRGBA32={Safe(() => UnityEngine.SystemInfo.SupportsTextureFormat(UnityEngine.TextureFormat.RGBA32).ToString())}");
             sb.AppendLine($"[Env]  Culture: {Safe(() => System.Globalization.CultureInfo.CurrentCulture.Name)}  Encoding: {Safe(() => System.Text.Encoding.Default.WebName)}");
 
-            // ⚠ Reported because nobody had ever looked. A whole family of decisions — which texts
-            // are worth translating, which are ours coming back, what a shaper makes of a syllable
-            // — rests on this runtime's character tables, and this project has already met a game
-            // shipping a corlib trimmed to half its size. One line, once, settles it per game
-            // instead of leaving it a suspicion. See TextNormalization.DescribeUnicodeSupport.
-            sb.AppendLine($"[Env]  Unicode tables: {Safe(TextNormalization.DescribeUnicodeSupport)}");
+            // What a character IS — which texts are worth translating, which are ours coming back,
+            // what a shaper makes of a syllable — is read from the mod's own Unicode tables, never
+            // from this runtime's (TextShaping.UnicodeInfo): said so a log tells which Unicode.
+            sb.AppendLine($"[Env]  Unicode tables: the mod's own, Unicode {TextShaping.ShapingTables.UnicodeVersion}");
             sb.Append("[Env] ============================");
             LogInfo(sb.ToString());
         }

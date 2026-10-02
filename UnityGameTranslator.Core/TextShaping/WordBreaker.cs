@@ -160,7 +160,7 @@ namespace UnityGameTranslator.Core.TextShaping
         /// <summary>Never inside a grapheme, never right after a vowel written before its consonant.</summary>
         private static bool BreakAllowed(string text, int at)
         {
-            var cat = CharUnicodeInfo.GetUnicodeCategory(text[at]);
+            var cat = UnicodeInfo.CategoryOf(text, at);
             if (cat == UnicodeCategory.NonSpacingMark || cat == UnicodeCategory.SpacingCombiningMark
                 || cat == UnicodeCategory.EnclosingMark)
                 return false;

@@ -81,7 +81,7 @@ namespace UnityGameTranslator.Core.TextShaping
             if (closing) i++;
 
             int nameStart = i;
-            while (i < raw.Length && char.IsLetter(raw[i])) i++;
+            while (i < raw.Length && UnicodeInfo.IsLetter(raw[i])) i++;
             int nameLen = i - nameStart;
             if (nameLen == 0 || i >= raw.Length) return false;
 

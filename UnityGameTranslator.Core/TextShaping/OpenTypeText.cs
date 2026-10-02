@@ -156,11 +156,10 @@ namespace UnityGameTranslator.Core.TextShaping
             int cp = char.ConvertToUtf32(text, char.IsLowSurrogate(text[i]) && i > 0 ? i - 1 : i);
             if (char.IsLowSurrogate(text[i])) return false;
             if (cp == 0x200C || cp == 0x200D) return false;
-            var category = System.Globalization.CharUnicodeInfo.GetUnicodeCategory(char.ConvertFromUtf32(cp), 0);
-            if (category == System.Globalization.UnicodeCategory.NonSpacingMark || category == System.Globalization.UnicodeCategory.SpacingCombiningMark
-                || category == System.Globalization.UnicodeCategory.EnclosingMark) return false;
+            var category = UnicodeInfo.CategoryOf(cp);
+            if (UnicodeInfo.IsMark(cp)) return false;
             // GB9c: Linker (InCB=Linker, generated — six viramas were copied here by hand, and
-            // Unicode 17 lists twenty), then a consonant.
+            // Unicode lists far more), then a consonant.
             int before = char.IsLowSurrogate(text[i - 1]) && i > 1 && char.IsHighSurrogate(text[i - 2]) ? i - 2 : i - 1;
             bool linker = ShapingCommon.IsLinker(CodePointAt(text, before, out _));
             return !(linker && category == System.Globalization.UnicodeCategory.OtherLetter);

@@ -111,6 +111,11 @@ namespace UnityGameTranslator.Core.Checks
         private static readonly Regex ScriptCompare = new Regex(@"(?:==|!=)\s*(?:\w+\.)*?(?:Script|S)\.([A-Z]\w*)\b|\b(?:\w+\.)*?(?:Script|S)\.([A-Z]\w*)\s*(?:==|!=)");
         private static readonly HashSet<string> NeutralScripts = new HashSet<string> { "Common", "Inherited", "Unknown" };
 
+        // The runtime's character tables: CharUnicodeInfo and char.IsLetter & co. answer from the
+        // Unicode of the .NET a game ships (6, 8, or a corlib trimmed in half). Only UnicodeInfo,
+        // which reads the mod's generated tables, may answer what a character is.
+        private static readonly Regex RuntimeUnicode = new Regex(@"\bCharUnicodeInfo\b|\bchar\.Is(Letter|Digit|LetterOrDigit|WhiteSpace|Control|Punctuation|Symbol|Separator|Number|Upper|Lower)\s*\(");
+
         public static void Run(Action<bool, string, string> check)
         {
             string core = FindCoreFolder();
@@ -118,6 +123,7 @@ namespace UnityGameTranslator.Core.Checks
             if (core == null) return;
 
             var found = new Dictionary<string, SortedSet<string>>(StringComparer.Ordinal);
+            var runtimeAsked = new List<string>();
             int files = 0;
             foreach (var path in Directory.GetFiles(core, "*.cs", SearchOption.AllDirectories))
             {
@@ -127,6 +133,7 @@ namespace UnityGameTranslator.Core.Checks
                 files++;
                 string source = StripComments(File.ReadAllText(path));
                 var here = new SortedSet<string>(StringComparer.Ordinal);
+                if (rel != "TextShaping/UnicodeInfo.cs" && RuntimeUnicode.IsMatch(source)) runtimeAsked.Add(rel);
 
                 foreach (Match m in HexCompare.Matches(source))
                 {
@@ -155,6 +162,9 @@ namespace UnityGameTranslator.Core.Checks
                 if (here.Count > 0) found[rel] = here;
             }
             check(files > 20, "the Core's files are read", files + " files");
+            check(runtimeAsked.Count == 0, "no file asks the game's runtime what a character is",
+                runtimeAsked.Count == 0 ? "UnicodeInfo answers, at the mod's own Unicode"
+                    : string.Join(", ", runtimeAsked) + " — ask TextShaping.UnicodeInfo, not CharUnicodeInfo or char.IsX");
 
             var unexpected = new List<string>();
             foreach (var kv in found)

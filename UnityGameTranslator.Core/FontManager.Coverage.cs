@@ -155,7 +155,7 @@ namespace UnityGameTranslator.Core
         {
             if (!_gameUnityFonts.TryGetValue(settingsFontName, out var font) || font == null) return "";
             int sample = 0;
-            foreach (char c in text) if (c > 0x7F && !char.IsWhiteSpace(c)) { sample = c; break; }
+            foreach (char c in text) if (c > 0x7F && !TextShaping.UnicodeInfo.IsWhiteSpace(c)) { sample = c; break; }
             var probe = FontHasCharacterMethod;
             bool? has = sample == 0 || probe == null ? null : Invoke(probe, font, (char)sample);
             // By reflection: under IL2CPP fontNames is an Il2Cpp array, and naming the Mono property
@@ -355,7 +355,7 @@ namespace UnityGameTranslator.Core
             {
                 int cp = char.IsHighSurrogate(text[i]) && i + 1 < text.Length ? char.ConvertToUtf32(text[i], text[++i]) : text[i];
                 if (cp < 0x80) continue;
-                var category = System.Globalization.CharUnicodeInfo.GetUnicodeCategory(char.ConvertFromUtf32(cp), 0);
+                var category = TextShaping.UnicodeInfo.CategoryOf(cp);
                 bool letterOrMark = category <= System.Globalization.UnicodeCategory.OtherLetter
                     || category == System.Globalization.UnicodeCategory.NonSpacingMark
                     || category == System.Globalization.UnicodeCategory.SpacingCombiningMark;

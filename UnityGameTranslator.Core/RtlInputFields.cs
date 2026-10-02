@@ -839,8 +839,8 @@ namespace UnityGameTranslator.Core.TextShaping
                 int next = s.Layout.VisualStep(current, toRight);
                 if (next == current) return current;
                 current = next;
-                bool atWordStart = current < s.Logical.Length && !char.IsWhiteSpace(s.Logical[current])
-                                   && (current == 0 || char.IsWhiteSpace(s.Logical[current - 1]));
+                bool atWordStart = current < s.Logical.Length && !UnicodeInfo.IsWhiteSpace(s.Logical[current])
+                                   && (current == 0 || UnicodeInfo.IsWhiteSpace(s.Logical[current - 1]));
                 if (atWordStart || current == 0 || current == s.Logical.Length) return current;
             }
             return current;

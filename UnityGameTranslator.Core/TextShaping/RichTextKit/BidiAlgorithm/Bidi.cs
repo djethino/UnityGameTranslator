@@ -925,6 +925,11 @@ namespace Topten.RichTextKit
                         prevType = t;
                         break;
 
+                    // UGT: a retained boundary neutral is invisible to W1 (UAX #9 §5.2): an NSM
+                    // after a zero width joiner takes the type of what came before the joiner.
+                    case Directionality.BN:
+                        break;
+
                     default:
                         prevType = t;
                         break;
@@ -1112,15 +1117,22 @@ namespace Topten.RichTextKit
                     while (seqEnd < _runLength && IsNeutralType(_runResolvedTypes[seqEnd]))
                         seqEnd++;
 
+                    // UGT: retained boundary neutrals are transparent to N1 and N2 (UAX #9 §5.2) —
+                    // a zero width joiner between a bracket and a mark hid the bracket's direction.
+                    int before = seqStart - 1;
+                    while (before >= 0 && _runResolvedTypes[before] == Directionality.BN) before--;
+                    int after = seqEnd;
+                    while (after < _runLength && _runResolvedTypes[after] == Directionality.BN) after++;
+
                     // Work out the preceding type
                     Directionality typeBefore;
-                    if (seqStart == 0)
+                    if (before < 0)
                     {
                         typeBefore = sos;
                     }
                     else
                     {
-                        typeBefore = _runResolvedTypes[seqStart - 1];
+                        typeBefore = _runResolvedTypes[before];
                         if (typeBefore == Directionality.AN || typeBefore == Directionality.EN)
                         {
                             typeBefore = Directionality.R;
@@ -1129,13 +1141,13 @@ namespace Topten.RichTextKit
 
                     // Work out the following type
                     Directionality typeAfter;
-                    if (seqEnd == _runLength)
+                    if (after == _runLength)
                     {
                         typeAfter = eos;
                     }
                     else
                     {
-                        typeAfter = _runResolvedTypes[seqEnd];
+                        typeAfter = _runResolvedTypes[after];
                         if (typeAfter == Directionality.AN || typeAfter == Directionality.EN)
                         {
                             typeAfter = Directionality.R;
@@ -1349,8 +1361,13 @@ namespace Topten.RichTextKit
             _runResolvedTypes[pb.ClosingIndex] = dir;
 
             // Set the directionality of NSM's inside the brackets
+            // (UGT: a boundary neutral between the bracket and its marks is skipped, as X9 removes
+            // it — a zero width joiner there left the mark at the paragraph's level; Unicode 18's
+            // BidiCharacterTest checks it.)
             for (int i = pb.OpeningIndex + 1; i < pb.ClosingIndex; i++)
             {
+                if (_runOriginalTypes[i] == Directionality.BN)
+                    continue;
                 if (_runOriginalTypes[i] == Directionality.NSM)
                     _runOriginalTypes[i] = dir;
                 else
@@ -1360,6 +1377,8 @@ namespace Topten.RichTextKit
             // Set the directionality of NSM's following the brackets
             for (int i = pb.ClosingIndex + 1; i < _runLength; i++)
             {
+                if (_runOriginalTypes[i] == Directionality.BN)
+                    continue;
                 if (_runOriginalTypes[i] == Directionality.NSM)
                     _runResolvedTypes[i] = dir;
                 else

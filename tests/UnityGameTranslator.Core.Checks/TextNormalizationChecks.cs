@@ -54,20 +54,25 @@ namespace UnityGameTranslator.Core.Checks
                 "and neither is a word, a number, nothing, or blanks",
                 "only the presence of a private code point AND the absence of anything else is a signal");
 
-            // ── Does this runtime have its character tables ───────────────────
+            // ── The mod's own character tables, not the runtime's ─────────────
             //
-            // ⚠ On a healthy runtime this says so. What it is FOR is the other case: this project
-            // has already met a game shipping a corlib trimmed to half its size, and a runtime
-            // without its character tables would answer wrongly here, in the readback form, and in
-            // every shaper — quietly, everywhere at once.
-            string support = TextNormalization.DescribeUnicodeSupport();
-            check(support.StartsWith("ok ("),
-                "this runtime classifies every character the mod leans on",
-                "said as " + support + " — a game whose runtime does not will now say so in its own log");
-
-            check(!string.IsNullOrEmpty(support) && support.Length < 400,
-                "and says it in one line",
-                "it goes into the startup block a player pastes into an issue, not into a wall of text");
+            // A game's runtime may carry Unicode 6, or a corlib trimmed to half its size: the mod's
+            // generated tables answer instead (UnicodeInfo). Their answers, against the standard's.
+            var categories = new (int cp, System.Globalization.UnicodeCategory category)[]
+            {
+                ('A', System.Globalization.UnicodeCategory.UppercaseLetter), ('7', System.Globalization.UnicodeCategory.DecimalDigitNumber),
+                (0x4E2D, System.Globalization.UnicodeCategory.OtherLetter), (0x0627, System.Globalization.UnicodeCategory.OtherLetter),
+                (0x093F, System.Globalization.UnicodeCategory.SpacingCombiningMark), (0x0E49, System.Globalization.UnicodeCategory.NonSpacingMark),
+                (0xE000, System.Globalization.UnicodeCategory.PrivateUse), (0x20000, System.Globalization.UnicodeCategory.OtherLetter),
+                (0x0378, System.Globalization.UnicodeCategory.OtherNotAssigned),
+            };
+            var misread = new List<string>();
+            foreach (var probe in categories)
+                if (TextShaping.UnicodeInfo.CategoryOf(probe.cp) != probe.category) misread.Add($"U+{probe.cp:X4} read as {TextShaping.UnicodeInfo.CategoryOf(probe.cp)}");
+            check(misread.Count == 0, "the mod's tables classify characters as Unicode does", string.Join(", ", misread));
+            check(TextShaping.UnicodeInfo.IsWhiteSpace('\t') && TextShaping.UnicodeInfo.IsWhiteSpace(0x3000) && !TextShaping.UnicodeInfo.IsWhiteSpace('x')
+                  && TextShaping.UnicodeInfo.IsDigit(0x0967) && TextShaping.UnicodeInfo.IsLetter(0x1E900),
+                "space, digit and letter are Unicode's properties", "a tab is a space though a control; a Devanagari digit is a digit; an Adlam letter a letter");
         }
 
         private static void LineEndings(Action<bool, string, string> check)

@@ -105,7 +105,7 @@ namespace UnityGameTranslator.Core
             if (cp >= 0xFE00 && cp <= 0xFE0F) return false;                            // variation selectors
             if (cp >= 0xE0100 && cp <= 0xE01EF) return false;
             if (cp >= 0xD800 && cp <= 0xDFFF) return false;                            // a lone surrogate
-            var category = CharUnicodeInfo.GetUnicodeCategory(char.ConvertFromUtf32(cp), 0);
+            var category = TextShaping.UnicodeInfo.CategoryOf(cp);
             return category != UnicodeCategory.Format && category != UnicodeCategory.SpaceSeparator
                 && category != UnicodeCategory.LineSeparator && category != UnicodeCategory.ParagraphSeparator
                 && category != UnicodeCategory.Control;

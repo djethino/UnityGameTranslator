@@ -5001,7 +5001,7 @@ namespace UnityGameTranslator.Core
             {
                 string v = entry.Value?.Value;
                 if (v == null) continue;
-                foreach (char c in v) if (!char.IsWhiteSpace(c) && !char.IsControl(c)) chars.Add(c);
+                foreach (char c in v) if (!TextShaping.UnicodeInfo.IsWhiteSpace(c) && !TextShaping.UnicodeInfo.IsControl(c)) chars.Add(c);
             }
             for (char c = '!'; c <= '~'; c++) chars.Add(c);
             return chars.Count;

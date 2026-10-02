@@ -517,7 +517,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             bool inWhitespace = false;
             foreach (char c in text)
             {
-                if (char.IsWhiteSpace(c))
+                if (TextShaping.UnicodeInfo.IsWhiteSpace(c))
                 {
                     inWhitespace = true;
                     continue;

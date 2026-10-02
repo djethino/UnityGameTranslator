@@ -25,27 +25,31 @@ every table covers the whole code space, the supplementary planes included:
   VowelConstraints        the vowel-sign sequences the USE specification forbids, between which
                           every shaper inserts a dotted circle (hb-ot-shaper-vowel-constraints)
 
-Inputs (downloaded from https://www.unicode.org/Public/UCD/latest/ucd/ unless given a dir):
+  GeneralCategories       the general category of every code point (Unicode's, not the game's
+                          runtime's: a game's .NET may carry Unicode 6 or 8)
+
+Inputs (downloaded from the pinned UCD below unless given a dir):
   IndicSyllabicCategory.txt IndicPositionalCategory.txt ArabicShaping.txt
   DerivedCoreProperties.txt UnicodeData.txt Blocks.txt Scripts.txt PropertyValueAliases.txt
+  DerivedNormalizationProps.txt PropList.txt
 plus HarfBuzz's three ms-use files (from its repository, MIT): the two "Additional" property
-files and IndicShapingInvalidCluster.txt, and Python's unicodedata for combining classes,
-decompositions and NFC.
+files and IndicShapingInvalidCluster.txt, and hb-ot-shaper.hh; CLDR's scriptMetadata.json.
+Every Unicode fact comes from the UCD of ONE version — never from Python's unicodedata, which is
+the Unicode of the Python that runs this (15.1 for 3.13: 46 combining classes were missing).
 
 Usage:  python tools/generate-shaping-tables.py [dir-with-the-txt-files]
 """
 import io
 import os
 import sys
-import unicodedata
 import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(HERE, "..", "UnityGameTranslator.Core", "TextShaping", "ShapingTables.g.cs")
-# ⚠ PINNED, not "latest": "latest" moved to 18.0.0 under a regeneration meant to change one table
-# (2026-10-02), which would have renumbered every script and mixed two versions with IndicTables.g.cs
-# (17.0.0). Moving to a new Unicode is its own change: this line and generate-indic-tables.py together.
-UCD = "https://www.unicode.org/Public/17.0.0/ucd/"
+# ⚠ PINNED, never "latest": every Unicode table of the mod is of this one version — this line,
+# generate-indic-tables.py's, and tools/generate-bidi-trie (the bidi classes and the conformance
+# files of the checks). A new Unicode is moved to in all of them at once.
+UCD = "https://www.unicode.org/Public/18.0.0/ucd/"
 HB = "https://raw.githubusercontent.com/harfbuzz/harfbuzz/main/src/ms-use/"
 FILES = ["IndicSyllabicCategory.txt", "IndicPositionalCategory.txt", "ArabicShaping.txt",
          "DerivedCoreProperties.txt", "UnicodeData.txt", "Blocks.txt", "Scripts.txt", "PropertyValueAliases.txt"]
@@ -101,15 +105,17 @@ def parse_derived(text, wanted):
 
 
 def parse_unicode_data(text):
-    """General category and bidi class per code point, First/Last ranges expanded."""
-    gc, bidi = {}, {}
+    """General category, bidi class, canonical combining class and decomposition per code point
+    (First/Last ranges expanded) — read from UnicodeData.txt of the version in hand, never from
+    Python's unicodedata, which carries the Unicode of the Python that runs this (15.1 for 3.13)."""
+    gc, bidi, ccc, decomposition = {}, {}, {}, {}
     first = None
     for line in text.splitlines():
         fields = line.split(";")
-        if len(fields) < 5:
+        if len(fields) < 6:
             continue
         cp = int(fields[0], 16)
-        name, cat, bc = fields[1], fields[2], fields[4]
+        name, cat, cc, bc, dec = fields[1], fields[2], int(fields[3]), fields[4], fields[5]
         if name.endswith(", First>"):
             first = cp
             continue
@@ -121,7 +127,11 @@ def parse_unicode_data(text):
             continue
         gc[cp] = cat
         bidi[cp] = bc
-    return gc, bidi
+        if cc:
+            ccc[cp] = cc
+        if dec:
+            decomposition[cp] = dec
+    return gc, bidi, ccc, decomposition
 
 
 def parse_blocks(text):
@@ -419,7 +429,12 @@ def main():
     pos, _ = parse_props(load(FILES[1], src_dir, UCD))
     ajt, _ = parse_props(load(FILES[2], src_dir, UCD), field=2)
     udi = parse_derived(load(FILES[3], src_dir, UCD), "Default_Ignorable_Code_Point")
-    gc, bidi = parse_unicode_data(load(FILES[4], src_dir, UCD))
+    gc, bidi, ucd_ccc, ucd_decomposition = parse_unicode_data(load(FILES[4], src_dir, UCD))
+    # Full_Composition_Exclusion: a canonical pair that never recomposes (NFC's rule, read).
+    excluded = parse_derived(load("DerivedNormalizationProps.txt", src_dir, UCD), "Full_Composition_Exclusion")
+    # White_Space (PropList): what "is a space" means — a property, not a category (tab and line
+    # feed are controls, yet spaces).
+    white_space = ranges(parse_derived(load("PropList.txt", src_dir, UCD), "White_Space"))
     blocks = parse_blocks(load(FILES[5], src_dir, UCD))
     scripts, _ = parse_props(load(FILES[6], src_dir, UCD))
     iso_codes = parse_script_aliases(load(FILES[7], src_dir, UCD))
@@ -458,23 +473,18 @@ def main():
             linkers.extend(range(int(parts[0], 16), int(parts[-1], 16) + 1))
 
     # 1. Combining classes, HarfBuzz-modified, every plane.
-    ccc = {}
-    for cp in code_points():
-        c = unicodedata.combining(chr(cp))
-        if c:
-            ccc[cp] = MODIFIED_CCC.get(c, c)
+    ccc = {cp: MODIFIED_CCC.get(c, c) for cp, c in ucd_ccc.items()}
 
-    # 2. First-level canonical decompositions, every plane, with whether the pair recomposes.
+    # 2. First-level canonical decompositions, every plane, with whether the pair recomposes: a
+    #    two-code-point canonical decomposition recomposes unless Unicode excludes it from
+    #    composition (that is the whole of NFC's rule for a primary composite).
     decomp = {}
-    for cp in code_points():
-        if cp < 0x00C0:
-            continue
-        d = unicodedata.decomposition(chr(cp))
-        if not d or d.startswith("<"):
+    for cp, d in ucd_decomposition.items():
+        if d.startswith("<"):
             continue
         parts = [int(x, 16) for x in d.split()]
         a, b = parts[0], parts[1] if len(parts) > 1 else 0
-        composes = b != 0 and unicodedata.normalize("NFC", chr(a) + chr(b)) == chr(cp)
+        composes = b != 0 and cp not in excluded
         decomp[cp] = (a, b, composes)
 
     # 3. Default ignorable.
@@ -565,8 +575,8 @@ def main():
     w("// <auto-generated>")
     w(f"//   By tools/generate-shaping-tables.py from Unicode {version} (IndicSyllabicCategory,")
     w("//   IndicPositionalCategory, ArabicShaping, DerivedCoreProperties, UnicodeData, Blocks, Scripts,")
-    w("//   PropertyValueAliases), HarfBuzz's ms-use files and hb-ot-shaper.hh, CLDR's scriptMetadata, and Python's")
-    w("//   unicodedata. Do not edit: rerun the generator.")
+    w("//   PropertyValueAliases, DerivedNormalizationProps), HarfBuzz's ms-use files and hb-ot-shaper.hh, and CLDR's")
+    w("//   scriptMetadata. Do not edit: rerun the generator.")
     w("// </auto-generated>")
     w("namespace UnityGameTranslator.Core.TextShaping")
     w("{")
@@ -682,6 +692,27 @@ def main():
     rtl_indices = sorted(rtl_scripts)
     for i in range(0, len(rtl_indices), 16):
         w("            " + ", ".join(str(v) for v in rtl_indices[i:i + 16]) + ",")
+    w("        };")
+    w("")
+    # The general category of every code point, as System.Globalization.UnicodeCategory numbers it
+    # (so callers keep that enum): one Unicode for the whole mod, not the runtime's.
+    GC_VALUES = {"Lu": 0, "Ll": 1, "Lt": 2, "Lm": 3, "Lo": 4, "Mn": 5, "Mc": 6, "Me": 7, "Nd": 8, "Nl": 9,
+                 "No": 10, "Zs": 11, "Zl": 12, "Zp": 13, "Cc": 14, "Cf": 15, "Cs": 16, "Co": 17, "Pc": 18,
+                 "Pd": 19, "Ps": 20, "Pe": 21, "Pi": 22, "Pf": 23, "Po": 24, "Sm": 25, "Sc": 26, "Sk": 27,
+                 "So": 28, "Cn": 29}
+    gc_runs = runs({cp: GC_VALUES[c] for cp, c in gc.items()})
+    w("        /// <summary>General category of every code point, as System.Globalization.UnicodeCategory numbers it — runs (first, last, category), sorted. Unlisted = OtherNotAssigned.</summary>")
+    w("        internal static readonly int[] GeneralCategories =")
+    w("        {")
+    for i in range(0, len(gc_runs), 6):
+        w("            " + ", ".join(f"0x{a:04X}, 0x{b:04X}, {v}" for a, b, v in gc_runs[i:i + 6]) + ",")
+    w("        };")
+    w("")
+    w("        /// <summary>White_Space (PropList) — inclusive ranges, sorted, as (first, last) pairs.</summary>")
+    w("        internal static readonly int[] WhiteSpace =")
+    w("        {")
+    for i in range(0, len(white_space), 4):
+        w("            " + ", ".join(f"0x{a:04X}, 0x{b:04X}" for a, b in white_space[i:i + 4]) + ",")
     w("        };")
     w("")
     w("        /// <summary>Vowel-sign sequences the USE specification forbids — flattened (first, second, third or 0), sorted by first; a dotted circle goes before the last one.</summary>")

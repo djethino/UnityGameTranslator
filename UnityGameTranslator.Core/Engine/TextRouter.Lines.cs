@@ -150,7 +150,7 @@ namespace UnityGameTranslator.Core
             {
                 if (c == '<') inTag = true;
                 else if (c == '>') inTag = false;
-                else if (!inTag && char.IsLetter(c)) return true;
+                else if (!inTag && TextShaping.UnicodeInfo.IsLetter(c)) return true;
             }
             return false;
         }
@@ -319,7 +319,7 @@ namespace UnityGameTranslator.Core
 
         private static bool HasContent(string s)
         {
-            foreach (char c in s) if (!char.IsWhiteSpace(c)) return true;
+            foreach (char c in s) if (!TextShaping.UnicodeInfo.IsWhiteSpace(c)) return true;
             return false;
         }
 

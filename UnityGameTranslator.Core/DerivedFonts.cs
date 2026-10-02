@@ -689,7 +689,7 @@ namespace UnityGameTranslator.Core
         {
             var chars = name.ToCharArray();
             for (int i = 0; i < chars.Length; i++)
-                if (!char.IsLetterOrDigit(chars[i]) && chars[i] != '-' && chars[i] != '_') chars[i] = '_';
+                if (!UnicodeInfo.IsLetterOrDigit(chars[i]) && chars[i] != '-' && chars[i] != '_') chars[i] = '_';
             return new string(chars);
         }
 

@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Writes UnityGameTranslator.Core/TextShaping/RichTextKit/Resources/BidiClasses.trie — the bidi
+    class, paired-bracket type and paired bracket of every code point — from the UCD of the version
+    the mod's other Unicode tables are made of. The trie format is RichTextKit's: its own reader and
+    builder are linked here as they are, so the file written is the file it reads.
+
+    Usage: dotnet run -c Release
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="../../UnityGameTranslator.Core/TextShaping/RichTextKit/Unicode/UnicodeTrie.cs" />
+    <Compile Include="../../UnityGameTranslator.Core/TextShaping/RichTextKit/Unicode/UnicodeTrieBuilder.cs" />
+    <Compile Include="../../UnityGameTranslator.Core/TextShaping/RichTextKit/Unicode/Directionality.cs" />
+    <Compile Include="../../UnityGameTranslator.Core/TextShaping/RichTextKit/Unicode/PairedBracketType.cs" />
+    <Compile Include="../../UnityGameTranslator.Core/TextShaping/RichTextKit/Utils/BinaryReaderExtensions.cs" />
+  </ItemGroup>
+
+</Project>

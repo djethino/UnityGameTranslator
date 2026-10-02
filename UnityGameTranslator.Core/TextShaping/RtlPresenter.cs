@@ -1945,7 +1945,32 @@ namespace UnityGameTranslator.Core.TextShaping
                 }
                 catch (Exception ex) { material = "unreadable: " + ex.Message; }
 
-                TranslatorCore.LogDebug($"[RtlPresenter] font comp={compId} {instance.GetType().Name} settings='{settingsFontName ?? "-"}' ({role}) drawn with '{current}', material {material}, at {path}");
+                // The component's own layout settings that act on every glyph: a game's spacing, its
+                // kerning or font features, its own right-to-left flag can move letters a shaped text
+                // placed (2026-10-02: words cut around some letters in one game only, the same text
+                // and font drawing right everywhere else). Each said as the type has it, absent if not.
+                var layout = new System.Text.StringBuilder();
+                foreach (var name in new[] { "characterSpacing", "wordSpacing", "characterWidthAdjustment", "enableKerning",
+                                             "fontFeatures", "isRightToLeftText", "richText", "parseCtrlCharacters", "enableCulling" })
+                {
+                    try
+                    {
+                        var prop = instance.GetType().GetProperty(name, BindingFlags.Public | BindingFlags.Instance);
+                        if (prop == null) continue;
+                        object value = prop.GetValue(instance, null);
+                        string shown = value?.ToString() ?? "null";
+                        if (value is System.Collections.IEnumerable list && !(value is string))
+                        {
+                            var items = new List<string>();
+                            foreach (var item in list) items.Add(item?.ToString());
+                            shown = "[" + string.Join(",", items.ToArray()) + "]";
+                        }
+                        layout.Append(' ').Append(name).Append('=').Append(shown);
+                    }
+                    catch (Exception ex) { layout.Append(' ').Append(name).Append("=unreadable(").Append(ex.GetType().Name).Append(')'); }
+                }
+
+                TranslatorCore.LogDebug($"[RtlPresenter] font comp={compId} {instance.GetType().Name} settings='{settingsFontName ?? "-"}' ({role}) drawn with '{current}', material {material}, layout{layout}, at {path}");
             }
             catch (Exception ex) { TranslatorCore.LogDebug($"[RtlPresenter] font comp={compId} unreadable: {ex.Message}"); }
         }

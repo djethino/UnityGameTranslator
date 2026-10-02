@@ -662,10 +662,13 @@ namespace UnityGameTranslator.Core
                 if (!(classPtr is IntPtr cls) || cls == IntPtr.Zero || objectNew == null)
                     return Refused(objectNew == null ? "no il2cpp_object_new found" : "no IL2CPP class pointer for Font");
 
+                // 🔴 ReferenceEquals, never `font == null` before the icall: UnityEngine.Object's ==
+                // calls a managed object with no native side null, and a bare Font has none until
+                // Internal_CreateFontFromPath makes it — every Font was refused here (2026-10-02).
                 var font = fromPointer.Invoke(new object[] { (IntPtr)objectNew.Invoke(null, new object[] { cls }) }) as Font;
-                if (font == null) return Refused("the bare Font could not be made");
+                if (ReferenceEquals(font, null)) return Refused("the bare Font could not be made");
                 make.Invoke(null, new object[] { font, path });
-                return font;
+                return font != null ? font : Refused("Internal_CreateFontFromPath made no font of it");
             }
             catch (Exception ex)
             {

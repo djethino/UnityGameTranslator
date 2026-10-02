@@ -880,21 +880,55 @@ namespace UnityGameTranslator.Core
         // Track font names that failed to create (don't retry)
         private static readonly HashSet<string> _failedFallbackFontNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        // Track fonts that already had fontNames applied (to distinguish startup vs runtime change)
-        private static readonly HashSet<string> _fontNamesApplied = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-        // Font size bump per font: toggles +1/-1 on runtime font change to invalidate atlas cache.
-        // Atlas caches by (char, size, style). Changing size by 1 forces re-rasterization with new fontNames.
-        // Scale is adjusted to compensate so visual size stays identical.
+        // Font size shift per font (ShiftForNames): the atlas caches by (char, size, style), so
+        // drawing a new set of fontNames one size away forces re-rasterization with them.
         private static readonly Dictionary<string, int> _fontSizeBump = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
 
-        /// <summary>Get the current font size bump for a font (0 or 1).</summary>
+        /// <summary>Get the current font size bump for a font.</summary>
         public static int GetFontSizeBump(string fontName)
         {
             if (string.IsNullOrEmpty(fontName)) return 0;
             int bump;
             _fontSizeBump.TryGetValue(fontName, out bump);
             return bump;
+        }
+
+        // Per font: which fontNames each size shift has drawn letters with. The engine keeps the
+        // letters a Font drew, by character and size, whatever its fontNames say since — so a shift
+        // is reused only for the very names it drew, and a new set of names takes a shift never drawn.
+        private static readonly Dictionary<string, Dictionary<int, string>> _shiftDrawnWith =
+            new Dictionary<string, Dictionary<int, string>>(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// The size shift under which <paramref name="names"/> are drawn for this font, and made the
+        /// current one. The first names a font is given take no shift (applied as the game starts,
+        /// nothing drawn yet — what the replacement always assumed); every later set, restoring the
+        /// game's own included, takes the shift that already drew it, else the nearest one never
+        /// drawn: 0, +1, -1, +2, -2… (user, 2026-10-02: None after starting with a fallback kept
+        /// the fallback's letters — the restore had kept the shift the last fallback drew at).
+        /// </summary>
+        private static int ShiftForNames(string fontName, string[] names)
+        {
+            string key = string.Join("\u0001", names ?? new string[0]);
+            if (!_shiftDrawnWith.TryGetValue(fontName, out var drawn))
+                _shiftDrawnWith[fontName] = drawn = new Dictionary<int, string>();
+
+            int shift = 0;
+            bool found = false;
+            foreach (var kv in drawn)
+                if (kv.Value == key) { shift = kv.Key; found = true; break; }
+            if (!found)
+            {
+                for (int step = 0; drawn.ContainsKey(shift); step++)
+                    shift = step % 2 == 0 ? step / 2 + 1 : -(step / 2 + 1);
+                drawn[shift] = key;
+            }
+
+            _fontSizeBump.TryGetValue(fontName, out int before);
+            if (shift == 0) _fontSizeBump.Remove(fontName); else _fontSizeBump[fontName] = shift;
+            if (shift != before)
+                TranslatorCore.LogInfo($"[FontManager] {fontName}: drawn at size shift {shift} (was {before}) — {(found ? "letters already drawn with these names" : "a size never drawn")}");
+            return shift;
         }
 
         // Whether CreateDynamicFontFromOSFont is available on this runtime
@@ -4013,15 +4047,10 @@ namespace UnityGameTranslator.Core
                         bool matches = (currentFont == (object)targetFont) || (currentName == fontName);
                         if (!matches) continue;
 
-                        // Bump fontSize by 1 to force Unity to re-rasterize with the new fontNames.
-                        // ApplyFontScale will correct it back on the next text processing cycle.
-                        float origSize = TypeHelper.GetFontSize(textObj);
-                        if (origSize > 0)
-                        {
-                            TranslatorPatches.BypassFontSizePrefix = true;
-                            TypeHelper.SetFontSize(textObj, origSize + 1);
-                            TranslatorPatches.BypassFontSizePrefix = false;
-                        }
+                        // Straight to the size the current names draw at (ShiftForNames): a size
+                        // in between, even for one frame, would put these names' letters under a
+                        // shift kept for other names.
+                        TranslatorPatches.ApplyScaleForFont(textObj, fontName);
 
                         // SetVerticesDirty / SetLayoutDirty — also use the actual type.
                         var setDirty = actualType.GetMethod("SetVerticesDirty", BindingFlags.Public | BindingFlags.Instance);
@@ -4076,6 +4105,9 @@ namespace UnityGameTranslator.Core
                 if (gameFont != null)
                 {
                     UniverseLib.Runtime.TextureHelper.SetFontNames(gameFont, originalNames);
+                    // The game's names back: drawn where they drew before, or at a size no
+                    // replacement drew — the current one holds the replacement's letters.
+                    ShiftForNames(fontName, originalNames);
                     ForceRefreshUITextFont(gameFont, fontName);
                     TranslatorCore.LogDebug($"[FontManager] Restored fontNames for '{fontName}': [{string.Join(", ", originalNames)}]");
                 }
@@ -4285,19 +4317,9 @@ namespace UnityGameTranslator.Core
                         // No clone = no shared atlas = no corruption.
                         replacementFont = originalGameFont;
 
-                        // Runtime font change: toggle fontSize bump to invalidate atlas cache.
-                        // Atlas caches by (char, size). Changing size by ±1 creates new entries
-                        // → FreeType re-rasterizes with the new fontNames.
-                        // Scale is adjusted in ApplyFontScale to keep visual size identical.
-                        if (_fontNamesApplied.Contains(originalFontName))
-                        {
-                            int oldBump = 0;
-                            _fontSizeBump.TryGetValue(originalFontName, out oldBump);
-                            int newBump = (oldBump == 0) ? 1 : (oldBump == 1 ? -1 : 0);
-                            _fontSizeBump[originalFontName] = newBump;
-                            TranslatorCore.LogInfo($"[FontManager] Runtime font change: bump {originalFontName} fontSize by {newBump} (was {oldBump})");
-                        }
-                        _fontNamesApplied.Add(originalFontName);
+                        // The atlas keeps letters by (char, size): drawn at a size shift that never
+                        // drew other names, so FreeType rasterizes with these (ShiftForNames).
+                        ShiftForNames(originalFontName, fontNamesList.ToArray());
 
                         TranslatorCore.LogInfo($"[FontManager] Modified '{originalFontName}' fontNames=[{string.Join(", ", fontNamesList)}]");
                     }

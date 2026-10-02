@@ -93,20 +93,5 @@ namespace UnityGameTranslator.Core.TextShaping
             var direction = Topten.RichTextKit.UnicodeClasses.Directionality(cp);
             return direction == Topten.RichTextKit.Directionality.R || direction == Topten.RichTextKit.Directionality.AL;
         }
-
-        /// <summary>
-        /// True when the string contains the Farsi yeh (U+06CC) — the one letter whose base form
-        /// differs between Arabic and Persian spelling. The vendored GlyphFixer normalizes yeh
-        /// one way or the other and must be told which; deciding FROM CONTENT keeps this free of
-        /// any configured language. ⚠ Open question flagged in PresentationFormsShaper: a text
-        /// genuinely mixing both yehs gets one of them normalized.
-        /// </summary>
-        public static bool PrefersFarsiForms(string text)
-        {
-            if (string.IsNullOrEmpty(text)) return false;
-            for (int i = 0; i < text.Length; i++)
-                if (text[i] == 'ی') return true;
-            return false;
-        }
     }
 }

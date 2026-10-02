@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Linq;
 using UnityGameTranslator.Core.TextShaping;
 
 namespace UnityGameTranslator.Core.Checks
@@ -117,10 +118,17 @@ namespace UnityGameTranslator.Core.Checks
                 "one strong RTL letter is enough — runs are cut later");
             check(!RtlText.NeedsPresentation(""), "empty is left alone", "no crash, no work");
 
-            check(RtlText.PrefersFarsiForms("فارسی"), "Farsi yeh detected from content",
-                "U+06CC present — the one letter the vendored fixer must be told about");
-            check(!RtlText.PrefersFarsiForms(ShortLogical), "Arabic yeh does not read as Farsi",
-                "U+064A only");
+            // The yeh a translation holds is the yeh drawn: the vendored fixer rewrote U+064A into
+            // U+06CC (or back) on a guess of the language, while each has its own forms.
+            var shaper = new PresentationFormsShaper();
+            string arabicYeh = shaper.Shape("بي"), persianYeh = shaper.Shape("بی");
+            check(arabicYeh.IndexOf('ﻲ') >= 0 && persianYeh.IndexOf('ﯽ') >= 0,
+                "the Arabic and the Persian yeh are each shaped as written",
+                "final forms U+FEF2 and U+FBFD — got " + string.Join(" ", arabicYeh.Select(c => ((int)c).ToString("X4")))
+                + " / " + string.Join(" ", persianYeh.Select(c => ((int)c).ToString("X4"))));
+            string mixed = shaper.Shape("بي بی");
+            check(mixed.IndexOf('ﻲ') >= 0 && mixed.IndexOf('ﯽ') >= 0,
+                "a text holding both keeps both", "no letter of the translation is rewritten");
         }
 
         private static void WhatShapingProduces(Action<bool, string, string> check)

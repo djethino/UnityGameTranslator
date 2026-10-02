@@ -32,15 +32,13 @@ namespace UnityGameTranslator.Core.TextShaping
         {
             if (string.IsNullOrEmpty(run)) return run;
 
-            // Which yeh spelling this run uses — decided from content, never from a configured
-            // language (see RtlText.PrefersFarsiForms and its flagged limitation).
-            bool farsi = RtlText.PrefersFarsiForms(run);
-
             _input.SetValue(run);
             TashkeelFixer.RemoveTashkeel(_input);
             // fixTextTags: false — tag protection is stage C's job (our placeholders and rich
-            // text tags are isolated into LTR runs before any shaping happens).
-            GlyphFixer.Fix(_input, _output, preserveNumbers: true, farsi: farsi, fixTextTags: false);
+            // text tags are isolated into LTR runs before any shaping happens). farsi: only the
+            // vendored digit conversion reads it, off here (preserveNumbers): no letter is
+            // rewritten, the Arabic and the Persian yeh each keep their own forms (GlyphFixer.Fix).
+            GlyphFixer.Fix(_input, _output, preserveNumbers: true, farsi: false, fixTextTags: false);
             TashkeelFixer.RestoreTashkeel(_output);
             TashkeelFixer.FixShaddaCombinations(_output);
 
@@ -77,8 +75,6 @@ namespace UnityGameTranslator.Core.TextShaping
             map = null;
             if (string.IsNullOrEmpty(run)) { map = new int[0]; return run; }
 
-            bool farsi = RtlText.PrefersFarsiForms(run);
-
             // Codepoints of the input, with the UTF-16 index each one starts at.
             var starts = new System.Collections.Generic.List<int>(run.Length);
             for (int i = 0; i < run.Length; i++)
@@ -89,7 +85,7 @@ namespace UnityGameTranslator.Core.TextShaping
 
             _input.SetValue(run);
             TashkeelFixer.RemoveTashkeel(_input);
-            GlyphFixer.Fix(_input, _output, preserveNumbers: true, farsi: farsi, fixTextTags: false);
+            GlyphFixer.Fix(_input, _output, preserveNumbers: true, farsi: false, fixTextTags: false);
             TashkeelFixer.RestoreTashkeel(_output);
 
             // One slot per input codepoint at this point (the alef swallowed by a ligature is a

@@ -44,7 +44,9 @@ namespace RTLTMPro
         /// <returns></returns>
         public static void Fix(FastStringBuilder input, FastStringBuilder output, bool preserveNumbers, bool farsi, bool fixTextTags)
         {
-            FixYah(input, farsi);
+            // UGT: no FixYah. It REWROTE the text's yeh — Arabic U+064A into Persian U+06CC or back,
+            // on a guess of the language — while GlyphTable shapes both, each with its own forms
+            // (FEF1–FEF4, FBFC–FBFF). The letters the translation holds are the ones drawn.
 
             output.SetValue(input);
 
@@ -97,26 +99,6 @@ namespace RTLTMPro
                 } else
                 {
                     FixNumbers(output, farsi);
-                }
-            }
-        }
-
-        /// <summary>
-        ///     Removes tashkeel. Converts general RTL letters to isolated form. Also fixes Farsi and Arabic ی letter.
-        /// </summary>
-        /// <param name="text">Input to prepare</param>
-        /// <param name="farsi"></param>
-        /// <returns>Prepared input in char array</returns>
-        public static void FixYah(FastStringBuilder text, bool farsi)
-        {
-            for (int i = 0; i < text.Length; i++)
-            {
-                if (farsi && text.Get(i) == (int)ArabicGeneralLetters.Yeh)
-                {
-                    text.Set(i, (char)ArabicGeneralLetters.FarsiYeh);
-                } else if (farsi == false && text.Get(i) == (int)ArabicGeneralLetters.FarsiYeh)
-                {
-                    text.Set(i, (char)ArabicGeneralLetters.Yeh);
                 }
             }
         }

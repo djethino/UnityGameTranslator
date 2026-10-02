@@ -2331,6 +2331,19 @@ namespace UnityGameTranslator.Core
             catch (Exception ex) { Faults.Say("UIToolkit.ShieldFromUnload", ex, o.name); }
         }
 
+        /// <summary>The SDF asset made from the derived copy's file, asked at once for a Latin letter and some of the copy's private names (what a shaped text is written in).</summary>
+        private static object CreateFromDerivedFile(string settingsName, string name)
+        {
+            var derived = FontManager.DerivedForSettings(settingsName);
+            if (derived == null) return null;
+            var probe = new System.Text.StringBuilder("A");
+            var added = derived.Namer?.Added;
+            if (added != null)
+                for (int i = 0; i < added.Count && i < 16; i++)
+                    if (added[i].Codepoint <= 0xFFFF) probe.Append((char)added[i].Codepoint);
+            return FontManager.CreateSdfFontAssetFromFile(derived.CurrentFile, _textCoreFontAssetType, name, probe.ToString());
+        }
+
         private static object BuildDefinition(Font replacement, bool isSdf, string settingsName)
         {
             if (isSdf && _textCoreFontAssetType != null && _fromSdfFontMethod != null)
@@ -2358,8 +2371,7 @@ namespace UnityGameTranslator.Core
                     // so the element wearing it is recognised as wearing the replacement.
                     asset = FontManager.CreateSdfFontAsset(replacement, _textCoreFontAssetType)
                             ?? FontManager.CreateSdfFontAssetByFamily(replacement, _textCoreFontAssetType)
-                            ?? FontManager.CreateSdfFontAssetFromFile(FontManager.DerivedForSettings(settingsName)?.CurrentFile,
-                                                                       _textCoreFontAssetType, replacement.name);
+                            ?? CreateFromDerivedFile(settingsName, replacement.name);
 
                     _sdfCache[key] = asset;
                     ShieldFromUnload(asset);

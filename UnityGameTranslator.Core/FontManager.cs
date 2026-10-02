@@ -5034,24 +5034,52 @@ namespace UnityGameTranslator.Core
         /// a UI Toolkit game: "'UGT Sys Tahoma #0' cannot be turned into an SDF asset").
         /// Null when the engine has no such overload or the file is missing.
         /// </summary>
-        internal static object CreateSdfFontAssetFromFile(string path, Type fontAssetType, string name)
+        /// <summary>
+        /// Asks a freshly made SDF asset to take <paramref name="probe"/> and says what it could not, its
+        /// atlas size and its material's shader — once per asset. A text drawn with an asset that holds
+        /// no glyph shows NOTHING, with no error anywhere (2026-10-02, a UI Toolkit game: texts empty
+        /// after the replacement), and these three are what tells the causes apart.
+        /// </summary>
+        private static void SayWhatTheAssetDraws(object asset, string name, string probe)
+        {
+            if (asset == null || string.IsNullOrEmpty(probe) || !DiagnosticOnce.First("FontManager.sdfProbe", name)) return;
+            var type = asset.GetType();
+            string added = "?", atlas = "?", shader = "?";
+            try
+            {
+                var tryAdd = Array.Find(type.GetMethods(BindingFlags.Public | BindingFlags.Instance),
+                    m => m.Name == "TryAddCharacters" && m.GetParameters().Length == 2 && m.GetParameters()[0].ParameterType == typeof(string));
+                if (tryAdd != null)
+                {
+                    var args = new object[] { probe, null };
+                    bool all = (bool)tryAdd.Invoke(asset, args);
+                    string missing = args[1] as string ?? "";
+                    added = all ? "all added" : $"{missing.Length} of {probe.Length} NOT added ({string.Join(" ", Array.ConvertAll(missing.ToCharArray(), c => ((int)c).ToString("X4")))})";
+                }
+                if (type.GetProperty("atlasTextures", BindingFlags.Public | BindingFlags.Instance)?.GetValue(asset, null) is System.Collections.IList textures && textures.Count > 0 && textures[0] is Texture tex && tex != null)
+                    atlas = $"{textures.Count} texture(s), {tex.width}x{tex.height}";
+                if (type.GetProperty("material", BindingFlags.Public | BindingFlags.Instance)?.GetValue(asset, null) is Material mat && mat != null)
+                    shader = mat.shader != null ? mat.shader.name : "no shader";
+            }
+            catch (Exception ex) { Faults.Say("FontManager.SayWhatTheAssetDraws", ex, name); }
+            TranslatorCore.LogInfo($"[FontManager] '{name}' asked for {probe.Length} character(s): {added}; atlas {atlas}; shader {shader}");
+        }
+
+        internal static object CreateSdfFontAssetFromFile(string path, Type fontAssetType, string name, string probe = null)
         {
             if (string.IsNullOrEmpty(path) || fontAssetType == null || !System.IO.File.Exists(path)) return null;
 
-            // 🔴 The overload that takes the population mode, with DynamicOS — what TextCore's own
-            // CreateFontAssetFromFamilyName does with a file. The public 7-parameter overload passes
-            // Dynamic, which adds glyphs later from a SOURCE FONT OBJECT a path-made asset does not
-            // have: the asset was made, and every text drawn with it came out empty (read in Unity
-            // 6000.5's FontAsset, 2026-10-02). Private on that engine, hence NonPublic.
+            // ⚠ The public path overload, which makes a Dynamic asset. Read in Unity 6000.5's FontAsset
+            // (LoadFontFace, 2026-10-02): a Dynamic asset reloads its face from its source Font, else
+            // from the FILE it was made from; a DynamicOS one reloads it by family and style — and a
+            // derived copy's family is not unique (the copies of Tahoma and of Tahoma Bold are both
+            // "UGT Sys Tahoma"), so it can reopen the other file, whose private names are different.
             MethodInfo chosen = null;
-            foreach (var method in fontAssetType.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static))
+            foreach (var method in fontAssetType.GetMethods(BindingFlags.Public | BindingFlags.Static))
             {
                 if (method.Name != "CreateFontAsset" || method.IsGenericMethod) continue;
                 var ps = method.GetParameters();
-                if (ps.Length < 7 || ps[0].ParameterType != typeof(string) || ps[1].ParameterType != typeof(int)) continue;
-                bool hasMode = Array.Exists(ps, p => p.ParameterType.Name.Contains("AtlasPopulationMode"));
-                if (chosen == null || hasMode) chosen = method;
-                if (hasMode) break;
+                if (ps.Length >= 7 && ps[0].ParameterType == typeof(string) && ps[1].ParameterType == typeof(int)) { chosen = method; break; }
             }
             if (chosen == null) return null;
 
@@ -5060,19 +5088,12 @@ namespace UnityGameTranslator.Core
             args[0] = path;
             args[1] = 0;   // face: a derived copy is a single face
             int ints = 0;
-            bool dynamicOs = false;
             int atlasSide = AtlasFloor(ExpectedGlyphCount(), SdfSampling, SdfPadding, false);
             for (int i = 2; i < parameters.Length; i++)
             {
                 var pType = parameters[i].ParameterType;
                 if (pType.Name.Contains("GlyphRenderMode")) args[i] = pType.IsEnum ? Enum.ToObject(pType, 4166) : (object)4166;   // SDFAA_HINTED
-                else if (pType.Name.Contains("AtlasPopulationMode") && pType.IsEnum && Enum.IsDefined(pType, "DynamicOS"))
-                {
-                    args[i] = Enum.Parse(pType, "DynamicOS");
-                    dynamicOs = true;
-                }
                 else if (pType == typeof(int)) { args[i] = ints == 0 ? SdfSampling : ints == 1 ? SdfPadding : atlasSide; ints++; }
-                else if (pType == typeof(bool)) args[i] = true;   // multi-atlas
                 else args[i] = parameters[i].HasDefaultValue ? parameters[i].DefaultValue : null;
             }
 
@@ -5082,13 +5103,8 @@ namespace UnityGameTranslator.Core
                 if (result is UnityEngine.Object made && made != null)
                 {
                     made.name = name;
-                    // As CreateFontAssetFromFamilyName marks its own.
-                    if (dynamicOs)
-                    {
-                        try { fontAssetType.GetProperty("InternalDynamicOS", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?.SetValue(result, true, null); }
-                        catch (Exception ex) { Faults.Say("FontManager.CreateSdfFontAssetFromFile InternalDynamicOS", ex); }
-                    }
-                    TranslatorCore.LogInfo($"[FontManager] SDF asset made from the file of '{name}' ({System.IO.Path.GetFileName(path)}, {(dynamicOs ? "DynamicOS" : "Dynamic — glyphs may not be added later")})");
+                    TranslatorCore.LogInfo($"[FontManager] SDF asset made from the file of '{name}' ({System.IO.Path.GetFileName(path)})");
+                    SayWhatTheAssetDraws(result, name, probe);
                     return result;
                 }
             }

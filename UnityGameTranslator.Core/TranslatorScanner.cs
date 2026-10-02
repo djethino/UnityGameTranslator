@@ -980,13 +980,12 @@ namespace UnityGameTranslator.Core
         /// without wrapper allocations (no HashSet, no List, no ToArray).
         /// </summary>
         // Which types the refresh looks up, what it finds and what each lookup costs — the facts
-        // needed to make discovery event-driven where it pays. First cycles only.
-        private static int _lookupNoteBudget = 12;
-
+        // needed to make discovery event-driven where it pays. Once per type and count found (debug
+        // only): a type whose lookup finds a new number of objects says it again, never a count.
         private static void NoteLookup(RegisteredTextType type, UnityEngine.Object[] found, long started)
         {
-            if (started == 0L || _lookupNoteBudget <= 0) return;
-            _lookupNoteBudget--;
+            if (started == 0L || !TranslatorCore.DebugMode
+                || !DiagnosticOnce.First("Scanner.lookup", type.Name + "\u0001" + (found?.Length ?? 0))) return;
             double ms = (System.Diagnostics.Stopwatch.GetTimestamp() - started) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
             TranslatorCore.LogDebug($"[Scanner] lookup {type.Name}: {found?.Length ?? 0} found in {ms:F1} ms");
         }

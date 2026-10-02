@@ -48,10 +48,8 @@ namespace UnityGameTranslator.Core
     /// </summary>
     public sealed class LanguageState
     {
-        /// <summary>How many times one refusal is said before it stops being said.</summary>
-        private const int RefusalsSaid = 3;
-
-        private int _refusalsSaid;
+        // Whether the refusal of the verdict in force has been said: once per verdict, never a count.
+        private bool _refusalSaid;
 
         /// <summary>Where the ordinary lines go. Left null in a check that does not read them.</summary>
         public Action<string> Info { get; set; }
@@ -105,7 +103,7 @@ namespace UnityGameTranslator.Core
             FileTarget = null;
             Conflict = null;
             FileChanged = false;
-            _refusalsSaid = 0;
+            _refusalSaid = false;
         }
 
         /// <summary>What the file states, as it is read. Only settled values are taken.</summary>
@@ -331,7 +329,7 @@ namespace UnityGameTranslator.Core
             if (explained == Conflict) return;
 
             Conflict = explained;
-            _refusalsSaid = 0;
+            _refusalSaid = false;
 
             if (explained != null)
             {
@@ -347,13 +345,16 @@ namespace UnityGameTranslator.Core
         /// <summary>
         /// Whether the refusal is worth saying again.
         ///
-        /// ⚠ Three times, then silence. This is asked from the scanner, so an ungated line would be
-        /// written on every frame — and a log that repeats one line for ever is a log nobody reads
-        /// the rest of. The count starts over whenever the verdict itself moves.
+        /// ⚠ Once per verdict. This is asked from the scanner, so an ungated line would be written on
+        /// every frame; the line is the same for one verdict, so saying it once is saying everything.
+        /// A new verdict — or the same one after it was settled — is said again. Never "the first
+        /// three" (DiagnosticOnce's rule: no count on a diagnostic).
         /// </summary>
         public bool ShouldSayRefusal()
         {
-            return _refusalsSaid++ < RefusalsSaid;
+            if (_refusalSaid) return false;
+            _refusalSaid = true;
+            return true;
         }
     }
 }

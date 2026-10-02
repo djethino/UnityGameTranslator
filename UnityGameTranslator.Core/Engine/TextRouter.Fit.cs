@@ -84,9 +84,8 @@ namespace UnityGameTranslator.Core
 
         private void SayFit(string line)
         {
-            if (_layoutFitSaid >= 5) return;
-            _layoutFitSaid++;
-            _host.Log(line);
+            // Once per distinct line (component, sizes, text), never the first five only.
+            if (DiagnosticOnce.First("LAYOUT-FIT", line)) _host.Log(line);
         }
 
         /// <summary>

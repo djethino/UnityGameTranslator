@@ -86,7 +86,6 @@ namespace UnityGameTranslator.Core.TextShaping
         private static readonly Dictionary<int, FieldState> _states = new Dictionary<int, FieldState>();
         private static readonly Dictionary<int, FieldState> _byTmpLabel = new Dictionary<int, FieldState>();
         private static readonly List<int> _scratch = new List<int>();
-        private static int _logBudget = 8;
 
         // ══ Presenting a label ═══════════════════════════════════════════════════════════════
 
@@ -173,15 +172,13 @@ namespace UnityGameTranslator.Core.TextShaping
             value = s.Shown;
         }
 
-        // The first fields presented in a session, code point by code point: a screen cannot say
-        // whether a glyph drawn detached is a letter we did not shape or a font that draws its
-        // shaped form that way — the log can (first seen on a mod editor field, 2026-09-25).
-        private static int _describeBudget = 3;
-
+        // Every field text presented, code point by code point, once per text (debug only — what
+        // somebody types is many texts): a screen cannot say whether a glyph drawn detached is a
+        // letter we did not shape or a font that draws its shaped form that way — the log can
+        // (first seen on a mod editor field, 2026-09-25). Never a count of the first few.
         private static void Describe(string kind, object label, string typed, string shown)
         {
-            if (_describeBudget <= 0) return;
-            _describeBudget--;
+            if (!TranslatorCore.DebugMode || !DiagnosticOnce.First("RtlInputFields.describe", kind + "\u0001" + typed)) return;
             string font = (label as Text)?.font != null ? (label as Text).font.name : "?";
             TranslatorCore.LogInfo($"[RtlInputFields] {kind} field (font {font}) typed: {RtlPresenter.Escape(typed)}");
             TranslatorCore.LogInfo($"[RtlInputFields] {kind} field shows: {RtlPresenter.Escape(shown)}");
@@ -1015,8 +1012,7 @@ namespace UnityGameTranslator.Core.TextShaping
 
         private static void Note(string message)
         {
-            if (_logBudget <= 0) return;
-            _logBudget--;
+            if (!DiagnosticOnce.First("RtlInputFields.note", message)) return;
             TranslatorCore.LogWarning("[RtlInputFields] " + message);
         }
 

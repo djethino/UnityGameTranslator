@@ -247,16 +247,17 @@ namespace UnityGameTranslator.Core.Checks
             var index = new ReadbackIndex { Debug = said.Add };
             index.Index("You have [!v*0] apples", "Vous avez [!v*0] pommes", ownUi: false, normalizeNumbers: true);
 
-            for (int i = 0; i < 25; i++) index.IsReadback($"<b>Vous avez {i} pommes</b>", false);
-            check(said.Count == 10,
-                "the 'not queued, this is ours' line is said ten times, then not again",
-                "a game that re-decorates every frame would otherwise write a log nobody can read");
+            for (int frame = 0; frame < 3; frame++)
+                for (int i = 0; i < 25; i++) index.IsReadback($"<b>Vous avez {i} pommes</b>", false);
+            check(said.Count == 25,
+                "the 'not queued, this is ours' line is said once per text, every text",
+                "a game re-decorating every frame writes each text once; a count of the first ten dropped the eleventh");
 
             index.ClearGame();
             index.Index("You have [!v*0] apples", "Vous avez [!v*0] pommes", ownUi: false, normalizeNumbers: true);
             index.IsReadback("<b>Vous avez 1 pommes</b>", false);
-            check(said.Count == 11,
-                "and a reload of the game's file opens the budget again",
+            check(said.Count == 26,
+                "and a reload of the game's file says them again",
                 "a new file is a new session for the log; what it refuses is worth seeing once more");
 
             var silent = new ReadbackIndex();

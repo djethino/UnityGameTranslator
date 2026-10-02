@@ -553,15 +553,15 @@ namespace UnityGameTranslator.Core
                 // witness: it empties the component before rebuilding it (read back: '', a write
                 // no setter passes on — an empty text is never routed). What it lays out is then
                 // the last whole written, our translation or its own text. Measured in a trace
-                // carrying `held`, 2026-09-26. Any OTHER disagreement is said, bounded.
+                // carrying `held`, 2026-09-26. Any OTHER disagreement is said, once per case.
                 string whole = IsLayoutPassStart(held, text) ? held
                              : IsLayoutPassStart(state.LastTranslated, text) ? state.LastTranslated
                              : IsLayoutPassStart(state.LastRaw, text) ? state.LastRaw
                              : null;
                 if (whole == null) return false;
-                if (whole != held && !string.IsNullOrEmpty(held) && _layoutHeldSaid < 5)
+                if (whole != held && !string.IsNullOrEmpty(held)
+                    && DiagnosticOnce.First("LAYOUT-HELD", compId + "\u0001" + whole + "\u0001" + held))
                 {
-                    _layoutHeldSaid++;
                     _host.Log($"[LAYOUT-HELD] comp={compId} a layout pass starts from '{Clip(whole, 60)}' but the component reads back '{Clip(held, 60)}'");
                 }
                 state.LayoutWhole = StripBreaks(whole).TrimEnd();

@@ -172,6 +172,7 @@
       key. Both only show in a sequence: index, ask, re-decorate, clear, ask again.
     -->
     <Compile Include="../../UnityGameTranslator.Core/Engine/ReadbackIndex.cs" />
+    <Compile Include="../../UnityGameTranslator.Core/Engine/DiagnosticOnce.cs" />
     <!--
       The JSON library on a runtime that refuses to emit methods: its switch must still be there.
     -->

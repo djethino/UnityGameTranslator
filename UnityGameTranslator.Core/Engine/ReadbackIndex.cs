@@ -57,11 +57,11 @@ namespace UnityGameTranslator.Core
     /// </summary>
     public sealed class ReadbackIndex
     {
-        /// <summary>Where the bounded "not queued, this is ours" lines go. Left null in a check that does not read them.</summary>
+        /// <summary>Where the "not queued, this is ours" lines go — once per text. Left null in a check that does not read them.</summary>
         public Action<string> Debug { get; set; }
 
-        private const int SkipLogBudget = 10;
-        private int _skipLogCount;
+        // The texts already said not queued: once per text, never a count of the first ten.
+        private readonly HashSet<string> _skipLogged = new HashSet<string>(StringComparer.Ordinal);
 
         private sealed class Side
         {
@@ -130,7 +130,7 @@ namespace UnityGameTranslator.Core
             _presentedToLogical.Clear();
             _presentedExact.Clear();
             _sourceOfTarget.Clear();
-            _skipLogCount = 0;
+            lock (_skipLogged) _skipLogged.Clear();
         }
 
         /// <summary>
@@ -386,10 +386,11 @@ namespace UnityGameTranslator.Core
             string n = NormalizeForReadbackMatch(text);
             if (n == null || !index.ContainsKey(n)) return IsFragmentOfPresentedText(text);
 
-            if (_skipLogCount < SkipLogBudget)
+            bool first;
+            lock (_skipLogged) first = Debug != null && _skipLogged.Add(text);
+            if (first)
             {
-                _skipLogCount++;
-                Debug?.Invoke($"[Readback] Not queued, this is our own translation re-decorated by the game: '{(text.Length > 60 ? text.Substring(0, 60) + "..." : text)}'");
+                Debug($"[Readback] Not queued, this is our own translation re-decorated by the game: '{(text.Length > 60 ? text.Substring(0, 60) + "..." : text)}'");
             }
             return true;
         }

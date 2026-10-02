@@ -294,8 +294,6 @@ namespace UnityGameTranslator.Core
         // Each layout keyed to the whole it lays out, so a translation of that whole can take its
         // place (TextRouter.Fit).
         private readonly Dictionary<string, string> _layoutResults = new Dictionary<string, string>();
-        private int _layoutHeldSaid;   // [LAYOUT-HELD] lines said this session (bounded)
-        private int _layoutFitSaid;    // [LAYOUT-FIT] lines said this session (bounded)
 
         /// <summary>The record for this component, created on first need.</summary>
         private ComponentTextState StateFor(long compId)

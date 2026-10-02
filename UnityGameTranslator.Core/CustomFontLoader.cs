@@ -2867,7 +2867,8 @@ namespace UnityGameTranslator.Core
                 catch (Exception ex)
                 {
                     exceptionsCount++;
-                    if (addedCount < 3)
+                    // Once per distinct failure (the count of all of them is said below).
+                    if (DiagnosticOnce.First("CustomFontLoader.modernGlyph", ex.GetType().Name + "\u0001" + ex.Message))
                         TranslatorCore.LogWarning($"[CustomFontLoader] Failed to create modern glyph U+{glyphInfo.unicode:X4}: {ex.Message}");
                 }
             }

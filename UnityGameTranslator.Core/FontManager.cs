@@ -130,7 +130,6 @@ namespace UnityGameTranslator.Core
         private static float _lastDeadRefCleanup = 0f;
         private const float DEAD_REF_CLEANUP_INTERVAL = 5f;
 
-        private static int _markDirtyWarnCount = 0;
 
         public static void ProtectCloneAtlases()
         {
@@ -345,9 +344,8 @@ namespace UnityGameTranslator.Core
                         _excludedCharsPerClone[originalFontName] = excluded;
                     }
                     excluded.Add(c);
-                    if (_coverageRejectLogCount < CoverageRejectLogBudget)
+                    if (DiagnosticOnce.First("FontReplace.reject", originalFontName + "\u0001" + clone.name + "\u0001" + c))
                     {
-                        _coverageRejectLogCount++;
                         TranslatorCore.LogDebug($"[FontReplace] '{originalFontName}' keeps the game font: clone '{clone.name}' has no glyph for '{c}' (U+{((int)c):X4})");
                     }
                     return false;
@@ -357,11 +355,6 @@ namespace UnityGameTranslator.Core
             return true;
         }
 
-        // Silent when everything renders; names the missing glyph when a font legitimately can't be
-        // swapped, which is the first question asked when a line keeps the game face. Budgeted so a
-        // single unsupported character can't flood the log.
-        private const int CoverageRejectLogBudget = 12;
-        private static int _coverageRejectLogCount;
 
         /// <summary>
         /// Mark all components using a clone font as dirty so they re-render with the updated atlas.
@@ -404,9 +397,8 @@ namespace UnityGameTranslator.Core
                         method.Invoke(comp, null);
                         marked++;
                     }
-                    else if (_markDirtyWarnCount < 3)
+                    else if (DiagnosticOnce.First("MarkDirty.missing", comp.GetType().FullName))
                     {
-                        _markDirtyWarnCount++;
                         TranslatorCore.LogWarning($"[MarkDirty] SetAllDirty NOT FOUND on {comp.GetType().FullName}");
                     }
                 }

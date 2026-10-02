@@ -843,8 +843,6 @@ namespace UnityGameTranslator.Core
         /// façade: same names, same signatures as before the cut, so no caller moved.
         /// </summary>
         private static readonly ReadbackIndex _readback = new ReadbackIndex { Debug = m => LogDebug(m) };
-        private static int _shapedQueueRefusals;
-        private static int _readbackStoreLogged;
 
         /// <inheritdoc cref="ReadbackIndex.RegisterPresented"/>
         internal static void RegisterPresentedText(string presented, string logical)
@@ -6090,11 +6088,10 @@ namespace UnityGameTranslator.Core
                 }
                 if (admission == Admission.AlreadyTarget)
                 {
-                    // Every route that creates an entry passes here, so the stack is logged once:
-                    // the caller that got this far is named, not guessed at.
-                    if (_readbackStoreLogged < 3)
+                    // Every route that creates an entry passes here, so the stack is logged — once
+                    // per key: the caller that got this far is named, not guessed at.
+                    if (DiagnosticOnce.First("Readback.store", normalizedKey))
                     {
-                        _readbackStoreLogged++;
                         Adapter.LogWarning($"[Readback] Refused to store a re-decorated translation as a new key: '{(normalizedKey.Length > 70 ? normalizedKey.Substring(0, 70) + "..." : normalizedKey)}'\n{Environment.StackTrace}");
                     }
                     return;
@@ -6270,7 +6267,7 @@ namespace UnityGameTranslator.Core
             {
                 // The second way in (a game shipping its own shaping) is a real source this project
                 // cannot translate yet: logged so the limitation is visible instead of silent.
-                if (_shapedQueueRefusals++ < 3)
+                if (DiagnosticOnce.First("Queue.presentationForms", text))
                     LogWarning($"[Queue] Refused presentation-form text as a source key (own composed output, or a game already shipping shaped RTL — not translatable yet): '{(text.Length > 40 ? text.Substring(0, 40) + "…" : text)}'");
                 return false;
             }
@@ -6639,21 +6636,20 @@ namespace UnityGameTranslator.Core
             void ITextRouterHost.LogWarning(string message) => TranslatorCore.LogWarning(message);
             void ITextRouterHost.LogDebug(string message) => TranslatorCore.LogDebug(message);
 
-            // Which of the game's methods lays texts out, said a few times per session: a diagnostic
-            // for the layout pass (analyse/banc-routage-texte.md). ⚠ Unity's own stack extraction,
-            // not System.Diagnostics: on IL2CPP the game's frames are native and only the engine can
-            // name them.
-            private int _layoutStacksSaid;
+            // Which of the game's methods lays texts out: a diagnostic for the layout pass
+            // (analyse/banc-routage-texte.md), once per component — the stack is extracted only then,
+            // its cost bounded by the components, not by a count — and once per distinct stack.
+            // ⚠ Unity's own stack extraction, not System.Diagnostics: on IL2CPP the game's frames are
+            // native and only the engine can name them.
             private readonly HashSet<string> _layoutStacks = new HashSet<string>();
 
             public void LayoutPassSeen(object component, string fullText)
             {
-                if (_layoutStacksSaid >= 5) return;
+                if (!DiagnosticOnce.First("Layout.component", IdOf(component).ToString())) return;
                 string stack;
                 try { stack = UnityEngine.StackTraceUtility.ExtractStackTrace(); }
                 catch (Exception ex) { stack = $"(stack unavailable: {ex.GetType().Name}: {ex.Message})"; }
                 if (!_layoutStacks.Add(stack)) return;
-                _layoutStacksSaid++;
                 string head = fullText.Length > 60 ? fullText.Substring(0, 60) + "…" : fullText;
                 LogInfo($"[Layout] {Describe(component)} is laid out word by word by the game — '{head}'. Called from:\n{stack}");
                 TextTrace.Layout(IdOf(component), fullText, stack);

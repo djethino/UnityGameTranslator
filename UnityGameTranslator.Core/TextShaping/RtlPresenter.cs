@@ -53,8 +53,6 @@ namespace UnityGameTranslator.Core.TextShaping
         private static readonly Dictionary<long, object> _alignedOriginal = new Dictionary<long, object>();
         private static readonly Dictionary<long, object> _wrapOriginal = new Dictionary<long, object>();
 
-        private static int _logBudget = 8;
-
         // Components whose text went through Present, and those just enabled still wearing a
         // template's presented form without having done so (NoteEnabled → AdoptCopies).
         private static readonly HashSet<long> _presented = new HashSet<long>();
@@ -391,9 +389,8 @@ namespace UnityGameTranslator.Core.TextShaping
                         && !UIToolkitSupport.UnderlineIsSafe(instance, RtlComposer.ShapeLogicalOnly(value)))
                     {
                         value = stripped;
-                        if (_underlineDropBudget > 0)
+                        if (DiagnosticOnce.First("RtlPresenter.underline", instance.GetType().Name))
                         {
-                            _underlineDropBudget--;
                             TranslatorCore.LogWarning("[RtlPresenter] underline/strikethrough tag dropped on RTL text: this engine's DrawUnderlineMesh crashes laying out an underline over right-to-left glyphs (Unity issue, fixed in 6000.5). The text is unaffected, and translations.json keeps the tag.");
                         }
                     }
@@ -432,11 +429,8 @@ namespace UnityGameTranslator.Core.TextShaping
                 string composed = RtlComposer.Compose(value, RtlOutput.VisualOrder);
                 RegisterShown(compId, composed, value);
                 MirrorAlignment(instance, compId, mirror);
-                if (_fallbackLogBudget > 0)
-                {
-                    _fallbackLogBudget--;
+                if (DiagnosticOnce.First("RtlPresenter.noLineSource", type.Name))
                     TranslatorCore.LogWarning($"[RtlPresenter] no line source for {type.Name} — whole-string visual order, multi-line may stack bottom-up");
-                }
                 Log(compId, "visual", value, composed);
                 value = composed;
             }
@@ -513,12 +507,11 @@ namespace UnityGameTranslator.Core.TextShaping
             else
                 MirrorAlignment(instance, compId, mirrorNow);
 
-            if (value.IndexOf("<u", StringComparison.OrdinalIgnoreCase) >= 0 && _underlineDropBudget > 0)
+            if (value.IndexOf("<u", StringComparison.OrdinalIgnoreCase) >= 0 && DiagnosticOnce.First("RtlPresenter.echoUnderline", compId.ToString()))
             {
                 // ...and still carrying an underline the guard should have removed. Worth a line
                 // while this engine's underline defect is being characterised: it would mean a
                 // write reached the element without going through the guard.
-                _underlineDropBudget--;
                 TranslatorCore.LogWarning($"[RtlPresenter] echo still carries an underline tag on comp={compId} — a write bypassed the guard");
             }
         }
@@ -582,12 +575,10 @@ namespace UnityGameTranslator.Core.TextShaping
             if (needsBreak)
             {
                 working = WordBreaker.Break(working, out string whyNot);
-                if (whyNot != null && _dictionaryLogBudget > 0)
-                {
-                    // Said, never hidden: a text stays unwrappable, and the reason must be readable.
-                    _dictionaryLogBudget--;
+                // Said, never hidden: a text stays unwrappable, and the reason must be readable —
+                // once per reason.
+                if (whyNot != null && DiagnosticOnce.First("RtlPresenter.wordBreak", whyNot))
                     TranslatorCore.LogWarning($"[RtlPresenter] word breaking skipped — {whyNot}");
-                }
             }
 
             // Stage B2 — the font's own OpenType tables, for a TMP component drawn by a font
@@ -672,7 +663,6 @@ namespace UnityGameTranslator.Core.TextShaping
             return again;
         }
 
-        private static int _dictionaryLogBudget = 3;
 
         /// <summary>
         /// Finish a UI Toolkit element once its layout has run: cut its measuring form at the
@@ -978,7 +968,8 @@ namespace UnityGameTranslator.Core.TextShaping
                         // existed. A visual-order fallback would be read backwards under the flag.
                         if (entry.Kind == ReflowKind.Tmp)
                         {
-                            if (_fallbackLogBudget > 0) { _fallbackLogBudget--; TranslatorCore.LogWarning($"[RtlPresenter] TMP lines not cut ({whyNot}) — the engine's own wrap kept: comp={id}"); }
+                            if (DiagnosticOnce.First("RtlPresenter.tmpNotCut", id + "|" + whyNot))
+                                TranslatorCore.LogWarning($"[RtlPresenter] TMP lines not cut ({whyNot}) — the engine's own wrap kept: comp={id}");
                             _reflows.Remove(id);
                             continue;
                         }
@@ -987,9 +978,8 @@ namespace UnityGameTranslator.Core.TextShaping
                             final = BuildUGuiLinesNow(comp, entry.Measure, out whyOwn);
                         else if (entry.Kind == ReflowKind.UGuiWords)
                             final = BuildUGuiWordLines(comp, entry.Assigned, out whyOwn);
-                        if (_fallbackLogBudget > 0)
+                        if (DiagnosticOnce.First("RtlPresenter.reflowFallback", id + "|" + whyNot + "|" + (final != null)))
                         {
-                            _fallbackLogBudget--;
                             if (final != null)
                                 TranslatorCore.LogWarning($"[RtlPresenter] engine lines never caught up ({whyNot}) — cut with our own generator at the box's settled width: comp={id}");
                             else
@@ -1038,7 +1028,6 @@ namespace UnityGameTranslator.Core.TextShaping
             }
         }
 
-        private static int _fallbackLogBudget = 5;
         private static readonly HashSet<string> _waitReasons = new HashSet<string>();
         // Reflows waiting on an inactive uGUI text, skipped until a graphic is enabled (see
         // ProcessPendingReflows), and the count of enabled graphics they were parked at.
@@ -1068,7 +1057,6 @@ namespace UnityGameTranslator.Core.TextShaping
         // one character per line and locked there; a disclaimer grew to one line as wide as its
         // paragraph. A cut is made once, at the width the game gave the box for its own text,
         // and the engine's wrapping (kept on) folds what would not fit.
-        private static int _underlineDropBudget = 3;
 
         /// <summary>
         /// One line source per engine; everything after the cut is shared. Cuts
@@ -1284,17 +1272,14 @@ namespace UnityGameTranslator.Core.TextShaping
         }
 
 
-        // Everything a last-resort cut rests on, for the first few of a session: the box as the
+        // Everything a last-resort cut rests on, once per text cut (never a count): the box as the
         // engine sees it (rectTransform.rect — what Text.OnPopulateMesh cuts with) against the
         // pixel-adjusted rect, the component's own wrapping and best-fit settings, and how many
         // lines came out. Added when labels came out in three pieces with a "stable" width that
         // could not be the engine's — the log has to say which of these differs.
-        private static int _cutDescribeBudget = 60;
-
         private static void DescribeCut(object comp, string assigned, UnityEngine.Rect pixelRect, object settings, string cut)
         {
-            if (_cutDescribeBudget <= 0 || !TranslatorCore.DebugMode) return;
-            _cutDescribeBudget--;
+            if (!TranslatorCore.DebugMode || !DiagnosticOnce.First("RtlPresenter.cut", assigned + "\u0001" + pixelRect.width.ToString("F1"))) return;
             try
             {
                 string rectSize = "?";
@@ -1726,11 +1711,8 @@ namespace UnityGameTranslator.Core.TextShaping
                 try { wrapped = (string)_tk2dFormatText.Invoke(instance, new object[] { shaped }) ?? shaped; }
                 catch (Exception ex) { Faults.Say("RtlPresenter.ComposeTk2dPerLine format", ex); wrapped = shaped; }
             }
-            else if (_fallbackLogBudget > 0)
-            {
-                _fallbackLogBudget--;
+            else if (DiagnosticOnce.First("RtlPresenter.tk2dFormat", ""))
                 TranslatorCore.LogWarning("[RtlPresenter] tk2dTextMesh.FormatText not resolvable — per-explicit-line only, engine wrap points unknown");
-            }
 
             return ComposeLines(wrapped.Split('\n'));
         }
@@ -1917,21 +1899,13 @@ namespace UnityGameTranslator.Core.TextShaping
             // this" from "my viewer did". It is what answers an issue saying "right-to-left is
             // broken in my game", which is why it stayed when the bench probes were removed.
             //
-            // ⚠ The budget never rearms: past 300 lines this is silent for the rest of the session.
-            // Fine for one reproduction, to revisit if a report ever needs more.
-            if (TranslatorCore.DebugMode && _dumpBudget > 0)
-            {
-                _dumpBudget--;
-                TranslatorCore.LogDebug($"[RtlPresenter] comp={compId} mode={mode} in : {Escape(logical)}");
-                TranslatorCore.LogDebug($"[RtlPresenter] comp={compId} mode={mode} out: {Escape(composed)}");
-            }
-            if (_logBudget <= 0) return;
-            _logBudget--;
-            TranslatorCore.LogDebug($"[RtlPresenter] comp={compId} mode={mode} " +
-                $"'{(logical.Length > 30 ? logical.Substring(0, 30) + "…" : logical)}' → shaped ({composed.Length} ch)");
+            // Once per distinct text and mode, never a count (DiagnosticOnce): a text re-set every
+            // frame is written once, every new one is written — a 300-line budget fell silent before
+            // the line somebody was looking at (2026-10-02).
+            if (!TranslatorCore.DebugMode || !DiagnosticOnce.First("RtlPresenter.Log", mode + "\u0001" + logical)) return;
+            TranslatorCore.LogDebug($"[RtlPresenter] comp={compId} mode={mode} in : {Escape(logical)}");
+            TranslatorCore.LogDebug($"[RtlPresenter] comp={compId} mode={mode} out: {Escape(composed)}");
         }
-
-        private static int _dumpBudget = 300;
 
         // Components already described, so a text refreshed every frame costs one line, once.
         private static readonly HashSet<long> _fontDescribed = new HashSet<long>();

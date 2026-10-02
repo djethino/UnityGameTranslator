@@ -305,14 +305,13 @@ namespace UnityGameTranslator.Core.Checks
                 "and it is said once, not on every server answer",
                 "this is reached from the sync stream and from every download; an unconditional line repeats for ever");
 
-            check(state.ShouldSayRefusal() && state.ShouldSayRefusal() && state.ShouldSayRefusal()
-                  && !state.ShouldSayRefusal(),
-                "the refusal itself is said three times and then not again",
-                "it is asked from the scanner, so ungated it would be written on every frame");
+            check(state.ShouldSayRefusal() && !state.ShouldSayRefusal(),
+                "the refusal itself is said once per verdict",
+                "it is asked from the scanner, so ungated it would be written on every frame — and it is one line for one verdict");
 
             state.NoteConflict("en", "th");
             check(state.Conflict == null && state.ShouldSayRefusal(),
-                "settling it says so, and the count starts over",
+                "settling it says so, and a new verdict is said again",
                 "'nothing is being translated' has to be revocable, or the mod stays silently stopped after the fix");
 
             var agreeing = Fresh();

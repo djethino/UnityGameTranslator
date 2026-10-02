@@ -1623,17 +1623,15 @@ namespace UnityGameTranslator.Core
         /// </summary>
         // ⚠ Diagnostic, behind DebugMode: which path finished each element and how
         // many frames after its assignment — the user sees "a jump under a second" and the two
-        // paths differ by exactly that.
-        private static int _finishLogBudget = 80;
+        // paths differ by exactly that. Once per element and outcome, never a count.
 
         private static void TryFinishPending(object element, PendingRtl pending, string via)
         {
             if (Time.frameCount <= pending.Frame) return;
             if (!WillBeLaidOut(element))
             {
-                if (_finishLogBudget > 0 && TranslatorCore.DebugMode)
+                if (TranslatorCore.DebugMode && DiagnosticOnce.First("UITK.finish", PathOf(element) + "\u0001not laid out"))
                 {
-                    _finishLogBudget--;
                     TranslatorCore.LogDebug($"[RtlPresenter] uitk {via}: not laid out yet ({(IsElementAttached(element) ? "display:none somewhere above" : "not attached")}) frames={Time.frameCount - pending.Frame} '{PathOf(element)}'");
                 }
                 return;
@@ -1656,9 +1654,8 @@ namespace UnityGameTranslator.Core
             MirrorAlign(element, pending.Mirror);
             bool done = TextShaping.RtlPresenter.FinishUiToolkitPending(element, pending.LogicalSource,
                             pending.Logical, pending.Measure, pending.Assigned);
-            if (_finishLogBudget > 0 && TranslatorCore.DebugMode)
+            if (TranslatorCore.DebugMode && DiagnosticOnce.First("UITK.finish", PathOf(element) + "\u0001" + done + "\u0001" + pending.Logical))
             {
-                _finishLogBudget--;
                 TranslatorCore.LogDebug($"[RtlPresenter] uitk {via}: {(done ? "finished" : "no width yet")} frames={Time.frameCount - pending.Frame} '{PathOf(element)}'");
             }
             if (done) _pendingRtl.Remove(element);
@@ -2630,13 +2627,11 @@ namespace UnityGameTranslator.Core
 
         // Every verdict is logged while this engine's underline defect is being characterised:
         // the bench crashed a third time with the tag apparently absent, and the log could not
-        // say whether the guard had even been consulted for the element that died.
-        private static int _underlineVerdictBudget = 12;
-
+        // say whether the guard had even been consulted for the element that died. Once per element
+        // and verdict — a count of the first twelve hid the thirteenth, the one that crashed.
         private static void LogUnderlineVerdict(object element, bool safe, string why)
         {
-            if (_underlineVerdictBudget <= 0) return;
-            _underlineVerdictBudget--;
+            if (!DiagnosticOnce.First("UITK.underline", PathOf(element) + "\u0001" + safe + "\u0001" + why)) return;
             TranslatorCore.LogInfo($"[RtlPresenter] underline verdict for '{PathOf(element)}': {(safe ? "KEEP" : "DROP")} — {why}");
         }
 

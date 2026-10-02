@@ -91,6 +91,17 @@ namespace UnityGameTranslator.Core.Checks
                   && UnicodeInfo.MirrorOf('A') == 'A',
                 "a right-to-left level mirrors what Unicode pairs: brackets, guillemets, ≤ and ≥",
                 "four characters were typed here; Unicode's BidiMirroring.txt lists hundreds");
+            // A percentage, as UAX #9 lays it out (and every browser): after an Arabic letter a European
+            // number is an Arabic number (W2), the % beside it a neutral that goes to its left — "%2",
+            // as Arabic writes ٪٢; after a Hebrew letter it stays a European number — "2%". Both outputs
+            // agree (TMP reverses the flagged string itself).
+            string arabicVisual = RtlComposer.Compose("احصل على 2% فرصة", RtlOutput.VisualOrder);
+            var arabicFlagged = RtlComposer.Compose("احصل على 2% فرصة", RtlOutput.RtlFlagged).ToCharArray();
+            Array.Reverse(arabicFlagged);
+            string hebrewVisual = RtlComposer.Compose("קבל 2% סיכוי", RtlOutput.VisualOrder);
+            check(arabicVisual.Contains("%2") && new string(arabicFlagged).Contains("%2") && hebrewVisual.Contains("2%"),
+                "a percentage reads as UAX #9 lays it out: %2 after Arabic, 2% after Hebrew",
+                "Arabic " + string.Join(" ", arabicVisual.Select(c => ((int)c).ToString("X4"))) + " | Hebrew " + string.Join(" ", hebrewVisual.Select(c => ((int)c).ToString("X4"))));
             check(RtlText.ContainsStrongRtl("x\U0001E900"), "a right-to-left letter beyond U+FFFF is found",
                 "Adlam is in a supplementary plane: read as one code point, not two halves");
             check(!RtlText.IsStrongRtl(0x0915) && !RtlText.IsStrongRtl(0x4E2D) && !RtlText.IsStrongRtl(0x0416),

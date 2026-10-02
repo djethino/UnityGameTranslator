@@ -1385,6 +1385,18 @@ namespace UnityGameTranslator.Core
             return ok;
         }
 
+        /// <summary>
+        /// A font the mod made outlives the game's unloads: the engine's sweep of unused assets
+        /// (a scene change) destroyed a replacement no text wore at that instant, and the next text
+        /// given it read a dead object — "GetName" refused on every pass (2026-10-02). Same shield as
+        /// the mod's TMP and UI Toolkit assets.
+        /// </summary>
+        private static Font Kept(Font font)
+        {
+            if (font != null) font.hideFlags |= HideFlags.DontUnloadUnusedAsset;
+            return font;
+        }
+
         // The game's build stripped Font.CreateDynamicFontFromOSFont: fonts by name are made by the two
         // engine calls it stands for (TypeHelper.NewDynamicFont).
         private static bool _osFontShortcutStripped;
@@ -1410,7 +1422,7 @@ namespace UnityGameTranslator.Core
                         var font = method.Invoke(null, new object[] { family, 32 }) as Font;
                         if (font != null)
                             TranslatorCore.LogDebug($"[FontManager] Created dynamic Unity font: {family}");
-                        return font;
+                        return Kept(font);
                     }
                     _osFontShortcutStripped = true;
                 }
@@ -1427,7 +1439,7 @@ namespace UnityGameTranslator.Core
                 TranslatorCore.LogInfo("[FontManager] CreateDynamicFontFromOSFont stripped from this game — fonts by name are made by the engine calls it is made of");
             }
 
-            var made = TypeHelper.NewDynamicFont(new[] { family }, 32);
+            var made = Kept(TypeHelper.NewDynamicFont(new[] { family }, 32));
             if (made != null) TranslatorCore.LogDebug($"[FontManager] Created dynamic Unity font (engine calls): {family}");
             else if (!TypeHelper.CanMakeDynamicFonts)
             {
@@ -3527,6 +3539,8 @@ namespace UnityGameTranslator.Core
             if (comp != null && TranslatorCore.IsOwnUI(comp)) return false;
 
             var fontObj = TypeHelper.GetFont(c);
+            // A font destroyed under the component has no name to ask (IL2CPP throws on it).
+            if (!TypeHelper.IsUnityObjectAlive(fontObj)) return false;
             string fontName = (fontObj is UnityEngine.Object fo) ? fo.name : null;
             if (string.IsNullOrEmpty(fontName)) return false;
 
@@ -4104,7 +4118,13 @@ namespace UnityGameTranslator.Core
             if (_failedFallbackFontNames.Contains(settings.fallback))
                 return null;
 
-            // Get or create the replacement font (keyed by original font name — each game font gets its own clone)
+            // Get or create the replacement font (keyed by original font name — each game font gets its own clone).
+            // One the game unloaded all the same is made again, never handed out dead.
+            if (_unityFallbackFonts.TryGetValue(originalFontName, out var cached) && !TypeHelper.IsUnityObjectAlive(cached))
+            {
+                TranslatorCore.LogWarning($"[FontManager] the replacement for '{originalFontName}' was unloaded by the game — made again");
+                _unityFallbackFonts.Remove(originalFontName);
+            }
             if (!_unityFallbackFonts.TryGetValue(originalFontName, out var replacementFont))
             {
                 // The reference as the shared rule serves it (FontReferences.Order): a bare name not

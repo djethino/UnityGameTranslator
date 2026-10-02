@@ -105,6 +105,20 @@ namespace UnityGameTranslator.Core.Checks
         // The runtime's character tables: CharUnicodeInfo and char.IsLetter & co. answer from the
         // Unicode of the .NET a game ships (6, 8, or a corlib trimmed in half). Only UnicodeInfo,
         // which reads the mod's generated tables, may answer what a character is.
+        // A character RANGE written as an ordered comparison with a character literal: `c <= 'Z'`,
+        // `for (char c = '!'; c <= '~'; …)` — printable ASCII as "the letters", Latin as "the text"
+        // (2026-10-03: an atlas filled with ASCII could not be rebuilt for a font without Latin; a
+        // debug line was written for Latin texts only). Digits and hexadecimal letters read machine
+        // formats (an id, an escape) and are not a script decision; any other literal is.
+        private static readonly Regex LiteralRange = new Regex(@"(?:<=|>=|<|>)\s*'([^'\\])'|'([^'\\])'\s*(?:<=|>=|<|>)");
+        private static bool MachineFormat(char c) => (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+
+        // Where a Latin range IS the question, said with why.
+        private static readonly Dictionary<string, string> RangeAllowedIn = new Dictionary<string, string>
+        {
+            ["FontManager.Coverage.cs"] = "DrawsLatin: whether a font holds the Latin letters and digits of the mod's own English interface",
+        };
+
         private static readonly Regex RuntimeUnicode = new Regex(@"\bCharUnicodeInfo\b|\bchar\.Is(Letter|Digit|LetterOrDigit|WhiteSpace|Control|Punctuation|Symbol|Separator|Number|Upper|Lower)\s*\(");
 
         public static void Run(Action<bool, string, string> check)
@@ -144,6 +158,16 @@ namespace UnityGameTranslator.Core.Checks
                     here.Add("U+" + cp.ToString("X4"));
                 }
                 if (SearchedString.IsMatch(source)) here.Add("STRING");
+                if (!RangeAllowedIn.ContainsKey(rel))
+                    foreach (Match m in LiteralRange.Matches(source))
+                    {
+                        char c = (m.Groups[1].Success ? m.Groups[1].Value : m.Groups[2].Value)[0];
+                        // The same decisions as the code points above: Unicode's own structure, and a
+                        // point a file is allowed with its reason.
+                        if (MachineFormat(c) || UnicodeStructure.Contains(c) || PrivateUse(c)) continue;
+                        if (AllowedIn.TryGetValue(rel, out var allowedRange) && allowedRange.ContainsKey(c)) continue;
+                        here.Add("RANGE '" + c + "'");
+                    }
                 foreach (Match m in ScriptCompare.Matches(rel == EngineDispatchFile ? WithoutEngineOf(source) : source))
                 {
                     string name = m.Groups[1].Success ? m.Groups[1].Value : m.Groups[2].Value;

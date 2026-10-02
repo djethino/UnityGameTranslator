@@ -251,24 +251,15 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// DEBUG LOG: a text with Latin letters that reached the queue without the reverse index
-        /// recognising it — after every skip check, so only texts actually queued are named.
+        /// DEBUG LOG: a text that reached the queue without the reverse index recognising it — after
+        /// every skip check, so only texts actually queued are named; once per text. Any text, in any
+        /// script and of any length (2026-10-03: only texts of more than 5 characters holding Latin
+        /// letters were named, so a game written in another script never had one).
         /// </summary>
         private void NoteReverseMiss(string text, string trimmedNormalized)
         {
-            if (text.Length > 5)
-            {
-                bool hasLatin = false;
-                foreach (char c in text)
-                {
-                    if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'))
-                    { hasLatin = true; break; }
-                }
-                if (hasLatin && DiagnosticOnce.First("Router.reverseMiss", text))
-                {
-                    _host.LogDebug($"[REVERSE-MISS] orig({text.Length}c)='{text}'\n  norm({trimmedNormalized.Length}c)='{trimmedNormalized}'");
-                }
-            }
+            if (DiagnosticOnce.First("Router.reverseMiss", text))
+                _host.LogDebug($"[REVERSE-MISS] orig({text.Length}c)='{text}'\n  norm({trimmedNormalized.Length}c)='{trimmedNormalized}'");
         }
 
         private static string Head40(string text) => text.Length > 40 ? text.Substring(0, 40) : text;

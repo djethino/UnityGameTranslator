@@ -846,9 +846,9 @@ namespace UnityGameTranslator.Core
             }
         }
 
-        // A font whose atlas must be rebuilt → the letters asked to fill it (those it can draw, in
-        // printable ASCII) and the size asked next.
-        private sealed class AtlasRebuild { internal Font Font; internal string Letters; internal int Size; internal int Frames; }
+        // A font whose atlas must be rebuilt → the letters asked to fill it (those of the texts wearing
+        // it, which it can draw) and the size asked next.
+        private sealed class AtlasRebuild { internal Font Font; internal string Letters; internal int Size, From, Frames; }
         // By instance id, never by the Font object: see OnFontTextureRebuilt.
         private static readonly Dictionary<int, AtlasRebuild> _atlasRebuilds = new Dictionary<int, AtlasRebuild>();
 
@@ -856,30 +856,46 @@ namespace UnityGameTranslator.Core
         // starts past it, every size it asks being one the atlas does not hold.
         private static readonly Dictionary<int, int> _lastFillSize = new Dictionary<int, int>();
 
-        // The first size asked: larger than text is drawn at, so the letters are new to the atlas.
-        // Measured on the bench (analyse/atlas-fontnames-reconstruction.md): from there, a small atlas
-        // rebuilds at the first frame and a full 4096² one within 17.
-        private const int FirstFillSize = 100;
-
         // Unity's dynamic font atlas stops at 4096² — said by the engine itself when a request cannot
         // fit ("max size 4096"). One frame's letters at one size must fit an EMPTY atlas of that size,
         // or the engine refuses to rebuild at all.
         private const int EngineFontAtlasMax = 4096;
 
+        /// <summary>
+        /// Asks the atlas of <paramref name="font"/> to be rebuilt, filled with what is STALE in it: the
+        /// letters of the texts wearing it now (those it can draw), at a size none of them is drawn at —
+        /// one past the largest, so every letter asked is new to the atlas. Nothing written for one
+        /// script or one game (2026-10-03: printable ASCII and a fixed 100 px stood here, and a font
+        /// with no Latin letter could not be rebuilt). No text wearing it: nothing stale is shown, and
+        /// a text that comes later asks its letters with the names of now.
+        /// </summary>
         private static void AskAtlasRebuild(Font font)
         {
             var letters = new System.Text.StringBuilder();
-            for (char c = '!'; c <= '~'; c++)
-                if (font.HasCharacter(c)) letters.Append(c);
-            if (letters.Length == 0)
+            var seen = new HashSet<char>();
+            float largest = 0f;
+            foreach (var type in new[] { TypeHelper.UI_TextType, TypeHelper.TextMeshType })
             {
-                if (DiagnosticOnce.First("FontManager.AtlasRebuild.noLetters", font.name))
-                    TranslatorCore.LogWarning($"[FontManager] '{font.name}': no ASCII letter to rebuild its atlas with — letters drawn before its names changed stay until the next launch");
-                return;
+                if (type == null) continue;
+                var all = TypeHelper.FindAllObjectsOfType(type);
+                if (all == null) continue;
+                foreach (var component in all)
+                {
+                    if (!(TypeHelper.GetFont(component) is Font worn) || worn != font) continue;
+                    string text = TypeHelper.GetText(component);
+                    if (string.IsNullOrEmpty(text)) continue;
+                    largest = Math.Max(largest, TypeHelper.GetFontSize(component));
+                    foreach (char c in text)
+                        if (!TextShaping.UnicodeInfo.IsWhiteSpace(c) && !TextShaping.UnicodeInfo.IsControl(c) && seen.Add(c) && font.HasCharacter(c))
+                            letters.Append(c);
+                }
             }
+            if (letters.Length == 0) return;
+
             int id = font.GetInstanceID();
-            int size = _lastFillSize.TryGetValue(id, out int last) ? Math.Max(FirstFillSize, last + 1) : FirstFillSize;
-            _atlasRebuilds[id] = new AtlasRebuild { Font = font, Letters = letters.ToString(), Size = size };
+            int past = (int)Math.Ceiling(largest) + 1;
+            int size = _lastFillSize.TryGetValue(id, out int last) ? Math.Max(past, last + 1) : past;
+            _atlasRebuilds[id] = new AtlasRebuild { Font = font, Letters = letters.ToString(), Size = size, From = size };
             SubscribeTextureRebuilt();
             SubscribeWillRenderCanvases();
         }
@@ -903,7 +919,7 @@ namespace UnityGameTranslator.Core
                 {
                     _atlasRebuilds.Remove(id);
                     if (DiagnosticOnce.First("FontManager.AtlasRebuild.tooLarge", font.name))
-                        TranslatorCore.LogWarning($"[FontManager] '{font.name}': its atlas would not rebuild (sizes {FirstFillSize}–{rebuild.Size - 1} asked) — letters drawn before its names changed stay until the next launch");
+                        TranslatorCore.LogWarning($"[FontManager] '{font.name}': its atlas would not rebuild (sizes {rebuild.From}–{rebuild.Size - 1} asked) — letters drawn before its names changed stay until the next launch");
                     continue;
                 }
                 _lastFillSize[id] = rebuild.Size;
@@ -4880,17 +4896,25 @@ namespace UnityGameTranslator.Core
             return side;
         }
 
-        /// <summary>How many different characters the translation shows — what an atlas built for it will receive (at least the printable ASCII).</summary>
+        /// <summary>
+        /// How many different characters an atlas built for this translation will receive: those of its
+        /// translations, and those of the game's own lines it was made from — shown as they are when
+        /// left untranslated. Read from the texts, never a range written for one script (2026-10-03:
+        /// printable ASCII stood here).
+        /// </summary>
         private static int ExpectedGlyphCount()
         {
             var chars = new HashSet<char>();
+            void Add(string text)
+            {
+                if (text == null) return;
+                foreach (char c in text) if (!TextShaping.UnicodeInfo.IsWhiteSpace(c) && !TextShaping.UnicodeInfo.IsControl(c)) chars.Add(c);
+            }
             foreach (var entry in TranslatorCore.TranslationLines())
             {
-                string v = entry.Value?.Value;
-                if (v == null) continue;
-                foreach (char c in v) if (!TextShaping.UnicodeInfo.IsWhiteSpace(c) && !TextShaping.UnicodeInfo.IsControl(c)) chars.Add(c);
+                Add(entry.Key);
+                Add(entry.Value?.Value);
             }
-            for (char c = '!'; c <= '~'; c++) chars.Add(c);
             return chars.Count;
         }
 

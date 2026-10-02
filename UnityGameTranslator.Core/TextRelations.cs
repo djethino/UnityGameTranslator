@@ -260,7 +260,8 @@ namespace UnityGameTranslator.Core
             {
                 char c = stripped[i];
                 if (c == '*' || c == '{' || c == '}') continue;
-                if (c >= '0' && c <= '9') continue;
+                // Every script's digits, not only 0-9 (UnicodeInfo: the mod's own Unicode tables).
+                if (TextShaping.UnicodeInfo.IsDigit(c)) continue;
 
                 // Layout differs on the two sides — a sprite tag leaves none of the space its glyph
                 // occupied — so runs of blank become one, and the ends are trimmed below.

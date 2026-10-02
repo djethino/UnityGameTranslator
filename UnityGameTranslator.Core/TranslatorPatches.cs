@@ -2666,11 +2666,10 @@ namespace UnityGameTranslator.Core
 
             int instanceId = TypeHelper.GetInstanceID(instance);
             float scale = FontManager.GetFontScale(fontName, instanceId);
-            int bump = FontManager.GetFontSizeBump(fontName);
-            // Fast exit: if scale is 1.0, no bump, and we've never tracked this component, nothing to do
+            // Fast exit: if scale is 1.0 and we've never tracked this component, nothing to do
             // But if we HAVE a true original stored, we must continue to potentially restore the original size
             // (e.g., component was previously scaled by global, now overridden to 1.0)
-            if (Math.Abs(scale - 1.0f) < 0.001f && bump == 0)
+            if (Math.Abs(scale - 1.0f) < 0.001f)
             {
                 if (instanceId == -1 ||
                     (!_originalFontSizes.ContainsKey(instanceId) && !_trueOriginalFontSizes.ContainsKey(instanceId)
@@ -2698,11 +2697,8 @@ namespace UnityGameTranslator.Core
                 _originalFontSizes[instanceId] = originalSize;
             }
 
-            // Apply font size bump for runtime font changes.
-            // Bumping fontSize by ±1 creates new atlas cache entries → forces re-rasterization
-            // with updated fontNames. 1px difference during runtime testing, resets on restart.
             // What the component will hold — rounded for a whole-number size (TypeHelper.HeldFontSize).
-            float targetSize = TypeHelper.HeldFontSize(instance, (originalSize + bump) * scale);
+            float targetSize = TypeHelper.HeldFontSize(instance, originalSize * scale);
 
             float currentSize = TypeHelper.GetFontSize(instance);
 

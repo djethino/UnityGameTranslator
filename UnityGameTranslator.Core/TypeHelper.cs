@@ -677,6 +677,56 @@ namespace UnityGameTranslator.Core
             }
         }
 
+        /// <summary>Whether this runtime has the two engine calls <see cref="NewDynamicFont"/> is made of.</summary>
+        internal static bool CanMakeDynamicFonts =>
+            typeof(Font).GetMethod("Internal_CreateDynamicFont", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static) != null
+            && typeof(Font).GetConstructor(Type.EmptyTypes) != null;
+
+        /// <summary>
+        /// An OS font by family names, made as Unity's own CreateDynamicFontFromOSFont makes it —
+        /// <c>new Font()</c>, then the engine's <c>Internal_CreateDynamicFont</c> — for a runtime whose
+        /// build stripped that shortcut but kept the two calls. A real dynamic font, drawn by legacy
+        /// text like the shortcut's: a font made from a FILE is not one (new Font(path) is not dynamic,
+        /// has no material, answers no character: it only feeds an SDF asset — bench, 2026-10-02).
+        /// Null when the runtime has neither.
+        /// </summary>
+        internal static Font NewDynamicFont(string[] names, int size)
+        {
+            if (names == null || names.Length == 0) return null;
+            string key = string.Join(", ", names);
+            Font Refused(string why)
+            {
+                if (DiagnosticOnce.First("TypeHelper.NewDynamicFont", key + "\u0001" + why))
+                    TranslatorCore.LogWarning($"[TypeHelper] no font made by name [{key}]: {why}");
+                return null;
+            }
+            var fontType = typeof(Font);
+            try
+            {
+                var make = fontType.GetMethod("Internal_CreateDynamicFont", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+                var bare = fontType.GetConstructor(Type.EmptyTypes);
+                if (make == null || bare == null)
+                    return Refused(make == null ? "no Internal_CreateDynamicFont on this runtime" : "no Font() on this runtime");
+
+                // The names as the engine's parameter takes them: string[] on Mono, the interop's
+                // string array on IL2CPP (made from ours).
+                var arrayType = make.GetParameters()[1].ParameterType;
+                object array = arrayType.IsInstanceOfType(names) ? names
+                    : arrayType.GetConstructor(new[] { typeof(string[]) })?.Invoke(new object[] { names });
+                if (array == null) return Refused($"no way to hand the names as {arrayType.Name}");
+
+                var font = bare.Invoke(null) as Font;
+                if (ReferenceEquals(font, null)) return Refused("Font() gave nothing");
+                make.Invoke(null, new object[] { font, array, size });
+                return font != null ? font : Refused("Internal_CreateDynamicFont made no font of it");
+            }
+            catch (Exception ex)
+            {
+                Faults.Say("TypeHelper.NewDynamicFont", ex, key);
+                return null;
+            }
+        }
+
         private static Type _classPointerStore;
         private static readonly Dictionary<Type, bool> _absentFromGame = new Dictionary<Type, bool>();
 

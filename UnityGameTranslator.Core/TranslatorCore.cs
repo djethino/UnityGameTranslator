@@ -2230,6 +2230,7 @@ namespace UnityGameTranslator.Core
             // Remove the Canvas.willRenderCanvases subscription so the callback can't fire
             // against objects Unity is destroying during teardown (native crash on exit).
             try { FontManager.UnsubscribeWillRenderCanvases(); } catch (Exception e) { Faults.Say("Shutdown willRenderCanvases", e); }
+            try { FontManager.UnsubscribeTextureRebuilt(); } catch (Exception e) { Faults.Say("Shutdown font atlas event", e); }
             try { Tk2dFonts.Shutdown(); } catch (Exception e) { Faults.Say("Shutdown tk2d atlas event", e); }
             try { Perf.Shutdown(); } catch (Exception e) { Faults.Say("Shutdown atlas rebuild count", e); }
 

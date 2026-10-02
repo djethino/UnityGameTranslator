@@ -566,6 +566,9 @@ namespace UnityGameTranslator.Core
             TranslatorScanner.TickRenderWatch();   // says its own failures, entry by entry
             Perf.Stop(Perf.RenderWatch, tWatch);
 
+            // Fonts whose names were rewritten: one new size of letters each, until their atlas rebuilds.
+            RebuildAtlases();
+
             if (!_pendingSceneRefresh) return;
             _pendingSceneRefresh = false;
 
@@ -715,128 +718,36 @@ namespace UnityGameTranslator.Core
             }
         }
 
-        private static bool _textureRebuiltSubscribed = false;
-        private static bool _textureRebuiltHandling = false;
+        // The delegate Font.textureRebuilt holds (EngineEvents), kept to remove it on shutdown.
+        private static object _textureRebuiltHandler;
 
-        /// <summary>
-        /// Subscribe to Font.textureRebuilt via add_textureRebuilt method (IL2CPP compatible).
-        /// When the atlas rebuilds, re-request all known chars and mark components dirty.
-        /// </summary>
-        private static void SubscribeTextureRebuilt(string originalFontName, string fallbackName)
+        /// <summary>Font.textureRebuilt, on both runtimes: how a rebuild asked by <see cref="RewriteFontNames"/> is known to be done.</summary>
+        private static void SubscribeTextureRebuilt()
         {
-            if (_textureRebuiltSubscribed) return;
-
+            if (_textureRebuiltHandler != null) return;
             try
             {
-                // Find add_textureRebuilt METHOD (not event — IL2CPP wrapping hides the event)
-                var addMethod = typeof(Font).GetMethod("add_textureRebuilt",
-                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
-                if (addMethod == null)
-                {
-                    TranslatorCore.LogWarning("[FontManager] add_textureRebuilt method not found");
-                    return;
-                }
-
-                // On IL2CPP, the method expects Il2CppSystem.Action<Font>, not System.Action<Font>.
-                // Use DelegateSupport.ConvertDelegate to wrap our managed delegate.
-                Action<Font> managedHandler = OnFontTextureRebuilt;
-                object il2cppHandler = managedHandler;
-
-                if (TranslatorCore.Adapter?.IsIL2CPP == true)
-                {
-                    // Find DelegateSupport.ConvertDelegate<T> via reflection
-                    Type delegateSupportType = null;
-                    foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
-                    {
-                        delegateSupportType = asm.GetType("Il2CppInterop.Runtime.DelegateSupport");
-                        if (delegateSupportType != null) break;
-                    }
-
-                    if (delegateSupportType != null)
-                    {
-                        // Get the parameter type that add_textureRebuilt expects
-                        var paramType = addMethod.GetParameters()[0].ParameterType;
-                        var convertMethod = delegateSupportType.GetMethod("ConvertDelegate",
-                            BindingFlags.Public | BindingFlags.Static);
-                        if (convertMethod != null)
-                        {
-                            var genericConvert = convertMethod.MakeGenericMethod(paramType);
-                            il2cppHandler = genericConvert.Invoke(null, new object[] { managedHandler });
-                        }
-                    }
-                }
-
-                addMethod.Invoke(null, new object[] { il2cppHandler });
-                _textureRebuiltSubscribed = true;
-                TranslatorCore.LogDebug("[FontManager] Subscribed to Font.textureRebuilt");
+                _textureRebuiltHandler = EngineEvents.Add(typeof(Font), "textureRebuilt", (Action<Font>)OnFontTextureRebuilt);
+                if (_textureRebuiltHandler == null)
+                    TranslatorCore.LogWarning("[FontManager] Font.textureRebuilt not found — an atlas asked to rebuild is filled until its sizes run out");
             }
-            catch (Exception ex)
-            {
-                TranslatorCore.LogWarning($"[FontManager] Failed to subscribe textureRebuilt: {ex.InnerException?.Message ?? ex.Message}");
-            }
+            catch (Exception ex) { Faults.Say("FontManager.SubscribeTextureRebuilt", ex); }
         }
 
-        private static void OnFontTextureRebuilt(Font rebuiltFont)
+        /// <summary>Removes the Font.textureRebuilt subscription — on shutdown, before the engine tears fonts down.</summary>
+        public static void UnsubscribeTextureRebuilt()
         {
+            if (_textureRebuiltHandler == null) return;
+            var handler = _textureRebuiltHandler;
+            _textureRebuiltHandler = null;
+            EngineEvents.Remove(typeof(Font), "textureRebuilt", handler);
+        }
 
-            if (_textureRebuiltHandling) return;
-            if (rebuiltFont == null) return;
-
-            // Check if the rebuilt font is related to any of our clones.
-            // Unity fires textureRebuilt for SYSTEM fonts AND original game fonts,
-            // not just our clone objects. Since our clones are Instantiate() of game fonts,
-            // a rebuild of the original can affect shared atlas state.
-            // Also: fonts we cloned FROM (字体家AI造字剑客 etc.) fire here.
-            string rebuiltName = rebuiltFont.name;
-
-            // Strategy: find directly matching clones, OR if the rebuilt font is a game font
-            // we cloned from, mark ALL clones dirty (safe — textureRebuilt is infrequent).
-            var matchedClones = new List<KeyValuePair<string, Font>>();
-            bool isGameFontWeCloned = _gameUnityFonts.ContainsKey(rebuiltName)
-                || _originalFontNames.ContainsKey(rebuiltName);
-
-            foreach (var kvp in _unityFallbackFonts)
-            {
-                if (kvp.Value == null) continue;
-                if (kvp.Value == rebuiltFont
-                    || string.Equals(kvp.Key, rebuiltName, StringComparison.OrdinalIgnoreCase)
-                    || string.Equals(kvp.Value.name, rebuiltName, StringComparison.OrdinalIgnoreCase)
-                    || isGameFontWeCloned)  // Rebuilt font is one we cloned from → affect all clones
-                {
-                    matchedClones.Add(kvp);
-                    if (!isGameFontWeCloned) break; // Direct match → only one clone
-                }
-            }
-
-            if (matchedClones.Count == 0) return;
-
-            _textureRebuiltHandling = true;
-            try
-            {
-                foreach (var match in matchedClones)
-                {
-                    TranslatorCore.LogDebug($"[FontManager] Atlas rebuilt for '{rebuiltName}', re-protecting '{match.Key}'");
-
-                    // Re-request all known chars for this clone immediately
-                    if (_knownCharsStringCache.TryGetValue(match.Key, out string charString) && charString != null)
-                    {
-                        // Filling the clone's atlas: a refusal means characters missing on screen — said.
-                        try { FontAtlas.Request(match.Value, charString); }
-                        catch (Exception ex) { Faults.Say("FontManager.OnFontTextureRebuilt", ex, match.Key); }
-                    }
-
-                    // Mark all components using this clone as dirty so they re-render
-                    MarkCloneComponentsDirty(match.Value);
-                }
-            }
-            catch (Exception ex)
-            {
-                TranslatorCore.LogWarning($"[FontManager] textureRebuilt handler error: {ex.Message}");
-            }
-            finally
-            {
-                _textureRebuiltHandling = false;
-            }
+        private static void OnFontTextureRebuilt(Font rebuilt)
+        {
+            if (rebuilt == null || !_atlasRebuilds.TryGetValue(rebuilt, out var rebuild)) return;
+            _atlasRebuilds.Remove(rebuilt);
+            TranslatorCore.LogInfo($"[FontManager] '{rebuilt.name}': atlas rebuilt with its new names ({rebuild.Frames} frame(s))");
         }
 
         /// <summary>
@@ -880,55 +791,85 @@ namespace UnityGameTranslator.Core
         // Track font names that failed to create (don't retry)
         private static readonly HashSet<string> _failedFallbackFontNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        // Font size shift per font (ShiftForNames): the atlas caches by (char, size, style), so
-        // drawing a new set of fontNames one size away forces re-rasterization with them.
-        private static readonly Dictionary<string, int> _fontSizeBump = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-
-        /// <summary>Get the current font size bump for a font.</summary>
-        public static int GetFontSizeBump(string fontName)
+        /// <summary>
+        /// 🔴 The ONE way the mod rewrites a Font's fontNames — a game font made to draw a fallback,
+        /// the game's own names put back, a window font rebacked. The engine keeps the letters a Font
+        /// drew, by character and size, whatever its names say since: written alone, the new names
+        /// showed nothing until the next launch (a fallback removed kept its letters, 2026-10-02).
+        /// So the atlas is then made to rebuild (<see cref="RebuildAtlases"/>), which draws every
+        /// letter again with the names of now, at the same size.
+        /// </summary>
+        internal static bool RewriteFontNames(Font font, string[] names)
         {
-            if (string.IsNullOrEmpty(fontName)) return 0;
-            int bump;
-            _fontSizeBump.TryGetValue(fontName, out bump);
-            return bump;
+            if (font == null || names == null) return false;
+            if (!UniverseLib.Runtime.TextureHelper.SetFontNames(font, names)) return false;
+            AskAtlasRebuild(font);
+            return true;
         }
 
-        // Per font: which fontNames each size shift has drawn letters with. The engine keeps the
-        // letters a Font drew, by character and size, whatever its fontNames say since — so a shift
-        // is reused only for the very names it drew, and a new set of names takes a shift never drawn.
-        private static readonly Dictionary<string, Dictionary<int, string>> _shiftDrawnWith =
-            new Dictionary<string, Dictionary<int, string>>(StringComparer.OrdinalIgnoreCase);
+        // A font whose atlas must be rebuilt → the letters asked to fill it (those it can draw, in
+        // printable ASCII) and the size asked next.
+        private sealed class AtlasRebuild { internal string Letters; internal int Size; internal int Frames; }
+        private static readonly Dictionary<Font, AtlasRebuild> _atlasRebuilds = new Dictionary<Font, AtlasRebuild>();
+
+        // Per font: the size its last rebuild asked, kept in the atlas after the rebuild — the next one
+        // starts past it, every size it asks being one the atlas does not hold.
+        private static readonly Dictionary<Font, int> _lastFillSize = new Dictionary<Font, int>();
+
+        // The first size asked: larger than text is drawn at, so the letters are new to the atlas.
+        // Measured on the bench (analyse/atlas-fontnames-reconstruction.md): from there, a small atlas
+        // rebuilds at the first frame and a full 4096² one within 17.
+        private const int FirstFillSize = 100;
+
+        // Unity's dynamic font atlas stops at 4096² — said by the engine itself when a request cannot
+        // fit ("max size 4096"). One frame's letters at one size must fit an EMPTY atlas of that size,
+        // or the engine refuses to rebuild at all.
+        private const int EngineFontAtlasMax = 4096;
+
+        private static void AskAtlasRebuild(Font font)
+        {
+            var letters = new System.Text.StringBuilder();
+            for (char c = '!'; c <= '~'; c++)
+                if (font.HasCharacter(c)) letters.Append(c);
+            if (letters.Length == 0)
+            {
+                if (DiagnosticOnce.First("FontManager.AtlasRebuild.noLetters", font.name))
+                    TranslatorCore.LogWarning($"[FontManager] '{font.name}': no ASCII letter to rebuild its atlas with — letters drawn before its names changed stay until the next launch");
+                return;
+            }
+            int size = _lastFillSize.TryGetValue(font, out int last) ? Math.Max(FirstFillSize, last + 1) : FirstFillSize;
+            _atlasRebuilds[font] = new AtlasRebuild { Letters = letters.ToString(), Size = size };
+            SubscribeTextureRebuilt();
+            SubscribeWillRenderCanvases();
+        }
 
         /// <summary>
-        /// The size shift under which <paramref name="names"/> are drawn for this font, and made the
-        /// current one. The first names a font is given take no shift (applied as the game starts,
-        /// nothing drawn yet — what the replacement always assumed); every later set, restoring the
-        /// game's own included, takes the shift that already drew it, else the nearest one never
-        /// drawn: 0, +1, -1, +2, -2… (user, 2026-10-02: None after starting with a fallback kept
-        /// the fallback's letters — the restore had kept the shift the last fallback drew at).
+        /// One new size per frame for each font waiting, until the engine rebuilds its atlas
+        /// (<see cref="OnFontTextureRebuilt"/>). ONE size per frame: a rebuild must fit everything
+        /// asked during its frame into an empty atlas, so several sizes at once defeat it once the
+        /// atlas is large (measured). A per-frame budget, not a wait.
         /// </summary>
-        private static int ShiftForNames(string fontName, string[] names)
+        private static void RebuildAtlases()
         {
-            string key = string.Join("\u0001", names ?? new string[0]);
-            if (!_shiftDrawnWith.TryGetValue(fontName, out var drawn))
-                _shiftDrawnWith[fontName] = drawn = new Dictionary<int, string>();
-
-            int shift = 0;
-            bool found = false;
-            foreach (var kv in drawn)
-                if (kv.Value == key) { shift = kv.Key; found = true; break; }
-            if (!found)
+            if (_atlasRebuilds.Count == 0) return;
+            foreach (var font in new List<Font>(_atlasRebuilds.Keys))
             {
-                for (int step = 0; drawn.ContainsKey(shift); step++)
-                    shift = step % 2 == 0 ? step / 2 + 1 : -(step / 2 + 1);
-                drawn[shift] = key;
+                var rebuild = _atlasRebuilds[font];
+                if (font == null) { _atlasRebuilds.Remove(font); continue; }
+                // Past the size where these letters alone outgrow an empty atlas, nothing more can work.
+                if ((long)rebuild.Letters.Length * rebuild.Size * rebuild.Size > (long)EngineFontAtlasMax * EngineFontAtlasMax)
+                {
+                    _atlasRebuilds.Remove(font);
+                    if (DiagnosticOnce.First("FontManager.AtlasRebuild.tooLarge", font.name))
+                        TranslatorCore.LogWarning($"[FontManager] '{font.name}': its atlas would not rebuild (sizes {FirstFillSize}–{rebuild.Size - 1} asked) — letters drawn before its names changed stay until the next launch");
+                    continue;
+                }
+                _lastFillSize[font] = rebuild.Size;
+                rebuild.Frames++;
+                try { FontAtlas.Request(font, rebuild.Letters, rebuild.Size, FontStyle.Normal); }
+                catch (Exception ex) { Faults.Say("FontManager.RebuildAtlases", ex, font.name); _atlasRebuilds.Remove(font); continue; }
+                rebuild.Size++;
             }
-
-            _fontSizeBump.TryGetValue(fontName, out int before);
-            if (shift == 0) _fontSizeBump.Remove(fontName); else _fontSizeBump[fontName] = shift;
-            if (shift != before)
-                TranslatorCore.LogInfo($"[FontManager] {fontName}: drawn at size shift {shift} (was {before}) — {(found ? "letters already drawn with these names" : "a size never drawn")}");
-            return shift;
         }
 
         // Whether CreateDynamicFontFromOSFont is available on this runtime
@@ -1439,41 +1380,61 @@ namespace UnityGameTranslator.Core
 
         private static bool SetWindowFontNames(Font target, List<string> names)
         {
-            bool ok = UniverseLib.Runtime.TextureHelper.SetFontNames(target, names.ToArray());
+            bool ok = RewriteFontNames(target, names.ToArray());
             if (ok) TranslatorCore.LogInfo($"[FontManager] Rebacked '{target.name}' fontNames=[{string.Join(", ", names)}]");
             return ok;
         }
 
+        // The game's build stripped Font.CreateDynamicFontFromOSFont: fonts by name are made by the two
+        // engine calls it stands for (TypeHelper.NewDynamicFont).
+        private static bool _osFontShortcutStripped;
+
         /// <summary>
-        /// Create a fresh dynamic OS-backed Font for a font FAMILY name via reflection
-        /// (CreateDynamicFontFromOSFont). Returns null when the runtime stripped it — the single
-        /// place that call is made, so the availability flag stays consistent.
+        /// Create a fresh dynamic OS-backed Font for a font FAMILY name — the single place a font is
+        /// made by name, so the availability flag stays consistent: CreateDynamicFontFromOSFont, else,
+        /// where the game's build stripped it, the two engine calls it is made of. Null when the
+        /// runtime can do neither (legacy text then rewrites the game font's own fontNames).
         /// </summary>
         private static Font CreateDynamicOSFont(string family)
         {
             if (string.IsNullOrEmpty(family) || !_dynamicFontCreationAvailable) return null;
-            try
+            if (!_osFontShortcutStripped)
             {
-                var method = typeof(Font).GetMethod("CreateDynamicFontFromOSFont",
-                    BindingFlags.Public | BindingFlags.Static,
-                    null, new Type[] { typeof(string), typeof(int) }, null);
-                if (method == null) return null;
-
-                var font = method.Invoke(null, new object[] { family, 32 }) as Font;
-                if (font != null)
-                    TranslatorCore.LogDebug($"[FontManager] Created dynamic Unity font: {family}");
-                return font;
-            }
-            catch (Exception ex)
-            {
-                var msg = ex.InnerException?.Message ?? ex.Message;
-                if (msg.Contains("unstripping") || msg.Contains("Method not found"))
+                try
                 {
-                    _dynamicFontCreationAvailable = false;
-                    TranslatorCore.LogWarning($"[FontManager] CreateDynamicFontFromOSFont unavailable on this runtime");
+                    var method = typeof(Font).GetMethod("CreateDynamicFontFromOSFont",
+                        BindingFlags.Public | BindingFlags.Static,
+                        null, new Type[] { typeof(string), typeof(int) }, null);
+                    if (method != null)
+                    {
+                        var font = method.Invoke(null, new object[] { family, 32 }) as Font;
+                        if (font != null)
+                            TranslatorCore.LogDebug($"[FontManager] Created dynamic Unity font: {family}");
+                        return font;
+                    }
+                    _osFontShortcutStripped = true;
                 }
-                return null;
+                catch (Exception ex)
+                {
+                    var msg = ex.InnerException?.Message ?? ex.Message;
+                    if (!msg.Contains("unstripping") && !msg.Contains("Method not found"))
+                    {
+                        Faults.Say("FontManager.CreateDynamicOSFont", ex, family);
+                        return null;
+                    }
+                    _osFontShortcutStripped = true;
+                }
+                TranslatorCore.LogInfo("[FontManager] CreateDynamicFontFromOSFont stripped from this game — fonts by name are made by the engine calls it is made of");
             }
+
+            var made = TypeHelper.NewDynamicFont(new[] { family }, 32);
+            if (made != null) TranslatorCore.LogDebug($"[FontManager] Created dynamic Unity font (engine calls): {family}");
+            else if (!TypeHelper.CanMakeDynamicFonts)
+            {
+                _dynamicFontCreationAvailable = false;
+                TranslatorCore.LogWarning("[FontManager] no font can be made by name on this runtime — legacy text is pointed at fonts by the game font's own names");
+            }
+            return made;
         }
 
         /// <summary>
@@ -1580,7 +1541,7 @@ namespace UnityGameTranslator.Core
         public static bool RestoreFontToOriginal(Font target, string originalFamily)
         {
             if (target == null) return false;
-            return UniverseLib.Runtime.TextureHelper.SetFontNames(target, new[] { originalFamily ?? target.name });
+            return RewriteFontNames(target, new[] { originalFamily ?? target.name });
         }
 
         // Per-component scale overrides from font override rules
@@ -4021,10 +3982,6 @@ namespace UnityGameTranslator.Core
                 var allTexts = TypeHelper.FindAllObjectsOfType(textType);
                 int refreshed = 0;
 
-                // A new sweep: what the last one learnt about a throwing setter does not apply
-                // here, and a component created since then deserves its own attempt.
-                TypeHelper.BeginFontSizeRun();
-
                 foreach (var textObj in allTexts)
                 {
                     if (textObj == null) continue;
@@ -4047,10 +4004,6 @@ namespace UnityGameTranslator.Core
                         bool matches = (currentFont == (object)targetFont) || (currentName == fontName);
                         if (!matches) continue;
 
-                        // Straight to the size the current names draw at (ShiftForNames): a size
-                        // in between, even for one frame, would put these names' letters under a
-                        // shift kept for other names.
-                        TranslatorPatches.ApplyScaleForFont(textObj, fontName);
 
                         // SetVerticesDirty / SetLayoutDirty — also use the actual type.
                         var setDirty = actualType.GetMethod("SetVerticesDirty", BindingFlags.Public | BindingFlags.Instance);
@@ -4104,10 +4057,8 @@ namespace UnityGameTranslator.Core
 
                 if (gameFont != null)
                 {
-                    UniverseLib.Runtime.TextureHelper.SetFontNames(gameFont, originalNames);
-                    // The game's names back: drawn where they drew before, or at a size no
-                    // replacement drew — the current one holds the replacement's letters.
-                    ShiftForNames(fontName, originalNames);
+                    // The game's names back, and its atlas rebuilt: it holds the replacement's letters.
+                    RewriteFontNames(gameFont, originalNames);
                     ForceRefreshUITextFont(gameFont, fontName);
                     TranslatorCore.LogDebug($"[FontManager] Restored fontNames for '{fontName}': [{string.Join(", ", originalNames)}]");
                 }
@@ -4303,13 +4254,7 @@ namespace UnityGameTranslator.Core
                         }
                     }
 
-                    // Save atlas state BEFORE SetFontNames
-                    int texIdBefore = 0;
-                    try { texIdBefore = originalGameFont.material?.mainTexture?.GetInstanceID() ?? 0; }
-                    catch (Exception ex) { Faults.Say("FontManager.GetUnityReplacementFont texture id", ex); }
-
-                    bool set = UniverseLib.Runtime.TextureHelper.SetFontNames(
-                        originalGameFont, fontNamesList.ToArray());
+                    bool set = RewriteFontNames(originalGameFont, fontNamesList.ToArray());
 
                     if (set)
                     {
@@ -4317,9 +4262,6 @@ namespace UnityGameTranslator.Core
                         // No clone = no shared atlas = no corruption.
                         replacementFont = originalGameFont;
 
-                        // The atlas keeps letters by (char, size): drawn at a size shift that never
-                        // drew other names, so FreeType rasterizes with these (ShiftForNames).
-                        ShiftForNames(originalFontName, fontNamesList.ToArray());
 
                         TranslatorCore.LogInfo($"[FontManager] Modified '{originalFontName}' fontNames=[{string.Join(", ", fontNamesList)}]");
                     }
@@ -4484,19 +4426,16 @@ namespace UnityGameTranslator.Core
             // "[Custom] X" is fonts/X and nothing else (FontReferences): never a game font whose name
             // resembles it — the fonts/ file reaches the engine by name (FontFolderRedirect).
             bool custom = UnityGameTranslator.Common.FontReferences.Order(systemFontName)[0] == UnityGameTranslator.Common.FontSource.Custom;
-            // 🔴 Where the runtime cannot make an OS font by name (IL2CPP stripped
-            // CreateDynamicFontFromOSFont), the same font is made from its FILE (TypeHelper.NewFontFromFile)
-            // — a replacement the component wears whole, our font first. The fontNames trick that
-            // stood in for it put ours BEHIND the game font's own glyphs: on a game font holding the
-            // letters, nothing changed on screen (2026-10-02). Kept below for a runtime that can do
-            // neither.
+            // 🔴 A font made by NAME, never from a file: a file-made Font is not dynamic, has no
+            // material and draws no legacy text (bench, 2026-10-02 — it only feeds SDF assets).
+            // Where IL2CPP stripped CreateDynamicFontFromOSFont, CreateDynamicOSFont makes it by the
+            // engine calls it is made of; the fontNames rewrite (GetUnityReplacementFont) is only for
+            // a runtime that has neither — it puts ours BEHIND the game font's own glyphs.
             if (custom)
             {
                 if (CustomNotDrawableYet(systemFontName)) return null;
                 var derived = DerivedFonts.Get(cleanName);
-                CustomFontLoader.CustomFonts.TryGetValue(cleanName, out var customInfo);
-                var created = CreateDynamicOSFont(ResolveSystemFontFamily(systemFontName, out _))
-                              ?? TypeHelper.NewFontFromFile(derived?.CurrentFile ?? (customInfo != null && customInfo.IsTtf ? customInfo.TtfPath : null));
+                var created = CreateDynamicOSFont(ResolveSystemFontFamily(systemFontName, out _));
                 // A derived copy rewritten under the same name (Mono, DerivedFonts) is a NEW font object
                 // each time — named apart, since a component is given a font whose name differs from
                 // the one it wears (TryApplyUnityClone), and the old object holds the old glyphs.
@@ -4512,7 +4451,7 @@ namespace UnityGameTranslator.Core
                 var installed = ShownDerived(cleanName, UnityGameTranslator.Common.FontSource.System);
                 if (installed != null)
                 {
-                    var created = CreateDynamicOSFont(installed.CurrentFamily) ?? TypeHelper.NewFontFromFile(installed.CurrentFile);
+                    var created = CreateDynamicOSFont(installed.CurrentFamily);
                     if (created != null)
                     {
                         created.name = installed.CurrentFamily + " #" + installed.Version;
@@ -4524,20 +4463,10 @@ namespace UnityGameTranslator.Core
             // 🔴 A bare name is the INSTALLED font first (FontReferences.Order), never a game font that
             // happens to share it: "Arial" went to the game's own "arial" — a font without Hebrew —
             // and every translated text drawn with it showed its Latin and digits only (2026-10-02).
-            // Installed here: a fresh OS font, else the font made from its file, or null —
-            // GetUnityReplacementFont then points the game font's own fontNames at it.
+            // Installed here: a fresh OS font, or null — GetUnityReplacementFont then points the
+            // game font's own fontNames at it (where the runtime cannot make fonts).
             if (!IsGameFontRef(systemFontName) && AssetAvailability.IsSystemFontAvailable(cleanName))
-            {
-                var created = CreateDynamicOSFont(cleanName);
-                if (created != null) return created;
-                created = TypeHelper.NewFontFromFile(CustomFontLoader.FindSystemTtfPath(cleanName));
-                if (created != null)
-                {
-                    created.name = cleanName;
-                    TranslatorCore.LogInfo($"[FontManager] '{cleanName}' made from its file — this runtime makes no font by name");
-                }
-                return created;
-            }
+                return CreateDynamicOSFont(cleanName);
 
             // Not installed here: a game font of that name (translations written before the origin
             // marks existed) — already loaded, works on IL2CPP without CreateDynamicFontFromOSFont.
@@ -4762,8 +4691,8 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// Create a Unity Font from a system font name.
-        /// Tries multiple approaches: CreateDynamicFontFromOSFont, new Font(name), reflection.
+        /// Create a Unity Font from a system font name, as the source of a TMP asset: by name, else
+        /// from its file (a file-made font feeds an SDF asset; it draws no legacy text).
         /// </summary>
         private static Font CreateUnityFont(string fontName)
         {
@@ -4779,156 +4708,19 @@ namespace UnityGameTranslator.Core
 
             var fontType = typeof(Font);
 
-            // Try 1: CreateDynamicFontFromOSFont via reflection
-            if (_dynamicFontCreationAvailable)
+            // The installed font by name, else from its file — the two ways every other path makes one
+            // (CreateDynamicOSFont, TypeHelper.NewFontFromFile). This path had copies of both (the
+            // by-name one, Font() + Internal_CreateDynamicFont, is now CreateDynamicOSFont's): its file
+            // search read file names only and missed "Comic Sans MS" (comic.ttf), then it made an EMPTY
+            // font of that name (Internal_CreateFont: Unity's new Font(name), which looks nothing up),
+            // which the legacy path later took for a game font — "no glyph for 'P'" (bench, 2026-10-02).
+            var made = CreateDynamicOSFont(fontName);
+            if (made != null) return made;
+            made = TypeHelper.NewFontFromFile(CustomFontLoader.FindSystemTtfPath(fontName));
+            if (made != null)
             {
-                try
-                {
-                    var method = fontType.GetMethod("CreateDynamicFontFromOSFont",
-                        System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static,
-                        null, new Type[] { typeof(string), typeof(int) }, null);
-                    if (method != null)
-                    {
-                        var font = method.Invoke(null, new object[] { fontName, 32 }) as Font;
-                        if (font != null)
-                        {
-                            TranslatorCore.LogDebug($"[FontManager] Created Font via CreateDynamicFontFromOSFont: {fontName}");
-                            return font;
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    var msg = ex.InnerException?.Message ?? ex.Message;
-                    if (msg.Contains("unstripping") || msg.Contains("Method not found"))
-                    {
-                        _dynamicFontCreationAvailable = false;
-                        TranslatorCore.LogDebug($"[FontManager] CreateDynamicFontFromOSFont unavailable: {msg}");
-                    }
-                }
-            }
-
-            // ICall for CreateDynamicFontFromOSFont was tested but crashes the game
-            // (the native function calls back into stripped managed code → crash loop)
-
-            // Try 2: Font() + Internal_CreateFontFromPath — load TTF from file path
-            try
-            {
-                var internalFromPath = fontType.GetMethod("Internal_CreateFontFromPath",
-                    System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
-                if (internalFromPath != null)
-                {
-                    // Find the TTF file path
-                    string fontPath = FindFontFilePath(fontName);
-                    if (fontPath != null)
-                    {
-                        var emptyCtor = fontType.GetConstructor(Type.EmptyTypes);
-                        if (emptyCtor != null)
-                        {
-                            var font = emptyCtor.Invoke(null) as Font;
-                            if (font != null)
-                            {
-                                internalFromPath.Invoke(null, new object[] { font, fontPath });
-                                font.name = fontName;
-                                TranslatorCore.LogDebug($"[FontManager] Created Font via Internal_CreateFontFromPath: {Sanitize.Path(fontPath)}");
-
-                                // ⚠ A probe stood here — set fontSize, dump every property, call
-                                // RequestCharactersInTexture("ABCabc") "to make the font dynamic" — and never
-                                // ran: that method has three overloads, so GetMethod by name threw an
-                                // ambiguous match every time, on every game, and fontSize is read-only.
-                                // Removed on 2026-09-27 when the silent catches stopped hiding it; the font
-                                // has always worked without it (CreateFontAsset is what follows).
-                                return font;
-                            }
-                        }
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                TranslatorCore.LogWarning($"[FontManager] Internal_CreateFontFromPath failed: {ex.InnerException?.Message ?? ex.Message}");
-            }
-
-            // Try 3: Font() + Internal_CreateFont(Font, String) — by name
-            try
-            {
-                var internalCreate = fontType.GetMethod("Internal_CreateFont",
-                    System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
-                if (internalCreate != null)
-                {
-                    var emptyCtor = fontType.GetConstructor(Type.EmptyTypes);
-                    if (emptyCtor != null)
-                    {
-                        var font = emptyCtor.Invoke(null) as Font;
-                        if (font != null)
-                        {
-                            internalCreate.Invoke(null, new object[] { font, fontName });
-                            TranslatorCore.LogDebug($"[FontManager] Created Font via Internal_CreateFont: {fontName}");
-                            return font;
-                        }
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                TranslatorCore.LogWarning($"[FontManager] Internal_CreateFont failed: {ex.InnerException?.Message ?? ex.Message}");
-            }
-
-            // Try 3: Font() + Internal_CreateDynamicFont(Font, string[], int) — dynamic font from names
-            try
-            {
-                var internalDynamic = fontType.GetMethod("Internal_CreateDynamicFont",
-                    System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
-                if (internalDynamic != null)
-                {
-                    var emptyCtor = fontType.GetConstructor(Type.EmptyTypes);
-                    if (emptyCtor != null)
-                    {
-                        var font = emptyCtor.Invoke(null) as Font;
-                        if (font != null)
-                        {
-                            // Need to create an Il2CppStringArray for the font names
-                            var parameters = internalDynamic.GetParameters();
-                            var arrayType = parameters[1].ParameterType;
-
-                            // Try to create the array with the font name
-                            object fontNamesArray = null;
-                            try
-                            {
-                                var arrayCtor = arrayType.GetConstructor(new Type[] { typeof(string[]) });
-                                if (arrayCtor != null)
-                                    fontNamesArray = arrayCtor.Invoke(new object[] { new string[] { fontName } });
-                            }
-                            catch (Exception ex) { Faults.Say("FontManager.CreateUnityFont names array string", ex); }
-
-                            if (fontNamesArray == null)
-                            {
-                                try
-                                {
-                                    var arrayCtor = arrayType.GetConstructor(new Type[] { typeof(int) });
-                                    if (arrayCtor != null)
-                                    {
-                                        fontNamesArray = arrayCtor.Invoke(new object[] { 1 });
-                                        var indexer = arrayType.GetProperty("Item");
-                                        indexer?.SetValue(fontNamesArray, fontName, new object[] { 0 });
-                                    }
-                                }
-                                catch (Exception ex) { Faults.Say("FontManager.CreateUnityFont names array int", ex); }
-                            }
-
-                            if (fontNamesArray != null)
-                            {
-                                internalDynamic.Invoke(null, new object[] { font, fontNamesArray, 32 });
-                                TranslatorCore.LogDebug($"[FontManager] Created Font via Internal_CreateDynamicFont: {fontName}");
-                                return font;
-                            }
-                        }
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                TranslatorCore.LogWarning($"[FontManager] Internal_CreateDynamicFont failed: {ex.InnerException?.Message ?? ex.Message}");
+                made.name = fontName;
+                return made;
             }
 
             // Log available Font constructors/methods for diagnostics
@@ -4945,63 +4737,6 @@ namespace UnityGameTranslator.Core
             catch (Exception ex) { Faults.Say("FontManager.CreateUnityFont diagnostics", ex); }
 
             TranslatorCore.LogWarning($"[FontManager] Cannot create Font on this runtime for: {fontName}");
-            return null;
-        }
-
-        /// <summary>
-        /// Find the TTF/OTF file path for a font name.
-        /// Scans Windows/Fonts, Linux/Mac font dirs.
-        /// </summary>
-        private static string FindFontFilePath(string fontName)
-        {
-            if (string.IsNullOrEmpty(fontName)) return null;
-
-            // Same door as CustomFontLoader.FindSystemTtfPath, same rule: the name is combined
-            // with the font folders, so it must be a name and not a path.
-            if (!PlainFileName.Accepts(fontName))
-            {
-                TranslatorCore.LogWarning($"[FontManager] '{Sanitize.Path(fontName)}' is not a font name (it reads as a path); ignored");
-                return null;
-            }
-
-            // The socle's one list — the same folders every other System font search reads.
-            var fontDirs = CustomFontLoader.SystemFontDirectories();
-
-            // Search for exact match first, then partial
-            foreach (var dir in fontDirs)
-            {
-                if (!System.IO.Directory.Exists(dir)) continue;
-                try
-                {
-                    // Exact filename match
-                    foreach (var ext in new[] { ".ttf", ".otf", ".TTF", ".OTF" })
-                    {
-                        string path = System.IO.Path.Combine(dir, fontName + ext);
-                        if (System.IO.File.Exists(path))
-                        {
-                            TranslatorCore.LogDebug($"[FontManager] Found font file: {Sanitize.Path(path)}");
-                            return path;
-                        }
-                    }
-
-                    // Search recursively
-                    foreach (var file in System.IO.Directory.GetFiles(dir, "*.*", System.IO.SearchOption.AllDirectories))
-                    {
-                        string fileName = System.IO.Path.GetFileNameWithoutExtension(file);
-                        string fileExt = System.IO.Path.GetExtension(file).ToLower();
-                        if (fileExt != ".ttf" && fileExt != ".otf") continue;
-
-                        if (string.Equals(fileName, fontName, StringComparison.OrdinalIgnoreCase))
-                        {
-                            TranslatorCore.LogDebug($"[FontManager] Found font file: {file}");
-                            return file;
-                        }
-                    }
-                }
-                catch (Exception ex) { Faults.Say("FontManager.FindFontFilePath", ex); }
-            }
-
-            TranslatorCore.LogWarning($"[FontManager] Font file not found for: {fontName}");
             return null;
         }
 
@@ -5656,12 +5391,6 @@ namespace UnityGameTranslator.Core
             _gameTMPFonts.TryGetValue(fontName, out object font);
             return font;
         }
-
-        /// <summary>
-        /// Whether dynamic font creation from system fonts is available.
-        /// On MelonLoader IL2CPP, CreateDynamicFontFromOSFont is stripped.
-        /// </summary>
-        public static bool IsDynamicFontCreationAvailable => _dynamicFontCreationAvailable;
 
         /// <summary>
         /// Get font info for display in UI.

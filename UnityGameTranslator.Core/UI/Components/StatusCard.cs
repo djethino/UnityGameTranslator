@@ -376,8 +376,6 @@ namespace UnityGameTranslator.Core.UI.Components
             _standingSet = true;
             if (_badgeHost == null) return;
 
-            _badgeHost.Clear();
-
             // What the file is made of, measured here: the socle's chips for it are the
             // Manager's and the site's, and this card dropped them (see the filter below).
             var stats = CalculateLocalStats();
@@ -465,8 +463,23 @@ namespace UnityGameTranslator.Core.UI.Components
                 shown.Add(badge);
             }
 
-            BadgeStrip.Create(_badgeHost, "Badges", shown, StripWidth());
+            // 🔴 Dealt again only when the chips or the width they wrap in changed. The card is
+            // refreshed at every line the translation gains, and a strip torn down and rebuilt
+            // with the same chips is new objects with no size until the next layout pass — the
+            // card jumped by a row each time the count moved (2026-10-02).
+            float width = StripWidth();
+            var signature = new System.Text.StringBuilder().Append(width.ToString("F0", System.Globalization.CultureInfo.InvariantCulture));
+            foreach (var badge in shown) signature.Append('|').Append((int)badge.Tone).Append(badge.Text).Append('\u0001').Append(badge.Tip);
+            string key = signature.ToString();
+            if (key == _shownBadges && _badgeHost.ChildCount > 0) return;
+            _shownBadges = key;
+
+            _badgeHost.Clear();
+            BadgeStrip.Create(_badgeHost, "Badges", shown, width);
         }
+
+        // The chips and width last dealt (SetStanding): the same again is nothing to rebuild.
+        private string _shownBadges;
 
         /// <summary>
         /// The width the chips wrap in: the host's, once it has been laid out. Zero before the
@@ -519,6 +532,12 @@ namespace UnityGameTranslator.Core.UI.Components
         {
             if (_identityMarks == null) return false;
 
+            // The same pair already drawn: nothing to tear down (the card is refreshed at every
+            // line the translation gains — see SetStanding).
+            string pair = (sourceLanguage ?? "") + "\u0001" + (targetLanguage ?? "");
+            if (pair == _markedPair && _identityMarks.ChildCount > 0) return true;
+            _markedPair = pair;
+
             _identityMarks.Clear();
 
             AddIdentitySide("IdSource", sourceLanguage);
@@ -529,6 +548,9 @@ namespace UnityGameTranslator.Core.UI.Components
             AddIdentitySide("IdTarget", targetLanguage);
             return true;
         }
+
+        // The language pair the marks were last drawn for.
+        private string _markedPair;
 
         /// <summary>
         /// One side of the pair: its flag and name when it has a language, the word "Auto" when it
@@ -633,11 +655,23 @@ namespace UnityGameTranslator.Core.UI.Components
         {
             if (_contributionRow == null) return;
 
-            _contributionRow.Clear();
-
             bool any = kinds != null && kinds.Length > 0;
             _contributionRow.Visible = any;
             if (!any) return;
+
+            // The same pieces already drawn: shown again as they are (the card is refreshed at
+            // every line the translation gains — see SetStanding).
+            var signature = new System.Text.StringBuilder(head ?? "");
+            foreach (var kind in kinds)
+            {
+                signature.Append('|').Append(kind.Total).Append(kind.Label);
+                foreach (TagCount piece in kind.Tally.Counted()) signature.Append(piece.Letter).Append(piece.Count);
+            }
+            string key = signature.ToString();
+            if (key == _shownKinds && _contributionRow.ChildCount > 0) return;
+            _shownKinds = key;
+
+            _contributionRow.Clear();
 
             // 🔴 **One line, opening with "N to review:" — the shape the Manager already has.** It
             // was appended to the sentence above with an em dash ("…lines to take. — 59 to review:")
@@ -676,6 +710,9 @@ namespace UnityGameTranslator.Core.UI.Components
         /// crush a label to nothing when the row is tight, and a Text given no width does not clip,
         /// it wraps — one syllable per line, which is exactly what this row used to do.
         /// </summary>
+        // The contribution pieces last drawn (SetContributionKinds).
+        private string _shownKinds;
+
         private static void Piece(Host row, string name, string text)
         {
             var label = Labels.Create(row, name, text, TextRole.Small, tone: Tone.Plain,

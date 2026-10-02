@@ -1160,6 +1160,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             CloseFailureEditor();
             _failStatus.Say(added > 0 ? "Added to Exclusions: applied on Apply" : "Already in Exclusions");
             _failStatus.Tone = Tone.Secondary;
+            if (added > 0) NoteAwaitingApply(_failStatus);
             RefreshExclusionsList();
             UpdateApplyButtonText();
 
@@ -1172,6 +1173,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 _tabBar?.SelectTab("Exclusions");
                 _exclusionsStatus.Say(added == 1 ? "1 exclusion added from Failures: applied on Apply" : $"{added} exclusions added from Failures: applied on Apply");
                 _exclusionsStatus.Tone = Tone.Secondary;
+                NoteAwaitingApply(_exclusionsStatus);
             }
         }
 
@@ -1242,6 +1244,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _manualPatternInput.Text = "";
             _exclusionsStatus.Say("Pattern will be added on Apply");
             _exclusionsStatus.Tone = Tone.Secondary;
+            NoteAwaitingApply(_exclusionsStatus);
 
             RefreshExclusionsList();
             UpdateApplyButtonText();
@@ -1328,6 +1331,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                         UpdateApplyButtonText();
                         _exclusionsStatus.Show(Tr("Added:") + $" {capturedPath}");
                         _exclusionsStatus.Tone = Tone.Success;
+                        NoteAwaitingApply(_exclusionsStatus);
                     }
                 }) : null);
                 // Which framework drew it. A UI Toolkit path is a list of USS classes and reads
@@ -1377,6 +1381,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                             _pendingExclusionRemoves.Remove(capturedPattern);
                             RefreshExclusionsList();
                             UpdateApplyButtonText();
+                            // "Pattern will be removed on Apply" announced the removal just undone.
+                            if (_pendingExclusionRemoves.Count == 0) WithdrawIfStillSaid(_exclusionsStatus);
                         };
                         case "delete": return () => OnDeleteExclusionClicked(capturedPattern);
                         default: return null;
@@ -1408,6 +1414,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                 _pendingExclusionAdds.Remove(pattern);
                 _exclusionsStatus.Say("Pending pattern cancelled");
                 _exclusionsStatus.Tone = Tone.Secondary;
+                NoteAwaitingApply(_exclusionsStatus);
+                // The Failures tab may still say an addition waits for Apply: none does any more.
+                if (_pendingExclusionAdds.Count == 0) WithdrawIfStillSaid(_failStatus);
             }
             else
             {
@@ -1415,6 +1424,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 _pendingExclusionRemoves.Add(pattern);
                 _exclusionsStatus.Say("Pattern will be removed on Apply");
                 _exclusionsStatus.Tone = Tone.Secondary;
+                NoteAwaitingApply(_exclusionsStatus);
             }
 
             RefreshExclusionsList();
@@ -1576,11 +1586,76 @@ namespace UnityGameTranslator.Core.UI.Panels
             _pendingFontOverrides.Add(rule);
             RefreshFontOverridesList();
             UpdateApplyButtonText();
-            if (_fontOverrideStatus != null)
+            SayOverrideStatus(rule, "Added", awaitsApply: true, Tone.Success);
+        }
+
+        // What the line under the rules last said about ONE rule, so it follows that rule: its
+        // pattern edited, the line names the new one; its removal undone, the line goes.
+        private FontOverrideRule _overrideStatusRule;
+        private string _overrideStatusVerb;
+        private bool _overrideStatusAwaitsApply;
+
+        private void SayOverrideStatus(FontOverrideRule rule, string verb, bool awaitsApply, Tone tone)
+        {
+            if (_fontOverrideStatus == null) return;
+            _overrideStatusRule = rule;
+            _overrideStatusVerb = verb;
+            _overrideStatusAwaitsApply = awaitsApply;
+            _fontOverrideStatus.Tone = tone;
+            WriteOverrideStatus();
+        }
+
+        private void WriteOverrideStatus()
+        {
+            string what = string.IsNullOrEmpty(_overrideStatusRule.match) ? "(empty rule)" : _overrideStatusRule.match;
+            _fontOverrideStatus.Show(_overrideStatusAwaitsApply ? $"{_overrideStatusVerb}: {what} (Apply to save)" : $"{_overrideStatusVerb}: {what}");
+            // Even "Removed: X" for a rule never saved: it tells this window's pending session.
+            NoteAwaitingApply(_fontOverrideStatus);
+        }
+
+        /// <summary>The rule the line names has changed: the line says it again (or goes, when what
+        /// it announced was undone), unless something else was written there since.</summary>
+        private void OverrideStatusFollows(FontOverrideRule rule, bool withdrawn)
+        {
+            if (_fontOverrideStatus == null || rule == null || !ReferenceEquals(rule, _overrideStatusRule)) return;
+            bool stillSaid = _awaitingApplySaid.TryGetValue(_fontOverrideStatus, out var said) && said == _fontOverrideStatus.Value;
+            if (!stillSaid || withdrawn)
             {
-                _fontOverrideStatus.Show($"Added: {match} (Apply to save)");
-                _fontOverrideStatus.Tone = Tone.Success;
+                WithdrawIfStillSaid(_fontOverrideStatus);
+                _overrideStatusRule = null;
             }
+            else WriteOverrideStatus();
+        }
+
+        // 🔴 A status line about a change waiting for Apply ("will be added on Apply", "Removed: …
+        // (Apply to save)", "Pending pattern cancelled") is a claim about what is pending, and the
+        // pending state is replaced as a whole by Apply and by the window opening again (a choice
+        // not applied does not survive it). Each such line is noted with what it said, and
+        // withdrawn at those two moments — unless something else has been written there since.
+        // ⚠ Written 2026-10-02: "Added: <old pattern> (Apply to save)" stayed under a rule whose
+        // pattern had been edited, then saved — naming a rule that no longer existed.
+        // (The Fonts list's own line needs none of this: RefreshFontsList rewrites it at both moments.)
+        private readonly Dictionary<LabelHandle, string> _awaitingApplySaid = new Dictionary<LabelHandle, string>();
+
+        private void NoteAwaitingApply(LabelHandle label)
+        {
+            if (label != null) _awaitingApplySaid[label] = label.Value;
+        }
+
+        /// <summary>What the line announced was undone: it goes, if it still says it.</summary>
+        private void WithdrawIfStillSaid(LabelHandle label)
+        {
+            if (label == null || !_awaitingApplySaid.TryGetValue(label, out var said)) return;
+            if (label.Value == said) label.Say("");
+            _awaitingApplySaid.Remove(label);
+        }
+
+        private void WithdrawAwaitingApply()
+        {
+            foreach (var kvp in _awaitingApplySaid)
+                if (kvp.Key.Value == kvp.Value) kvp.Key.Say("");
+            _awaitingApplySaid.Clear();
+            _overrideStatusRule = null;
         }
 
         private void RefreshFontOverridesList()
@@ -1621,6 +1696,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                 _removedFontOverrides.Remove(rule);
                 RefreshFontOverridesList();
                 UpdateApplyButtonText();
+                // "Removed: … (Apply to save)" announced what was just undone.
+                OverrideStatusFollows(rule, withdrawn: true);
             }) : null);
             Pending.TrackState(row.Root, () => PendingState.Removed, "overrides");
             row.Say("match", string.IsNullOrEmpty(rule.match) ? "(empty rule)" : rule.match);
@@ -1646,6 +1723,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                         if (_fillingRows || capturedIndex >= _pendingFontOverrides.Count) return;
                         _pendingFontOverrides[capturedIndex].match = row.Field("MatchInput").Text;
                         UpdateApplyButtonText();
+                        OverrideStatusFollows(rule, withdrawn: false);
                     };
                     // Delete: a rule the panel opened with waits for Apply, marked and undoable;
                     // one added since simply goes, there is nothing on disk to take back.
@@ -1660,12 +1738,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                         // The line under the rules still said "Added: … (Apply to save)" about a
                         // rule that no longer exists. It now says what just happened: gone at once
                         // for a rule never saved, waiting for Apply for one that was.
-                        if (_fontOverrideStatus != null)
-                        {
-                            string what = string.IsNullOrEmpty(rule.match) ? "(empty rule)" : rule.match;
-                            _fontOverrideStatus.Show(initial != null ? $"Removed: {what} (Apply to save)" : $"Removed: {what}");
-                            _fontOverrideStatus.Tone = Tone.Secondary;
-                        }
+                        SayOverrideStatus(rule, "Removed", awaitsApply: initial != null, Tone.Secondary);
                     };
                     case "sizeChanged": return () =>
                     {
@@ -2597,6 +2670,9 @@ namespace UnityGameTranslator.Core.UI.Panels
             try { RefreshFontOverridesList(); }
             catch (Exception ex) { TranslatorCore.LogWarning($"[TranslationParametersPanel] RefreshFontOverridesList failed: {ex.Message}"); }
 
+            // Every pending answer was just dropped: so are the lines that announced them.
+            WithdrawAwaitingApply();
+
             UpdateApplyButtonText();
         }
 
@@ -2788,6 +2864,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                 RefreshFontsList();
                 RefreshExclusionsList();
                 RefreshFontOverridesList();
+
+                // Nothing waits for Apply any more: the lines that said something did are withdrawn.
+                WithdrawAwaitingApply();
 
                 // What an export carries follows what was just applied (fonts, rules, images).
                 RefreshExport();

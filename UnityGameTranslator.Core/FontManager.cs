@@ -1287,7 +1287,7 @@ namespace UnityGameTranslator.Core
             if (font == null) return null;
 
             // Pin the glyph source to the resolved names.
-            SetWindowFontNames(font, names);
+            PinFontNames(font, names);
             return font;
         }
 
@@ -1378,11 +1378,61 @@ namespace UnityGameTranslator.Core
             return names;
         }
 
-        private static bool SetWindowFontNames(Font target, List<string> names)
+        /// <summary>
+        /// Every name the engine may know a font by, the resolved family first: then the other names
+        /// its file carries (the engine may know it by its family, or by the Windows-only typographic
+        /// family — a file can carry its full name for Mac only, and then the full name alone is never
+        /// found, measured 2026-09-28), then the name it was asked by. One list for a font made by name
+        /// and for a game font's names pointed at it: made with the full name alone, a fonts/ font was
+        /// never found and drew as the OS's stand-in (2026-10-02).
+        /// </summary>
+        private static List<string> EngineNamesFor(string reference)
         {
-            bool ok = RewriteFontNames(target, names.ToArray());
-            if (ok) TranslatorCore.LogInfo($"[FontManager] Rebacked '{target.name}' fontNames=[{string.Join(", ", names)}]");
-            return ok;
+            string family = ResolveSystemFontFamily(reference, out string path);
+            var names = new List<string>();
+            if (!string.IsNullOrEmpty(family)) names.Add(family);
+            foreach (var name in NamesInFile(path))
+                if (!string.IsNullOrEmpty(name) && !names.Contains(name)) names.Add(name);
+            string clean = StripFontPrefix(reference);
+            if (!string.IsNullOrEmpty(clean) && !names.Contains(clean)) names.Add(clean);
+            return names;
+        }
+
+        private static readonly Dictionary<string, List<string>> _namesInFile = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>The names a font file carries (its name table), read once per file; empty when unreadable.</summary>
+        private static List<string> NamesInFile(string path)
+        {
+            if (string.IsNullOrEmpty(path)) return new List<string>();
+            if (_namesInFile.TryGetValue(path, out var known)) return known;
+            List<string> names;
+            try { names = new Rasterizer.TtfParser(System.IO.File.ReadAllBytes(path)).Metrics?.Names ?? new List<string>(); }
+            catch (Exception ex)
+            {
+                Faults.Say("FontManager.NamesInFile", ex, System.IO.Path.GetFileName(path));
+                names = new List<string>();
+            }
+            _namesInFile[path] = names;
+            return names;
+        }
+
+        /// <summary>
+        /// The names a font JUST MADE draws from — set without the atlas rebuild of
+        /// <see cref="RewriteFontNames"/>: it has drawn nothing yet.
+        /// </summary>
+        private static void PinFontNames(Font fresh, List<string> names)
+        {
+            if (fresh == null || names == null || names.Count == 0) return;
+            UniverseLib.Runtime.TextureHelper.SetFontNames(fresh, names.ToArray());
+        }
+
+        /// <summary>A font by name, made from the first of these names and drawing from all of them (EngineNamesFor).</summary>
+        private static Font CreateDynamicOSFont(List<string> names)
+        {
+            if (names == null || names.Count == 0) return null;
+            var font = CreateDynamicOSFont(names[0]);
+            PinFontNames(font, names);
+            return font;
         }
 
         /// <summary>
@@ -1550,7 +1600,9 @@ namespace UnityGameTranslator.Core
                 foreach (var name in WindowFamilyNames(fontName))
                     if (!names.Contains(name)) names.Add(name);
             }
-            return names.Count > 0 && SetWindowFontNames(target, names);
+            if (names.Count == 0 || !RewriteFontNames(target, names.ToArray())) return false;
+            TranslatorCore.LogInfo($"[FontManager] Rebacked '{target.name}' fontNames=[{string.Join(", ", names)}]");
+            return true;
         }
 
         /// <summary>Restore a Font's fontNames to its own family name (undo RebackFontToChain).</summary>
@@ -4190,8 +4242,6 @@ namespace UnityGameTranslator.Core
                 }
                 if (replacementFont == null && originalGameFont != null)
                 {
-                    string cleanFallback = StripFontPrefix(drawRef);
-
                     // Real font family name (+ TTF path for the cmap probe below) — shared resolver,
                     // also used by the mod window's fonts (LoadUIFont, RebackFontToChain).
                     string realFontName = ResolveSystemFontFamily(drawRef, out string ttfPath);
@@ -4235,14 +4285,12 @@ namespace UnityGameTranslator.Core
                     // Modifying the original: one font, one atlas, no conflicts.
 
                     // Build excluded chars set from the TTF cmap table.
-                    List<string> namesInFile = null;
                     if (ttfPath != null)
                     {
                         try
                         {
                             var ttfData = System.IO.File.ReadAllBytes(ttfPath);
                             var ttfProbe = new Rasterizer.TtfParser(ttfData);
-                            namesInFile = ttfProbe.Metrics?.Names;
                             var excludedSet = new HashSet<char>();
 
                             int totalChecked = 0, excludedCount = 0;
@@ -4273,19 +4321,10 @@ namespace UnityGameTranslator.Core
                         }
                     }
 
-                    // fontNames: font family name first, then file name, then original names for CJK fallback.
-                    // Using family name (e.g., "Comic Sans MS") instead of TTF path because
-                    // Unity's FreeType on original fonts resolves family names, not file paths.
-                    var fontNamesList = new List<string>();
-                    fontNamesList.Add(realFontName); // e.g., "Comic Sans MS" (from TTF name table)
-                    // Every other name the file carries: the engine may know it by its family, or by the
-                    // Windows-only typographic family — a file can carry its full name for Mac only, and
-                    // then the full name alone is never found (measured 2026-09-28, FontFolderRedirect).
-                    if (namesInFile != null)
-                        foreach (var fileName in namesInFile)
-                            if (!fontNamesList.Contains(fileName)) fontNamesList.Add(fileName);
-                    if (!fontNamesList.Contains(cleanFallback))
-                        fontNamesList.Add(cleanFallback); // e.g., "comic" (filename)
+                    // fontNames: every name the engine may know ours by (EngineNamesFor — family names,
+                    // never a path: FreeType on original fonts resolves families), then the game font's
+                    // own names for what ours lacks (CJK).
+                    var fontNamesList = EngineNamesFor(drawRef);
                     if (_originalFontNames.TryGetValue(originalFontName, out var origNames) && origNames != null)
                     {
                         foreach (var origName in origNames)
@@ -4476,7 +4515,7 @@ namespace UnityGameTranslator.Core
             {
                 if (CustomNotDrawableYet(systemFontName)) return null;
                 var derived = DerivedFonts.Get(cleanName);
-                var created = CreateDynamicOSFont(ResolveSystemFontFamily(systemFontName, out _));
+                var created = CreateDynamicOSFont(EngineNamesFor(systemFontName));
                 // A derived copy rewritten under the same name (Mono, DerivedFonts) is a NEW font object
                 // each time — named apart, since a component is given a font whose name differs from
                 // the one it wears (TryApplyUnityClone), and the old object holds the old glyphs.
@@ -4507,7 +4546,7 @@ namespace UnityGameTranslator.Core
             // Installed here: a fresh OS font, or null — GetUnityReplacementFont then points the
             // game font's own fontNames at it (where the runtime cannot make fonts).
             if (!IsGameFontRef(systemFontName) && AssetAvailability.IsSystemFontAvailable(cleanName))
-                return CreateDynamicOSFont(cleanName);
+                return CreateDynamicOSFont(EngineNamesFor(systemFontName));
 
             // Not installed here: a game font of that name (translations written before the origin
             // marks existed) — already loaded, works on IL2CPP without CreateDynamicFontFromOSFont.

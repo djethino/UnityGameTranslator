@@ -1139,7 +1139,7 @@ namespace UnityGameTranslator.Core
         {
             if (fontObj == null) return;
 
-            string fontName = (fontObj is UnityEngine.Object uobj) ? uobj.name : null;
+            string fontName = TypeHelper.FontNameOf(fontObj);
             if (string.IsNullOrEmpty(fontName)) return;
 
             // Don't register fonts we created (a fallback, a derived copy "UGT …" drawing the mod's own
@@ -3148,7 +3148,7 @@ namespace UnityGameTranslator.Core
             if (instanceId == -1) return;
 
             var fontObj = TypeHelper.GetFont(component);
-            string fontName = (fontObj is UnityEngine.Object fo) ? fo.name : null;
+            string fontName = TypeHelper.FontNameOf(fontObj);
             if (string.IsNullOrEmpty(fontName)) return;
 
             // Our own replacement asset — echo of our SetFont, nothing to do
@@ -3320,7 +3320,7 @@ namespace UnityGameTranslator.Core
                     if (comp != null && TranslatorCore.ShouldSkipTranslation(comp)) continue;
 
                     var fontObj = TypeHelper.GetFont(c);
-                    string fontName = (fontObj is UnityEngine.Object fo) ? fo.name : null;
+                    string fontName = TypeHelper.FontNameOf(fontObj);
                     if (string.IsNullOrEmpty(fontName)) continue;
                     if (_createdFallbackFontNames.Contains(fontName)) continue;
 
@@ -3530,6 +3530,18 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// The name of the font a component wears — or, when that font is a replacement the game
+        /// destroyed under it (its name unreadable, 2026-10-02), the name of the game font it stood
+        /// for, as recorded for this component. Null when neither is known.
+        /// </summary>
+        private static string WornFontName(int instanceId, object worn)
+        {
+            string name = TypeHelper.FontNameOf(worn);
+            if (name != null || TypeHelper.IsUnityObjectAlive(worn)) return name;
+            return _originalFontsPerComponent.TryGetValue(instanceId, out var stoodFor) ? TypeHelper.FontNameOf(stoodFor) : null;
+        }
+
+        /// <summary>
         /// Puts its clone on one UI.Text still wearing a game font the settings replace; true when
         /// the font changed. The one implementation behind the scene pass above and the font setter
         /// (OnGameAssignedUnityFont): what a component gets must not depend on which of the two saw it.
@@ -3544,13 +3556,9 @@ namespace UnityGameTranslator.Core
             if (comp != null && TranslatorCore.IsOwnUI(comp)) return false;
 
             var fontObj = TypeHelper.GetFont(c);
-            // A replacement destroyed under the component has no name to ask (IL2CPP throws on it):
-            // the game font it stood for is the one remembered for this component, and the
-            // replacement made anew goes on (TryApplyUnityClone).
-            string fontName = TypeHelper.FontNameOf(fontObj);
-            if (fontName == null && !TypeHelper.IsUnityObjectAlive(fontObj)
-                && _originalFontsPerComponent.TryGetValue(id, out var stoodFor))
-                fontName = TypeHelper.FontNameOf(stoodFor);
+            // A destroyed replacement stands for its game font: the replacement made anew goes on
+            // (TryApplyUnityClone).
+            string fontName = WornFontName(id, fontObj);
             if (string.IsNullOrEmpty(fontName)) return false;
 
             string settingsFontName = GetSettingsFontName(id, fontName);
@@ -4021,7 +4029,7 @@ namespace UnityGameTranslator.Core
                         var currentFont = fontProp.GetValue(textObj, null);
                         if (currentFont == null) continue;
 
-                        string currentName = (currentFont is UnityEngine.Object co) ? co.name : null;
+                        string currentName = TypeHelper.FontNameOf(currentFont);
                         // Match by reference OR name — targetFont may not be the exact same instance
                         // (e.g. after a restore, we still want to refresh the same-named font)
                         bool matches = (currentFont == (object)targetFont) || (currentName == fontName);
@@ -5451,11 +5459,11 @@ namespace UnityGameTranslator.Core
                     foreach (var c in comps)
                     {
                         if (c == null) continue;
-                        var fontObj = TypeHelper.GetFont(c);
-                        string fontName = (fontObj is UnityEngine.Object fo) ? fo.name : null;
+                        int id = c.GetInstanceID();
+                        string fontName = WornFontName(id, TypeHelper.GetFont(c));
                         if (string.IsNullOrEmpty(fontName)) continue;
 
-                        string settingsFontName = GetSettingsFontName(c.GetInstanceID(), fontName);
+                        string settingsFontName = GetSettingsFontName(id, fontName);
                         if (string.IsNullOrEmpty(settingsFontName)) continue;
 
                         counts.TryGetValue(settingsFontName, out int n);

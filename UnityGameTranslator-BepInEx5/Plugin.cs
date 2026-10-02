@@ -67,17 +67,36 @@ namespace UnityGameTranslator.BepInEx5
                 // the engine and initialise the UI at load, unchanged. Nothing of ours needs the
                 // UI before then: the patches only cache and translate, and every coroutine of
                 // the mod starts from the tick loop the UI owns.
-                if (!uiInitialized)
-                {
-                    uiInitialized = true;
-                    TranslatorUIManager.Initialize();
-                }
+                InitializeUiOnce();
                 TranslatorCore.OnSceneChanged(scene.name);
             };
             SceneManager.sceneUnloaded += (scene) =>
             {
                 TranslatorCore.OnSceneUnloaded(scene.name);
             };
+
+            // 🔴 ...unless that first load has ALREADY happened: on Unity 2018.4 the static
+            // constructor that starts BepInEx can run after the first scene is in, and a game
+            // that never loads another one (a single-scene title, the bench player) never raised
+            // the event — no UI, no tick: no font rewrite, no copy adopted, nothing deferred ever
+            // ran. Then the first rendered frame is the event: the engine is running by then.
+            if (SceneManager.GetActiveScene().isLoaded)
+                Application.onBeforeRender += OnFirstFrameAfterLoadedScene;
+        }
+
+        private void OnFirstFrameAfterLoadedScene()
+        {
+            Application.onBeforeRender -= OnFirstFrameAfterLoadedScene;
+            if (uiInitialized) return;   // a scene load came first
+            InitializeUiOnce();
+            TranslatorCore.OnSceneChanged(SceneManager.GetActiveScene().name);
+        }
+
+        private void InitializeUiOnce()
+        {
+            if (uiInitialized) return;
+            uiInitialized = true;
+            TranslatorUIManager.Initialize();
         }
 
         void OnApplicationQuit()

@@ -66,6 +66,11 @@ namespace UnityGameTranslator.Core
             // name, and removes the older ones once the engine lets them go.
             internal string OwnFile;
             internal readonly List<string> OlderFiles = new List<string>();
+            // Mono: the engine refused a rewrite in place — an older engine opens the file it draws
+            // from without letting it be written (Unity 2018.4, 2026-10-02: "Sharing violation", and
+            // the shaped letters never reached the copy). From then on this copy's versions are
+            // written as IL2CPP's are: a file and a pool name each.
+            internal bool InPlaceRefused;
             internal string NamesPath => Path.Combine(_folder, Key + ".names");
             internal string CurrentFamily => Slots[Current].Family;
             /// <summary>The real file of the current version (read by the TMP rasterizer, the coverage probe).</summary>
@@ -708,8 +713,9 @@ namespace UnityGameTranslator.Core
 
         /// <summary>
         /// Rewrites every queued copy and returns the fonts/ names whose copy changed — the caller
-        /// hands their components the new copy. Mono rewrites the same file; IL2CPP takes a pool name
-        /// (a family the engine has not opened).
+        /// hands their components the new copy. Mono rewrites the same file while the engine lets it
+        /// (<see cref="TryRewriteInPlace"/>); IL2CPP, and Mono once refused, take a pool name (a
+        /// family the engine has not opened).
         /// </summary>
         internal static List<string> ProcessPending(bool il2cpp)
         {
@@ -719,16 +725,13 @@ namespace UnityGameTranslator.Core
             {
                 _pending.Remove(entry);
                 if (!entry.Namer.Dirty) continue;
-                int target = entry.Current;
-                string file = entry.OwnFile;
-                if (il2cpp)
-                {
-                    var slot = TakeFromPool(entry.Name);
-                    if (slot == null) continue;   // said once; the new glyphs show at the next launch
-                    entry.Slots.Add(slot.Value);
-                    target = entry.Slots.Count - 1;
-                    file = Path.Combine(_folder, $"ugt-{entry.Key}-{entry.Version + 1}.ttf");
-                }
+                if (!il2cpp && !entry.InPlaceRefused && TryRewriteInPlace(entry)) { changed.Add(entry.Name); continue; }
+                if (!il2cpp && !entry.InPlaceRefused) continue;   // refused for another reason: said
+                var slot = TakeFromPool(entry.Name);
+                if (slot == null) continue;   // said once; the new glyphs show at the next launch
+                entry.Slots.Add(slot.Value);
+                int target = entry.Slots.Count - 1;
+                string file = Path.Combine(_folder, $"ugt-{entry.Key}-{entry.Version + 1}.ttf");
                 var into = entry.Slots[target];
                 byte[] derived = DerivedFontWriter.Write(entry.Source, into.Family, entry.Namer.Added, out string refusal);
                 if (derived == null)
@@ -761,6 +764,40 @@ namespace UnityGameTranslator.Core
                 TranslatorCore.LogDebug($"[DerivedFonts] {entry.Name}: copy rewritten ({entry.Namer.Added.Count} shaped glyph(s)) as '{entry.CurrentFamily}'");
             }
             return changed;
+        }
+
+        /// <summary>
+        /// Mono: the copy rewritten in its own file, under the name the engine listed (a new Font
+        /// object is made from it). False when it was not: the writer refused (said), or the engine
+        /// holds the file — then <see cref="Entry.InPlaceRefused"/> is set, said once, and the caller
+        /// writes this version, and every later one, under a pool name.
+        /// </summary>
+        private static bool TryRewriteInPlace(Entry entry)
+        {
+            var into = entry.Slots[entry.Current];
+            byte[] derived = DerivedFontWriter.Write(entry.Source, into.Family, entry.Namer.Added, out string refusal);
+            if (derived == null)
+            {
+                TranslatorCore.LogWarning($"[DerivedFonts] {entry.Name}: the derived copy could not be rewritten — {refusal}");
+                return false;
+            }
+            try
+            {
+                File.WriteAllBytes(entry.OwnFile, derived);
+            }
+            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
+            {
+                entry.InPlaceRefused = true;
+                TranslatorCore.LogInfo($"[DerivedFonts] {entry.Name}: the engine holds its copy's file ({ex.GetType().Name}) — new versions go under the session's font names");
+                return false;
+            }
+            try { File.WriteAllText(entry.NamesPath, entry.Namer.Save()); }
+            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
+            { Faults.Say("DerivedFonts.TryRewriteInPlace names", ex, Sanitize.Path(entry.NamesPath)); }
+            entry.Namer.MarkWritten();
+            entry.Version++;
+            TranslatorCore.LogDebug($"[DerivedFonts] {entry.Name}: copy rewritten ({entry.Namer.Added.Count} shaped glyph(s)) as '{entry.CurrentFamily}'");
+            return true;
         }
 
         /// <summary>The names handed out, kept for the next launch — when the game closes.</summary>

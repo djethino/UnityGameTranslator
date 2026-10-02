@@ -720,10 +720,10 @@ namespace UnityGameTranslator.Core.TextShaping
         // cachedTextGenerator plumbing, resolved once per process.
         private static bool _genResolved;
         private static PropertyInfo _cachedGeneratorProp;   // Text.cachedTextGenerator
-        private static PropertyInfo _generatorLinesProp;    // TextGenerator.lines -> IList<UILineInfo>
+        private static GeneratorList _generatorLines;       // TextGenerator.GetLines(List<UILineInfo>)
         private static PropertyInfo _generatorCharCountProp; // TextGenerator.characterCount
-        private static PropertyInfo _generatorCharsProp;     // TextGenerator.characters -> IList<UICharInfo>
-        private static FieldInfo _charWidthField;            // UICharInfo.charWidth
+        private static GeneratorList _generatorChars;       // TextGenerator.GetCharacters(List<UICharInfo>)
+        private static MemberInfo _charWidth;                // UICharInfo.charWidth
         private static PropertyInfo _supportRichTextProp;   // Text.supportRichText
         // The redraw gate (WillBeRedrawn): Graphic.canvas, Graphic.canvasRenderer, CanvasRenderer.cull.
         private static PropertyInfo _canvasProp;
@@ -735,8 +735,82 @@ namespace UnityGameTranslator.Core.TextShaping
         private static MethodInfo _getPixelAdjustedRect;    // Graphic.GetPixelAdjustedRect()
         private static MethodInfo _generatorPopulate;       // TextGenerator.Populate(string, settings)
         private static object _ownGenerator;                // ours, never the component's
-        private static FieldInfo _lineStartCharField;       // UILineInfo.startCharIdx
-        private static PropertyInfo _lineStartCharProp;
+        private static MemberInfo _lineStartChar;           // UILineInfo.startCharIdx
+
+        /// <summary>
+        /// A text generator's lines or characters, read through GetLines / GetCharacters(List&lt;T&gt;)
+        /// into one list of the engine's own type, reused (main thread only). Not through the
+        /// lines / characters properties: they answer an IList&lt;T&gt;, which on IL2CPP is an interop
+        /// interface wrapper — no System IList, no Count — so every read there came back empty and
+        /// every UI.Text cut fell to its last resort: one line, held unwrapped, spilling out of its
+        /// box. The list type is the one the method declares (System's on Mono, the interop's on
+        /// IL2CPP), read through its own Count and indexer.
+        /// </summary>
+        private sealed class GeneratorList
+        {
+            private readonly MethodInfo _fill, _count, _item;
+            private readonly object _list;
+            internal readonly Type Element;
+
+            private GeneratorList(MethodInfo fill, object list, MethodInfo count, MethodInfo item, Type element)
+            {
+                _fill = fill; _list = list; _count = count; _item = item; Element = element;
+            }
+
+            /// <summary>The generator's <paramref name="fillName"/>(List&lt;T&gt;), or null when this runtime lacks it.</summary>
+            internal static GeneratorList Resolve(Type generatorType, string fillName)
+            {
+                const BindingFlags pubInst = BindingFlags.Public | BindingFlags.Instance;
+                foreach (var m in generatorType.GetMethods(pubInst))
+                {
+                    if (m.Name != fillName) continue;
+                    var ps = m.GetParameters();
+                    if (ps.Length != 1) continue;
+                    var listType = ps[0].ParameterType;
+                    if (!listType.IsGenericType || listType.IsInterface || listType.IsAbstract
+                        || listType.GetGenericArguments().Length != 1) continue;
+                    var count = Members.Property(listType, "Count", pubInst)?.GetGetMethod();
+                    var item = listType.GetMethod("get_Item", pubInst, null, new[] { typeof(int) }, null);
+                    if (count == null || item == null) continue;
+                    return new GeneratorList(m, Activator.CreateInstance(listType), count, item,
+                                             listType.GetGenericArguments()[0]);
+                }
+                return null;
+            }
+
+            /// <summary>What the generator holds now, one boxed element per entry.</summary>
+            internal List<object> Read(object generator)
+            {
+                _fill.Invoke(generator, new[] { _list });
+                int n = Convert.ToInt32(_count.Invoke(_list, null));
+                var items = new List<object>(n);
+                for (int i = 0; i < n; i++) items.Add(_item.Invoke(_list, new object[] { i }));
+                return items;
+            }
+        }
+
+        private const BindingFlags PublicInstance = BindingFlags.Public | BindingFlags.Instance;
+
+        /// <summary>A TextGenerationSettings member — a field on Mono, a property on IL2CPP. Null when absent.</summary>
+        private static object SettingOf(object settings, string name)
+        {
+            var m = Members.FieldOrProperty(settings.GetType(), name, PublicInstance);
+            return m == null ? null : Members.Get(m, settings);
+        }
+
+        /// <summary>
+        /// Sets a wrap setting (horizontalOverflow / verticalOverflow) to Overflow (1). False when
+        /// the member is absent — the caller says so rather than cut under the box's own wrapping.
+        /// </summary>
+        private static bool SetOverflowSetting(object settings, string name)
+        {
+            var m = Members.FieldOrProperty(settings.GetType(), name, PublicInstance);
+            if (m == null) return false;
+            Members.Set(m, settings, Enum.ToObject(Members.TypeOf(m), 1));
+            return true;
+        }
+
+        private static int LineStartOf(object line) => Convert.ToInt32(Members.Get(_lineStartChar, line));
 
         // processedText per concrete type (NGUI UILabel and lookalikes).
         private static readonly Dictionary<Type, PropertyInfo> _processedTextProps = new Dictionary<Type, PropertyInfo>();
@@ -1098,30 +1172,7 @@ namespace UnityGameTranslator.Core.TextShaping
                 _canvasRendererProp = TypeHelper.UI_TextType.GetProperty("canvasRenderer", BindingFlags.Public | BindingFlags.Instance);
                 _cullProp = _canvasRendererProp?.PropertyType.GetProperty("cull", BindingFlags.Public | BindingFlags.Instance);
                 var genType = _cachedGeneratorProp?.PropertyType;
-                _generatorLinesProp = genType?.GetProperty("lines", BindingFlags.Public | BindingFlags.Instance);
                 _generatorCharCountProp = genType?.GetProperty("characterCount", BindingFlags.Public | BindingFlags.Instance);
-                _generatorCharsProp = genType?.GetProperty("characters", BindingFlags.Public | BindingFlags.Instance);
-                if (_generatorCharsProp != null)
-                {
-                    var charsType = _generatorCharsProp.PropertyType;
-                    if (charsType.IsGenericType && charsType.GetGenericArguments().Length == 1)
-                        _charWidthField = charsType.GetGenericArguments()[0].GetField("charWidth", BindingFlags.Public | BindingFlags.Instance);
-                }
-                // UILineInfo lives in the text-rendering assembly, not necessarily UI's:
-                // the generic argument of TextGenerator.lines (IList<UILineInfo>) is the
-                // reliable way to it.
-                Type lineType = null;
-                if (_generatorLinesProp != null)
-                {
-                    var listType = _generatorLinesProp.PropertyType;
-                    if (listType.IsGenericType && listType.GetGenericArguments().Length == 1)
-                        lineType = listType.GetGenericArguments()[0];
-                }
-                if (lineType != null)
-                {
-                    _lineStartCharField = lineType.GetField("startCharIdx", BindingFlags.Public | BindingFlags.Instance);
-                    _lineStartCharProp = lineType.GetProperty("startCharIdx", BindingFlags.Public | BindingFlags.Instance);
-                }
 
                 // The synchronous path. Both are public API on this engine (verified in the
                 // bench game's own assemblies), and a generator of OUR OWN keeps the
@@ -1141,6 +1192,18 @@ namespace UnityGameTranslator.Core.TextShaping
                     // A text generator of our own: the engine may refuse to make one — said.
                     try { _ownGenerator = Activator.CreateInstance(genType); }
                     catch (Exception ex) { Faults.Say("RtlPresenter.EnsureGeneratorPlumbing own generator", ex); }
+
+                    // Lines and characters, and the members read on them. UILineInfo / UICharInfo
+                    // live in the text-rendering assembly, not necessarily UI's: the element type
+                    // of the list each method fills is the reliable way to them.
+                    try
+                    {
+                        _generatorLines = GeneratorList.Resolve(genType, "GetLines");
+                        _generatorChars = GeneratorList.Resolve(genType, "GetCharacters");
+                        _lineStartChar = Members.FieldOrProperty(_generatorLines?.Element, "startCharIdx", PublicInstance);
+                        _charWidth = Members.FieldOrProperty(_generatorChars?.Element, "charWidth", PublicInstance);
+                    }
+                    catch (Exception ex) { Faults.Say("RtlPresenter.EnsureGeneratorPlumbing lines", ex); }
                 }
             }
             // The uGUI text generator's members, found by reflection on this engine: a refusal
@@ -1166,8 +1229,7 @@ namespace UnityGameTranslator.Core.TextShaping
                 string rectSize = "?";
                 var rtProp = comp.GetType().GetProperty("rectTransform", BindingFlags.Public | BindingFlags.Instance);
                 if (rtProp?.GetValue(comp, null) is UnityEngine.RectTransform rt) rectSize = $"{rt.rect.width:F1}x{rt.rect.height:F1}";
-                var t = settings.GetType();
-                object F(string name) { try { return t.GetField(name)?.GetValue(settings); } catch (Exception ex) { return $"?({ex.GetType().Name})"; } }
+                object F(string name) { try { return SettingOf(settings, name) ?? "(absent)"; } catch (Exception ex) { return $"?({ex.GetType().Name})"; } }
                 int lines = cut == null ? -1 : cut.Split('\n').Length;
                 string preview = assigned.Length > 24 ? assigned.Substring(0, 24) + "…" : assigned;
                 TranslatorCore.LogDebug($"[RtlPresenter] cut comp={TypeHelper.GetInstanceID(comp)} {(comp is UnityEngine.Component cc && cc.gameObject != null ? (cc.gameObject.activeInHierarchy ? "active" : "INACTIVE") : "?")} pixelRect={pixelRect.width:F1}x{pixelRect.height:F1} rect={rectSize} "
@@ -1204,7 +1266,7 @@ namespace UnityGameTranslator.Core.TextShaping
             whyNot = null;
             EnsureGeneratorPlumbing();
             if (_generatorPopulate == null || _getGenerationSettings == null || _getPixelAdjustedRect == null
-                || _ownGenerator == null || _generatorCharsProp == null || _charWidthField == null)
+                || _ownGenerator == null || _generatorChars == null || _charWidth == null)
             { whyNot = "generator character widths not readable on this runtime"; return null; }
             if (assigned.IndexOf('<') >= 0)
             { whyNot = "rich text tags in a word-broken text — not cut"; return null; }
@@ -1217,22 +1279,19 @@ namespace UnityGameTranslator.Core.TextShaping
 
                 object settings = _getGenerationSettings.Invoke(comp, new object[] { r.size });
                 if (settings == null) { whyNot = "no generation settings"; return null; }
-                var st = settings.GetType();
-                // One line, every character: both overflows on. HorizontalWrapMode.Overflow = 1,
-                // VerticalWrapMode.Overflow = 1.
-                var hField = st.GetField("horizontalOverflow", BindingFlags.Public | BindingFlags.Instance);
-                var vField = st.GetField("verticalOverflow", BindingFlags.Public | BindingFlags.Instance);
-                if (hField != null) hField.SetValue(settings, Enum.ToObject(hField.FieldType, 1));
-                if (vField != null) vField.SetValue(settings, Enum.ToObject(vField.FieldType, 1));
-                float scale = 1f;
-                var scaleField = st.GetField("scaleFactor", BindingFlags.Public | BindingFlags.Instance);
-                if (scaleField != null) scale = Convert.ToSingle(scaleField.GetValue(settings));
+                // One line, every character: both overflows on (HorizontalWrapMode.Overflow and
+                // VerticalWrapMode.Overflow are both 1).
+                if (!SetOverflowSetting(settings, "horizontalOverflow") || !SetOverflowSetting(settings, "verticalOverflow"))
+                { whyNot = "generation settings not writable on this runtime"; return null; }
+                object scaleSetting = SettingOf(settings, "scaleFactor");
+                if (scaleSetting == null) { whyNot = "generation settings carry no scale factor"; return null; }
+                float scale = Convert.ToSingle(scaleSetting);
 
                 if (!(bool)_generatorPopulate.Invoke(_ownGenerator, new object[] { assigned, settings }))
                 { whyNot = "generator refused to populate"; return null; }
-                var chars = _generatorCharsProp.GetValue(_ownGenerator, null) as System.Collections.IList;
-                if (chars == null || chars.Count < assigned.Length)
-                { whyNot = $"generator reports {chars?.Count ?? 0} characters for {assigned.Length}"; return null; }
+                var chars = _generatorChars.Read(_ownGenerator);
+                if (chars.Count < assigned.Length)
+                { whyNot = $"generator reports {chars.Count} characters for {assigned.Length}"; return null; }
 
                 float limit = r.width * scale;
                 var sb = new System.Text.StringBuilder(assigned.Length + 8);
@@ -1249,7 +1308,7 @@ namespace UnityGameTranslator.Core.TextShaping
                         lineStart = i + 1; lineWidth = 0f; lastBoundary = -1;
                         continue;
                     }
-                    float w = Convert.ToSingle(_charWidthField.GetValue(chars[i]));
+                    float w = Convert.ToSingle(Members.Get(_charWidth, chars[i]));
                     bool boundary = c == WordBreaker.ZeroWidthSpace || c == ' ';
                     if (lineWidth + w > limit && i > lineStart)
                     {
@@ -1261,7 +1320,7 @@ namespace UnityGameTranslator.Core.TextShaping
                         lastBoundary = -1;
                         // Width of what already sits on the new line, this character included.
                         lineWidth = 0f;
-                        for (int k = lineStart; k <= i; k++) lineWidth += Convert.ToSingle(_charWidthField.GetValue(chars[k]));
+                        for (int k = lineStart; k <= i; k++) lineWidth += Convert.ToSingle(Members.Get(_charWidth, chars[k]));
                         if (boundary) lastBoundary = i;
                         continue;
                     }
@@ -1295,8 +1354,7 @@ namespace UnityGameTranslator.Core.TextShaping
             whyNot = null;
             EnsureGeneratorPlumbing();
             if (_generatorPopulate == null || _getGenerationSettings == null || _getPixelAdjustedRect == null
-                || _ownGenerator == null || _generatorLinesProp == null
-                || (_lineStartCharField == null && _lineStartCharProp == null))
+                || _ownGenerator == null || _generatorLines == null || _lineStartChar == null)
             { whyNot = "generator API not resolvable on this runtime"; return null; }
 
             try
@@ -1307,29 +1365,23 @@ namespace UnityGameTranslator.Core.TextShaping
                 var extents = new UnityEngine.Vector2(Math.Max(1f, r.width - 1f), r.height);
                 object settings = _getGenerationSettings.Invoke(comp, new object[] { extents });
                 if (settings == null) { whyNot = "no generation settings"; return null; }
-                var vertical = settings.GetType().GetField("verticalOverflow", BindingFlags.Public | BindingFlags.Instance);
-                if (vertical != null) vertical.SetValue(settings, Enum.ToObject(vertical.FieldType, 1));
+                if (!SetOverflowSetting(settings, "verticalOverflow"))
+                { whyNot = "generation settings not writable on this runtime"; return null; }
 
                 if (!(bool)_generatorPopulate.Invoke(_ownGenerator, new object[] { text, settings }))
                 { whyNot = "generator refused to populate"; return null; }
 
-                var lines = _generatorLinesProp.GetValue(_ownGenerator, null) as System.Collections.IList;
-                var starts = new List<int>();
-                if (lines == null) return starts;
-                foreach (var line in lines)
-                {
-                    object v = _lineStartCharField != null ? _lineStartCharField.GetValue(line)
-                                                           : _lineStartCharProp.GetValue(line, null);
-                    starts.Add(Convert.ToInt32(v));
-                }
+                var lines = _generatorLines.Read(_ownGenerator);
+                var starts = new List<int>(lines.Count);
+                foreach (var line in lines) starts.Add(LineStartOf(line));
                 return starts;
             }
             catch (Exception ex) { whyNot = "populate failed: " + ex.Message; return null; }
         }
 
         // UICharInfo.cursorPos, UILineInfo.topY/height — read for an input field's caret.
-        private static FieldInfo _charCursorPosField;
-        private static FieldInfo _lineTopYField, _lineHeightField;
+        private static MemberInfo _charCursorPos;
+        private static MemberInfo _lineTopY, _lineHeight;
         private static PropertyInfo _pixelsPerUnitProp;
 
         /// <summary>
@@ -1344,27 +1396,25 @@ namespace UnityGameTranslator.Core.TextShaping
                                             List<int> lineStart, List<float> lineTop, List<float> lineHeight)
         {
             EnsureGeneratorPlumbing();
-            if (_cachedGeneratorProp == null || _generatorCharsProp == null || _generatorLinesProp == null
-                || _charWidthField == null) return false;
+            if (_cachedGeneratorProp == null || _generatorChars == null || _generatorLines == null
+                || _charWidth == null || _lineStartChar == null) return false;
             try
             {
-                if (_charCursorPosField == null)
+                if (_charCursorPos == null)
                 {
-                    var charType = _charWidthField.DeclaringType;
-                    _charCursorPosField = charType.GetField("cursorPos", BindingFlags.Public | BindingFlags.Instance);
-                    var lineType = _generatorLinesProp.PropertyType.GetGenericArguments()[0];
-                    _lineTopYField = lineType.GetField("topY", BindingFlags.Public | BindingFlags.Instance);
-                    _lineHeightField = lineType.GetField("height", BindingFlags.Public | BindingFlags.Instance);
+                    _charCursorPos = Members.FieldOrProperty(_generatorChars.Element, "cursorPos", PublicInstance);
+                    _lineTopY = Members.FieldOrProperty(_generatorLines.Element, "topY", PublicInstance);
+                    _lineHeight = Members.FieldOrProperty(_generatorLines.Element, "height", PublicInstance);
                     _pixelsPerUnitProp = TypeHelper.UI_TextType.GetProperty("pixelsPerUnit", BindingFlags.Public | BindingFlags.Instance);
                 }
-                if (_charCursorPosField == null || _lineTopYField == null || _lineHeightField == null || _pixelsPerUnitProp == null)
+                if (_charCursorPos == null || _lineTopY == null || _lineHeight == null || _pixelsPerUnitProp == null)
                     return false;
 
                 object generator = _cachedGeneratorProp.GetValue(comp, null);
                 if (generator == null) return false;
-                var chars = _generatorCharsProp.GetValue(generator, null) as System.Collections.IList;
-                var lines = _generatorLinesProp.GetValue(generator, null) as System.Collections.IList;
-                if (chars == null || lines == null || lines.Count == 0) return false;
+                var chars = _generatorChars.Read(generator);
+                var lines = _generatorLines.Read(generator);
+                if (lines.Count == 0) return false;
                 // A generator a frame behind describes the previous text: refuse rather than draw
                 // the caret against somebody else's glyphs. (Unity adds one terminator glyph.)
                 if (chars.Count < shown.Length || chars.Count > shown.Length + 1) return false;
@@ -1375,18 +1425,16 @@ namespace UnityGameTranslator.Core.TextShaping
                 charX.Clear(); charWidth.Clear();
                 foreach (var c in chars)
                 {
-                    var pos = (UnityEngine.Vector2)_charCursorPosField.GetValue(c);
+                    var pos = (UnityEngine.Vector2)Members.Get(_charCursorPos, c);
                     charX.Add(pos.x / ppu);
-                    charWidth.Add(Convert.ToSingle(_charWidthField.GetValue(c)) / ppu);
+                    charWidth.Add(Convert.ToSingle(Members.Get(_charWidth, c)) / ppu);
                 }
                 lineStart.Clear(); lineTop.Clear(); lineHeight.Clear();
                 foreach (var line in lines)
                 {
-                    object v = _lineStartCharField != null ? _lineStartCharField.GetValue(line)
-                                                           : _lineStartCharProp.GetValue(line, null);
-                    lineStart.Add(Convert.ToInt32(v));
-                    lineTop.Add(Convert.ToSingle(_lineTopYField.GetValue(line)) / ppu);
-                    lineHeight.Add(Convert.ToSingle(_lineHeightField.GetValue(line)) / ppu);
+                    lineStart.Add(LineStartOf(line));
+                    lineTop.Add(Convert.ToSingle(Members.Get(_lineTopY, line)) / ppu);
+                    lineHeight.Add(Convert.ToSingle(Members.Get(_lineHeight, line)) / ppu);
                 }
                 return true;
             }
@@ -1420,18 +1468,11 @@ namespace UnityGameTranslator.Core.TextShaping
                 // the height made it answer "two lines at full size" where the game shows one
                 // line at a smaller size — the component then shrank our two lines into two
                 // specks (bench: "New game" empty at start-up).
-                try
-                {
-                    bool bestFit = false;
-                    var bestFitProp = comp.GetType().GetProperty("resizeTextForBestFit", BindingFlags.Public | BindingFlags.Instance);
-                    if (bestFitProp != null) bestFit = (bool)bestFitProp.GetValue(comp, null);
-                    if (!bestFit)
-                    {
-                        var vertical = settings.GetType().GetField("verticalOverflow", BindingFlags.Public | BindingFlags.Instance);
-                        if (vertical != null) vertical.SetValue(settings, Enum.ToObject(vertical.FieldType, 1));
-                    }
-                }
-                catch (Exception ex) { Faults.Say("RtlPresenter.BuildUGuiLinesNow", ex); }
+                bool bestFit = false;
+                var bestFitProp = comp.GetType().GetProperty("resizeTextForBestFit", BindingFlags.Public | BindingFlags.Instance);
+                if (bestFitProp != null) bestFit = (bool)bestFitProp.GetValue(comp, null);
+                if (!bestFit && !SetOverflowSetting(settings, "verticalOverflow"))
+                { whyNot = "generation settings not writable on this runtime"; return null; }
                 if (!(bool)_generatorPopulate.Invoke(_ownGenerator, new object[] { assigned, settings }))
                 { whyNot = "generator refused to populate"; return null; }
 
@@ -1454,8 +1495,7 @@ namespace UnityGameTranslator.Core.TextShaping
             whyNot = null;
             EnsureGeneratorPlumbing();
 
-            if (_cachedGeneratorProp == null || _generatorLinesProp == null
-                || (_lineStartCharField == null && _lineStartCharProp == null))
+            if (_cachedGeneratorProp == null || _generatorLines == null || _lineStartChar == null)
             { whyNot = "text generator API not resolvable on this runtime"; return null; }
 
             // ⚠ Rich text: which string do the generator's line indices count? The legacy
@@ -1505,16 +1545,11 @@ namespace UnityGameTranslator.Core.TextShaping
                 tagMap = null;                           // no count to prove the map — raw it is
             }
 
-            var lines = _generatorLinesProp.GetValue(generator, null) as System.Collections.IList;
-            if (lines == null || lines.Count == 0) { whyNot = "generator has no lines yet"; return null; }
+            var lines = _generatorLines.Read(generator);
+            if (lines.Count == 0) { whyNot = "generator has no lines yet"; return null; }
 
             var starts = new List<int>(lines.Count);
-            foreach (var line in lines)
-            {
-                object v = _lineStartCharField != null ? _lineStartCharField.GetValue(line)
-                                                       : _lineStartCharProp.GetValue(line, null);
-                starts.Add(Convert.ToInt32(v));
-            }
+            foreach (var line in lines) starts.Add(LineStartOf(line));
             if (starts[0] != 0) { whyNot = "line data does not start at 0"; return null; }
             // The generator described a different (older) string — lengths must agree.
             foreach (int s in starts) if (s < 0 || s > referenceLength)

@@ -1095,15 +1095,10 @@ namespace UnityGameTranslator.Core.TextShaping
                 return p;
             }
 
-            private static MemberInfo Member(Type t, string name)
-            {
-                if (t == null) return null;
-                const BindingFlags any = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
-                return (MemberInfo)t.GetField(name, any) ?? t.GetProperty(name, any);
-            }
+            private static MemberInfo Member(Type t, string name) =>
+                Members.FieldOrProperty(t, name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
 
-            private static Type TypeOf(MemberInfo m) =>
-                m is FieldInfo f ? f.FieldType : m is PropertyInfo p ? p.PropertyType : null;
+            private static Type TypeOf(MemberInfo m) => Members.TypeOf(m);
 
             /// <summary>The element of an array — a managed T[] on Mono, an interop array's indexer on IL2CPP.</summary>
             private static Type ElementType(Type arrayType)
@@ -1114,15 +1109,10 @@ namespace UnityGameTranslator.Core.TextShaping
                 return item?.PropertyType;
             }
 
-            internal static object Get(MemberInfo m, object target) =>
-                m is FieldInfo f ? f.GetValue(target) : ((PropertyInfo)m).GetValue(target, null);
+            internal static object Get(MemberInfo m, object target) => Members.Get(m, target);
 
             /// <summary>Sets a member of an element read with <see cref="Item"/> — a boxed struct on Mono, written back with <see cref="SetItem"/>.</summary>
-            internal static void Set(MemberInfo m, object target, object value)
-            {
-                if (m is FieldInfo f) f.SetValue(target, value);
-                else ((PropertyInfo)m).SetValue(target, value, null);
-            }
+            internal static void Set(MemberInfo m, object target, object value) => Members.Set(m, target, value);
 
             internal static object Item(object array, int index)
             {

@@ -3405,15 +3405,20 @@ namespace UnityGameTranslator.Core
             // component already sized, and never sized (TypeHelper.IsInScene).
             if (!TypeHelper.IsInScene(component)) return null;
 
-            RegisterUnityFontObject(settingsFontName, fontObj);
+            // The font the component wears may be a replacement the game destroyed under it (some
+            // games destroy fonts outright, the unload shield notwithstanding — 2026-10-02): it has
+            // no name to read (IL2CPP throws) and is no game font to remember. Its text still knows
+            // which game font it stands for (settingsFontName), and takes the replacement made anew.
+            bool wornAlive = TypeHelper.IsUnityObjectAlive(fontObj);
+            if (wornAlive) RegisterUnityFontObject(settingsFontName, fontObj);
 
             var replacementFont = GetUnityReplacementFont(settingsFontName);
             if (replacementFont == null) return null;
 
             int instanceId = TypeHelper.GetInstanceID(component);
-            TrackOriginalFont(instanceId, fontObj, component);
+            if (wornAlive) TrackOriginalFont(instanceId, fontObj, component);
 
-            string currentName = (fontObj is UnityEngine.Object co) ? co.name : null;
+            string currentName = TypeHelper.FontNameOf(fontObj);
             string replaceName = replacementFont.name;
 
             // Apply the clone whenever it can actually render the text — the real question, and the
@@ -3539,9 +3544,13 @@ namespace UnityGameTranslator.Core
             if (comp != null && TranslatorCore.IsOwnUI(comp)) return false;
 
             var fontObj = TypeHelper.GetFont(c);
-            // A font destroyed under the component has no name to ask (IL2CPP throws on it).
-            if (!TypeHelper.IsUnityObjectAlive(fontObj)) return false;
-            string fontName = (fontObj is UnityEngine.Object fo) ? fo.name : null;
+            // A replacement destroyed under the component has no name to ask (IL2CPP throws on it):
+            // the game font it stood for is the one remembered for this component, and the
+            // replacement made anew goes on (TryApplyUnityClone).
+            string fontName = TypeHelper.FontNameOf(fontObj);
+            if (fontName == null && !TypeHelper.IsUnityObjectAlive(fontObj)
+                && _originalFontsPerComponent.TryGetValue(id, out var stoodFor))
+                fontName = TypeHelper.FontNameOf(stoodFor);
             if (string.IsNullOrEmpty(fontName)) return false;
 
             string settingsFontName = GetSettingsFontName(id, fontName);
@@ -3556,7 +3565,7 @@ namespace UnityGameTranslator.Core
                 EnsureCharsInCloneAtlasDirect(text, clone, settingsFontName);
 
             var nowFont = TypeHelper.GetFont(c);
-            string nowName = (nowFont is UnityEngine.Object nfo) ? nfo.name : null;
+            string nowName = TypeHelper.FontNameOf(nowFont);
 
             // The size goes with the font, whichever path put it on (see ApplyReplacementsToScene):
             // wearing the replacement — a clone, or the game's own font whose names now draw the

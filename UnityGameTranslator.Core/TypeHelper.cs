@@ -1120,6 +1120,13 @@ namespace UnityGameTranslator.Core
         /// IL2CPP interop, without touching the object's members.
         /// Non-Unity objects are considered alive if non-null.
         /// </summary>
+        /// <summary>
+        /// A font's name, or null when it is no live Unity object — a replacement the game destroyed
+        /// under the component that wears it, whose name IL2CPP refuses to read (2026-10-02).
+        /// </summary>
+        public static string FontNameOf(object font) =>
+            IsUnityObjectAlive(font) && font is UnityEngine.Object o ? o.name : null;
+
         public static bool IsUnityObjectAlive(object obj)
         {
             if (obj == null) return false;

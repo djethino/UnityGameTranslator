@@ -2642,8 +2642,7 @@ namespace UnityGameTranslator.Core
         {
             if (unityCloneFont != null)
             {
-                object curFont = TypeHelper.GetFont(instance);
-                string curFontName = (curFont is UnityEngine.Object cfo) ? cfo.name : null;
+                string curFontName = TypeHelper.FontNameOf(TypeHelper.GetFont(instance));
                 if (!string.Equals(curFontName, unityCloneName, StringComparison.OrdinalIgnoreCase))
                     return;
             }
@@ -3130,7 +3129,7 @@ namespace UnityGameTranslator.Core
                 {
                     fontObj = TypeHelper.GetFont(__instance);
                     if (fontObj != null)
-                        fontName = (fontObj is UnityEngine.Object uobj) ? uobj.name : null;
+                        fontName = TypeHelper.FontNameOf(fontObj);
 
                     // If the component already has a clone font (inherited from template/pool),
                     // resolve back to the ORIGINAL font name so tracking stays correct. A TMP text
@@ -3276,8 +3275,7 @@ namespace UnityGameTranslator.Core
                 // Detect missed SetFont: text was translated but HasCachedTranslation said no
                 if (unityCloneFont != null && textValue != preTranslateText && componentType == "Unity")
                 {
-                    object curFont = TypeHelper.GetFont(__instance);
-                    string curFontName = (curFont is UnityEngine.Object cfo) ? cfo.name : null;
+                    string curFontName = TypeHelper.FontNameOf(TypeHelper.GetFont(__instance));
                     if (!string.Equals(curFontName, unityCloneName, StringComparison.OrdinalIgnoreCase))
                     {
                         // SetFont was missed — apply it now

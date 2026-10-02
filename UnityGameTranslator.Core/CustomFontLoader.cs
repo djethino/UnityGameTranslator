@@ -2589,7 +2589,7 @@ namespace UnityGameTranslator.Core
         /// don't expose the broader API or where the first throws on a missing TTF source.
         /// Called after the tables are filled, and again whenever an entry is added later.
         /// </summary>
-        private static bool RebuildLookupTables(object fontAsset, Type fontAssetType)
+        internal static bool RebuildLookupTables(object fontAsset, Type fontAssetType)
         {
             SetPropertyOrField(fontAsset, fontAssetType, "IsFontAssetLookupTablesDirty", true);
 
@@ -2660,19 +2660,11 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// What goes into ANOTHER font's fallback list for an asset of ours: the same font as a
-        /// second asset on the same atlas (FallbackTwin), never the asset components wear.
-        ///
-        /// TMP gives a letter found in a fallback the material of the font it was asked in, re-bound
-        /// to the fallback's atlas — except when the fallback IS the component's own font
-        /// ("current font asset != m_fontAsset", TMPro_UGUI_Private.cs, TMP 3.0.6). A letter asked in
-        /// a &lt;font&gt; tag's font and found in our asset, while the component wears that same asset
-        /// (our replacement), was drawn with the tag font's material, on the tag font's atlas:
-        /// invisible (bench, out-fonttag, 2026-10-03). A second asset is a fallback like any other.
-        /// An asset that is not ours is returned as it is. <paramref name="make"/> false: the twin
-        /// only if it already exists (to take it OUT of a list).
+        /// The second asset of a font of OURS for other fonts' fallback lists, on the same atlas
+        /// (FallbackTwin) — see FontManager.FallbackListAsset. Null when the asset is not ours (or,
+        /// <paramref name="make"/> false, has none yet); the asset itself when it could not be made.
         /// </summary>
-        internal static object FallbackListAsset(object asset, bool make = true)
+        internal static object OwnFallbackTwin(object asset, bool make)
         {
             if (asset == null) return null;
             int id = TypeHelper.GetInstanceID(asset);
@@ -2681,7 +2673,7 @@ namespace UnityGameTranslator.Core
                 if (info?.FontAsset == null || !info.IsLoaded) continue;
                 if (!ReferenceEquals(info.FontAsset, asset) && (id == -1 || TypeHelper.GetInstanceID(info.FontAsset) != id)) continue;
                 if (info.FallbackTwin != null && TypeHelper.IsUnityObjectAlive(info.FallbackTwin)) return info.FallbackTwin;
-                if (!make) return asset;
+                if (!make) return null;
 
                 // CreateFontAsset writes the scale of the asset it makes into the font's record:
                 // the worn asset's own is put back.
@@ -2699,7 +2691,7 @@ namespace UnityGameTranslator.Core
                 TranslatorCore.LogDebug($"[CustomFontLoader] {info.Name}: second asset made for fallback lists");
                 return twin;
             }
-            return asset;
+            return null;
         }
 
         private static bool AddGlyphsTo(object fontAsset, float glyphMetricsScale, CustomFontInfo fontInfo, List<GlyphInfo> added)

@@ -2674,6 +2674,100 @@ namespace UnityGameTranslator.Core
             return false;
         }
 
+        // Second assets of fonts that are not ours (a game font, an asset built by Unity), by the
+        // instance id of the asset they stand for — see FallbackListAsset.
+        private static readonly Dictionary<int, object> _fallbackTwins = new Dictionary<int, object>();
+
+        /// <summary>
+        /// What goes into ANOTHER font's fallback list for a fallback asset: the same font as a
+        /// second asset, never the asset the replaced components wear.
+        ///
+        /// TMP gives a letter found in a fallback the material of the font it was asked in, re-bound
+        /// to the fallback's atlas — except when the fallback IS the component's own font
+        /// ("current font asset != m_fontAsset", TMPro_UGUI_Private.cs, TMP 3.0.6). A letter asked in
+        /// a &lt;font&gt; tag's font and found in the replacement the component wears was drawn with
+        /// the tag font's material on the tag font's atlas: invisible — for our fonts and for a game
+        /// font chosen as the fallback alike (bench, out-fonttag and out-fontgame, 2026-10-03). A
+        /// second asset is a fallback like any other.
+        ///
+        /// How it is made depends on who writes the atlas: ours (CustomFontLoader.OwnFallbackTwin)
+        /// and a static one share it — nobody writes it; a DYNAMIC one gets its own, from the same
+        /// font file (two assets filling one texture would overwrite each other's letters).
+        /// <paramref name="make"/> false: an existing second asset only (to take it out of a list).
+        /// The asset itself when none can be had, said once.
+        /// </summary>
+        internal static object FallbackListAsset(object asset, bool make = true)
+        {
+            if (asset == null) return null;
+            var own = CustomFontLoader.OwnFallbackTwin(asset, make);
+            if (own != null) return own;
+
+            int id = TypeHelper.GetInstanceID(asset);
+            if (id == -1) return asset;
+            if (_fallbackTwins.TryGetValue(id, out var known) && TypeHelper.IsUnityObjectAlive(known)) return known;
+            if (!make) return asset;
+
+            object twin = null;
+            string name = TypeHelper.FontNameOf(asset);
+            // Typed first: on IL2CPP a game font can come as a bare UnityEngine.Object, whose type has
+            // none of the properties read below (bench: read as static, its atlas shared and spoiled).
+            var type = TypeHelper.TMP_FontAssetType;
+            asset = TypeHelper.Il2CppCast(asset, type);
+            try
+            {
+                // Static only when the asset says so, or when its TMP has no population mode at all
+                // (TMProOld: always static). Unreadable is not static: sharing a texture something else
+                // writes spoils the letters of both.
+                var modeProp = type.GetProperty("atlasPopulationMode", BindingFlags.Public | BindingFlags.Instance);
+                object mode = modeProp?.GetValue(asset, null);
+                if (modeProp != null && mode == null)
+                {
+                    if (DiagnosticOnce.First("fallback-twin-nomode", name))
+                        TranslatorCore.LogWarning($"[FontManager] '{name}': its atlas mode cannot be read — no second asset, a letter of it inside a <font> tag is drawn on the tag font's atlas");
+                    return asset;
+                }
+                bool dynamic = mode != null && Convert.ToInt32(mode) == 1; // AtlasPopulationMode.Dynamic
+                if (dynamic)
+                {
+                    var file = type.GetProperty("sourceFontFile", BindingFlags.Public | BindingFlags.Instance)?.GetValue(asset, null) as Font;
+                    if (file == null)
+                    {
+                        if (DiagnosticOnce.First("fallback-twin-nofile", name))
+                            TranslatorCore.LogWarning($"[FontManager] '{name}': dynamic, with no font file to make a second asset from — a letter of it inside a <font> tag is drawn on the tag font's atlas");
+                        return asset;
+                    }
+                    var shape = SdfShape.Of(asset);
+                    if (shape == null)
+                    {
+                        if (DiagnosticOnce.First("fallback-twin-noshape", name))
+                            TranslatorCore.LogWarning($"[FontManager] '{name}': its drawing settings cannot be read — no second asset, a letter of it inside a <font> tag is drawn on the tag font's atlas");
+                        return asset;
+                    }
+                    twin = CreateSdfFontAsset(file, type, shape);
+                }
+                else if (asset is UnityEngine.Object original)
+                {
+                    var copy = UnityEngine.Object.Instantiate(original);
+                    twin = TypeHelper.Il2CppCast(copy, type);
+                    CustomFontLoader.RebuildLookupTables(twin, twin.GetType());
+                }
+            }
+            catch (Exception ex) { Faults.Say("FontManager.FallbackListAsset", ex.InnerException ?? ex, name); }
+            if (!(twin is UnityEngine.Object made))
+            {
+                if (DiagnosticOnce.First("fallback-twin-failed", name))
+                    TranslatorCore.LogWarning($"[FontManager] '{name}': no second asset for fallback lists — a letter of it inside a <font> tag is drawn on the tag font's atlas");
+                return asset;
+            }
+            // Its own name, one of ours: never listed as a game font, never found for the original by name.
+            made.name = name + " (UGT fallback)";
+            made.hideFlags |= HideFlags.DontUnloadUnusedAsset;
+            _createdFallbackFontNames.Add(made.name);
+            _fallbackTwins[id] = twin;
+            TranslatorCore.LogDebug($"[FontManager] '{name}': second asset made for fallback lists");
+            return twin;
+        }
+
         /// <summary>
         /// Apply fallback font to a specific TMP font asset (via reflection).
         /// </summary>
@@ -2708,8 +2802,8 @@ namespace UnityGameTranslator.Core
                 }
 
                 // Our own font goes into another font's list as its second asset — see
-                // CustomFontLoader.FallbackListAsset (a <font> tag's letters drawn invisible).
-                fallbackAsset = CustomFontLoader.FallbackListAsset(fallbackAsset);
+                // FallbackListAsset (a <font> tag's letters drawn invisible).
+                fallbackAsset = FallbackListAsset(fallbackAsset);
 
                 // Get the fallback list via reflection
                 var fallbackList = GetFallbackListReflection(font);
@@ -2769,7 +2863,7 @@ namespace UnityGameTranslator.Core
                 var removeMethod = fallbackList.GetType().GetMethod("Remove");
                 if (removeMethod != null)
                 {
-                    bool removed = (bool)removeMethod.Invoke(fallbackList, new[] { CustomFontLoader.FallbackListAsset(oldFallbackAsset, make: false) });
+                    bool removed = (bool)removeMethod.Invoke(fallbackList, new[] { FallbackListAsset(oldFallbackAsset, make: false) });
                     if (removed)
                         TranslatorCore.LogDebug($"[FontManager] Removed old fallback '{oldFallbackName}' from: {gameFontName}");
                 }
@@ -4003,6 +4097,7 @@ namespace UnityGameTranslator.Core
         public static void ClearCreatedFontAssets()
         {
             _fallbackAssets.Clear();
+            _fallbackTwins.Clear();
             _adaptedMaterials.Clear();
             TranslatorCore.LogInfo("[FontManager] Cleared derived font assets + adapted materials for rebuild");
         }
@@ -5108,7 +5203,38 @@ namespace UnityGameTranslator.Core
             return result;
         }
 
-        internal static object CreateSdfFontAsset(Font font, Type fontAssetType)
+        /// <summary>
+        /// The settings an SDF asset is drawn with — an existing asset's, read off it (Of), when a
+        /// second asset must draw as the first does (FallbackListAsset): the same sampling size,
+        /// padding and render mode give the same letters, where the defaults would draw the game's
+        /// font another way inside a &lt;font&gt; tag than outside it.
+        /// </summary>
+        internal sealed class SdfShape
+        {
+            internal int Sampling, Padding, RenderMode, Width, Height;
+
+            internal static SdfShape Of(object asset)
+            {
+                if (asset == null) return null;
+                var type = asset.GetType();
+                const BindingFlags pub = BindingFlags.Public | BindingFlags.Instance;
+                object Read(string name) => type.GetProperty(name, pub)?.GetValue(asset, null);
+                object face = Read("faceInfo");
+                object point = face?.GetType().GetProperty("pointSize", pub)?.GetValue(face, null);
+                object padding = Read("atlasPadding"), mode = Read("atlasRenderMode"), width = Read("atlasWidth"), height = Read("atlasHeight");
+                if (point == null || padding == null || mode == null || width == null || height == null) return null;
+                return new SdfShape
+                {
+                    Sampling = (int)Math.Round(Convert.ToDouble(point)),
+                    Padding = Convert.ToInt32(padding),
+                    RenderMode = Convert.ToInt32(mode),
+                    Width = Convert.ToInt32(width),
+                    Height = Convert.ToInt32(height),
+                };
+            }
+        }
+
+        internal static object CreateSdfFontAsset(Font font, Type fontAssetType, SdfShape shape = null)
         {
             if (font == null || fontAssetType == null) return null;
 
@@ -5132,8 +5258,8 @@ namespace UnityGameTranslator.Core
 
                     TranslatorCore.LogDebug($"[FontManager] Trying CreateFontAsset overload: {parameters.Length} params ({string.Join(",", parameters.Select(p => p.ParameterType.Name))})");
 
-                    // Simple version: CreateFontAsset(Font)
-                    if (parameters.Length == 1)
+                    // Simple version: CreateFontAsset(Font) — the runtime's defaults, never for a given shape.
+                    if (parameters.Length == 1 && shape == null)
                     {
                         try
                         {
@@ -5161,6 +5287,7 @@ namespace UnityGameTranslator.Core
                             // Build args array matching the exact parameter list
                             var args = new object[parameters.Length];
                             args[0] = font;
+                            int sides = 0;
                             bool multiAtlas = false;
                             foreach (var p in parameters) if (p.ParameterType == typeof(bool)) multiAtlas = true;
                             int atlasSide = AtlasFloor(ExpectedGlyphCount(), SdfSampling, SdfPadding, multiAtlas);
@@ -5173,7 +5300,8 @@ namespace UnityGameTranslator.Core
                                 if (pName.Contains("GlyphRenderMode"))
                                 {
                                     // SDFAA_HINTED = 4166
-                                    args[i] = pType.IsEnum ? Enum.ToObject(pType, 4166) : (object)4166;
+                                    int renderMode = shape?.RenderMode ?? 4166;
+                                    args[i] = pType.IsEnum ? Enum.ToObject(pType, renderMode) : (object)renderMode;
                                 }
                                 else if (pName.Contains("AtlasPopulationMode"))
                                 {
@@ -5184,8 +5312,8 @@ namespace UnityGameTranslator.Core
                                 {
                                     // Int params: samplingPointSize, atlasPadding, atlasWidth, atlasHeight
                                     // For 9-param version: extra int is samplingPointSize (index 1)
-                                    if (i <= 3) args[i] = i == 1 ? SdfSampling : SdfPadding; // sampling point size / padding
-                                    else args[i] = atlasSide; // atlas width/height
+                                    if (i <= 3) args[i] = i == 1 ? (shape?.Sampling ?? SdfSampling) : (shape?.Padding ?? SdfPadding); // sampling point size / padding
+                                    else args[i] = shape == null ? atlasSide : (sides++ == 0 ? shape.Width : shape.Height); // atlas width, then height
                                 }
                                 else if (pType == typeof(bool))
                                 {
@@ -5799,6 +5927,7 @@ namespace UnityGameTranslator.Core
             _detectedUnityFontNames.Clear();
             _detectedTMPFontObjects.Clear();
             _fallbackAssets.Clear();
+            _fallbackTwins.Clear();
             _unityFallbackFonts.Clear();
             _cloneToOriginal.Clear();
             _excludedCharsPerClone.Clear();

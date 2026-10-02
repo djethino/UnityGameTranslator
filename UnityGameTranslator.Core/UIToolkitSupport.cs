@@ -2305,11 +2305,46 @@ namespace UnityGameTranslator.Core
         /// ⚠ Cached by name: creating a font asset rasterises an atlas, and doing it once per scan
         /// pass would be the kind of leak that only shows up after twenty minutes of play.
         /// </summary>
+        /// <summary>
+        /// Keeps a font asset we made — and its atlas textures and material — out of the game's
+        /// Resources.UnloadUnusedAssets.
+        ///
+        /// 🔴 Nothing the game serialises refers to them, so an unload pass destroys them: the texts
+        /// drawn with one showed for a fraction of a second, then vanished (2026-10-02, a UI Toolkit
+        /// game unloading assets as its menu opened). TextCore marks its own runtime assets the same
+        /// way (FontAssetFactory.SetHideFlags: DontSave on asset, atlas and material); this mod's other
+        /// paths use DontUnloadUnusedAsset (CustomFontLoader).
+        /// </summary>
+        private static void ShieldFromUnload(object asset)
+        {
+            if (!(asset is UnityEngine.Object o) || o == null) return;
+            o.hideFlags |= HideFlags.DontUnloadUnusedAsset;
+            try
+            {
+                var type = asset.GetType();
+                if (type.GetProperty("material", BindingFlags.Public | BindingFlags.Instance)?.GetValue(asset, null) is UnityEngine.Object material && material != null)
+                    material.hideFlags |= HideFlags.DontUnloadUnusedAsset;
+                if (type.GetProperty("atlasTextures", BindingFlags.Public | BindingFlags.Instance)?.GetValue(asset, null) is System.Collections.IEnumerable textures)
+                    foreach (var t in textures)
+                        if (t is UnityEngine.Object tex && tex != null) tex.hideFlags |= HideFlags.DontUnloadUnusedAsset;
+            }
+            catch (Exception ex) { Faults.Say("UIToolkit.ShieldFromUnload", ex, o.name); }
+        }
+
         private static object BuildDefinition(Font replacement, bool isSdf, string settingsName)
         {
             if (isSdf && _textCoreFontAssetType != null && _fromSdfFontMethod != null)
             {
                 string key = replacement.name ?? "?";
+
+                // A cached asset the engine destroyed since is made again, and said: the shield
+                // below should prevent it, and a text drawn with a dead asset shows nothing.
+                if (_sdfCache.TryGetValue(key, out var cached) && cached != null && !TypeHelper.IsUnityObjectAlive(cached))
+                {
+                    _sdfCache.Remove(key);
+                    if (DiagnosticOnce.First("UIToolkit.sdfDestroyed", key))
+                        TranslatorCore.LogWarning($"[UIToolkit] the SDF asset made for '{key}' was destroyed by the engine — made again");
+                }
 
                 if (!_sdfCache.TryGetValue(key, out var asset))
                 {
@@ -2327,6 +2362,7 @@ namespace UnityGameTranslator.Core
                                                                        _textCoreFontAssetType, replacement.name);
 
                     _sdfCache[key] = asset;
+                    ShieldFromUnload(asset);
 
                     if (asset == null)
                     {

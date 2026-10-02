@@ -2472,7 +2472,7 @@ namespace UnityGameTranslator.Core
         /// </summary>
         private static int PatchTmpOnEnable(Action<MethodInfo, MethodInfo, MethodInfo> patcher)
         {
-            if (TypeHelper.TMP_TextType == null || TypeHelper.UseAlternateTMP) return 0;
+            if (TypeHelper.TMP_TextType == null || !FontManager.TmpReplacesPerComponent) return 0;
 
             int count = 0;
             var postfix = typeof(TranslatorPatches).GetMethod(nameof(TMPText_OnEnable_Postfix),
@@ -3206,18 +3206,13 @@ namespace UnityGameTranslator.Core
                     {
                         if (fontObj == null) fontObj = TypeHelper.GetFont(__instance);
 
-                        // TMProOld: use fallback approach (add custom font to game font's fallback list)
-                        // TMProOld can't render manually-created TMP_FontAssets via SetFont,
-                        // but it CAN use them as fallback fonts for missing characters.
-                        // Modern TMP: use direct replacement (SetFont) for full font swap.
+                        // TMProOld: ours also added to the game font's fallback list (a component
+                        // not replaced yet still finds the letters). Replacement (SetFont): the
+                        // chosen font draws first — see FontManager.TmpReplacesPerComponent.
                         if (TypeHelper.UseAlternateTMP)
-                        {
                             FontManager.EnsureFallbackApplied(fontObj, settingsFontName);
-                        }
-                        else
-                        {
+                        if (FontManager.TmpReplacesPerComponent)
                             FontManager.ApplyFontReplacement(__instance, fontObj, settingsFontName);
-                        }
                     }
                     else if (componentType == "Unity" || componentType == "TextMesh")
                     {
@@ -3426,7 +3421,7 @@ namespace UnityGameTranslator.Core
             try
             {
                 if (!TranslatorCore.FontReplacementActive) return;
-                if (TypeHelper.UseAlternateTMP) return; // TMProOld uses the fallback-list path
+                if (!FontManager.TmpReplacesPerComponent) return;
                 FontManager.OnGameAssignedFont(__instance);
             }
             catch (Exception ex)
@@ -3464,7 +3459,7 @@ namespace UnityGameTranslator.Core
                 if (TranslatorCore.TranslationsActive && __instance is Component tmpComp && !TranslatorCore.IsOwnUI(tmpComp))
                     TextShaping.RtlPresenter.NoteEnabled(__instance);
                 if (!TranslatorCore.FontReplacementActive) return;
-                if (TypeHelper.UseAlternateTMP) return; // TMProOld uses the fallback-list path
+                if (!FontManager.TmpReplacesPerComponent) return;
                 FontManager.OnComponentEnabled(__instance);
             }
             catch (Exception ex)

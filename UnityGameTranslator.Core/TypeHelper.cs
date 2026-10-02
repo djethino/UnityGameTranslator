@@ -941,7 +941,9 @@ namespace UnityGameTranslator.Core
 
             try
             {
-                if (TMP_ForceMeshUpdateMethod != null)
+                // TMP's method only on a TMP text: the restore path is shared with UI.Text and
+                // TextMesh, and invoked on those it threw "Object does not match target type".
+                if (TMP_ForceMeshUpdateMethod != null && TMP_TextType != null && TMP_TextType.IsInstanceOfType(component))
                 {
                     TMP_ForceMeshUpdateMethod.Invoke(component, null);
                     return;

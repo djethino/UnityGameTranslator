@@ -3214,7 +3214,25 @@ namespace UnityGameTranslator.Core
         public static bool HasActiveReplacements =>
             _fallbackAssets.Count > 0 &&
             TranslatorCore.FontReplacementActive &&
-            !TypeHelper.UseAlternateTMP;
+            TmpReplacesPerComponent;
+
+        /// <summary>
+        /// Whether a TMP component's font is REPLACED by ours (SetFont, the game's font kept behind it
+        /// for what ours lacks), rather than ours only added behind the game's font.
+        ///
+        /// 🔴 The chosen font draws first, the game's only for what it lacks (user, 2026-10-02: « le but
+        /// du fallback et des fonts custom c'est que l'utilisateur trouve une font ressemblante ou qui
+        /// convient pour remplacer l'originale, pas de faire des mix »). Added behind the game's font,
+        /// ours drew the letters and the game's the comma beside them — « है , » in another face.
+        ///
+        /// ⚠ TMProOld was held to the fallback list because it "can't render manually-created
+        /// TMP_FontAssets via SetFont" (analyse/tmproold-fallback-effects-limitation.md). The asset that
+        /// failed was a BARE ScriptableObject; the one made today is a clone of a game asset
+        /// (CustomFontLoader: "Cloned existing font"). Tried again on that ground — the proof is in game
+        /// (analyse/ponctuation-police-des-lettres.md). The fallback list stays applied as well: a
+        /// component not yet replaced still finds the letters.
+        /// </summary>
+        internal static bool TmpReplacesPerComponent => true;
 
         /// <summary>
         /// Direct font-application pass over the scene's TMP components, WITHOUT

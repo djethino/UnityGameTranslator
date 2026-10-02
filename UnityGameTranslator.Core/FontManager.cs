@@ -1205,9 +1205,54 @@ namespace UnityGameTranslator.Core
         /// game's word was purple). Found as TMP finds it: loaded already, else from Resources under
         /// TMP's own font path.
         /// </summary>
-        internal static void NoteFontTags(string text)
+        internal static void NoteFontTags(string text, int componentId)
         {
-            if (string.IsNullOrEmpty(text) || TypeHelper.TMP_FontAssetType == null) return;
+            if (TypeHelper.TMP_FontAssetType == null) return;
+            var names = TagFontNames(text);
+            // Which fonts this text names, as it is now: what a refresh, a highlight and the scene
+            // count of a tag's font look for (ComponentNamesTagFont).
+            if (componentId != -1)
+            {
+                if (names.Count > 0) _tagFontsOfComponent[componentId] = names;
+                else _tagFontsOfComponent.Remove(componentId);
+            }
+            foreach (var name in names)
+            {
+                if (!_tagFontsAsked.Add(name)) continue;
+                var asset = FindTagFontAsset(name);
+                if (asset == null)
+                {
+                    TranslatorCore.LogInfo($"[FontManager] '{name}', named by a <font> tag, is not loaded and not in Resources — the tag's letters keep TMP's own fallbacks");
+                    continue;
+                }
+                TranslatorCore.LogInfo($"[FontManager] '{name}', named by a <font> tag, detected as a game font");
+                RegisterFontObject(asset, TypeHelper.UseAlternateTMP ? "TMP (alt)" : "TMP");
+                // Its fallback, when one is set, was just added: the texts already drawn with this
+                // tag looked their letters up without it.
+                if (!string.IsNullOrEmpty(GetFontSettings(name)?.fallback)) RequestPendingRefresh();
+            }
+        }
+
+        // Per component: the fonts its text's <font> tags name — no component WEARS such a font, so
+        // every question "which texts use this font" asks this too.
+        private static readonly Dictionary<int, HashSet<string>> _tagFontsOfComponent = new Dictionary<int, HashSet<string>>();
+
+        /// <summary>Whether this component's text names one of these fonts in a <font> tag.</summary>
+        internal static bool ComponentNamesTagFont(int componentId, HashSet<string> fontNames)
+        {
+            if (!_tagFontsOfComponent.TryGetValue(componentId, out var named)) return false;
+            foreach (var name in named) if (fontNames.Contains(name)) return true;
+            return false;
+        }
+
+        /// <summary>
+        /// The font names a text's <font="name"> / <font=name> tags give, TMP's own syntax; never
+        /// "default", TMP's way back to the text's own font.
+        /// </summary>
+        internal static HashSet<string> TagFontNames(string text)
+        {
+            var names = new HashSet<string>(StringComparer.Ordinal);
+            if (string.IsNullOrEmpty(text)) return names;
             int at = 0;
             while ((at = text.IndexOf("<font", at, StringComparison.OrdinalIgnoreCase)) >= 0)
             {
@@ -1223,35 +1268,36 @@ namespace UnityGameTranslator.Core
                 if (end <= start) continue;
                 string name = text.Substring(start, end - start);
                 at = end;
-                // <font=default> is TMP's way back to the text's own font, no font of its own.
-                if (string.Equals(name, "default", StringComparison.OrdinalIgnoreCase) || !_tagFontsAsked.Add(name)) continue;
-
-                var asset = FindTagFontAsset(name);
-                if (asset == null)
-                {
-                    TranslatorCore.LogInfo($"[FontManager] '{name}', named by a <font> tag, is not loaded and not in Resources — the tag's letters keep TMP's own fallbacks");
-                    continue;
-                }
-                TranslatorCore.LogInfo($"[FontManager] '{name}', named by a <font> tag, detected as a game font");
-                RegisterFontObject(asset, TypeHelper.UseAlternateTMP ? "TMP (alt)" : "TMP");
+                if (!string.Equals(name, "default", StringComparison.OrdinalIgnoreCase)) names.Add(name);
             }
+            return names;
         }
 
         /// <summary>A TMP font asset by the name a tag gives it: one loaded already, else TMP's own Resources path.</summary>
         private static object FindTagFontAsset(string name)
         {
-            var loaded = TypeHelper.FindAllObjectsOfType(TypeHelper.TMP_FontAssetType);
-            if (loaded != null)
-                foreach (var asset in loaded)
-                    if (TypeHelper.FontNameOf(asset) == name) return asset;
+            var asset = LoadedTmpFontNamed(name);
+            if (asset != null) return asset;
 
             var settings = TypeHelper.TMP_FontAssetType.Assembly.GetType(TypeHelper.TMP_FontAssetType.Namespace + ".TMP_Settings");
             var pathProp = settings?.GetProperty("defaultFontAssetPath", BindingFlags.Public | BindingFlags.Static);
             string path = pathProp?.GetValue(null, null) as string;
             if (path == null) return null;
-            var found = Resources.Load(path + name);
-            if (found == null) return null;
-            return TypeHelper.TMP_FontAssetType.IsInstanceOfType(found) ? found : TypeHelper.Il2CppCast(found, TypeHelper.TMP_FontAssetType);
+            // Loaded where TMP loads it from, then taken among the loaded fonts: on IL2CPP what
+            // Resources.Load hands back stayed a bare UnityEngine.Object through the cast, while
+            // the same font found among the loaded ones casts (bench, 2021.3 IL2CPP).
+            if (TypeHelper.LoadResource(path + name, TypeHelper.TMP_FontAssetType) == null) return null;
+            return LoadedTmpFontNamed(name);
+        }
+
+        private static object LoadedTmpFontNamed(string name)
+        {
+            // An asset, not a scene object: the asset scan (the scene one misses it on Mono).
+            var loaded = TypeHelper.FindAllAssetsOfType(TypeHelper.TMP_FontAssetType);
+            if (loaded != null)
+                foreach (var asset in loaded)
+                    if (TypeHelper.FontNameOf(asset) == name) return TypeHelper.Il2CppCast(asset, TypeHelper.TMP_FontAssetType);
+            return null;
         }
 
         public static void RegisterFontObject(object fontObj, string fontType)
@@ -2124,6 +2170,14 @@ namespace UnityGameTranslator.Core
                 // _originalFontsPerComponent (e.g. already-replaced on first encounter).
                 _replacedFor.Clear();
 
+                // The new fallback in the font's own fallback list, as its detection puts it there
+                // (RegisterFontObject): the old one was just taken out, and nothing else put the new
+                // one in — a font a <font> tag switches to, worn by no component, is drawn from that
+                // list alone, and kept the old letters (2026-10-03).
+                if (enabled && !string.IsNullOrEmpty(fallbackFont)
+                    && _detectedTMPFontObjects.TryGetValue(fontName, out var tmpFontObject))
+                    ApplyFallbackToFont(tmpFontObject, fallbackFont);
+
                 TranslatorCore.LogDebug($"[FontManager] Font settings changed for '{fontName}': " +
                     $"enabled={enabled}, fallback='{fallbackFont ?? "(none)"}' (was '{oldFallback ?? "(none)"}')");
             }
@@ -2653,11 +2707,15 @@ namespace UnityGameTranslator.Core
                     RequestPendingRefresh();
                 }
 
+                // Our own font goes into another font's list as its second asset — see
+                // CustomFontLoader.FallbackListAsset (a <font> tag's letters drawn invisible).
+                fallbackAsset = CustomFontLoader.FallbackListAsset(fallbackAsset);
+
                 // Get the fallback list via reflection
                 var fallbackList = GetFallbackListReflection(font);
                 if (fallbackList == null)
                 {
-                    TranslatorCore.LogWarning($"[FontManager] Cannot access fallback list for: {fontName}");
+                    TranslatorCore.LogWarning($"[FontManager] Cannot access fallback list for: {fontName} ({font.GetType().FullName})");
                     return false;
                 }
 
@@ -2711,7 +2769,7 @@ namespace UnityGameTranslator.Core
                 var removeMethod = fallbackList.GetType().GetMethod("Remove");
                 if (removeMethod != null)
                 {
-                    bool removed = (bool)removeMethod.Invoke(fallbackList, new[] { oldFallbackAsset });
+                    bool removed = (bool)removeMethod.Invoke(fallbackList, new[] { CustomFontLoader.FallbackListAsset(oldFallbackAsset, make: false) });
                     if (removed)
                         TranslatorCore.LogDebug($"[FontManager] Removed old fallback '{oldFallbackName}' from: {gameFontName}");
                 }
@@ -4077,7 +4135,9 @@ namespace UnityGameTranslator.Core
         public static bool ComponentMatchesFont(int instanceId, string currentFontName, HashSet<string> fontNames)
         {
             return (!string.IsNullOrEmpty(currentFontName) && fontNames.Contains(currentFontName))
-                || (!string.IsNullOrEmpty(GetOriginalFontName(instanceId)) && fontNames.Contains(GetOriginalFontName(instanceId)));
+                || (!string.IsNullOrEmpty(GetOriginalFontName(instanceId)) && fontNames.Contains(GetOriginalFontName(instanceId)))
+                // A font its text switches to by a tag: its fallback changing is this text's to redraw.
+                || ComponentNamesTagFont(instanceId, fontNames);
         }
 
         /// <summary>
@@ -5608,6 +5668,15 @@ namespace UnityGameTranslator.Core
 
                         counts.TryGetValue(settingsFontName, out int n);
                         counts[settingsFontName] = n + 1;
+
+                        // And the fonts its <font> tags switch to: this text uses them too.
+                        if (_tagFontsOfComponent.TryGetValue(id, out var named))
+                            foreach (var tagFont in named)
+                                if (!string.Equals(tagFont, settingsFontName, StringComparison.OrdinalIgnoreCase))
+                                {
+                                    counts.TryGetValue(tagFont, out int t);
+                                    counts[tagFont] = t + 1;
+                                }
                     }
                 }
                 catch (Exception ex)

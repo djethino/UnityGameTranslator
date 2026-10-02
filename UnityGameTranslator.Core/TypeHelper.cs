@@ -1815,6 +1815,52 @@ namespace UnityGameTranslator.Core
             return FindAllObjectsOfTypeMono(type);
         }
 
+        private static MethodInfo _resourcesLoadTyped;
+        private static bool _resourcesLoadResolved;
+
+        /// <summary>
+        /// <c>Resources.Load(path, type)</c> — the overload <c>Resources.Load&lt;T&gt;</c> calls, so the
+        /// one a game keeps when it loads anything by path (TMP's &lt;font&gt; tags do). Never the
+        /// one-argument <c>Load(path)</c>: an IL2CPP build that never calls it has none, and the
+        /// call threw out of the text setter's prefix. By reflection on both runtimes, with the
+        /// type as the runtime takes it (Il2CppType.Of on IL2CPP). Null when not found, and a
+        /// refusal of the runtime is said, once per path.
+        /// </summary>
+        public static UnityEngine.Object LoadResource(string path, Type type)
+        {
+            if (string.IsNullOrEmpty(path) || type == null) return null;
+            if (!_resourcesLoadResolved)
+            {
+                _resourcesLoadResolved = true;
+                foreach (var method in typeof(Resources).GetMethods(BindingFlags.Public | BindingFlags.Static))
+                {
+                    if (method.Name != "Load" || method.IsGenericMethodDefinition) continue;
+                    var ps = method.GetParameters();
+                    if (ps.Length != 2 || ps[0].ParameterType != typeof(string)) continue;
+                    bool il2cppType = ps[1].ParameterType.FullName?.Contains("Il2Cpp") == true;
+                    if (il2cppType == _il2cppHelpersInitialized) { _resourcesLoadTyped = method; break; }
+                }
+                if (_resourcesLoadTyped == null)
+                    TranslatorCore.LogWarning("[TypeHelper] No Resources.Load(path, type) in this runtime — nothing is loaded by path");
+            }
+            if (_resourcesLoadTyped == null) return null;
+            try
+            {
+                object typeArg = type;
+                if (_il2cppHelpersInitialized)
+                {
+                    if (_il2cppTypeOfMethod == null || _il2cppLookupRefused.Contains(type)) return null;
+                    typeArg = _il2cppTypeOfMethod.MakeGenericMethod(type).Invoke(null, null);
+                }
+                return _resourcesLoadTyped.Invoke(null, new[] { path, typeArg }) as UnityEngine.Object;
+            }
+            catch (Exception ex)
+            {
+                Faults.Say("TypeHelper.LoadResource", ex.InnerException ?? ex, path);
+                return null;
+            }
+        }
+
         // Instance id → whether that object lives in a loaded scene. An object never changes side:
         // an asset stays an asset, and instantiating one makes a new object with a new id. Emptied
         // when a scene unloads (ForgetSceneMembership) so it does not grow with every scene.

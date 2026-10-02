@@ -3177,7 +3177,7 @@ namespace UnityGameTranslator.Core
                     FontManager.RegisterFontByName(settingsFontName, componentType);
                     FontManager.IncrementUsageCount(settingsFontName);
                     // The fonts its own <font> tags switch to — worn by no component, seen only here.
-                    if (componentType == "TMP") FontManager.NoteFontTags(textValue);
+                    if (componentType == "TMP") FontManager.NoteFontTags(textValue, compId);
 
                     // Skip translation if disabled for this font
                     if (!FontManager.IsTranslationEnabled(settingsFontName))

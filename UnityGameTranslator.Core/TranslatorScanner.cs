@@ -1670,6 +1670,10 @@ namespace UnityGameTranslator.Core
                     return;
                 }
 
+                // The fonts its <font> tags switch to, as the setter prefix notes them: a text
+                // found in place never went through a setter.
+                if (type.Category == "TMP") FontManager.NoteFontTags(currentText, instanceId);
+
                 // Check if text changed since last seen
                 tSeen = Perf.Start();
                 bool seen;
@@ -2838,6 +2842,8 @@ namespace UnityGameTranslator.Core
             string compFont = TypeHelper.GetFontName(component);
             string settingsFont = FontManager.GetSettingsFontName(id, compFont);
             bool matches = !string.IsNullOrEmpty(settingsFont) && string.Equals(settingsFont, targetFontName, StringComparison.OrdinalIgnoreCase);
+            // A font its text switches to by a <font> tag: the text uses it, worn or not.
+            bool namesIt = !matches && FontManager.ComponentNamesTagFont(id, new HashSet<string>(StringComparer.OrdinalIgnoreCase) { targetFontName });
 
             // Audit riding along with the highlight: among the components using this font, which
             // ones are actually wearing the replacement? A component still showing the settings
@@ -2859,7 +2865,8 @@ namespace UnityGameTranslator.Core
                 }
             }
 
-            RecolourForHighlight(component, id, matches ? _highlightColor : DimColor);
+            if (namesIt) _hlMatched++;
+            RecolourForHighlight(component, id, matches || namesIt ? _highlightColor : DimColor);
         }
 
         /// <summary>
@@ -3644,7 +3651,9 @@ namespace UnityGameTranslator.Core
                         var hlComp = component as Component;
                         if (hlComp != null && TranslatorCore.IsOwnUI(hlComp)) continue;
 
-                        bool matches = string.Equals(settingsFontName, _highlightedFontName, StringComparison.OrdinalIgnoreCase);
+                        bool matches = string.Equals(settingsFontName, _highlightedFontName, StringComparison.OrdinalIgnoreCase)
+                            // The same rule as HighlightComponent: a text whose <font> tag names it.
+                            || FontManager.ComponentNamesTagFont(id, new HashSet<string>(StringComparer.OrdinalIgnoreCase) { _highlightedFontName });
                         // Recorded on first touch: a text that appeared during the highlight was
                         // recoloured here with no colour kept, and stayed grey after it (2026-09-28).
                         RecolourForHighlight(component, id, matches ? _highlightColor : DimColor);

@@ -384,6 +384,11 @@ namespace UnityGameTranslator.Core
             // glyph renders at another size than its neighbours.
             public float LivePointSize { get; set; }
             public float LiveGlyphMetricsScale { get; set; } = 1f;
+
+            // The same font as a second asset on the same atlas, for OTHER fonts' fallback lists
+            // (FallbackListAsset), and the character scale its entries were written with.
+            public object FallbackTwin { get; set; }
+            public float TwinGlyphMetricsScale { get; set; } = 1f;
         }
 
         #endregion
@@ -424,6 +429,7 @@ namespace UnityGameTranslator.Core
                 if (fi == null) continue;
                 fi.IsLoaded = false;
                 fi.FontAsset = null;
+                fi.FallbackTwin = null;
                 fi.AtlasData = null;
                 fi.AtlasTextures = null;
                 fi.ReadyAlpha = null;
@@ -2643,9 +2649,61 @@ namespace UnityGameTranslator.Core
         /// </summary>
         internal static bool AddGlyphsToLiveAsset(CustomFontInfo fontInfo, List<GlyphInfo> added)
         {
-            var fontAsset = fontInfo?.FontAsset;
-            if (fontAsset == null || added == null || added.Count == 0 || fontInfo.AtlasData?.atlas == null) return false;
+            if (fontInfo?.FontAsset == null || added == null || added.Count == 0 || fontInfo.AtlasData?.atlas == null) return false;
             if (!_typesInitialized) InitializeTypes();
+            bool ok = AddGlyphsTo(fontInfo.FontAsset, fontInfo.LiveGlyphMetricsScale, fontInfo, added);
+            // The twin in other fonts' fallback lists names the same letters, or a variant shaped
+            // for a text inside a <font> tag is missing there.
+            if (fontInfo.FallbackTwin != null && TypeHelper.IsUnityObjectAlive(fontInfo.FallbackTwin))
+                ok &= AddGlyphsTo(fontInfo.FallbackTwin, fontInfo.TwinGlyphMetricsScale, fontInfo, added);
+            return ok;
+        }
+
+        /// <summary>
+        /// What goes into ANOTHER font's fallback list for an asset of ours: the same font as a
+        /// second asset on the same atlas (FallbackTwin), never the asset components wear.
+        ///
+        /// TMP gives a letter found in a fallback the material of the font it was asked in, re-bound
+        /// to the fallback's atlas — except when the fallback IS the component's own font
+        /// ("current font asset != m_fontAsset", TMPro_UGUI_Private.cs, TMP 3.0.6). A letter asked in
+        /// a &lt;font&gt; tag's font and found in our asset, while the component wears that same asset
+        /// (our replacement), was drawn with the tag font's material, on the tag font's atlas:
+        /// invisible (bench, out-fonttag, 2026-10-03). A second asset is a fallback like any other.
+        /// An asset that is not ours is returned as it is. <paramref name="make"/> false: the twin
+        /// only if it already exists (to take it OUT of a list).
+        /// </summary>
+        internal static object FallbackListAsset(object asset, bool make = true)
+        {
+            if (asset == null) return null;
+            int id = TypeHelper.GetInstanceID(asset);
+            foreach (var info in _customFonts.Values)
+            {
+                if (info?.FontAsset == null || !info.IsLoaded) continue;
+                if (!ReferenceEquals(info.FontAsset, asset) && (id == -1 || TypeHelper.GetInstanceID(info.FontAsset) != id)) continue;
+                if (info.FallbackTwin != null && TypeHelper.IsUnityObjectAlive(info.FallbackTwin)) return info.FallbackTwin;
+                if (!make) return asset;
+
+                // CreateFontAsset writes the scale of the asset it makes into the font's record:
+                // the worn asset's own is put back.
+                float pointSize = info.LivePointSize, scale = info.LiveGlyphMetricsScale;
+                var twin = CreateFontAsset(info);
+                info.TwinGlyphMetricsScale = info.LiveGlyphMetricsScale;
+                info.LivePointSize = pointSize;
+                info.LiveGlyphMetricsScale = scale;
+                if (twin == null)
+                {
+                    TranslatorCore.LogWarning($"[CustomFontLoader] {info.Name}: no second asset for fallback lists — a letter of it inside a <font> tag is drawn on the tag font's atlas");
+                    return asset;
+                }
+                info.FallbackTwin = twin;
+                TranslatorCore.LogDebug($"[CustomFontLoader] {info.Name}: second asset made for fallback lists");
+                return twin;
+            }
+            return asset;
+        }
+
+        private static bool AddGlyphsTo(object fontAsset, float glyphMetricsScale, CustomFontInfo fontInfo, List<GlyphInfo> added)
+        {
             try
             {
                 var fontAssetType = fontAsset.GetType();
@@ -2676,7 +2734,7 @@ namespace UnityGameTranslator.Core
                         object newGlyph = CreateModernGlyph(glyphType, index, glyphInfo, atlases, pointSize, yFlipped);
                         if (newGlyph == null) return false;
                         addGlyph.Invoke(glyphTable, new[] { newGlyph });
-                        object newChar = CreateModernCharacter(charType, (uint)glyphInfo.unicode, index, fontInfo.LiveGlyphMetricsScale);
+                        object newChar = CreateModernCharacter(charType, (uint)glyphInfo.unicode, index, glyphMetricsScale);
                         if (newChar == null) return false;
                         addChar.Invoke(charTable, new[] { newChar });
                     }

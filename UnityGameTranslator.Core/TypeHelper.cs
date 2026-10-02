@@ -612,6 +612,58 @@ namespace UnityGameTranslator.Core
             return info == IntPtr.Zero ? IntPtr.Zero : System.Runtime.InteropServices.Marshal.ReadIntPtr(info);
         }
 
+        /// <summary>
+        /// A Font made from a font FILE — what Unity's Font(string path) does (Internal_CreateFontFromPath):
+        /// the font's own data, not an OS font found by name. Null when this runtime can do neither.
+        ///
+        /// 🔴 Reflection only, never <c>new Font(path)</c> in the Core: an IL2CPP game's interop
+        /// carries no Font(string) when the game never used it (Pixel Starships, Unity 6000.0), and a
+        /// method NAMING it fails to compile there (pieges-projet §9). The engine's icall is always
+        /// there: the interop exposes it as a static, and a bare object to give it is what the
+        /// stripped constructor would have made (il2cpp_object_new, then the pointer constructor).
+        /// Why a file and not CreateDynamicFontFromOSFont: that one is stripped on the same games,
+        /// and was answered by pointing the game font's fontNames at ours — which a font with its own
+        /// glyphs draws only for what it lacks (2026-10-02: a fallback changed nothing on screen).
+        /// </summary>
+        internal static Font NewFontFromFile(string path)
+        {
+            if (string.IsNullOrEmpty(path) || !System.IO.File.Exists(path)) return null;
+            var fontType = typeof(Font);
+            try
+            {
+                var byPath = fontType.GetConstructor(new[] { typeof(string) });
+                if (byPath != null) return byPath.Invoke(new object[] { path }) as Font;
+
+                var make = fontType.GetMethod("Internal_CreateFontFromPath", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static,
+                    null, new[] { fontType, typeof(string) }, null);
+                var fromPointer = fontType.GetConstructor(new[] { typeof(IntPtr) });
+                if (make == null || fromPointer == null) return null;
+
+                if (_classPointerStore == null)
+                    foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+                    {
+                        _classPointerStore = asm.GetType("Il2CppInterop.Runtime.Il2CppClassPointerStore`1");
+                        if (_classPointerStore != null) break;
+                    }
+                Type il2cpp = null;
+                foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+                    if ((il2cpp = asm.GetType("Il2CppInterop.Runtime.IL2CPP")) != null) break;
+                var classPtr = _classPointerStore?.MakeGenericType(fontType).GetField("NativeClassPtr", BindingFlags.Public | BindingFlags.Static)?.GetValue(null);
+                var objectNew = il2cpp?.GetMethod("il2cpp_object_new", BindingFlags.Public | BindingFlags.Static, null, new[] { typeof(IntPtr) }, null);
+                if (!(classPtr is IntPtr cls) || cls == IntPtr.Zero || objectNew == null) return null;
+
+                var font = fromPointer.Invoke(new object[] { (IntPtr)objectNew.Invoke(null, new object[] { cls }) }) as Font;
+                if (font == null) return null;
+                make.Invoke(null, new object[] { font, path });
+                return font;
+            }
+            catch (Exception ex)
+            {
+                Faults.Say("TypeHelper.NewFontFromFile", ex, System.IO.Path.GetFileName(path));
+                return null;
+            }
+        }
+
         private static Type _classPointerStore;
         private static readonly Dictionary<Type, bool> _absentFromGame = new Dictionary<Type, bool>();
 

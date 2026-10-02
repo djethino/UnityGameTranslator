@@ -4462,15 +4462,24 @@ namespace UnityGameTranslator.Core
             // "[Custom] X" is fonts/X and nothing else (FontReferences): never a game font whose name
             // resembles it — the fonts/ file reaches the engine by name (FontFolderRedirect).
             bool custom = UnityGameTranslator.Common.FontReferences.Order(systemFontName)[0] == UnityGameTranslator.Common.FontSource.Custom;
+            // 🔴 Where the runtime cannot make an OS font by name (IL2CPP stripped
+            // CreateDynamicFontFromOSFont), the same font is made from its FILE (TypeHelper.NewFontFromFile)
+            // — a replacement the component wears whole, our font first. The fontNames trick that
+            // stood in for it put ours BEHIND the game font's own glyphs: on a game font holding the
+            // letters, nothing changed on screen (2026-10-02). Kept below for a runtime that can do
+            // neither.
             if (custom)
             {
                 if (CustomNotDrawableYet(systemFontName)) return null;
-                var created = CreateDynamicOSFont(ResolveSystemFontFamily(systemFontName, out _));
+                var derived = DerivedFonts.Get(cleanName);
+                CustomFontLoader.CustomFonts.TryGetValue(cleanName, out var customInfo);
+                var created = CreateDynamicOSFont(ResolveSystemFontFamily(systemFontName, out _))
+                              ?? TypeHelper.NewFontFromFile(derived?.CurrentFile ?? (customInfo != null && customInfo.IsTtf ? customInfo.TtfPath : null));
                 // A derived copy rewritten under the same name (Mono, DerivedFonts) is a NEW font object
                 // each time — named apart, since a component is given a font whose name differs from
                 // the one it wears (TryApplyUnityClone), and the old object holds the old glyphs.
-                var derived = DerivedFonts.Get(cleanName);
                 if (created != null && derived != null) created.name = derived.CurrentFamily + " #" + derived.Version;
+                else if (created != null) created.name = cleanName;
                 return created;
             }
 
@@ -4481,7 +4490,7 @@ namespace UnityGameTranslator.Core
                 var installed = ShownDerived(cleanName, UnityGameTranslator.Common.FontSource.System);
                 if (installed != null)
                 {
-                    var created = CreateDynamicOSFont(installed.CurrentFamily);
+                    var created = CreateDynamicOSFont(installed.CurrentFamily) ?? TypeHelper.NewFontFromFile(installed.CurrentFile);
                     if (created != null)
                     {
                         created.name = installed.CurrentFamily + " #" + installed.Version;
@@ -4493,10 +4502,20 @@ namespace UnityGameTranslator.Core
             // 🔴 A bare name is the INSTALLED font first (FontReferences.Order), never a game font that
             // happens to share it: "Arial" went to the game's own "arial" — a font without Hebrew —
             // and every translated text drawn with it showed its Latin and digits only (2026-10-02).
-            // Installed here: a fresh OS font, or null — GetUnityReplacementFont then points the
-            // game font's own fontNames at it (where the runtime cannot make fonts).
+            // Installed here: a fresh OS font, else the font made from its file, or null —
+            // GetUnityReplacementFont then points the game font's own fontNames at it.
             if (!IsGameFontRef(systemFontName) && AssetAvailability.IsSystemFontAvailable(cleanName))
-                return CreateDynamicOSFont(cleanName);
+            {
+                var created = CreateDynamicOSFont(cleanName);
+                if (created != null) return created;
+                created = TypeHelper.NewFontFromFile(CustomFontLoader.FindSystemTtfPath(cleanName));
+                if (created != null)
+                {
+                    created.name = cleanName;
+                    TranslatorCore.LogInfo($"[FontManager] '{cleanName}' made from its file — this runtime makes no font by name");
+                }
+                return created;
+            }
 
             // Not installed here: a game font of that name (translations written before the origin
             // marks existed) — already loaded, works on IL2CPP without CreateDynamicFontFromOSFont.
@@ -5076,9 +5095,7 @@ namespace UnityGameTranslator.Core
         {
             if (string.IsNullOrEmpty(path) || fontAssetType == null || !System.IO.File.Exists(path)) return null;
 
-            Font fromFile;
-            try { fromFile = new Font(path); }
-            catch (Exception ex) { Faults.Say("FontManager.CreateSdfFontAssetFromFile Font", ex, System.IO.Path.GetFileName(path)); return null; }
+            Font fromFile = TypeHelper.NewFontFromFile(path);
             if (fromFile == null) return null;
             fromFile.hideFlags |= HideFlags.DontUnloadUnusedAsset;
 

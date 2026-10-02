@@ -1525,6 +1525,8 @@ namespace UnityGameTranslator.Core
         /// Per MelonLoader docs, IL2CPP objects must be cast with TryCast/Cast, not C# casts.
         /// Returns the casted object, or the original if casting isn't needed/available.
         /// </summary>
+        private static readonly Dictionary<Type, MethodInfo> _tryCastByType = new Dictionary<Type, MethodInfo>();
+
         public static object Il2CppCast(object obj, Type targetType)
         {
             if (obj == null || targetType == null) return obj;
@@ -1537,7 +1539,12 @@ namespace UnityGameTranslator.Core
             {
                 try
                 {
-                    var typedMethod = _il2cppTryCastMethod.MakeGenericMethod(targetType);
+                    // One generic method per target type, made once: asked for every graphic the
+                    // game enables (Graphic.OnEnable postfix), not only now and then.
+                    MethodInfo typedMethod;
+                    lock (_tryCastByType)
+                        if (!_tryCastByType.TryGetValue(targetType, out typedMethod))
+                            _tryCastByType[targetType] = typedMethod = _il2cppTryCastMethod.MakeGenericMethod(targetType);
                     object result;
                     if (_il2cppTryCastIsStatic)
                         result = typedMethod.Invoke(null, new[] { obj });

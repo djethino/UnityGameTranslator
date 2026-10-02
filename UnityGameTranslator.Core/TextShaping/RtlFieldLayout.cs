@@ -403,6 +403,7 @@ namespace UnityGameTranslator.Core.TextShaping
             var lineDispStart = new int[lineCount];
             var lineDispEnd = new int[lineCount];
             var lineParaRtl = new bool[lineCount];
+            var lineVisibleEnds = new int[lineCount];   // the line's end before the whitespace hanging on a soft wrap
 
             for (int L = 0; L < lineCount; L++)
             {
@@ -410,10 +411,20 @@ namespace UnityGameTranslator.Core.TextShaping
                 lineParaRtl[L] = paraRtlOfCp[Math.Min(a, n)];
                 sbyte paraLevel = (sbyte)(lineParaRtl[L] ? 1 : 0);
 
+                // 🔴 The whitespace a SOFT wrap broke at hangs on the break, drawn nowhere: the
+                // engine leaves it out of the width it fits a line to, and kept in the line it went
+                // to the visual START of a right-to-left line (L1, paragraph level), pushing the
+                // whole line one space past its box (bench: a Hebrew field, 266 of 260). Its caret
+                // position is the break, as a hard break's is.
+                bool softBreak = L < lineCount - 1 && !(b < n && p.Cps[b] == '\n');
+                int hangFrom = b;
+                if (softBreak) while (hangFrom > a && IsWhitespace(p.Cps[hangFrom - 1])) hangFrom--;
+                lineVisibleEnds[L] = hangFrom;
+
                 var cps = new List<int>(b - a);
                 var lv = new List<sbyte>(b - a);
                 var orig = new List<int>(b - a);
-                for (int i = a; i < b; i++) { cps.Add(p.Cps[i]); lv.Add(levels[i]); orig.Add(i); }
+                for (int i = a; i < hangFrom; i++) { cps.Add(p.Cps[i]); lv.Add(levels[i]); orig.Add(i); }
 
                 // L1: whitespace at the end of a line goes back to the paragraph level.
                 for (int k = lv.Count - 1; k >= 0 && IsWhitespace(cps[k]); k--) lv[k] = paraLevel;
@@ -442,10 +453,12 @@ namespace UnityGameTranslator.Core.TextShaping
 
                 if (L < lineCount - 1)
                 {
-                    // A hard break maps its '\n' here; a soft one is ours alone.
+                    // A hard break maps its '\n' here; a soft one is ours, and carries the
+                    // whitespace that hangs on it.
                     if (b < n && p.Cps[b] == '\n') dispOfCp[b] = display.Length;
+                    for (int i = hangFrom; i < b; i++) dispOfCp[i] = display.Length;
                     display.Append('\n');
-                    cpOfDisplay.Add(b < n && p.Cps[b] == '\n' ? b : -1);
+                    cpOfDisplay.Add(b < n && p.Cps[b] == '\n' ? b : hangFrom < b ? hangFrom : -1);
                 }
                 else if (b < n && p.Cps[b] == '\n')
                 {
@@ -504,7 +517,9 @@ namespace UnityGameTranslator.Core.TextShaping
             for (int L = 0; L < lineCount; L++)
             {
                 _lineLogStart[L] = LogicalAtCp(p, lineStarts[L], len2);
-                _lineLogEnd[L] = LogicalAtCp(p, lineEnds[L], len2);
+                // Before the whitespace hanging on a soft wrap: the caret there is the line's end,
+                // at its last visible glyph, and the arrows step off the line from it.
+                _lineLogEnd[L] = LogicalAtCp(p, lineVisibleEnds[L], len2);
             }
             _lineDispStart = lineDispStart;
             _lineDispEnd = lineDispEnd;

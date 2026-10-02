@@ -139,10 +139,20 @@ namespace UnityGameTranslator.Core.TextShaping
             if (prep == null) { Release(id); return; }
 
             List<int> wraps = null;
+            long labelId = label.GetInstanceID();
             if (field.lineType != InputField.LineType.SingleLine)
             {
+                // Measured under the label's OWN wrapping: the Overflow held for the previous text
+                // answers "one line" for any paragraph.
+                RtlPresenter.RestoreRewrap(label, labelId);
                 wraps = RtlPresenter.UGuiLineStartsNow(label, prep.MeasureText, out string whyNot);
                 if (wraps == null) Note($"multi-line field laid out on its hard breaks only ({whyNot})");
+                // 🔴 OUR breaks are the lines: the engine must not wrap them again. A visual line as
+                // wide as the box was folded by rendering rounding, and the sentence's FIRST word
+                // (the right end of its visual line) landed alone on the next row — read out of
+                // order (bench: a three-line Hebrew field drawn in four pieces). Same hold as a
+                // reflowed text (RtlPresenter.DisableRewrap), put back when the field is released.
+                else RtlPresenter.DisableRewrap(label, labelId);
             }
 
             var s = StateFor(id, field, Engine.UGui);
@@ -261,6 +271,7 @@ namespace UnityGameTranslator.Core.TextShaping
             if (!_states.TryGetValue(id, out var s)) return;
             _states.Remove(id);
             if (s.Label != null) _byTmpLabel.Remove(s.Label.GetInstanceID());
+            if (s.Label is Text uLabel && Alive(s)) RtlPresenter.RestoreRewrap(uLabel, uLabel.GetInstanceID());
             RestoreNative(s);
             if (s.Overlay != null) UnityEngine.Object.Destroy(s.Overlay);
         }

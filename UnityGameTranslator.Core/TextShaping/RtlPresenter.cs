@@ -55,6 +55,56 @@ namespace UnityGameTranslator.Core.TextShaping
 
         private static int _logBudget = 8;
 
+        // Components whose right-to-left text went through Present (or came back to it as an
+        // echo), and those just enabled still wearing a template's form without having done so
+        // (NoteEnabled → AdoptCopies).
+        private static readonly HashSet<long> _presentedRtl = new HashSet<long>();
+        private static readonly List<object> _appeared = new List<object>();
+        private static readonly List<object> _adoptScratch = new List<object>();
+
+        /// <summary>
+        /// A text component enabled (Graphic.OnEnable, TMP's OnEnable). A COPY of a template is
+        /// born with the template's text — our whole-string visual form (PresentTemplate) — and
+        /// nothing else: a template is no scene object, so it is neither mirrored nor laid out, and
+        /// a game that never writes the copy again left it with the game's alignment (2026-10-02).
+        /// Such a copy is noted here and presented on its own at the next pass (AdoptCopies) — not
+        /// inside OnEnable, where the game is about to give it its own text, font and material.
+        /// </summary>
+        internal static void NoteEnabled(object instance)
+        {
+            if (instance == null || !TranslatorCore.IsMainThread) return;
+            long compId = TypeHelper.GetInstanceID(instance);
+            if (compId == -1 || _presentedRtl.Contains(compId)) return;
+            string text = TypeHelper.GetText(instance);
+            if (string.IsNullOrEmpty(text) || !RtlText.NeedsPresentation(TranslatorCore.TryGetPresentedLogical(text) ?? "")) return;
+            _appeared.Add(instance);
+        }
+
+        /// <summary>
+        /// The copies noted by <see cref="NoteEnabled"/> that still show a template's form: each
+        /// written its logical text through the setter, as the game would have — presented,
+        /// mirrored and laid out like any text. One the game wrote meanwhile is already done.
+        /// </summary>
+        private static void AdoptCopies()
+        {
+            if (_appeared.Count == 0) return;
+            _adoptScratch.Clear();
+            _adoptScratch.AddRange(_appeared);
+            _appeared.Clear();
+            foreach (var comp in _adoptScratch)
+            {
+                if (comp == null || (comp is UnityEngine.Object uo && uo == null)) continue;
+                long compId = TypeHelper.GetInstanceID(comp);
+                if (_presentedRtl.Contains(compId) || !TypeHelper.IsInScene(comp)) continue;
+                string text = TypeHelper.GetText(comp);
+                string logical = string.IsNullOrEmpty(text) ? null : TranslatorCore.TryGetPresentedLogical(text);
+                if (logical == null) continue;
+                TraceReflow(compId, "copy of a template adopted", comp);
+                try { TypeHelper.SetText(comp, logical); }
+                catch (Exception ex) { Faults.Say("RtlPresenter.AdoptCopies", ex, comp.GetType().Name); }
+            }
+        }
+
         // How many times Present has been entered — main thread only, like everything here. A
         // setter prefix compares it before and after its body to know whether the write it just
         // handled went through Present (see ReleaseIfNotPresented).
@@ -180,6 +230,7 @@ namespace UnityGameTranslator.Core.TextShaping
                     return;
                 }
 
+                if (compId != -1) _presentedRtl.Add(compId);
                 bool mirror = TranslatorCore.ShouldMirrorRtlAlignment(settingsFontName, overrideRule);
 
                 DescribeFont(instance, compId, settingsFontName);
@@ -441,6 +492,7 @@ namespace UnityGameTranslator.Core.TextShaping
         /// </summary>
         private static void KeepEcho(object instance, long compId, string value, string settingsFontName, FontOverrideRule overrideRule)
         {
+            if (compId != -1) _presentedRtl.Add(compId);
             bool mirrorNow = TranslatorCore.ShouldMirrorRtlAlignment(settingsFontName, overrideRule);
             if (UIToolkitSupport.IsTextElementInstance(instance))
                 UIToolkitSupport.MirrorAlign(instance, mirrorNow);
@@ -827,6 +879,9 @@ namespace UnityGameTranslator.Core.TextShaping
         /// </summary>
         internal static void ProcessPendingReflows()
         {
+            // First: copies of templates enabled since the last pass, presented now — their own
+            // reflow, if they need one, is queued for this same pass.
+            AdoptCopies();
             if (_reflows.Count == 0) return;
 
             _reflowScratch.Clear();
@@ -1137,7 +1192,7 @@ namespace UnityGameTranslator.Core.TextShaping
         }
 
         /// <summary>horizontalOverflow = Overflow while OUR line breaks are displayed.</summary>
-        private static void DisableRewrap(object comp, long compId)
+        internal static void DisableRewrap(object comp, long compId)
         {
             try
             {
@@ -1809,7 +1864,7 @@ namespace UnityGameTranslator.Core.TextShaping
         }
 
         /// <summary>The wrap mode a component had before <see cref="DisableRewrap"/>, put back.</summary>
-        private static void RestoreRewrap(object instance, long compId)
+        internal static void RestoreRewrap(object instance, long compId)
         {
             if (compId == -1 || !_wrapOriginal.TryGetValue(compId, out object wrap)) return;
             _wrapOriginal.Remove(compId);

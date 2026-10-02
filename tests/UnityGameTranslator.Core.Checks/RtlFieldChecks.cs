@@ -225,6 +225,11 @@ namespace UnityGameTranslator.Core.Checks
                 "a soft wrap cuts where the engine cut",
                 "the caret at the wrap belongs to the line where typing continues");
 
+            string[] softLines = soft.Display.Split('\n');
+            check(softLines.Length == 2 && softLines[0].IndexOf(' ') < 0 && softLines[1].IndexOf(' ') < 0,
+                "the space a soft wrap broke at is drawn on neither line",
+                "kept, it went to the visual start of the right-to-left line and pushed it one space past its box");
+
             int endOfFirst = 5;
             check(soft.VisualStep(endOfFirst, toRight: false) == 6,
                 "← at the left end of an Arabic line goes to the next line",

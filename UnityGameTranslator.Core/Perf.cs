@@ -67,7 +67,10 @@ namespace UnityGameTranslator.Core
         // MonoBehaviour elsewhere is an atomic call no per-frame budget can split.
         internal const int FindAll = 24;         // TypeHelper.FindAllObjectsOfType, the whole call
         internal const int SceneRead = 25;       // reading which scene an object is in, once per object (TypeHelper.IsInScene)
-        private const int SlotCount = 26;
+        // Every uGUI graphic the game enables passes through the Graphic.OnEnable postfix (and every
+        // TMP text through its own): a panel opening enables hundreds at once, in the same frame.
+        internal const int TextEnable = 26;      // TranslatorPatches.Graphic_OnEnable_Postfix + TMPText_OnEnable_Postfix
+        private const int SlotCount = 27;
 
         private static readonly string[] Names =
         {
@@ -76,7 +79,7 @@ namespace UnityGameTranslator.Core
             "Scan.Find", "UITK.Cycle", "UITK.Setter", "Scan.Process", "Scan.Text",
             "Scan.Gate", "Scan.Translate", "Scan.Apply",
             "Setter", "Setter.Note", "Setter.Release", "TMP.Layout", "Reveal", "RenderWatch",
-            "Find.All", "Scene.Read",
+            "Find.All", "Scene.Read", "Text.OnEnable",
         };
 
         private static readonly long[] _ticks = new long[SlotCount];

@@ -2511,6 +2511,7 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static void Graphic_OnEnable_Postfix(object __instance)
         {
+            long tEnable = Perf.Start();
             try
             {
                 // Skip during shutdown or if not initialized
@@ -2521,11 +2522,22 @@ namespace UnityGameTranslator.Core
                 // Fast exit: only process types we know are text components.
                 // 🔴 On IL2CPP the instance arrives wrapped as the PATCHED type (Graphic), whatever
                 // it really is: the type test answered "not a text" for every UI.Text there, and
-                // nothing below had ever run on IL2CPP. Asked of the object itself (TryCast).
+                // nothing below had ever run on IL2CPP. Asked of the object itself (TryCast) — once
+                // per graphic: an image is enabled again and again, and a panel enables hundreds.
                 if (__instance == null || TypeHelper.UI_TextType == null) return;
-                object asText = TypeHelper.UI_TextType.IsInstanceOfType(__instance) ? __instance
-                    : TranslatorCore.Adapter.IsIL2CPP ? TypeHelper.Il2CppCast(__instance, TypeHelper.UI_TextType) : null;
-                if (asText == null || !TypeHelper.UI_TextType.IsInstanceOfType(asText)) return;
+                object asText = __instance;
+                if (!TypeHelper.UI_TextType.IsInstanceOfType(__instance))
+                {
+                    if (!TranslatorCore.Adapter.IsIL2CPP || !(__instance is UnityEngine.Object graphic)) return;
+                    int graphicId = graphic.GetInstanceID();
+                    if (_notTextGraphics.Contains(graphicId)) return;
+                    asText = TypeHelper.Il2CppCast(__instance, TypeHelper.UI_TextType);
+                    if (asText == null || !TypeHelper.UI_TextType.IsInstanceOfType(asText))
+                    {
+                        _notTextGraphics.Add(graphicId);
+                        return;
+                    }
+                }
                 __instance = asText;
 
                 var comp = __instance as Component;
@@ -2552,7 +2564,13 @@ namespace UnityGameTranslator.Core
 
                 // Re-apply the clone font — this is the moment Unity sets up the CanvasRenderer,
                 // so the font binding will be complete (unlike when set on inactive components).
-                TypeHelper.SetFont(__instance, replacementFont);
+                // 🔴 Only when it is not already on: the engine's own OnEnable has just marked the
+                // text dirty, and a new character in the atlas marks every text of that font
+                // (EnsureCharsInCloneAtlasDirect). Rebuilding a text whose font and glyphs did not
+                // change, for every text of a panel that opens, is a layout pass per text — on an
+                // IL2CPP game the frame of a panel opening froze once this ran there.
+                bool fontChanged = !(TypeHelper.GetFont(__instance) is Font current) || current != replacementFont;
+                if (fontChanged) TypeHelper.SetFont(__instance, replacementFont);
 
                 // Ensure the clone's atlas has all chars for this component's text
                 string text = TypeHelper.GetText(__instance);
@@ -2563,19 +2581,37 @@ namespace UnityGameTranslator.Core
 
                     // Force complete mesh regeneration — SetFont alone doesn't rebuild
                     // the vertex mesh on IL2CPP. We need to trigger the full dirty chain.
-                    var compType = __instance.GetType();
-                    var setVertsDirty = compType.GetMethod("SetVerticesDirty", BindingFlags.Public | BindingFlags.Instance);
-                    var setLayoutDirty = compType.GetMethod("SetLayoutDirty", BindingFlags.Public | BindingFlags.Instance);
-                    var setMatDirty = compType.GetMethod("SetMaterialDirty", BindingFlags.Public | BindingFlags.Instance);
-                    setVertsDirty?.Invoke(__instance, null);
-                    setLayoutDirty?.Invoke(__instance, null);
-                    setMatDirty?.Invoke(__instance, null);
+                    if (fontChanged)
+                    {
+                        ResolveDirtyMethods();
+                        _setVerticesDirty?.Invoke(__instance, null);
+                        _setLayoutDirty?.Invoke(__instance, null);
+                        _setMaterialDirty?.Invoke(__instance, null);
+                    }
                 }
 
             }
             // Inside the game's own OnEnable, for every graphic it enables: an exception escaping
             // here would break it. The component keeps the font it had, and it is said.
             catch (Exception ex) { Faults.Say("Patches.Graphic_OnEnable_Postfix", ex, __instance?.GetType().Name); }
+            finally { Perf.Stop(Perf.TextEnable, tEnable); }
+        }
+
+        // Graphics the game enabled that are no UI.Text (IL2CPP, asked once each — see above).
+        private static readonly HashSet<int> _notTextGraphics = new HashSet<int>();
+
+        // Graphic.SetVerticesDirty / SetLayoutDirty / SetMaterialDirty, resolved once.
+        private static bool _dirtyResolved;
+        private static MethodInfo _setVerticesDirty, _setLayoutDirty, _setMaterialDirty;
+
+        private static void ResolveDirtyMethods()
+        {
+            if (_dirtyResolved) return;
+            _dirtyResolved = true;
+            var textType = TypeHelper.UI_TextType;
+            _setVerticesDirty = textType.GetMethod("SetVerticesDirty", BindingFlags.Public | BindingFlags.Instance);
+            _setLayoutDirty = textType.GetMethod("SetLayoutDirty", BindingFlags.Public | BindingFlags.Instance);
+            _setMaterialDirty = textType.GetMethod("SetMaterialDirty", BindingFlags.Public | BindingFlags.Instance);
         }
 
         #endregion
@@ -3441,6 +3477,7 @@ namespace UnityGameTranslator.Core
         {
             if (__instance == null) return;
 
+            long tEnable = Perf.Start();
             try
             {
                 // A copy of a template still wearing the template's right-to-left form: presented
@@ -3455,6 +3492,7 @@ namespace UnityGameTranslator.Core
             {
                 TranslatorCore.LogDebug($"[Patches] OnEnable postfix error: {ex.Message}");
             }
+            finally { Perf.Stop(Perf.TextEnable, tEnable); }
         }
 
         /// <summary>

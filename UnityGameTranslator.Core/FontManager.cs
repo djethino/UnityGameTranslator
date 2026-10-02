@@ -745,9 +745,15 @@ namespace UnityGameTranslator.Core
 
         private static void OnFontTextureRebuilt(Font rebuilt)
         {
-            if (rebuilt == null || !_atlasRebuilds.TryGetValue(rebuilt, out var rebuild)) return;
-            _atlasRebuilds.Remove(rebuilt);
+            // By instance id: on IL2CPP the event hands a NEW managed wrapper for the same font, which
+            // a dictionary keyed by the object never matched — the fill went on for 300 frames, the
+            // atlas rebuilt at each, the window's letters flickering (2026-10-02).
+            if (rebuilt == null) return;
+            int id = rebuilt.GetInstanceID();
+            if (!_atlasRebuilds.TryGetValue(id, out var rebuild)) return;
+            _atlasRebuilds.Remove(id);
             TranslatorCore.LogInfo($"[FontManager] '{rebuilt.name}': atlas rebuilt with its new names ({rebuild.Frames} frame(s))");
+            TranslatorCore.Host?.FontAtlasRebuilt(rebuilt.name);
         }
 
         /// <summary>
@@ -802,19 +808,53 @@ namespace UnityGameTranslator.Core
         internal static bool RewriteFontNames(Font font, string[] names)
         {
             if (font == null || names == null) return false;
+            // The names it already has: nothing drawn is wrong, nothing to rebuild (the window putting
+            // back a font it never changed, at every start).
+            var current = FontNamesOf(font);
+            if (current != null && current.Length == names.Length)
+            {
+                bool same = true;
+                for (int i = 0; i < names.Length && same; i++) same = string.Equals(current[i], names[i], StringComparison.Ordinal);
+                if (same) return true;
+            }
             if (!UniverseLib.Runtime.TextureHelper.SetFontNames(font, names)) return false;
             AskAtlasRebuild(font);
             return true;
         }
 
+        /// <summary>A Font's fontNames as plain strings (string[] on Mono, the interop's array on IL2CPP); null when unreadable.</summary>
+        private static string[] FontNamesOf(Font font)
+        {
+            try
+            {
+                var value = typeof(Font).GetProperty("fontNames", BindingFlags.Public | BindingFlags.Instance)?.GetValue(font, null);
+                if (value == null) return null;
+                if (value is string[] plain) return plain;
+                var type = value.GetType();
+                var lenProp = type.GetProperty("Length") ?? type.GetProperty("Count");
+                var indexer = type.GetProperty("Item");
+                if (lenProp == null || indexer == null) return null;
+                int len = (int)lenProp.GetValue(value, null);
+                var names = new string[len];
+                for (int i = 0; i < len; i++) names[i] = indexer.GetValue(value, new object[] { i })?.ToString();
+                return names;
+            }
+            catch (Exception ex)
+            {
+                Faults.Say("FontManager.FontNamesOf", ex, font.name);
+                return null;
+            }
+        }
+
         // A font whose atlas must be rebuilt → the letters asked to fill it (those it can draw, in
         // printable ASCII) and the size asked next.
-        private sealed class AtlasRebuild { internal string Letters; internal int Size; internal int Frames; }
-        private static readonly Dictionary<Font, AtlasRebuild> _atlasRebuilds = new Dictionary<Font, AtlasRebuild>();
+        private sealed class AtlasRebuild { internal Font Font; internal string Letters; internal int Size; internal int Frames; }
+        // By instance id, never by the Font object: see OnFontTextureRebuilt.
+        private static readonly Dictionary<int, AtlasRebuild> _atlasRebuilds = new Dictionary<int, AtlasRebuild>();
 
         // Per font: the size its last rebuild asked, kept in the atlas after the rebuild — the next one
         // starts past it, every size it asks being one the atlas does not hold.
-        private static readonly Dictionary<Font, int> _lastFillSize = new Dictionary<Font, int>();
+        private static readonly Dictionary<int, int> _lastFillSize = new Dictionary<int, int>();
 
         // The first size asked: larger than text is drawn at, so the letters are new to the atlas.
         // Measured on the bench (analyse/atlas-fontnames-reconstruction.md): from there, a small atlas
@@ -837,8 +877,9 @@ namespace UnityGameTranslator.Core
                     TranslatorCore.LogWarning($"[FontManager] '{font.name}': no ASCII letter to rebuild its atlas with — letters drawn before its names changed stay until the next launch");
                 return;
             }
-            int size = _lastFillSize.TryGetValue(font, out int last) ? Math.Max(FirstFillSize, last + 1) : FirstFillSize;
-            _atlasRebuilds[font] = new AtlasRebuild { Letters = letters.ToString(), Size = size };
+            int id = font.GetInstanceID();
+            int size = _lastFillSize.TryGetValue(id, out int last) ? Math.Max(FirstFillSize, last + 1) : FirstFillSize;
+            _atlasRebuilds[id] = new AtlasRebuild { Font = font, Letters = letters.ToString(), Size = size };
             SubscribeTextureRebuilt();
             SubscribeWillRenderCanvases();
         }
@@ -852,22 +893,23 @@ namespace UnityGameTranslator.Core
         private static void RebuildAtlases()
         {
             if (_atlasRebuilds.Count == 0) return;
-            foreach (var font in new List<Font>(_atlasRebuilds.Keys))
+            foreach (var id in new List<int>(_atlasRebuilds.Keys))
             {
-                var rebuild = _atlasRebuilds[font];
-                if (font == null) { _atlasRebuilds.Remove(font); continue; }
+                var rebuild = _atlasRebuilds[id];
+                var font = rebuild.Font;
+                if (!TypeHelper.IsUnityObjectAlive(font)) { _atlasRebuilds.Remove(id); continue; }
                 // Past the size where these letters alone outgrow an empty atlas, nothing more can work.
                 if ((long)rebuild.Letters.Length * rebuild.Size * rebuild.Size > (long)EngineFontAtlasMax * EngineFontAtlasMax)
                 {
-                    _atlasRebuilds.Remove(font);
+                    _atlasRebuilds.Remove(id);
                     if (DiagnosticOnce.First("FontManager.AtlasRebuild.tooLarge", font.name))
                         TranslatorCore.LogWarning($"[FontManager] '{font.name}': its atlas would not rebuild (sizes {FirstFillSize}–{rebuild.Size - 1} asked) — letters drawn before its names changed stay until the next launch");
                     continue;
                 }
-                _lastFillSize[font] = rebuild.Size;
+                _lastFillSize[id] = rebuild.Size;
                 rebuild.Frames++;
                 try { FontAtlas.Request(font, rebuild.Letters, rebuild.Size, FontStyle.Normal); }
-                catch (Exception ex) { Faults.Say("FontManager.RebuildAtlases", ex, font.name); _atlasRebuilds.Remove(font); continue; }
+                catch (Exception ex) { Faults.Say("FontManager.RebuildAtlases", ex, font.name); _atlasRebuilds.Remove(id); continue; }
                 rebuild.Size++;
             }
         }
@@ -4249,33 +4291,11 @@ namespace UnityGameTranslator.Core
                     // Save original fontNames BEFORE modifying (only first time)
                     if (!_originalFontNames.ContainsKey(originalFontName))
                     {
-                        try
+                        var saved = FontNamesOf(originalGameFont);
+                        if (saved != null)
                         {
-                            var fnProp = typeof(Font).GetProperty("fontNames", BindingFlags.Public | BindingFlags.Instance);
-                            if (fnProp != null)
-                            {
-                                var origNamesObj = fnProp.GetValue(originalGameFont, null);
-                                if (origNamesObj != null)
-                                {
-                                    var lenProp = origNamesObj.GetType().GetProperty("Length") ?? origNamesObj.GetType().GetProperty("Count");
-                                    int len = lenProp != null ? (int)lenProp.GetValue(origNamesObj, null) : 0;
-                                    var saved = new string[len];
-                                    var indexer = origNamesObj.GetType().GetProperty("Item");
-                                    for (int fn = 0; fn < len; fn++)
-                                    {
-                                        if (indexer != null)
-                                            saved[fn] = indexer.GetValue(origNamesObj, new object[] { fn })?.ToString();
-                                        else if (origNamesObj is string[] strArr)
-                                            saved[fn] = strArr[fn];
-                                    }
-                                    _originalFontNames[originalFontName] = saved;
-                                    TranslatorCore.LogDebug($"[FontManager] Saved original fontNames for '{originalFontName}': [{string.Join(", ", saved)}]");
-                                }
-                            }
-                        }
-                        catch (Exception saveEx)
-                        {
-                            TranslatorCore.LogWarning($"[FontManager] Failed to save fontNames: {saveEx.Message}");
+                            _originalFontNames[originalFontName] = saved;
+                            TranslatorCore.LogDebug($"[FontManager] Saved original fontNames for '{originalFontName}': [{string.Join(", ", saved)}]");
                         }
                     }
 

@@ -62,6 +62,8 @@ namespace UnityGameTranslator.Core.UI
             if (GameTextFonts.WaitsForGameFonts) GameTextFonts.PutAll();
         }
 
+        public void FontAtlasRebuilt(string fontName) => TranslatorUIManager.WindowFontRebuilt(fontName);
+
         public void ShuttingDown()
         {
             // Streams first (background tasks holding HTTP connections), then the live edit

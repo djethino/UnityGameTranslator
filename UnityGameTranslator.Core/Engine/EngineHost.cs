@@ -82,5 +82,12 @@ namespace UnityGameTranslator.Core
         /// waiting for it to draw the game's text with, where it cannot make fonts.
         /// </summary>
         void GameFontReplaced(string gameFontName);
+
+        /// <summary>
+        /// A font whose names the mod rewrote has had its atlas rebuilt (FontManager.RewriteFontNames):
+        /// its letters are now those of its new names, and what was measured with the old ones is to
+        /// be measured again — the mod's window, when it is the window's font.
+        /// </summary>
+        void FontAtlasRebuilt(string fontName);
     }
 }

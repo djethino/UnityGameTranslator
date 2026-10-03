@@ -447,6 +447,31 @@ namespace UnityGameTranslator.Core
                 }
             });
 
+            Group("NGUI UIInput right-to-left editing", () =>
+            {
+                // NGUI's input field — the same editing (RtlInputFields.Ngui): the label's caret and
+                // selection, its click, the field's arrows. Each found by its shape, a missing one
+                // said: the field then keeps NGUI's own behaviour for that gesture.
+                if (TypeHelper.NGUI_InputType != null && TextShaping.RtlInputFields.Ngui.Resolve())
+                {
+                    var fields = typeof(TextShaping.RtlInputFields);
+                    MethodInfo Hook(string name) => fields.GetMethod(name, BindingFlags.Static | BindingFlags.Public);
+                    var overlay = TextShaping.RtlInputFields.Ngui.PrintOverlay;
+                    var click = TextShaping.RtlInputFields.Ngui.GetCharacterIndexAtPosition;
+                    var keys = TextShaping.RtlInputFields.Ngui.FindProcessEvent();
+                    // Where the label is written: the text setter's hook does it on Mono; on IL2CPP the
+                    // setter is compiled into UpdateLabel, whose end presents the label instead.
+                    var update = TypeHelper.NGUI_InputType.GetMethod("UpdateLabel", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, Type.EmptyTypes, null);
+
+                    if (update != null) { patcher(update, null, Hook(nameof(TextShaping.RtlInputFields.Ngui_UpdateLabel_Postfix))); patchCount++; }
+                    if (overlay != null) { patcher(overlay, Hook(nameof(TextShaping.RtlInputFields.Ngui_PrintOverlay_Prefix)), null); patchCount++; }
+                    if (click != null) { patcher(click, null, Hook(nameof(TextShaping.RtlInputFields.Ngui_GetCharacterIndexAtPosition_Postfix))); patchCount++; }
+                    if (keys != null) { patcher(keys, Hook(nameof(TextShaping.RtlInputFields.Ngui_ProcessEvent_Prefix)), null); patchCount++; }
+                    if (update == null || overlay == null || click == null || keys == null)
+                        TranslatorCore.LogWarning($"[Patches] NGUI UIInput right-to-left editing incomplete: label={(update != null)} caret={(overlay != null)} click={(click != null)} arrows={(keys != null)}");
+                }
+            });
+
             Group("TextMesh", () =>
             {
                 // TextMesh.text setter (legacy 3D text). Not where the game's IL2CPP build has no
@@ -1053,8 +1078,14 @@ namespace UnityGameTranslator.Core
                         font => { prop.SetValue(__instance, font, null); TypeHelper.InvokeNoArg(__instance, "MarkAsChanged"); });
                 }
 
-                TextShaping.RtlPresenter.Present(__instance, TypeHelper.GetInstanceID(__instance), ref value,
-                                                 settingsFontName ?? fontName, genericOverride);
+                // An NGUI field's label showing what was typed is presented for EDITING — the caret,
+                // the clicks and the arrows mapped onto it (RtlInputFields.Ngui), as uGUI's and TMP's.
+                object nguiInput = TypeHelper.NGUI_InputType != null ? GetParentInputFieldCached(component) : null;
+                if (nguiInput != null && TypeHelper.IsTypedNguiLabel(nguiInput, component))
+                    TextShaping.RtlInputFields.PresentNguiLabel(nguiInput, __instance, ref value, settingsFontName ?? fontName);
+                else
+                    TextShaping.RtlPresenter.Present(__instance, TypeHelper.GetInstanceID(__instance), ref value,
+                                                     settingsFontName ?? fontName, genericOverride);
 
                 // Apply font scale. Also on StopButRescale — that outcome exists precisely because
                 // a component with nothing to translate still needs its size re-asserted.
@@ -2039,7 +2070,8 @@ namespace UnityGameTranslator.Core
             if (component is Component)
             {
                 object parentInput = GetParentInputFieldCached(component);
-                if (parentInput != null && MatchesTypedText(candidate, TypeHelper.GetInputFieldText(parentInput)))
+                if (parentInput != null && (MatchesTypedText(candidate, TypeHelper.GetInputFieldText(parentInput))
+                                            || TypeHelper.IsTypedNguiLabel(parentInput, component)))
                     return true;
             }
 

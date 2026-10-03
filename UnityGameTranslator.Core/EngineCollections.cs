@@ -49,6 +49,15 @@ namespace UnityGameTranslator.Core
             collection.GetType().GetProperty("Item")?.SetValue(collection, value, new object[] { index });
         }
 
+        /// <summary>One element added at the end of a list — a managed one, or the interop's (its own Add).</summary>
+        internal static void Add(object list, object value)
+        {
+            if (list is IList managed) { managed.Add(value); return; }
+            var add = list.GetType().GetMethod("Add", new[] { ElementType(list.GetType()) ?? typeof(object) });
+            if (add == null) throw new MissingMethodException(list.GetType().Name, "Add");
+            add.Invoke(list, new[] { value });
+        }
+
         /// <summary>A new array of <paramref name="arrayType"/> — managed, or the interop's (made by length).</summary>
         internal static object NewArray(Type arrayType, int length) =>
             arrayType.IsArray ? Array.CreateInstance(arrayType.GetElementType(), length)

@@ -234,20 +234,24 @@ namespace UnityGameTranslator.Core.TextShaping
                     if (ReferenceEquals(bidiInput, arr)) bidiInput = (int[])arr.Clone();
                     bidiInput[i] = '\n';
                 }
-                else if (i > 0 &&i + 1 < arr.Length && UnicodeInfo.IsNumericJoiner(arr[i])
-                         && UnicodeInfo.IsWordNumeric(arr[i - 1]) && UnicodeInfo.IsWordNumeric(arr[i + 1]))
-                {
-                    // Inside a number (UAX #29, WB11-12): read as a common separator, which rule W4
-                    // keeps between two digits of one type. An apostrophe is ON for the bidi, so
-                    // 3'000 was two numbers and came out 000'3 at a right-to-left level.
-                    if (ReferenceEquals(bidiInput, arr)) bidiInput = (int[])arr.Clone();
-                    bidiInput[i] = ',';
-                }
             _bidiData.Init(new Slice<int>(bidiInput), 1);
+            for (int i = 0; i < arr.Length; i++)
+                if (InsideNumber(arr, i)) _bidiData.Types[i] = Directionality.CS;
             _bidi.Process(_bidiData);
             levels = _bidi.ResolvedLevels;
             return arr;
         }
+
+        /// <summary>
+        /// Whether <paramref name="cps"/>[<paramref name="i"/>] holds a number together, between two of
+        /// its digits (UAX #29, WB11-12: the apostrophe of 3'000, the point, the comma, the Arabic
+        /// thousands separator). Every bidi pass reads it as a common separator, which rule W4 keeps
+        /// inside the number: an apostrophe is ON, and 3'000 came out 000'3 at a right-to-left level —
+        /// in a text (here) and in a field (RtlFieldLayout) alike.
+        /// </summary>
+        internal static bool InsideNumber(IList<int> cps, int i) =>
+            i > 0 && i + 1 < cps.Count && UnicodeInfo.IsNumericJoiner(cps[i])
+            && UnicodeInfo.IsWordNumeric(cps[i - 1]) && UnicodeInfo.IsWordNumeric(cps[i + 1]);
 
         /// <summary>
         /// Whether a left-to-right run of several words sits in this right-to-left text — a space

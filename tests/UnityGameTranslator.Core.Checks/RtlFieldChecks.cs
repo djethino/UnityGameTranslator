@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System;
 using System.Linq;
 using UnityGameTranslator.Core.TextShaping;
@@ -200,6 +201,44 @@ namespace UnityGameTranslator.Core.Checks
             check(lamAlef.VisualStep(0, toRight: false) == 2,
                 "← over a lam-alef jumps both letters",
                 "no stop inside a glyph nobody can see into");
+
+            // A number typed with its thousands separator stays one number in a field, as in a text
+            // (RtlComposer.InsideNumber): the field's layout runs its own bidi pass, and it showed
+            // "000'3" after the text's was fixed (NGUI field on the bench, 2026-10-03).
+            var grouped = RtlFieldLayout.Prepare("حد 3'000 ذهب").Lay(null);
+            check(grouped.Display.Contains("3'000"), "3'000 typed in a right-to-left field stays one number",
+                  "shown: " + grouped.Display);
+
+            // A whole line walked with one arrow, as somebody holding it down: every press moves the
+            // caret the way the arrow points, and the walk passes every place a caret can stand
+            // before it stops at the edge. Mixed lines — numbers, a placeholder, Latin, punctuation —
+            // are where a step went the other way (NGUI field on the bench, 2026-10-03).
+            foreach (string line in new[] { "הניקוד שלך: {0} נקודות.", "نقاط: {0:0} من 2000", "المستوى 25/50 +2.1",
+                                            "زد <sprite=0> بـ 10%", "abc مرحبا def", "حد 3'000 لحاملي الذهب" })
+            {
+                var walked = RtlFieldLayout.Prepare(line).Lay(null);
+                foreach (bool toRight in new[] { true, false })
+                {
+                    int caret = toRight ? walked.CaretAtLineSide(0, rightSide: false) : walked.CaretAtLineSide(0, rightSide: true);
+                    var seen = new HashSet<int> { caret };
+                    string wrong = null;
+                    for (int press = 0; press <= line.Length + 1; press++)
+                    {
+                        int next = walked.VisualStep(caret, toRight);
+                        if (next == caret) break;
+                        int from = walked.BoundaryOf(caret), to = walked.BoundaryOf(next);
+                        if (toRight ? to <= from : to >= from) { wrong = $"{caret}→{next} (gap {from}→{to})"; break; }
+                        seen.Add(caret = next);
+                    }
+                    var visible = new HashSet<int>();
+                    for (int c = 0; c <= line.Length; c++) visible.Add(walked.BoundaryOf(c));
+                    var reached = new HashSet<int>();
+                    foreach (int c in seen) reached.Add(walked.BoundaryOf(c));
+                    check(wrong == null && reached.SetEquals(visible),
+                          (toRight ? "→" : "←") + " walks \"" + line + "\" one gap at a time, end to end",
+                          wrong != null ? "a step went the other way: " + wrong : $"reached {reached.Count} of {visible.Count} gaps");
+                }
+            }
         }
 
         private static void SeveralLines(Action<bool, string, string> check)

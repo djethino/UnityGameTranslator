@@ -45,7 +45,11 @@ namespace UnityGameTranslator.Core
         /// textComponent excluded whole (<see cref="GetInputFieldTextComponent"/> answers null for it).
         /// </summary>
         public static Type NGUI_InputType { get; private set; }
+        /// <summary>The type of UIInput's label (NGUI's UILabel).</summary>
+        public static Type NGUI_LabelType { get; private set; }
         private static PropertyInfo NGUI_Input_ValueProp;
+        private static FieldInfo NGUI_Input_LabelField;
+        private static PropertyInfo NGUI_Input_LabelProp;
         private static MemberInfo NGUI_Input_Selection;
 
         /// <summary>UnityEngine.Font</summary>
@@ -267,6 +271,9 @@ namespace UnityGameTranslator.Core
             if (NGUI_InputType != null)
             {
                 NGUI_Input_ValueProp = NGUI_InputType.GetProperty("value", pubInst);
+                NGUI_Input_LabelField = NGUI_InputType.GetField("label", pubInst);
+                if (NGUI_Input_LabelField == null) NGUI_Input_LabelProp = NGUI_InputType.GetProperty("label", pubInst);
+                NGUI_LabelType = NGUI_Input_LabelField?.FieldType ?? NGUI_Input_LabelProp?.PropertyType;
                 var pubStatic = BindingFlags.Public | BindingFlags.Static;
                 NGUI_Input_Selection = (MemberInfo)NGUI_InputType.GetField("selection", pubStatic)
                                        ?? NGUI_InputType.GetProperty("selection", pubStatic);
@@ -291,6 +298,32 @@ namespace UnityGameTranslator.Core
                 return type;
             }
             return null;
+        }
+
+        /// <summary>An NGUI field's label (UIInput.label), or null.</summary>
+        public static object NguiInputLabel(object input)
+        {
+            if (NGUI_InputType == null || input == null || !NGUI_InputType.IsInstanceOfType(input)) return null;
+            try
+            {
+                return NGUI_Input_LabelField != null ? NGUI_Input_LabelField.GetValue(input)
+                     : NGUI_Input_LabelProp?.GetValue(input, null);
+            }
+            // NGUI's own member, reached by reflection: said.
+            catch (Exception ex) { Faults.Say("TypeHelper.NguiInputLabel", ex); return null; }
+        }
+
+        /// <summary>
+        /// Whether <paramref name="label"/> is the label of NGUI field <paramref name="input"/> showing
+        /// what was typed: NGUI shows the typed text whenever there is some, the hint (the game's
+        /// own text) only when there is none — structural, whatever slice of it is in view.
+        /// </summary>
+        public static bool IsTypedNguiLabel(object input, object label)
+        {
+            var own = NguiInputLabel(input);
+            if (own == null || label == null) return false;
+            int a = GetInstanceID(own), b = GetInstanceID(label);
+            return a != -1 && a == b && !string.IsNullOrEmpty(GetInputFieldText(input));
         }
 
         /// <summary>The NGUI field being typed in (UIInput.selection), or null.</summary>

@@ -364,7 +364,10 @@ namespace UnityGameTranslator.Core.TextShaping
                     _bidiData.Init(new Slice<int>(slice), 2);   // 2: first strong decides (P2/P3)
                     bool rtlUnit = false;
                     for (int k = 0; k < len; k++)
+                    {
                         if (p.IsRtlUnit(slice[k])) { _bidiData.Types[k] = Directionality.R; rtlUnit = true; }
+                        else if (RtlComposer.InsideNumber(slice, k)) _bidiData.Types[k] = Directionality.CS;
+                    }
                     _bidi.Process(_bidiData);
                     var resolved = _bidi.ResolvedLevels;
                     for (int k = 0; k < len; k++) levels[paraStart + k] = resolved[k];
@@ -681,6 +684,25 @@ namespace UnityGameTranslator.Core.TextShaping
                 if (best < 0 || (rightSide ? x > bestX : x < bestX)) { best = caret; bestX = x; }
             }
             return best < 0 ? _lineLogStart[line] : best;
+        }
+
+        /// <summary>
+        /// The caret standing in display gap <paramref name="boundary"/> — for an engine that answers
+        /// a click with a gap of the text it shows (NGUI). The nearest visible caret when none stands
+        /// exactly there (a gap inside a ligature); at a direction change two carets share a gap, and
+        /// the one of the line read first is taken.
+        /// </summary>
+        internal int CaretAtBoundary(int boundary)
+        {
+            int best = 0, bestDistance = int.MaxValue;
+            for (int line = 0; line < LineCount; line++)
+                foreach (int caret in CaretsOf(line))
+                {
+                    int distance = Math.Abs(BoundaryOf(caret) - boundary);
+                    if (distance < bestDistance) { best = caret; bestDistance = distance; }
+                    if (distance == 0) return caret;
+                }
+            return best;
         }
 
         /// <summary>

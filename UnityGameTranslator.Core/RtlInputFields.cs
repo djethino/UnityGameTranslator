@@ -39,7 +39,7 @@ namespace UnityGameTranslator.Core.TextShaping
     /// a field that stops showing one gets its colours back the same instant.
     /// ⚠ Main thread only, like everything that touches the shaper.
     /// </summary>
-    internal static class RtlInputFields
+    internal static partial class RtlInputFields
     {
         private enum Engine { UGui, Tmp }
 
@@ -800,11 +800,14 @@ namespace UnityGameTranslator.Core.TextShaping
                     return true;
                 }
 
-                int next = ctrl ? WordStep(s, focus, toRight) : layout.VisualStep(focus, toRight);
-                if (next == focus)
+                int next = ctrl ? WordStep(layout, s.Logical, focus, toRight) : layout.VisualStep(focus, toRight);
+                if (next == focus && (s.DrawStart > 0 || s.Logical.Length < FieldText(s).Length))
                 {
                     // The visible slice's edge (uGUI scrolls a long line): onward in reading order,
-                    // one character — the field then brings the caret into view itself.
+                    // one character — the field then brings the caret into view itself. Only a
+                    // slice: with the whole text in view, the edge of the screen is the end — moving
+                    // on there took the caret back the other way at the end of a mixed line
+                    // (a number ending an Arabic line on its left; bench, 2026-10-03).
                     int line = layout.LineOfCaret(focus);
                     bool forward = toRight != layout.LineIsRtl(line);
                     int absolute = focus + s.DrawStart + (forward ? 1 : -1);
@@ -824,17 +827,17 @@ namespace UnityGameTranslator.Core.TextShaping
         }
 
         /// <summary>Ctrl + arrow: visual steps until the caret stands at the start of a word.</summary>
-        private static int WordStep(FieldState s, int caret, bool toRight)
+        private static int WordStep(RtlFieldLayout layout, string logical, int caret, bool toRight)
         {
             int current = caret;
-            for (int guard = 0; guard <= s.Logical.Length; guard++)
+            for (int guard = 0; guard <= logical.Length; guard++)
             {
-                int next = s.Layout.VisualStep(current, toRight);
+                int next = layout.VisualStep(current, toRight);
                 if (next == current) return current;
                 current = next;
-                bool atWordStart = current < s.Logical.Length && !UnicodeInfo.IsWhiteSpace(s.Logical[current])
-                                   && (current == 0 || UnicodeInfo.IsWhiteSpace(s.Logical[current - 1]));
-                if (atWordStart || current == 0 || current == s.Logical.Length) return current;
+                bool atWordStart = current < logical.Length && !UnicodeInfo.IsWhiteSpace(logical[current])
+                                   && (current == 0 || UnicodeInfo.IsWhiteSpace(logical[current - 1]));
+                if (atWordStart || current == 0 || current == logical.Length) return current;
             }
             return current;
         }

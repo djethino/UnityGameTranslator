@@ -145,24 +145,9 @@ namespace UnityGameTranslator.Core
             public bool MissingLetters; // some of them are written in the target language's own script
         }
 
-        /// <summary>
-        /// Whether one of these characters is written in the script the target language is written
-        /// in — the catalogue's ISO 15924 code (Languages.ScriptOf) against Unicode's script of the
-        /// character. Only then does a notice say "Arabic characters": a bullet or a stray Japanese
-        /// word missing from a font is not the language missing (2026-10-03). A language written in
-        /// several scripts at once (Japanese: "Jpan") matches none, and the notice stays general.
-        /// </summary>
-        private static bool InTargetScript(List<int> missing)
-        {
-            string script = UnityGameTranslator.Common.Languages.ScriptOf(TranslatorCore.EffectiveTargetLanguage);
-            if (missing == null || string.IsNullOrEmpty(script)) return false;
-            foreach (int cp in missing)
-            {
-                string tag = TextShaping.ShapingTables.ScriptTags[TextShaping.ShapingCommon.ScriptOf(cp)];
-                if (tag != null && string.Equals(tag.TrimEnd(), script, StringComparison.OrdinalIgnoreCase)) return true;
-            }
-            return false;
-        }
+        /// <summary>Whether a missing character is a letter of the target language's own script (FontCoverage.AnyWrittenIn).</summary>
+        private static bool InTargetScript(List<int> missing) =>
+            FontCoverage.AnyWrittenIn(missing, UnityGameTranslator.Common.Languages.ScriptOf(TranslatorCore.EffectiveTargetLanguage));
 
         /// <summary>Every game font that cannot display what the translation wrote with it, by name.</summary>
         internal static List<FontProblem> FontProblems()

@@ -96,6 +96,25 @@ namespace UnityGameTranslator.Core
             return source.IndexOf(char.ConvertFromUtf32(cp), StringComparison.Ordinal) >= 0;
         }
 
+        /// <summary>
+        /// Whether one of these characters is written in the script of ISO 15924 code
+        /// <paramref name="isoScript"/> (the catalogue's script of a language, Languages.ScriptOf) —
+        /// by Unicode's script of the character. Only then does a notice say "Arabic characters": a
+        /// bullet or a stray Japanese word missing from a font is not the language missing
+        /// (2026-10-03). A language written in several scripts at once (Japanese: "Jpan") matches
+        /// none, and the notice stays general — never wrong, only less precise.
+        /// </summary>
+        internal static bool AnyWrittenIn(IEnumerable<int> characters, string isoScript)
+        {
+            if (characters == null || string.IsNullOrEmpty(isoScript)) return false;
+            foreach (int cp in characters)
+            {
+                string tag = TextShaping.ShapingTables.ScriptTags[TextShaping.ShapingCommon.ScriptOf(cp)];
+                if (tag != null && string.Equals(tag.TrimEnd(), isoScript, StringComparison.OrdinalIgnoreCase)) return true;
+            }
+            return false;
+        }
+
         /// <summary>A character a font must draw for the text to show.</summary>
         internal static bool Counts(int cp)
         {

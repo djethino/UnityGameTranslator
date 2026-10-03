@@ -12,6 +12,15 @@ namespace UnityGameTranslator.Core.Checks
     {
         public static void Run(Action<bool, string, string> check)
         {
+            // The language is named by a notice only for its own letters (2026-10-03: "missing Arabic
+            // characters" said for a bullet and two Japanese letters of a bad line).
+            check(FontCoverage.AnyWrittenIn(new[] { 0x25CF, 0xFE8D }, "Arab"),
+                "an Arabic letter in its contextual form is an Arabic character", "U+FE8D is ا as drawn alone");
+            check(!FontCoverage.AnyWrittenIn(new[] { 0x25CF, 0x30AE, 0x30EA }, "Arab"),
+                "a bullet and katakana are not", "the notice then says 'characters of this translation'");
+            check(!FontCoverage.AnyWrittenIn(new[] { 0x05D0 }, "Arab") && FontCoverage.AnyWrittenIn(new[] { 0x05D0 }, "Hebr"),
+                "a Hebrew letter is Hebrew, not Arabic", "by Unicode's script of the character, not a range");
+
             // The three decorations TMP draws with the "_" of the component's own font (user, 2026-10-03):
             // the message is due only when the translation itself carries one.
             foreach (var text in new[] { "a <u>b</u>", "<s>x</s>", "<mark=#FFD00080>x</mark>", "<U>x</U>", "<u color=#f00>x</u>" })

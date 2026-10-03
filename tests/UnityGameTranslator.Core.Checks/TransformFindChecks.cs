@@ -28,6 +28,8 @@ namespace UnityGameTranslator.Core.Checks
             (new Regex(@"\bGameObject\s*\.\s*Find\s*\("), "EngineStrings.FindGameObject"),
             (new Regex(@"\bApplication\s*\.\s*OpenURL\s*\("), "EngineStrings.OpenUrl"),
             (new Regex(@"\bsystemCopyBuffer\s*="), "EngineStrings.SetClipboard"),
+            // An ARRAY to native code, same family: the pointer overload, the array pinned (2026-10-03).
+            (new Regex(@"\.\s*LoadRawTextureData\s*\("), "TextureUtils.LoadRawTextureDataSafe"),
         };
 
         // Files allowed to name the engine call: the doors and their defaults, and one UniverseLib line

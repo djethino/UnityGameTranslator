@@ -483,13 +483,35 @@ namespace UnityGameTranslator.Core
 
         /// <summary>
         /// Load raw texture data via reflection.
-        /// On IL2CPP, LoadRawTextureData may expect Il2CppStructArray&lt;byte&gt; instead of byte[].
+        ///
+        /// 🔴 The POINTER overload first — <c>LoadRawTextureData(IntPtr, int)</c>, public since Unity
+        /// 5.3, the array pinned for the call: no array crosses to native code. On Unity 2023.1+ IL2CPP
+        /// the array overload goes through the interop's span wrapper (pieges-projet §2): it threw,
+        /// and sometimes took the process down with it (bench 6000.3.6 IL2CPP, 2026-10-03: three
+        /// native crashes at the 8192² atlas upload; when it only threw, the SetPixels32 fallback froze
+        /// the main thread eight seconds). The pointer entry calls the engine with the address and
+        /// the size, on every runtime. The array overloads stay for a runtime without it.
         /// </summary>
         public static bool LoadRawTextureDataSafe(Texture2D texture, byte[] data)
         {
             if (texture == null || data == null) return false;
 
             var type = texture.GetType();
+            var byPointer = type.GetMethod("LoadRawTextureData", BindingFlags.Public | BindingFlags.Instance, null,
+                new[] { typeof(IntPtr), typeof(int) }, null);
+            if (byPointer != null)
+            {
+                var pinned = System.Runtime.InteropServices.GCHandle.Alloc(data, System.Runtime.InteropServices.GCHandleType.Pinned);
+                try
+                {
+                    byPointer.Invoke(texture, new object[] { pinned.AddrOfPinnedObject(), data.Length });
+                    return true;
+                }
+                // The engine refusing the pointer overload: said, and the array ones are tried.
+                catch (Exception ex) { Faults.Say("TextureUtils.LoadRawTextureDataSafe pointer", ex); }
+                finally { pinned.Free(); }
+            }
+
             foreach (var method in type.GetMethods(BindingFlags.Public | BindingFlags.Instance))
             {
                 if (method.Name != "LoadRawTextureData") continue;

@@ -779,7 +779,8 @@ namespace UnityGameTranslator.Core.TextShaping
         private static PropertyInfo _cachedGeneratorProp;   // Text.cachedTextGenerator
         private static GeneratorList _generatorLines;       // TextGenerator.GetLines(List<UILineInfo>)
         private static PropertyInfo _generatorCharCountProp; // TextGenerator.characterCount
-        private static GeneratorList _generatorChars;       // TextGenerator.GetCharacters(List<UICharInfo>)
+        private static MemberInfo _generatorLastString;      // TextGenerator.m_LastString (what it last laid out)
+        private static GeneratorList _generatorChars;      // TextGenerator.GetCharacters(List<UICharInfo>)
         private static MemberInfo _charWidth;                // UICharInfo.charWidth
         private static PropertyInfo _supportRichTextProp;   // Text.supportRichText
         // The redraw gate (WillBeRedrawn): Graphic.canvas, Graphic.canvasRenderer, CanvasRenderer.cull.
@@ -1034,7 +1035,6 @@ namespace UnityGameTranslator.Core.TextShaping
         // ProcessPendingReflows), and the count of enabled graphics they were parked at.
         private static readonly HashSet<long> _parked = new HashSet<long>();
         private static int _parkedAt;
-        private static int _inactiveTraces;
 
         /// <summary>
         /// Debug: what happens to one component's pending reflow, once per state — queued, waiting
@@ -1044,10 +1044,9 @@ namespace UnityGameTranslator.Core.TextShaping
         private static void TraceReflow(long id, string state, object comp = null)
         {
             if (!TranslatorCore.DebugMode) return;
-            // Waiting on an inactive component: neither remembered nor said past the first fifty —
-            // a hidden screen holds hundreds, and they must not crowd out the states that matter.
-            if (state == "waits (inactive)") { if (_inactiveTraces >= 50 || !_waitReasons.Add(id + "|" + state)) return; _inactiveTraces++; }
-            else if (!_waitReasons.Add(id + "|" + state)) return;
+            // Once per component and state — never "the first N": the line looked for may be the
+            // N+1th (CLAUDE.md, no diagnostic capped by a count).
+            if (!_waitReasons.Add(id + "|" + state)) return;
             string where = comp is UnityEngine.Component wc && wc != null ? " @ " + TranslatorCore.GetGameObjectPath(wc.gameObject) : "";
             TranslatorCore.LogInfo($"[RtlPresenter] reflow {state}: comp={id}{where}");
         }
@@ -1233,6 +1232,9 @@ namespace UnityGameTranslator.Core.TextShaping
                 _cullProp = _canvasRendererProp?.PropertyType.GetProperty("cull", BindingFlags.Public | BindingFlags.Instance);
                 var genType = _cachedGeneratorProp?.PropertyType;
                 _generatorCharCountProp = genType?.GetProperty("characterCount", BindingFlags.Public | BindingFlags.Instance);
+                // The string the generator last laid out — its own cache key (PopulateWithErrors
+                // compares it), a private field on Mono and a property of the interop on IL2CPP.
+                _generatorLastString = Members.FieldOrProperty(genType, "m_LastString", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
 
                 // The synchronous path. Both are public API on this engine (verified in the
                 // bench game's own assemblies), and a generator of OUR OWN keeps the
@@ -1579,6 +1581,14 @@ namespace UnityGameTranslator.Core.TextShaping
 
             object generator = populated ?? _cachedGeneratorProp.GetValue(comp, null);
             if (generator == null) { whyNot = "no cached generator"; return null; }
+
+            // 🔴 The string itself, where the engine keeps it: a count cannot tell a text from
+            // another of the same length — and the visual form a template copy is born with has
+            // EXACTLY the length of the logical form written into it next. Cut with the visual
+            // form's breaks, the copy's lines were sawn a few characters off ("[" | "u]", a word
+            // split in two — bench, template copy, 2026-10-03).
+            if (_generatorLastString != null && Members.Get(_generatorLastString, generator) is string laidOut && laidOut != assigned)
+            { whyNot = "generator describes another text (the previous string, not yet laid out again)"; return null; }
 
             // 🔴 IDENTITY, not just bounds: on a page switch the game refills the same component
             // and for a frame or two the generator still describes the PREVIOUS text — its line

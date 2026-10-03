@@ -20,10 +20,11 @@ namespace UnityGameTranslator.Core
     /// material is registered once, the same index comes back) and grows them the same way.
     ///
     /// ② The wrong atlas, not fixed in any engine read (6000.0 to 6000.5): the decoration takes the
-    /// '_''s texture coordinates but goes into the mesh of the CURRENT material, which can be another
-    /// asset's. It then samples another atlas at the '_''s place: a highlight became a sliver of some
-    /// glyph instead of a box (measured, 6000.0.84). The prefix makes the '_''s material current for
-    /// the call (<see cref="PointAtUnderscore"/>), the postfix puts the text's back.
+    /// '_''s texture coordinates but goes into the mesh the generator's CURRENT state names, which can
+    /// be another asset's. It then samples another atlas at the '_''s place: a highlight became a
+    /// sliver of some glyph instead of a box, a strikethrough bits of letters (measured, 6000.0.84 and
+    /// 6000.3.6). The prefix makes the '_''s material, index and asset current for the call
+    /// (<see cref="PointAtUnderscore"/>), the postfix puts the text's back.
     ///
     /// Which engine needs ① is read from the engine itself, never from a version number. The same
     /// code serves Mono and IL2CPP: every member is reached as a field or as the property the interop
@@ -40,7 +41,8 @@ namespace UnityGameTranslator.Core
         private static MemberInfo _currentIndex;       // TextGenerator.m_CurrentMaterialIndex
         private static MemberInfo _underline;          // TextGenerator.m_Underline
         private static MemberInfo _underlineCharacter, _underlineAsset, _underlineIndex;
-        private static MemberInfo _currentAsset;       // TextGenerator.m_CurrentFontAsset (debug record only)
+        private static MemberInfo _currentAsset;       // TextGenerator.m_CurrentFontAsset
+        private static MemberInfo _currentMaterial;    // TextGenerator.m_CurrentMaterial
         private static MemberInfo _meshInfo;           // TextInfo.meshInfo
         private static MemberInfo _materialCount;      // TextInfo.materialCount
         private static MemberInfo _isImgui;            // TextGenerationSettings.isIMGUI
@@ -148,7 +150,8 @@ namespace UnityGameTranslator.Core
             _atlasRenderMode = Members.Property(Members.TypeOf(_refFontAsset), "atlasRenderMode", Any);
             if (_meshRenderMode != null && _atlasRenderMode == null) return "FontAsset.atlasRenderMode";
 
-            _currentAsset = Members.FieldOrProperty(generator, "m_CurrentFontAsset", Any);
+            if ((_currentAsset = Members.FieldOrProperty(generator, "m_CurrentFontAsset", Any)) == null) return "m_CurrentFontAsset";
+            if ((_currentMaterial = Members.FieldOrProperty(generator, "m_CurrentMaterial", Any)) == null) return "m_CurrentMaterial";
             return null;
         }
 
@@ -157,9 +160,9 @@ namespace UnityGameTranslator.Core
         /// room for its material, and the mesh it goes in (<see cref="PointAtUnderscore"/>). Runs on
         /// the text job's thread; touches only this generator and this text.
         /// </summary>
-        public static void DrawUnderlineMesh_Prefix(object __instance, object generationSettings, object textInfo, out int __state)
+        public static void DrawUnderlineMesh_Prefix(object __instance, object generationSettings, object textInfo, out object __state)
         {
-            __state = -1;
+            __state = null;
             try
             {
                 if (TranslatorCore.DebugMode && DiagnosticOnce.First("TextCore.hook", "underline"))
@@ -173,9 +176,9 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>② The same before a highlight.</summary>
-        public static void DrawTextHighlight_Prefix(object __instance, object generationSettings, object textInfo, out int __state)
+        public static void DrawTextHighlight_Prefix(object __instance, object generationSettings, object textInfo, out object __state)
         {
-            __state = -1;
+            __state = null;
             try
             {
                 if (TranslatorCore.DebugMode && DiagnosticOnce.First("TextCore.hook", "highlight"))
@@ -187,41 +190,70 @@ namespace UnityGameTranslator.Core
             catch (Exception ex) { Faults.Say("TextCoreDecorations.highlight", ex.InnerException ?? ex); }
         }
 
-        /// <summary>After either draw: the current material the text had, when the prefix moved it.</summary>
-        public static void Decoration_Postfix(object __instance, int __state)
+        /// <summary>After either draw: the generator's current material, index and asset as the text had them.</summary>
+        public static void Decoration_Postfix(object __instance, object __state)
         {
-            if (__state < 0) return;
-            try { Members.Set(_currentIndex, __instance, __state); }
+            if (!(__state is Current before)) return;
+            try { before.Restore(__instance); }
             catch (Exception ex) { Faults.Say("TextCoreDecorations restore", ex.InnerException ?? ex); }
+        }
+
+        /// <summary>The generator's current material index, material and font asset — moved together, put back together.</summary>
+        private sealed class Current
+        {
+            internal int Index;
+            internal object Material, Asset;
+
+            internal static Current Of(object generator) => new Current
+            {
+                Index = (int)Members.Get(_currentIndex, generator),
+                Material = Members.Get(_currentMaterial, generator),
+                Asset = Members.Get(_currentAsset, generator),
+            };
+
+            internal void Restore(object generator)
+            {
+                Members.Set(_currentIndex, generator, Index);
+                Members.Set(_currentMaterial, generator, Material);
+                Members.Set(_currentAsset, generator, Asset);
+            }
         }
 
         /// <summary>
         /// The mesh a decoration is drawn in must be the one whose atlas holds its '_': its texture
-        /// coordinates point there. The engine takes the CURRENT material's mesh, and its current
-        /// material can be another asset's than the '_''s — after a fallback's letter it keeps the
-        /// fallback's index while its current asset is back to the main one (measured: '_' from
-        /// material 0's asset, drawn into material 1's). The '_''s own material is made current for
-        /// the call: GetUnderlineSpecialCharacter, called again by the draw, then names it. Returns the
-        /// index to put back, or -1 when nothing was moved.
+        /// coordinates point there. The engine draws into the mesh of the '_''s material index
+        /// (DrawUnderlineMesh, 6000.0 and 6000.3 read the same), which GetUnderlineSpecialCharacter —
+        /// called again inside the draw — takes from the generator's CURRENT state: the current index
+        /// when the current ASSET is the '_''s, otherwise a material registered from the current
+        /// MATERIAL. That state can be another asset's than the '_''s — after a fallback's letter
+        /// (measured: '_' from material 0's asset, drawn into material 1's). Moving the index alone left
+        /// asset and material behind: the strip went into a mesh with another atlas, bits of glyphs at
+        /// the strike's height — always in some texts, one run in four in others, as the material left
+        /// by the previous text decided (bench, Hebrew and Arabic from a fallback, 2026-10-03). Index,
+        /// material and asset are made the '_''s together for the call. Returns what to put back, or null.
         /// </summary>
-        private static int PointAtUnderscore(object generator, string what)
+        private static Current PointAtUnderscore(object generator, string what)
         {
             object underline = Members.Get(_underline, generator);
-            if (Members.Get(_underlineCharacter, underline) == null) return -1;   // the engine draws nothing
+            if (Members.Get(_underlineCharacter, underline) == null) return null;   // the engine draws nothing
             object asset = Members.Get(_underlineAsset, underline);
-            int current = (int)Members.Get(_currentIndex, generator);
             int count = CountOf(Members.Get(_referenceLookup, generator));
             object references = Members.Get(_references, generator);
-            if (current < count && Same(Members.Get(_refFontAsset, At(references, current)), asset)) return -1;
             for (int i = 0; i < count; i++)
             {
-                if (!Same(Members.Get(_refFontAsset, At(references, i)), asset)) continue;
+                object reference = At(references, i);
+                if (!Same(Members.Get(_refFontAsset, reference), asset)) continue;
+                var before = Current.Of(generator);
+                object material = Members.Get(_refMaterial, reference);
+                if (before.Index == i && Same(before.Asset, asset) && Same(before.Material, material)) return null;
                 Members.Set(_currentIndex, generator, i);
+                Members.Set(_currentMaterial, generator, material);
+                Members.Set(_currentAsset, generator, asset);
                 if (DiagnosticOnce.First("TextCore.decoration.moved", what))
-                    TranslatorCore.LogDebug($"[TextCore] {what} drawn in the mesh of its '_' (material {i}) instead of the letters' ({current})");
-                return current;
+                    TranslatorCore.LogDebug($"[TextCore] {what} drawn in the mesh of its '_' (material {i}) instead of the letters' ({before.Index})");
+                return before;
             }
-            return -1;   // the '_''s asset has no material of its own yet: the engine registers it while drawing
+            return null;   // the '_''s asset has no material of its own yet: the engine registers it while drawing
         }
 
         /// <summary>

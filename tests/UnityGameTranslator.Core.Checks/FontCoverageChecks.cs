@@ -12,6 +12,17 @@ namespace UnityGameTranslator.Core.Checks
     {
         public static void Run(Action<bool, string, string> check)
         {
+            // The three decorations TMP draws with the "_" of the component's own font (user, 2026-10-03):
+            // the message is due only when the translation itself carries one.
+            foreach (var text in new[] { "a <u>b</u>", "<s>x</s>", "<mark=#FFD00080>x</mark>", "<U>x</U>", "<u color=#f00>x</u>" })
+                check(FontCoverage.DecoratesText(text), "decorates: " + text, "TMP draws it with the font's \"_\"");
+            foreach (var text in new[] { "<sprite=1>", "<size=150%>x</size>", "<sub>2</sub>", "<b>x</b>", "a < b", "<style=u>", "plain", "<", "<u" })
+                check(!FontCoverage.DecoratesText(text), "does not decorate: " + text, "another tag, or no tag, needs no \"_\"");
+            var d = new FontCoverage();
+            check(d.NoteDecorated("Title", "<u>x</u>") && !d.NoteDecorated("Title", "<s>y</s>") && d.IsDecorated("Title") && !d.IsDecorated("Body"),
+                "a font is marked once, by the first decorated text drawn with it", "per font, like the characters");
+            check(!d.NoteDecorated("Body", "no tag here") && !d.IsDecorated("Body"), "a text without decoration marks nothing", "");
+
             var c = new FontCoverage();
             check(c.Record("Title", "Hé 1!") && !c.Record("Title", "Hé 1!"), "a text is read once per font",
                 "a line drawn every frame costs one lookup");

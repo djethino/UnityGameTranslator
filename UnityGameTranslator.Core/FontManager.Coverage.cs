@@ -50,6 +50,8 @@ namespace UnityGameTranslator.Core
                 string logical = TranslatorCore.TryGetPresentedLogical(text);
                 if (logical != null) source = TranslatorCore.SourceOfTranslation(logical);
             }
+            // <u>, <s>, <mark> in the translation: drawn by TMP with the "_" of the font it draws with.
+            Coverage.NoteDecorated(settingsFontName, text);
             if (source != null && !_crossingFonts.Contains(settingsFontName))
             {
                 int from = TextShaping.RtlText.ParagraphDirection(UnityGameTranslator.Common.Markup.Strip(source));
@@ -101,6 +103,8 @@ namespace UnityGameTranslator.Core
         private static int _missingAtVersion = -1;
         private static int _missingAtSettings;
         private static readonly Dictionary<string, List<int>> _missingByFont = new Dictionary<string, List<int>>(StringComparer.Ordinal);
+        // Game fonts whose translation underlines, strikes or highlights, by the fallback drawing them that has no "_".
+        private static readonly Dictionary<string, string> _undecoratedBy = new Dictionary<string, string>(StringComparer.Ordinal);
         private static readonly Dictionary<string, HashSet<int>> _cmapByPath = new Dictionary<string, HashSet<int>>(StringComparer.OrdinalIgnoreCase);
         private static readonly Dictionary<string, string> _installedPathByName = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
@@ -149,6 +153,60 @@ namespace UnityGameTranslator.Core
             }
             list.Sort((a, b) => string.CompareOrdinal(a.Font, b.Font));
             return list;
+        }
+
+        /// <summary>
+        /// A game font whose translation uses &lt;u&gt;, &lt;s&gt; or &lt;mark&gt; while its fallback
+        /// has no "_" — the character TextMesh Pro draws all three with, taken from the component's
+        /// own font only: they do not show. Accepted: the translator kept that fallback anyway
+        /// (FontSettings.decorations_accepted_without) — the corner no longer asks, the Fonts tab
+        /// still says it.
+        /// </summary>
+        internal struct DecorationProblem
+        {
+            public string Font;
+            public string Fallback;
+            public bool Accepted;
+        }
+
+        /// <summary>Every such game font, by name. Only what is provable: a fallback nothing can speak for is never named.</summary>
+        internal static List<DecorationProblem> DecorationProblems()
+        {
+            Refresh();
+            var list = new List<DecorationProblem>();
+            foreach (var kv in _undecoratedBy)
+            {
+                TranslatorCore.FontSettingsMap.TryGetValue(kv.Key, out var settings);
+                list.Add(new DecorationProblem
+                {
+                    Font = kv.Key,
+                    Fallback = kv.Value,
+                    Accepted = string.Equals(settings?.decorations_accepted_without, kv.Value, StringComparison.Ordinal),
+                });
+            }
+            list.Sort((a, b) => string.CompareOrdinal(a.Font, b.Font));
+            return list;
+        }
+
+        /// <summary>This game font's decoration problem, or null.</summary>
+        internal static DecorationProblem? DecorationProblemOf(string settingsFontName)
+        {
+            foreach (var p in DecorationProblems())
+                if (string.Equals(p.Font, settingsFontName, StringComparison.Ordinal)) return p;
+            return null;
+        }
+
+        /// <summary>
+        /// The translator keeps this game font's fallback without underlines, strikethroughs and
+        /// highlights: written in the translation's font settings and saved at once — an act, like
+        /// any Ignore, and a choice that travels with the translation.
+        /// </summary>
+        internal static void AcceptWithoutDecorations(string settingsFontName)
+        {
+            var problem = DecorationProblemOf(settingsFontName);
+            if (problem == null || !TranslatorCore.FontSettingsMap.TryGetValue(settingsFontName, out var settings)) return;
+            settings.decorations_accepted_without = problem.Value.Fallback;
+            TranslatorCore.SaveCache();
         }
 
         /// <summary>This game font's problem, or null when it displays the translation (or nothing can tell).</summary>
@@ -247,8 +305,12 @@ namespace UnityGameTranslator.Core
             var before = new Dictionary<string, int>(StringComparer.Ordinal);
             foreach (var kv in _missingByFont) before[kv.Key] = kv.Value.Count;
             _missingByFont.Clear();
+            var undecoratedBefore = new Dictionary<string, string>(_undecoratedBy, StringComparer.Ordinal);
+            _undecoratedBy.Clear();
             foreach (var font in Coverage.Fonts)
             {
+                string undecorated = UndecoratingFallback(font);
+                if (undecorated != null) _undecoratedBy[font] = undecorated;
                 var sources = CoverageSources(font);
                 if (sources.Count == 0) continue;
                 _missingByFont[font] = Coverage.Missing(font, cp =>
@@ -264,6 +326,9 @@ namespace UnityGameTranslator.Core
                 });
             }
             // Said in the log when it changes — the first thing to read when the corner speaks of it.
+            foreach (var kv in _undecoratedBy)
+                if (!undecoratedBefore.TryGetValue(kv.Key, out var was) || was != kv.Value)
+                    TranslatorCore.LogInfo($"[FontManager] '{kv.Key}': its translation underlines, strikes or highlights, and its fallback '{kv.Value}' has no \"_\" — TextMesh Pro draws none of them");
             foreach (var kv in _missingByFont)
             {
                 before.TryGetValue(kv.Key, out int was);
@@ -275,6 +340,31 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// The fallback of a TextMesh Pro game font whose translation decorates (FontCoverage
+        /// .IsDecorated) when that fallback provably has no "_": TMP takes the character from the
+        /// component's own font — the fallback, once it replaces the game's — and from no fallback of
+        /// it (TMP_Text.GetUnderlineSpecialCharacter). Null otherwise, and when nothing can tell.
+        /// </summary>
+        private static string UndecoratingFallback(string settingsFontName)
+        {
+            if (!Coverage.IsDecorated(settingsFontName) || !TranslatorCore.FontReplacementActive) return null;
+            if (!TranslatorCore.FontSettingsMap.TryGetValue(settingsFontName, out var settings) || string.IsNullOrEmpty(settings.fallback)) return null;
+            if (settings.type != "TMP" && settings.type != "TMP (alt)") return null;
+            const int Underscore = 0x5F; // the glyph TMP draws every decoration with
+            // Its OWN glyphs: TMP looks for "_" in no fallback of it.
+            var sources = ReplacementSources(settingsFontName, settings.fallback, ownGlyphsOnly: true);
+            bool? has = null;
+            foreach (var source in sources)
+            {
+                has = source(Underscore);
+                if (has == false) return settings.fallback;
+            }
+            if (TranslatorCore.DebugMode && DiagnosticOnce.First("FontManager.decorations", settingsFontName + "/" + settings.fallback))
+                TranslatorCore.LogDebug($"[FontManager] '{settingsFontName}' decorates; its fallback '{settings.fallback}' has \"_\": {(has.HasValue ? has.Value.ToString() : sources.Count == 0 ? "nothing can tell" : "unknown")}");
+            return null;
+        }
+
+        /// <summary>
         /// What draws this game font's text: its replacement when one is set and active, and the
         /// game's font (TextMesh Pro takes the replacement as a FALLBACK of it; legacy text keeps the
         /// game font for a text the replacement cannot cover). A character is displayed when ANY of
@@ -282,11 +372,26 @@ namespace UnityGameTranslator.Core
         /// </summary>
         private static List<Func<int, bool?>> CoverageSources(string settingsFontName)
         {
-            var sources = new List<Func<int, bool?>>();
             TranslatorCore.FontSettingsMap.TryGetValue(settingsFontName, out var settings);
-            string fallback = settings?.fallback;
-            if (TranslatorCore.FontReplacementActive && !string.IsNullOrEmpty(fallback)
-                && DrawingGameFont(settingsFontName) is Font drawing)
+            var sources = TranslatorCore.FontReplacementActive ? ReplacementSources(settingsFontName, settings?.fallback) : new List<Func<int, bool?>>();
+            object gameFont = null;
+            if (_detectedTMPFontObjects.TryGetValue(settingsFontName, out var tmp)) gameFont = tmp;
+            else if (_gameUnityFonts.TryGetValue(settingsFontName, out var legacy)) gameFont = legacy;
+            var game = ObjectCoverage(gameFont);
+            if (game != null) sources.Add(game);
+            return sources;
+        }
+
+        /// <summary>
+        /// What the replacement set for this game font can tell about a character: the object drawing
+        /// legacy text, else the replacement's file or game font. <paramref name="ownGlyphsOnly"/>: the
+        /// font's own glyphs, not those of its fallbacks (a file is only ever its own).
+        /// </summary>
+        private static List<Func<int, bool?>> ReplacementSources(string settingsFontName, string fallback, bool ownGlyphsOnly = false)
+        {
+            var sources = new List<Func<int, bool?>>();
+            if (string.IsNullOrEmpty(fallback)) return sources;
+            if (DrawingGameFont(settingsFontName) is Font drawing)
             {
                 // 🔴 The object that DRAWS, not the font the reference names: legacy text got a GAME
                 // font for its replacement (another game font of that name, an older build's
@@ -296,22 +401,17 @@ namespace UnityGameTranslator.Core
                 var own = ObjectCoverage(drawing);
                 if (own != null) sources.Add(own);
             }
-            else if (TranslatorCore.FontReplacementActive && !string.IsNullOrEmpty(fallback))
+            else
             {
                 string path = FileOfReference(fallback, out string name, out var served);
                 var cmap = CharacterMap(path);
                 if (cmap != null) sources.Add(cp => cmap.Contains(cp));
                 else if (served == UnityGameTranslator.Common.FontSource.Game)
                 {
-                    var own = ObjectCoverage(GetGameFont(name) ?? (object)FindLoadedGameUnityFont(name));
+                    var own = ObjectCoverage(GetGameFont(name) ?? (object)FindLoadedGameUnityFont(name), !ownGlyphsOnly);
                     if (own != null) sources.Add(own);
                 }
             }
-            object gameFont = null;
-            if (_detectedTMPFontObjects.TryGetValue(settingsFontName, out var tmp)) gameFont = tmp;
-            else if (_gameUnityFonts.TryGetValue(settingsFontName, out var legacy)) gameFont = legacy;
-            var game = ObjectCoverage(gameFont);
-            if (game != null) sources.Add(game);
             return sources;
         }
 
@@ -408,11 +508,11 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// A loaded font object's own answer: TextMesh Pro's HasCharacter (fallbacks searched, the
-        /// character added when the asset is dynamic — as drawing it would), or Font.HasCharacter.
-        /// Null when the object or its probe is not there.
+        /// A loaded font object's own answer: TextMesh Pro's HasCharacter (fallbacks searched unless
+        /// <paramref name="searchFallbacks"/> is false, the character added when the asset is dynamic
+        /// — as drawing it would), or Font.HasCharacter. Null when the object or its probe is not there.
         /// </summary>
-        private static Func<int, bool?> ObjectCoverage(object font)
+        private static Func<int, bool?> ObjectCoverage(object font, bool searchFallbacks = true)
         {
             if (font == null) return null;
             if (font is Font legacy)
@@ -423,7 +523,7 @@ namespace UnityGameTranslator.Core
             }
             var type = font.GetType();
             var full = type.GetMethod("HasCharacter", BindingFlags.Public | BindingFlags.Instance, null, new[] { typeof(char), typeof(bool), typeof(bool) }, null);
-            if (full != null) return cp => cp > 0xFFFF ? (bool?)null : Invoke(full, font, (char)cp, true, true);
+            if (full != null) return cp => cp > 0xFFFF ? (bool?)null : Invoke(full, font, (char)cp, searchFallbacks, true);
             var plain = type.GetMethod("HasCharacter", BindingFlags.Public | BindingFlags.Instance, null, new[] { typeof(char) }, null);
             if (plain != null) return cp => cp > 0xFFFF ? (bool?)null : Invoke(plain, font, (char)cp);
             var byInt = type.GetMethod("HasCharacter", BindingFlags.Public | BindingFlags.Instance, null, new[] { typeof(int) }, null);

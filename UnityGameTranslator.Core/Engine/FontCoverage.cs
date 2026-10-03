@@ -118,6 +118,7 @@ namespace UnityGameTranslator.Core
             {
                 foreach (var f in _needed.Keys) yield return f;
                 foreach (var f in _unshaped) if (!_needed.ContainsKey(f)) yield return f;
+                foreach (var f in _decorated) if (!_needed.ContainsKey(f) && !_unshaped.Contains(f)) yield return f;
             }
         }
 
@@ -136,12 +137,56 @@ namespace UnityGameTranslator.Core
             return missing;
         }
 
+        // Fonts whose translated texts underline, strike through or highlight (DecoratesText).
+        private readonly HashSet<string> _decorated = new HashSet<string>(StringComparer.Ordinal);
+
+        /// <summary>
+        /// A translated text drawn with this font carries a decoration TMP draws with the font's "_"
+        /// (DecoratesText). True when that is new for the font.
+        /// </summary>
+        internal bool NoteDecorated(string font, string text)
+        {
+            if (string.IsNullOrEmpty(font) || !DecoratesText(text) || !_decorated.Add(font)) return false;
+            Version++;
+            return true;
+        }
+
+        internal bool IsDecorated(string font) => font != null && _decorated.Contains(font);
+
+        /// <summary>
+        /// Whether a text asks TextMesh Pro for an underline, a strikethrough or a highlight —
+        /// &lt;u&gt;, &lt;s&gt;, &lt;mark&gt;, with or without a value — the three things TMP draws
+        /// with the "_" of the component's own font, and only of that font (TMP_Text
+        /// .GetUnderlineSpecialCharacter, read in TMP 1.4 to 3.0 and Unity 6's).
+        /// </summary>
+        internal static bool DecoratesText(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return false;
+            for (int i = text.IndexOf('<'); i >= 0; i = text.IndexOf('<', i + 1))
+            {
+                int name = i + 1;
+                if (Tag(text, name, "u") || Tag(text, name, "s") || Tag(text, name, "mark")) return true;
+            }
+            return false;
+        }
+
+        // The tag name at this position, followed by its end, a value or an attribute.
+        private static bool Tag(string text, int at, string name)
+        {
+            if (at + name.Length > text.Length || string.Compare(text, at, name, 0, name.Length, StringComparison.OrdinalIgnoreCase) != 0) return false;
+            int after = at + name.Length;
+            if (after >= text.Length) return false;
+            char next = text[after];
+            return next == '>' || next == '=' || next == ' ';
+        }
+
         /// <summary>Forget everything — another translation is loaded.</summary>
         internal void Clear()
         {
             _needed.Clear();
             _seen.Clear();
             _unshaped.Clear();
+            _decorated.Clear();
             Version++;
         }
     }

@@ -26,6 +26,22 @@ namespace UnityGameTranslator.Core.UI
         internal static string ForFonts(int count) => $"{count} fonts draw {What} incorrectly. Set a fallback font for each.";
 
         /// <summary>
+        /// A fallback without the character TextMesh Pro draws underlines, strikethroughs and
+        /// highlights with, for a translation that uses them (FontManager.DecorationProblems). The
+        /// fact, then why it matters here; the box's buttons are the way out (Fonts, Ignore).
+        /// </summary>
+        internal static string DecorationsFor(FontManager.DecorationProblem problem) =>
+            $"Fallback font \"{problem.Fallback}\" cannot draw underline, strikethrough or highlight. This translation uses them.";
+
+        /// <summary>Several fallbacks at once — the Fonts tab says it on each row.</summary>
+        internal static string DecorationsForFonts(int count) =>
+            $"{count} fallback fonts cannot draw underline, strikethrough or highlight. This translation uses them.";
+
+        /// <summary>The same fact on the font's own row of the Fonts tab, where the fallback is chosen.</summary>
+        internal static string DecorationsOnRow() =>
+            "This fallback cannot draw underline, strikethrough or highlight. This translation uses them.";
+
+        /// <summary>
         /// A part of the mod's own window that cannot shape what it shows (FontManager.WindowCannotShape):
         /// its translated labels (the interface font), the game's source text or its translation (their
         /// own fonts — user, 2026-10-01). The source side is never named by its language: it is not

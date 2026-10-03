@@ -97,6 +97,8 @@ namespace UnityGameTranslator.Core.UI.Panels
         private Host _fontCoverageBox;
         private LabelHandle _fontCoverageLabel;
         private int _fontCoverageIgnoredAt;    // the weight Ignore was pressed at (MissingWeight); more shows the box again
+        private Host _fontDecorationsBox;
+        private LabelHandle _fontDecorationsLabel;
         // This window shows text its font cannot shape (FontManager.WindowCannotShape): the fact, and
         // the way to the interface font. Said while a window is open — that is where it shows.
         private Host _windowFontBox;
@@ -314,7 +316,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (live || ShowsWindowFont()) return true;
             if (panelsOpen) return false;
 
-            return ShowsModUpdate(false) || ShowsSync(false) || _webNotifWanted || ShowsFailures(false) || ShowsFontCoverage(false);
+            return ShowsModUpdate(false) || ShowsSync(false) || _webNotifWanted || ShowsFailures(false) || ShowsFontCoverage(false)
+                || ShowsFontDecorations(false);
         }
 
         private static bool ShowsModUpdate(bool panelsOpen)
@@ -340,6 +343,19 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (panelsOpen) return false;
             int weight = MissingWeight(out _);
             return weight > 0 && weight > _fontCoverageIgnoredAt;
+        }
+
+        /// <summary>
+        /// A game font whose translation underlines, strikes or highlights, while its fallback cannot
+        /// draw that — not accepted for that fallback by the translator. Unlike the other boxes, its
+        /// Ignore is the translator's choice and is kept with the translation, per font and fallback
+        /// (FontManager.AcceptWithoutDecorations): asked once, not every session.
+        /// </summary>
+        private static bool ShowsFontDecorations(bool panelsOpen)
+        {
+            if (panelsOpen) return false;
+            foreach (var p in FontManager.DecorationProblems()) if (!p.Accepted) return true;
+            return false;
         }
 
         /// <summary>
@@ -435,6 +451,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             _failuresFixBtn = _screen.Button("FailuresFixBtn");
             _fontCoverageBox = _screen.Host("FontCoverageBox");
             _fontCoverageLabel = _screen.Label("FontCoverageLabel");
+            _fontDecorationsBox = _screen.Host("FontDecorationsBox");
+            _fontDecorationsLabel = _screen.Label("FontDecorationsLabel");
             _windowFontBox = _screen.Host("WindowFontBox");
             _windowFontLabel = _screen.Label("WindowFontLabel");
             TranslatorCore.Failures.Changed += () => TranslatorUIManager.RunOnMainThread(RefreshOverlay);
@@ -492,6 +510,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                 case "failuresIgnore": return OnFailuresIgnoreClicked;
                 case "fontCoverageFix": return () => Intents.OpenTranslationParameters(ParametersTab.Fonts);
                 case "fontCoverageIgnore": return OnFontCoverageIgnoreClicked;
+                case "fontDecorationsFix": return () => Intents.OpenTranslationParameters(ParametersTab.Fonts);
+                case "fontDecorationsIgnore": return OnFontDecorationsIgnoreClicked;
                 case "windowFontFix": return Intents.OpenInterfaceSettings;
                 case "windowFontIgnore": return OnWindowFontIgnoreClicked;
                 case "unreachableSettings": return Intents.OpenTranslationSettings;
@@ -853,6 +873,17 @@ namespace UnityGameTranslator.Core.UI.Panels
                 _fontCoverageLabel?.Show(fonts.Count > 1 ? FontNotices.ForFonts(fonts.Count) : FontNotices.ForFont(fonts[0]));
             }
 
+            // 2b bis'. Fallbacks that cannot draw the underlines, strikethroughs or highlights the
+            // translation uses — those the translator has not kept as they are.
+            bool showDecorations = ShowsFontDecorations(_panelsOpenMode);
+            if (_fontDecorationsBox != null) _fontDecorationsBox.Visible = showDecorations;
+            if (showDecorations)
+            {
+                var asked = new List<FontManager.DecorationProblem>();
+                foreach (var p in FontManager.DecorationProblems()) if (!p.Accepted) asked.Add(p);
+                _fontDecorationsLabel?.Show(asked.Count > 1 ? FontNotices.DecorationsForFonts(asked.Count) : FontNotices.DecorationsFor(asked[0]));
+            }
+
             // 2b ter. This window cannot show the game's text correctly with its font.
             bool showWindowFont = ShowsWindowFont();
             if (_windowFontBox != null) _windowFontBox.Visible = showWindowFont;
@@ -1059,7 +1090,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // 🔴 Every box of the stack, the site's notification included: left out of this list,
             // it was drawn without a height of its own, over the buttons of the box above it.
-            foreach (var box in new[] { _modUpdateBox, _syncBox, _webNotifBox, _failuresBox, _fontCoverageBox, _windowFontBox, _unreachableBox, _fontBox, _aiBox, _connectionBox, _toast?.Handle })
+            foreach (var box in new[] { _modUpdateBox, _syncBox, _webNotifBox, _failuresBox, _fontCoverageBox, _fontDecorationsBox, _windowFontBox, _unreachableBox, _fontBox, _aiBox, _connectionBox, _toast?.Handle })
             {
                 if (box == null || !box.Visible) continue;
 
@@ -1103,6 +1134,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (_webNotifBox != null && _webNotifBox.Visible) height += 60;
             if (_failuresBox != null && _failuresBox.Visible) height += 60;
             if (_fontCoverageBox != null && _fontCoverageBox.Visible) height += 60;
+            if (_fontDecorationsBox != null && _fontDecorationsBox.Visible) height += 60;
             if (_windowFontBox != null && _windowFontBox.Visible) height += 60;
             if (_unreachableBox != null && _unreachableBox.Visible) height += 80;
             if (_aiBox != null && _aiBox.Visible) height += 50;
@@ -1257,6 +1289,14 @@ namespace UnityGameTranslator.Core.UI.Panels
         private void OnFontCoverageIgnoreClicked()
         {
             _fontCoverageIgnoredAt = MissingWeight(out _);
+            RefreshOverlay();
+        }
+
+        /// <summary>Kept by the translator: each fallback asked about is accepted as it is, in the translation.</summary>
+        private void OnFontDecorationsIgnoreClicked()
+        {
+            foreach (var p in FontManager.DecorationProblems())
+                if (!p.Accepted) FontManager.AcceptWithoutDecorations(p.Font);
             RefreshOverlay();
         }
 

@@ -1080,6 +1080,8 @@ namespace UnityGameTranslator.Core
                 // translation. Absent is the default (mirror).
                 if (!string.IsNullOrEmpty(kvp.Value.rtl_alignment))
                     fontObj["rtl_alignment"] = kvp.Value.rtl_alignment;
+                if (!string.IsNullOrEmpty(kvp.Value.decorations_accepted_without))
+                    fontObj["decorations_accepted_without"] = kvp.Value.decorations_accepted_without;
                 fontsObj[kvp.Key] = fontObj;
             }
 
@@ -1179,6 +1181,7 @@ namespace UnityGameTranslator.Core
                         ? sizePercentToken.Value<float>()
                         : (settings.scale_auto ? 1.0f : settings.scale);
                     settings.rtl_alignment = fontObj["rtl_alignment"]?.Value<string>();
+                    settings.decorations_accepted_without = fontObj["decorations_accepted_without"]?.Value<string>();
                 }
                 result[fontProp.Name] = settings;
             }
@@ -7156,6 +7159,15 @@ namespace UnityGameTranslator.Core
         /// component through a font override rule.
         /// </summary>
         public string rtl_alignment { get; set; }
+
+        /// <summary>
+        /// The fallback the translator kept although it has no "_" — the character TextMesh Pro
+        /// draws underlines, strikethroughs and highlights with, from the component's own font only —
+        /// while this translation uses them (FontManager.Coverage). The translator's choice, shared
+        /// with the translation: the corner asks no more for THIS fallback; another fallback is asked
+        /// about again. The Fonts tab keeps saying it.
+        /// </summary>
+        public string decorations_accepted_without { get; set; }
 
         /// <summary>
         /// Font type detected: "TMP", "Unity", "TextMesh", "tk2d"

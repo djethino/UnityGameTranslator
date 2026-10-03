@@ -2042,6 +2042,15 @@ namespace UnityGameTranslator.Core.UI.Panels
                     row.Label("MissingChars").Visible = true;
                 }
 
+                // Its fallback cannot draw the underlines, strikethroughs or highlights the translation
+                // uses. Said here even once the translator kept it (the corner's Ignore): this row is
+                // where the fallback is chosen, so where it is weighed.
+                if (FontManager.DecorationProblemOf(capturedFontName) != null)
+                {
+                    row.Say("noDecorations", FontNotices.DecorationsOnRow());
+                    row.Label("NoDecorations").Visible = true;
+                }
+
                 // Enable toggle
                 var enableToggle = row.Toggle("EnableToggle");
                 enableToggle.IsOn = fontInfo.Enabled;

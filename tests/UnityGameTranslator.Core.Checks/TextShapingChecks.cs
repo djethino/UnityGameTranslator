@@ -125,6 +125,15 @@ namespace UnityGameTranslator.Core.Checks
             string visualBr = RtlComposer.Compose("קנה<br>173.28 ש", RtlOutput.VisualOrder);
             string visualNl = RtlComposer.Compose("קנה\n173.28 ש", RtlOutput.VisualOrder);
             check(visualBr == visualNl.Replace("\n", "<br>"), "and in visual order", Escape(visualBr) + " | with \\n: " + Escape(visualNl));
+            // A number keeps the separators UAX #29 keeps inside it (WB11-12): 3'000 lays out as 3,000
+            // does — not two numbers around an apostrophe, shown 000'3 (a price, 2026-10-03).
+            foreach (string label in new[] { "السعر", "מחיר" })
+            {
+                string apostrophe = RtlComposer.Compose(label + " 3'000", RtlOutput.VisualOrder);
+                string comma = RtlComposer.Compose(label + " 3,000", RtlOutput.VisualOrder);
+                check(apostrophe == comma.Replace(',', '\''), "3'000 stays one number after " + label,
+                    Escape(apostrophe) + " | with a comma: " + Escape(comma));
+            }
             check(RtlText.ContainsStrongRtl("x\U0001E900"), "a right-to-left letter beyond U+FFFF is found",
                 "Adlam is in a supplementary plane: read as one code point, not two halves");
             check(!RtlText.IsStrongRtl(0x0915) && !RtlText.IsStrongRtl(0x4E2D) && !RtlText.IsStrongRtl(0x0416),

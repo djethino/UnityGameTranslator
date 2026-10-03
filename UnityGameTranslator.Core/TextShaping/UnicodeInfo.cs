@@ -58,13 +58,28 @@ namespace UnityGameTranslator.Core.TextShaping
         internal static bool IsControl(int cp) => CategoryOf(cp) == UnicodeCategory.Control;
 
         /// <summary>Unicode's White_Space property — tab and line feed included, though they are controls.</summary>
-        internal static bool IsWhiteSpace(int cp)
+        internal static bool IsWhiteSpace(int cp) => InRanges(ShapingTables.WhiteSpace, cp);
+
+        /// <summary>
+        /// A character UAX #29 keeps inside a number between two digits (Word_Break MidNum,
+        /// MidNumLet, Single_Quote; rules WB11-12): the apostrophe of 3'000, the point, the comma,
+        /// the Arabic thousands separator.
+        /// </summary>
+        internal static bool IsNumericJoiner(int cp) => InRanges(ShapingTables.NumericJoiners, cp);
+
+        /// <summary>A digit as UAX #29 reads one (Word_Break Numeric).</summary>
+        internal static bool IsWordNumeric(int cp) => InRanges(ShapingTables.WordNumeric, cp);
+
+        /// <summary>Whether <paramref name="cp"/> falls in one of the sorted inclusive (first, last) pairs.</summary>
+        internal static bool InRanges(int[] ranges, int cp)
         {
-            var ranges = ShapingTables.WhiteSpace;
-            for (int i = 0; i < ranges.Length; i += 2)
+            int lo = 0, hi = ranges.Length / 2 - 1;
+            while (lo <= hi)
             {
-                if (cp < ranges[i]) return false;
-                if (cp <= ranges[i + 1]) return true;
+                int mid = (lo + hi) >> 1;
+                if (cp < ranges[mid * 2]) hi = mid - 1;
+                else if (cp > ranges[mid * 2 + 1]) lo = mid + 1;
+                else return true;
             }
             return false;
         }

@@ -234,6 +234,15 @@ namespace UnityGameTranslator.Core.TextShaping
                     if (ReferenceEquals(bidiInput, arr)) bidiInput = (int[])arr.Clone();
                     bidiInput[i] = '\n';
                 }
+                else if (i > 0 &&i + 1 < arr.Length && UnicodeInfo.IsNumericJoiner(arr[i])
+                         && UnicodeInfo.IsWordNumeric(arr[i - 1]) && UnicodeInfo.IsWordNumeric(arr[i + 1]))
+                {
+                    // Inside a number (UAX #29, WB11-12): read as a common separator, which rule W4
+                    // keeps between two digits of one type. An apostrophe is ON for the bidi, so
+                    // 3'000 was two numbers and came out 000'3 at a right-to-left level.
+                    if (ReferenceEquals(bidiInput, arr)) bidiInput = (int[])arr.Clone();
+                    bidiInput[i] = ',';
+                }
             _bidiData.Init(new Slice<int>(bidiInput), 1);
             _bidi.Process(_bidiData);
             levels = _bidi.ResolvedLevels;

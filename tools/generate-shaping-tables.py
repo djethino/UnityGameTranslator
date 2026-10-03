@@ -25,6 +25,10 @@ every table covers the whole code space, the supplementary planes included:
   VowelConstraints        the vowel-sign sequences the USE specification forbids, between which
                           every shaper inserts a dotted circle (hb-ot-shaper-vowel-constraints)
 
+  NumericJoiners          Word_Break MidNum, MidNumLet and Single_Quote — what UAX #29 (WB11-12)
+                          keeps inside a number: 3'000, 3.000, 3,000
+  WordNumeric             Word_Break Numeric — the digits those join
+
   GeneralCategories       the general category of every code point (Unicode's, not the game's
                           runtime's: a game's .NET may carry Unicode 6 or 8)
 
@@ -32,7 +36,7 @@ Inputs (downloaded from the pinned UCD below unless given a dir):
   IndicSyllabicCategory.txt IndicPositionalCategory.txt ArabicShaping.txt
   DerivedCoreProperties.txt UnicodeData.txt Blocks.txt Scripts.txt PropertyValueAliases.txt
   DerivedNormalizationProps.txt PropList.txt BidiMirroring.txt LineBreak.txt EastAsianWidth.txt
-  emoji/emoji-data.txt
+  emoji/emoji-data.txt auxiliary/WordBreakProperty.txt
 plus HarfBuzz's three ms-use files (from its repository, MIT): the two "Additional" property
 files and IndicShapingInvalidCluster.txt, and hb-ot-shaper.hh; CLDR's scriptMetadata.json.
 Every Unicode fact comes from the UCD of ONE version — never from Python's unicodedata, which is
@@ -479,6 +483,11 @@ def main():
     east_asian_width = parse_with_defaults(load("EastAsianWidth.txt", src_dir, UCD))
     east_asian = ranges(cp for cp, v in enumerate(east_asian_width) if v in ("F", "W", "H"))
     pictographic = ranges(parse_derived(load("emoji/emoji-data.txt", src_dir, UCD), "Extended_Pictographic"))
+    # UAX #29's Word_Break: what keeps a number whole between its digits (WB11, WB12). Bidi has no
+    # such rule for an apostrophe (ON), so 3'000 split into two numbers at a right-to-left level.
+    word_break, _ = parse_props(load("auxiliary/WordBreakProperty.txt", src_dir, UCD))
+    numeric_joiners = ranges(cp for cp, v in word_break.items() if v in ("MidNum", "MidNumLet", "Single_Quote"))
+    word_numeric = ranges(cp for cp, v in word_break.items() if v == "Numeric")
     blocks = parse_blocks(load(FILES[5], src_dir, UCD))
     scripts, _ = parse_props(load(FILES[6], src_dir, UCD))
     iso_codes = parse_script_aliases(load(FILES[7], src_dir, UCD))
@@ -767,7 +776,9 @@ def main():
     w("        };")
     w("")
     for title, name, rngs in (("East_Asian_Width F, W or H — UAX #14's $EastAsian", "EastAsianWide", east_asian),
-                              ("Extended_Pictographic (emoji-data.txt)", "ExtendedPictographic", pictographic)):
+                              ("Extended_Pictographic (emoji-data.txt)", "ExtendedPictographic", pictographic),
+                              ("Word_Break MidNum, MidNumLet or Single_Quote — UAX #29's joiners inside a number", "NumericJoiners", numeric_joiners),
+                              ("Word_Break Numeric — the digits UAX #29 joins", "WordNumeric", word_numeric)):
         w(f"        /// <summary>{title} — inclusive ranges, sorted, as (first, last) pairs.</summary>")
         w(f"        internal static readonly int[] {name} =")
         w("        {")

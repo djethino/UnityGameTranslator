@@ -104,18 +104,7 @@ namespace UnityGameTranslator.Core.TextShaping
             return missing;
         }
 
-        private static bool InRanges(int[] ranges, int cp)
-        {
-            int lo = 0, hi = ranges.Length / 2 - 1;
-            while (lo <= hi)
-            {
-                int mid = (lo + hi) >> 1;
-                if (cp < ranges[mid * 2]) hi = mid - 1;
-                else if (cp > ranges[mid * 2 + 1]) lo = mid + 1;
-                else return true;
-            }
-            return false;
-        }
+        private static bool InRanges(int[] ranges, int cp) => UnicodeInfo.InRanges(ranges, cp);
 
         internal static bool IsDefaultIgnorable(int cp) => InRanges(ShapingTables.DefaultIgnorable, cp);
         internal static int UseCategory(int cp) => RunValue(ShapingTables.UseCategories, cp, ShapingTables.Use.O);

@@ -260,39 +260,14 @@ namespace UnityGameTranslator.Core
                 TranslatorCore.LogInfo($"[TextCore] decoration drawn with a material the text had not counted: meshes grown {had} → {count} (Unity's fix, carried by the mod)");
         }
 
-        // ── What Mono and IL2CPP hold differently: a managed array or the interop's, a dictionary
-        // either way, and an engine object wrapped anew at every read on IL2CPP — compared by the
-        // object it stands for, never by reference. ──
-
-        private static Type ElementType(Type arrayType)
-        {
-            if (arrayType == null) return null;
-            if (arrayType.IsArray) return arrayType.GetElementType();
-            for (var t = arrayType; t != null; t = t.BaseType)
-                if (t.IsGenericType && t.GetGenericArguments().Length == 1) return t.GetGenericArguments()[0];
-            return null;
-        }
-
-        private static int CountOf(object collection) =>
-            collection is ICollection managed ? managed.Count : Convert.ToInt32(collection.GetType().GetProperty("Count").GetValue(collection, null));
-
-        private static int LengthOf(object array) =>
-            array is Array managed ? managed.Length : Convert.ToInt32(array.GetType().GetProperty("Length").GetValue(array, null));
-
-        private static object At(object array, int i) =>
-            array is Array managed ? managed.GetValue(i) : array.GetType().GetProperty("Item").GetValue(array, new object[] { i });
-
-        private static void Put(object array, int i, object value)
-        {
-            if (array is Array managed) managed.SetValue(value, i);
-            else array.GetType().GetProperty("Item").SetValue(array, value, new object[] { i });
-        }
-
-        private static object NewArray(Type arrayType, int length) =>
-            arrayType.IsArray ? Array.CreateInstance(arrayType.GetElementType(), length)
-                              : arrayType.GetConstructor(new[] { typeof(long) }).Invoke(new object[] { (long)length });
-
-        private static bool Same(object a, object b) => ReferenceEquals(a, b) || (a != null && b != null && a.Equals(b));
+        // What Mono and IL2CPP hold differently: EngineCollections.
+        private static Type ElementType(Type arrayType) => EngineCollections.ElementType(arrayType);
+        private static int CountOf(object collection) => EngineCollections.Length(collection);
+        private static int LengthOf(object array) => EngineCollections.Length(array);
+        private static object At(object array, int i) => EngineCollections.Item(array, i);
+        private static void Put(object array, int i, object value) => EngineCollections.SetItem(array, i, value);
+        private static object NewArray(Type arrayType, int length) => EngineCollections.NewArray(arrayType, length);
+        private static bool Same(object a, object b) => EngineCollections.Same(a, b);
 
         // Which asset gave the '_', over which asset's letters, and whether its material was counted —
         // once per distinct answer: what decides whether an engine without Unity's fix would have died.

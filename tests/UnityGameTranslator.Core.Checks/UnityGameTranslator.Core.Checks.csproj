@@ -57,6 +57,7 @@
       of two lengths, and the one guard that keeps a game counting on the shown text untouched.
     -->
     <Compile Include="../../UnityGameTranslator.Core/Engine/RevealScale.cs" />
+    <Compile Include="../../UnityGameTranslator.Core/Engine/KerningUnits.cs" />
     <Compile Include="../../UnityGameTranslator.Core/Engine/Oscillation.cs" />
     <!--
       The path matcher both exclusions and font rules read, cut out the same day. What a pattern

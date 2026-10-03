@@ -41,7 +41,7 @@ namespace UnityGameTranslator.Core.TextShaping
             bool any = false;
             for (int k = 0; k < count; k++)
             {
-                items[k] = TmpLayout.Item(chars, k);
+                items[k] = EngineCollections.Item(chars, k);
                 decorated[k] = (Convert.ToInt32(TmpLayout.Get(TmpLayout.CiStyle, items[k])) & (Underline | Strikethrough)) != 0;
                 any |= decorated[k];
             }
@@ -68,18 +68,18 @@ namespace UnityGameTranslator.Core.TextShaping
             }
 
             bool changed = false;
-            int meshCount = TmpLayout.Length(meshes);
+            int meshCount = EngineCollections.Length(meshes);
             for (int m = 0; m < meshCount; m++)
             {
-                var mesh = TmpLayout.Item(meshes, m);
+                var mesh = EngineCollections.Item(meshes, m);
                 var vertices = mesh == null ? null : TmpLayout.Get(TmpLayout.MiVertices, mesh);
-                int n = TmpLayout.Length(vertices);
+                int n = EngineCollections.Length(vertices);
                 if (n < 12) continue;
                 var xs = new float[n];
                 var ys = new float[n];
                 for (int v = 0; v < n; v++)
                 {
-                    var p = (Vector3)TmpLayout.Item(vertices, v);
+                    var p = (Vector3)EngineCollections.Item(vertices, v);
                     xs[v] = p.x;
                     ys[v] = p.y;
                 }
@@ -92,9 +92,9 @@ namespace UnityGameTranslator.Core.TextShaping
                     if (x == null) continue;
                     for (int v = 0; v < 12; v++)
                     {
-                        var p = (Vector3)TmpLayout.Item(vertices, at + v);
+                        var p = (Vector3)EngineCollections.Item(vertices, at + v);
                         p.x = x[v];
-                        TmpLayout.SetItem(vertices, at + v, p);
+                        EngineCollections.SetItem(vertices, at + v, p);
                         xs[at + v] = x[v];
                     }
                     changed = true;
@@ -117,8 +117,8 @@ namespace UnityGameTranslator.Core.TextShaping
             var material = (TmpLayout.MiMaterial != null ? TmpLayout.Get(TmpLayout.MiMaterial, mesh) as Material : null)
                            ?? TmpLayout.FontSharedMaterial?.GetValue(text, null) as Material;
             var texture = material != null ? material.mainTexture : null;
-            if (uvs == null || texture == null || TmpLayout.Length(uvs) < at + 3) return 0f;
-            float u0 = UvX(TmpLayout.Item(uvs, at)), u2 = UvX(TmpLayout.Item(uvs, at + 2));
+            if (uvs == null || texture == null || EngineCollections.Length(uvs) < at + 3) return 0f;
+            float u0 = UvX(EngineCollections.Item(uvs, at)), u2 = UvX(EngineCollections.Item(uvs, at + 2));
             return Math.Abs(u2 - u0) * texture.width;
         }
 

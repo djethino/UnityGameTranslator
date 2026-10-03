@@ -543,6 +543,9 @@ namespace UnityGameTranslator.Core
             // it is missing, and highlights drawn from the wrong atlas (TextCoreDecorations).
             Group("TextCore decorations", () => patchCount += TextCoreDecorations.Patch(patcher));
 
+            // Kerning pairs left in font units by TMP's and TextCore's font assets (KerningPairs).
+            Group("kerning pairs", () => patchCount += KerningPairs.Patch(patcher));
+
             // uGUI components announce their arrival — see TranslatorScanner.HookComponentAppearance.
             Group("component appearance", () => patchCount += TranslatorScanner.HookComponentAppearance(patcher));
 

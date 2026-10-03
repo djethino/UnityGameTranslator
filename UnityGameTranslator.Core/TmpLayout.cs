@@ -83,39 +83,11 @@ namespace UnityGameTranslator.Core.TextShaping
         private static MemberInfo Member(Type t, string name) =>
             Members.FieldOrProperty(t, name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
 
-        /// <summary>The element of an array — a managed T[] on Mono, an interop array's indexer on IL2CPP.</summary>
-        private static Type ElementType(Type arrayType)
-        {
-            if (arrayType == null) return null;
-            if (arrayType.IsArray) return arrayType.GetElementType();
-            var item = arrayType.GetProperty("Item");
-            return item?.PropertyType;
-        }
+        private static Type ElementType(Type arrayType) => EngineCollections.ElementType(arrayType);
 
         internal static object Get(MemberInfo m, object target) => Members.Get(m, target);
 
-        /// <summary>Sets a member of an element read with <see cref="Item"/> — a boxed struct on Mono, written back with <see cref="SetItem"/>.</summary>
+        /// <summary>Sets a member of an element read with EngineCollections.Item — a boxed struct on Mono, written back with EngineCollections.SetItem.</summary>
         internal static void Set(MemberInfo m, object target, object value) => Members.Set(m, target, value);
-
-        internal static object Item(object array, int index)
-        {
-            if (array is Array a) return index >= 0 && index < a.Length ? a.GetValue(index) : null;
-            return array.GetType().GetProperty("Item")?.GetValue(array, new object[] { index });
-        }
-
-        internal static void SetItem(object array, int index, object value)
-        {
-            if (array is Array a) { a.SetValue(value, index); return; }
-            array.GetType().GetProperty("Item")?.SetValue(array, value, new object[] { index });
-        }
-
-        /// <summary>Element count of a managed array or an interop one.</summary>
-        internal static int Length(object array)
-        {
-            if (array == null) return 0;
-            if (array is Array a) return a.Length;
-            var p = array.GetType().GetProperty("Length") ?? array.GetType().GetProperty("Count");
-            return p == null ? 0 : Convert.ToInt32(p.GetValue(array, null));
-        }
     }
 }

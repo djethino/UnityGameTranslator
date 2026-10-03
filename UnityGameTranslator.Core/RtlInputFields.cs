@@ -510,12 +510,12 @@ namespace UnityGameTranslator.Core.TextShaping
             if (chars == null) return;
             for (int k = 0; k < count; k++)
             {
-                var c = TmpLayout.Item(chars, k);
+                var c = EngineCollections.Item(chars, k);
                 int at = Convert.ToInt32(TmpLayout.Get(TmpLayout.CiIndex, c));
                 if (at < 0 || at >= s.LabelIndex.Length) continue;
                 TmpLayout.Set(TmpLayout.CiIndex, c, s.LabelIndex[at]);
                 TmpLayout.Set(TmpLayout.CiStringLength, c, s.LabelLength[at]);
-                TmpLayout.SetItem(chars, k, c);
+                EngineCollections.SetItem(chars, k, c);
             }
         }
 
@@ -540,7 +540,7 @@ namespace UnityGameTranslator.Core.TextShaping
             var indexOf = new int[count];
             for (int k = 0; k < count; k++)
             {
-                var c = TmpLayout.Item(chars, k);
+                var c = EngineCollections.Item(chars, k);
                 indexOf[k] = Convert.ToInt32(TmpLayout.Get(TmpLayout.CiIndex, c));
                 origin[k] = Convert.ToSingle(TmpLayout.Get(TmpLayout.CiOrigin, c));
                 advance[k] = Convert.ToSingle(TmpLayout.Get(TmpLayout.CiXAdvance, c));
@@ -560,7 +560,7 @@ namespace UnityGameTranslator.Core.TextShaping
             s.LineTop.Clear(); s.LineBottom.Clear();
             for (int g = 0; g < lineCount; g++)
             {
-                var li = TmpLayout.Item(lines, g);
+                var li = EngineCollections.Item(lines, g);
                 s.LineTop.Add(Convert.ToSingle(TmpLayout.Get(TmpLayout.LiAscender, li)));
                 s.LineBottom.Add(Convert.ToSingle(TmpLayout.Get(TmpLayout.LiDescender, li)));
                 if (g == 0) continue;
@@ -642,18 +642,18 @@ namespace UnityGameTranslator.Core.TextShaping
         /// <summary>Shift one character's four vertices horizontally in the mesh TMP just built.</summary>
         private static void MoveTmpQuad(object chars, object meshes, int k, float delta)
         {
-            var c = TmpLayout.Item(chars, k);
+            var c = EngineCollections.Item(chars, k);
             if (!Convert.ToBoolean(TmpLayout.Get(TmpLayout.CiVisible, c))) return;
             int material = Convert.ToInt32(TmpLayout.Get(TmpLayout.CiMaterial, c));
             int vertex = Convert.ToInt32(TmpLayout.Get(TmpLayout.CiVertex, c));
-            var mesh = TmpLayout.Item(meshes, material);
+            var mesh = EngineCollections.Item(meshes, material);
             var vertices = mesh == null ? null : TmpLayout.Get(TmpLayout.MiVertices, mesh);
             if (vertices == null) return;
             for (int v = 0; v < 4; v++)
             {
-                var p = (Vector3)TmpLayout.Item(vertices, vertex + v);
+                var p = (Vector3)EngineCollections.Item(vertices, vertex + v);
                 p.x += delta;
-                TmpLayout.SetItem(vertices, vertex + v, p);
+                EngineCollections.SetItem(vertices, vertex + v, p);
             }
         }
 

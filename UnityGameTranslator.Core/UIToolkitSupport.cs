@@ -2653,6 +2653,7 @@ namespace UnityGameTranslator.Core
         private static PropertyInfo _styleWhiteSpaceProp;    // IStyle.whiteSpace        (inline)
         private static PropertyInfo _resolvedTextAlignProp;  // resolvedStyle.unityTextAlign
         private static PropertyInfo _resolvedTextGenProp;    // resolvedStyle.unityTextGenerator (Unity 6+, else null)
+        private static MethodInfo _atgEnabledForElement;      // TextUtilities.IsAdvancedTextEnabledForElement — the engine's own answer
         private static PropertyInfo _resolvedDisplayProp;    // resolvedStyle.display
 
         // The INLINE style values an element wore before our adjustments — restored verbatim
@@ -2707,6 +2708,20 @@ namespace UnityGameTranslator.Core
             _resolvedTextAlignProp = Members.Property(resolvedType, "unityTextAlign", pubInst);
             _resolvedTextGenProp = Members.Property(resolvedType, "unityTextGenerator", pubInst);
             _resolvedDisplayProp = Members.Property(resolvedType, "display", pubInst);
+
+            // The generator an element REALLY uses, as the engine decides it (internal; walked by
+            // name and parameter, never looked up by a name that could meet two members).
+            foreach (var t in AssemblyTypes.Of(VisualElementType.Assembly))
+            {
+                if (t.Name != "TextUtilities") continue;
+                foreach (var m in t.GetMethods(BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic))
+                {
+                    if (m.Name != "IsAdvancedTextEnabledForElement" || m.ReturnType != typeof(bool)) continue;
+                    var ps = m.GetParameters();
+                    if (ps.Length == 1 && ps[0].ParameterType.IsAssignableFrom(TextElementType)) { _atgEnabledForElement = m; break; }
+                }
+                if (_atgEnabledForElement != null) break;
+            }
         }
 
         /// <summary>
@@ -2768,12 +2783,23 @@ namespace UnityGameTranslator.Core
 
         /// <summary>
         /// True when this element renders through the Advanced Text Generator, which does bidi
-        /// and shaping natively — presenting on top of it would double-process. The property only
-        /// exists on Unity 6+; anywhere it cannot be read, the answer is "standard generator".
+        /// and shaping natively — presenting on top of it would double-process.
+        ///
+        /// 🔴 The engine's answer (TextUtilities.IsAdvancedTextEnabledForElement), not the style:
+        /// an element whose style ASKS for the Advanced generator is drawn by the standard one
+        /// when the engine does not run it (Unity 6.0–6.4 turn it on project-wide). Read from the
+        /// style, such an element was left unpresented and its Arabic showed unjoined, left to right
+        /// (bench, 6000.0.84f1, 2026-10-03: style Advanced, engine False). The style is read only
+        /// where the engine has no such answer; anywhere neither can be read: standard generator.
         /// </summary>
         internal static bool IsAtgActive(object element)
         {
             EnsureRtlPlumbing();
+            if (_atgEnabledForElement != null)
+            {
+                try { return (bool)_atgEnabledForElement.Invoke(null, new[] { element }); }
+                catch (Exception ex) { Faults.Say("UIToolkit.IsAtgActive engine", ex.InnerException ?? ex); }
+            }
             if (_resolvedTextGenProp == null) return false;
             try
             {

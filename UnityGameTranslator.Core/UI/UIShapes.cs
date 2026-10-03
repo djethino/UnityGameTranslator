@@ -195,7 +195,7 @@ namespace UnityGameTranslator.Core.UI
                     return null;
                 }
 
-                sprite.name = $"UGT_Shape_{radius}_{thickness}_{(int)corners}";
+                EngineStrings.SetName(sprite, $"UGT_Shape_{radius}_{thickness}_{(int)corners}");
                 return sprite;
             }
             catch (Exception ex)
@@ -282,7 +282,7 @@ namespace UnityGameTranslator.Core.UI
                 return false;
             }
 
-            _atlas.name = "UGT_ShapeAtlas";
+            EngineStrings.SetName(_atlas, "UGT_ShapeAtlas");
             _atlas.filterMode = FilterMode.Bilinear;
             // Clamp, so a shape at the very edge of the atlas cannot sample the opposite side.
             _atlas.wrapMode = TextureWrapMode.Clamp;

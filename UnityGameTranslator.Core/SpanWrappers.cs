@@ -14,7 +14,7 @@ namespace UnityGameTranslator.Core
     /// (GetPinnableReference), or the process dies outright (LoadImage). The way out is the native
     /// entry the interop makes public, <c>X_Injected(…, ref ManagedSpanWrapper, …)</c>, handed a
     /// wrapper pointed at our own pinned data — native code reads it once, synchronously, and keeps
-    /// nothing. Shared by every such call (FontAtlas, TextureUtils, TypeHelper.NewFontFromFile).
+    /// nothing. Shared by every such call (FontAtlas, TextureUtils, TypeHelper.NewFontFromFile, TransformFind, EngineStrings).
     /// </summary>
     internal static class SpanWrappers
     {
@@ -63,6 +63,42 @@ namespace UnityGameTranslator.Core
             var pinned = GCHandle.Alloc(text, GCHandleType.Pinned);
             try { call(Wrap(shape, pinned.AddrOfPinnedObject(), text.Length)); }
             finally { pinned.Free(); }
+        }
+
+        /// <summary>
+        /// Runs <paramref name="call"/> with the wrapper Unity's own bodies make for a string ARGUMENT:
+        /// null → an empty wrapper, "" → a wrapper of length 0 at address 1
+        /// (StringMarshaller.TryMarshalEmptyOrNullString), anything else → its characters, pinned for
+        /// the call.
+        /// </summary>
+        internal static void WithStringArgument(Shape shape, string text, Action<object> call)
+        {
+            if (text == null) { call(Activator.CreateInstance(shape.Type)); return; }
+            if (text.Length == 0) { call(Wrap(shape, (IntPtr)1, 0)); return; }
+            WithText(shape, text, call);
+        }
+
+        private static readonly Dictionary<Type, MethodInfo> _unmarshal = new Dictionary<Type, MethodInfo>();
+
+        /// <summary>
+        /// <c>UnityEngine.Bindings.Unmarshal.UnmarshalUnityObject&lt;T&gt;</c> — what Unity's bodies turn
+        /// an injected entry's returned handle into the object with. Null when the interop has none.
+        /// </summary>
+        internal static MethodInfo UnmarshalOf(Type unityType)
+        {
+            if (_unmarshal.TryGetValue(unityType, out var known)) return known;
+            MethodInfo found = null;
+            var unmarshalType = typeof(UnityEngine.Object).Assembly.GetType("UnityEngine.Bindings.Unmarshal");
+            if (unmarshalType != null)
+                foreach (var method in unmarshalType.GetMethods(BindingFlags.Public | BindingFlags.Static))
+                    if (method.Name == "UnmarshalUnityObject" && method.IsGenericMethodDefinition
+                        && method.GetParameters().Length == 1 && method.GetParameters()[0].ParameterType == typeof(IntPtr))
+                    {
+                        found = method.MakeGenericMethod(unityType);
+                        break;
+                    }
+            _unmarshal[unityType] = found;
+            return found;
         }
 
         private static readonly Dictionary<Type, MethodInfo> _marshal = new Dictionary<Type, MethodInfo>();

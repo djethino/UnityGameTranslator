@@ -155,7 +155,7 @@ namespace UnityGameTranslator.Core
                 return null;
             }
 
-            var go = new GameObject((original as UnityEngine.Object)?.name ?? originalName);
+            var go = EngineStrings.NewGameObject((original as UnityEngine.Object)?.name ?? originalName);
             go.hideFlags = HideFlags.HideAndDontSave;
             UnityEngine.Object.DontDestroyOnLoad(go);
             var data = TypeHelper.AddComponentByType(go, _dataType);

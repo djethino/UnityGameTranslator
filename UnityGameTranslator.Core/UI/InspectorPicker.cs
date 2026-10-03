@@ -1741,7 +1741,7 @@ namespace UnityGameTranslator.Core.UI
         private void CreateHighlightOverlay()
         {
             // Create a root object for the highlight canvas
-            _highlightCanvas = new GameObject("UGT_InspectorHighlight");
+            _highlightCanvas = EngineStrings.NewGameObject("UGT_InspectorHighlight");
             UnityEngine.Object.DontDestroyOnLoad(_highlightCanvas);
 
             var canvas = _highlightCanvas.AddComponent<Canvas>();
@@ -1753,7 +1753,7 @@ namespace UnityGameTranslator.Core.UI
             _highlightCanvas.AddComponent<UnityEngine.UI.GraphicRaycaster>();
 
             // Hover highlight — raycastTarget=true to block game clicks on the hovered element
-            var hoverObj = new GameObject("HoverHighlight");
+            var hoverObj = EngineStrings.NewGameObject("HoverHighlight");
             hoverObj.transform.SetParent(_highlightCanvas.transform, false);
             _hoverHighlight = hoverObj.AddComponent<Image>();
             _hoverHighlight.color = HoverHighlightColor;
@@ -1765,7 +1765,7 @@ namespace UnityGameTranslator.Core.UI
             hoverObj.SetActive(false);
 
             // Selected highlight
-            var selectedObj = new GameObject("SelectedHighlight");
+            var selectedObj = EngineStrings.NewGameObject("SelectedHighlight");
             selectedObj.transform.SetParent(_highlightCanvas.transform, false);
             _selectedHighlight = selectedObj.AddComponent<Image>();
             _selectedHighlight.color = SelectedHighlightColor;
@@ -1791,7 +1791,7 @@ namespace UnityGameTranslator.Core.UI
         {
             for (int i = 0; i < 12; i++)
             {
-                var obj = new GameObject(name + i);
+                var obj = EngineStrings.NewGameObject(name + i);
                 obj.transform.SetParent(_highlightCanvas.transform, false);
                 var image = obj.AddComponent<Image>();
                 image.color = color;

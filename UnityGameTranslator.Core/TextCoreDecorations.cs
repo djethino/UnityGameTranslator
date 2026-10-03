@@ -130,19 +130,23 @@ namespace UnityGameTranslator.Core
             if ((_underlineIndex = Members.FieldOrProperty(special, "materialIndex", Any)) == null) return "SpecialCharacter.materialIndex";
             if ((_meshInfo = Members.FieldOrProperty(textInfoType, "meshInfo", Any)) == null) return "TextInfo.meshInfo";
             if ((_materialCount = Members.FieldOrProperty(textInfoType, "materialCount", Any)) == null) return "TextInfo.materialCount";
-            if ((_isImgui = Members.FieldOrProperty(settingsType, "isIMGUI", Any)) == null) return "TextGenerationSettings.isIMGUI";
+            // Absent before Unity 6 (MeshInfo was made by size alone): the mesh is then made as that engine makes it.
+            _isImgui = Members.FieldOrProperty(settingsType, "isIMGUI", Any);
 
             _meshArrayType = Members.TypeOf(_meshInfo);
             var meshType = ElementType(_meshArrayType);
             var referenceType = ElementType(Members.TypeOf(_references));
             if (meshType == null || referenceType == null) return "the mesh and material arrays";
-            if ((_newMesh = meshType.GetConstructor(Any, null, new[] { typeof(int), typeof(bool) }, null)) == null) return "MeshInfo(int, bool)";
+            _newMesh = meshType.GetConstructor(Any, null, new[] { typeof(int), typeof(bool) }, null)
+                       ?? meshType.GetConstructor(Any, null, new[] { typeof(int) }, null);
+            if (_newMesh == null) return "MeshInfo(int[, bool])";
             if ((_meshMaterial = Members.FieldOrProperty(meshType, "material", Any)) == null) return "MeshInfo.material";
-            if ((_meshRenderMode = Members.FieldOrProperty(meshType, "glyphRenderMode", Any)) == null) return "MeshInfo.glyphRenderMode";
+            _meshRenderMode = Members.FieldOrProperty(meshType, "glyphRenderMode", Any);   // absent before Unity 6
             if ((_refCount = Members.FieldOrProperty(referenceType, "referenceCount", Any)) == null) return "MaterialReference.referenceCount";
             if ((_refMaterial = Members.FieldOrProperty(referenceType, "material", Any)) == null) return "MaterialReference.material";
             if ((_refFontAsset = Members.FieldOrProperty(referenceType, "fontAsset", Any)) == null) return "MaterialReference.fontAsset";
-            if ((_atlasRenderMode = Members.Property(Members.TypeOf(_refFontAsset), "atlasRenderMode", Any)) == null) return "FontAsset.atlasRenderMode";
+            _atlasRenderMode = Members.Property(Members.TypeOf(_refFontAsset), "atlasRenderMode", Any);
+            if (_meshRenderMode != null && _atlasRenderMode == null) return "FontAsset.atlasRenderMode";
 
             _currentAsset = Members.FieldOrProperty(generator, "m_CurrentFontAsset", Any);
             return null;
@@ -234,7 +238,8 @@ namespace UnityGameTranslator.Core
             int had = LengthOf(meshes);
             if (count <= had) return;
 
-            bool isImgui = (bool)Members.Get(_isImgui, generationSettings);
+            bool isImgui = _isImgui != null && (bool)Members.Get(_isImgui, generationSettings);
+            bool withImgui = _newMesh.GetParameters().Length == 2;
             object references = Members.Get(_references, generator);
             object grown = NewArray(_meshArrayType, count);
             for (int i = 0; i < had; i++) Put(grown, i, At(meshes, i));
@@ -242,9 +247,11 @@ namespace UnityGameTranslator.Core
             {
                 object reference = At(references, i);
                 int referenceCount = (int)Members.Get(_refCount, reference);
-                object mesh = _newMesh.Invoke(new object[] { referenceCount <= 0 ? 1 : referenceCount + 1, isImgui });
+                int size = referenceCount <= 0 ? 1 : referenceCount + 1;
+                object mesh = _newMesh.Invoke(withImgui ? new object[] { size, isImgui } : new object[] { size });
                 Members.Set(_meshMaterial, mesh, Members.Get(_refMaterial, reference));
-                Members.Set(_meshRenderMode, mesh, _atlasRenderMode.GetValue(Members.Get(_refFontAsset, reference), null));
+                if (_meshRenderMode != null)
+                    Members.Set(_meshRenderMode, mesh, _atlasRenderMode.GetValue(Members.Get(_refFontAsset, reference), null));
                 Put(grown, i, mesh);
             }
             Members.Set(_meshInfo, textInfo, grown);

@@ -58,7 +58,7 @@ namespace UnityGameTranslator.Core.UI
         private static void CreateBackdrop(UIBase owner)
         {
             // Create backdrop as a child of the UI canvas
-            _backdrop = new GameObject("TranslatorBackdrop");
+            _backdrop = EngineStrings.NewGameObject("TranslatorBackdrop");
             _backdrop.transform.SetParent(owner.RootObject.transform.parent, false);
 
             // Add RectTransform to fill screen

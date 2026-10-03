@@ -806,7 +806,7 @@ namespace UnityGameTranslator.Core
                 {
                     // Name the replacement sprite with the original name so it can be
                     // recognized by patches and ApplyToScene on subsequent reloads
-                    sprite.name = spriteName;
+                    EngineStrings.SetName(sprite, spriteName);
 
                     // Cleanup previous loaded sprite
                     if (_loadedSprites.TryGetValue(spriteName, out var prev) && prev != null)
@@ -1481,7 +1481,7 @@ namespace UnityGameTranslator.Core
                 try
                 {
                     // Find the target GameObject by hierarchy path
-                    var go = GameObject.Find(entry.HierarchyPath);
+                    var go = EngineStrings.FindGameObject(entry.HierarchyPath);
                     if (go == null)
                     {
                         TranslatorCore.LogDebug($"[ImageReplacer] ApplyToScene: GO not found for path '{entry.HierarchyPath}'");

@@ -282,7 +282,7 @@ namespace UnityGameTranslator.Core.Checks
             Section("Engine frontier (the engine names nothing of the interface)", EngineFrontierChecks.Run);
             Section("Silent catches (a ratchet down to none)", SilentCatchChecks.Run);
             Section("Font atlases filled through FontAtlas only", FontAtlasChecks.Run);
-            Section("Children found through TransformFind only", TransformFindChecks.Run);
+            Section("Strings handed to the engine through their doors only", TransformFindChecks.Run);
             Section("No character decision written for one script", CharacterRangeChecks.Run);
             Section("Underlines and strikethroughs over their letters", DecorationSpansChecks.Run);
             Section("A font's own lines (cap, mean, strikeout, underline)", FontLinesChecks.Run);

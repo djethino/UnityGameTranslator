@@ -69,7 +69,7 @@ namespace UnityGameTranslator.Core.UI.Components
             var record = TransformFind.Path(buttonObj.transform, SideRecordPrefix + current);
             if (record == null) return;
 
-            record.gameObject.name = SideRecordPrefix + side;
+            EngineStrings.SetName(record.gameObject, SideRecordPrefix + side);
 
             var selectable = buttonObj.GetComponent<Button>();
             Tint(buttonObj, selectable == null || selectable.interactable);

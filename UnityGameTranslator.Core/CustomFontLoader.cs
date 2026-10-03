@@ -1719,7 +1719,7 @@ namespace UnityGameTranslator.Core
                         // On IL2CPP, cast to the proper type so reflection sees all properties
                         fontAsset = TypeHelper.Il2CppCast(cloned, _tmpFontAssetType);
                         if (fontAsset is UnityEngine.Object uobj)
-                            uobj.name = fontInfo.Name;
+                            EngineStrings.SetName(uobj, fontInfo.Name);
 
                         TranslatorCore.LogInfo($"[CustomFontLoader] Cloned existing font: {existingFont.name}, clone type: {fontAsset?.GetType().FullName}");
 
@@ -1759,7 +1759,7 @@ namespace UnityGameTranslator.Core
                         fontAsset = TypeHelper.CreateScriptableObject(_tmpFontAssetType);
                         if (fontAsset is UnityEngine.Object uobj)
                         {
-                            uobj.name = fontInfo.Name;
+                            EngineStrings.SetName(uobj, fontInfo.Name);
                             // Same UnloadUnusedAssets shield as the cloned path above.
                             uobj.hideFlags |= HideFlags.DontUnloadUnusedAsset;
                         }
@@ -2101,7 +2101,7 @@ namespace UnityGameTranslator.Core
                             // Copy the material with our atlas texture
                             material = new Material(existingMat.shader);
                             material.CopyPropertiesFromMaterial(existingMat);
-                            material.name = $"{((ScriptableObject)fontAsset).name} Material";
+                            EngineStrings.SetName(material, $"{((ScriptableObject)fontAsset).name} Material");
                             material.SetTexture("_MainTex", atlas);
 
                             // Update texture dimensions for our atlas
@@ -2143,7 +2143,7 @@ namespace UnityGameTranslator.Core
                     if (shader != null)
                     {
                         material = new Material(shader);
-                        material.name = $"{((ScriptableObject)fontAsset).name} Material";
+                        EngineStrings.SetName(material, $"{((ScriptableObject)fontAsset).name} Material");
                         material.SetTexture("_MainTex", atlas);
                         material.SetFloat("_TextureWidth", atlas.width);
                         material.SetFloat("_TextureHeight", atlas.height);

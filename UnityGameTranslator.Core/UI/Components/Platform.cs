@@ -14,7 +14,7 @@ namespace UnityGameTranslator.Core.UI.Components
         /// <summary>Put text on the system clipboard, for the person to paste elsewhere.</summary>
         public static void CopyToClipboard(string text)
         {
-            GUIUtility.systemCopyBuffer = text ?? "";
+            EngineStrings.SetClipboard(text ?? "");
         }
     }
 }

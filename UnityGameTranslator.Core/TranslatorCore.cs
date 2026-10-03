@@ -2408,7 +2408,7 @@ namespace UnityGameTranslator.Core
             if (Uri.TryCreate(url, UriKind.Absolute, out var uri) &&
                 (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps))
             {
-                UnityEngine.Application.OpenURL(url);
+                EngineStrings.OpenUrl(url);
             }
             else
             {
@@ -2476,7 +2476,7 @@ namespace UnityGameTranslator.Core
             try
             {
                 System.IO.Directory.CreateDirectory(full);   // prepared at start, but a player may have removed it
-                UnityEngine.Application.OpenURL(new Uri(full).AbsoluteUri);
+                EngineStrings.OpenUrl(new Uri(full).AbsoluteUri);
                 return true;
             }
             catch (Exception ex)

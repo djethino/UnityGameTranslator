@@ -2365,7 +2365,7 @@ namespace UnityGameTranslator.Core
                 if (!_adaptedMaterials.TryGetValue(key, out var adapted) || !TypeHelper.IsUnityObjectAlive(adapted))
                 {
                     adapted = new Material(origMat);
-                    adapted.name = origMat.name + " (UGT adapted)";
+                    EngineStrings.SetName(adapted, origMat.name + " (UGT adapted)");
                     if (fontMat.HasProperty("_MainTex") && adapted.HasProperty("_MainTex"))
                         adapted.SetTexture("_MainTex", fontMat.GetTexture("_MainTex"));
 
@@ -2761,7 +2761,7 @@ namespace UnityGameTranslator.Core
                 return asset;
             }
             // Its own name, one of ours: never listed as a game font, never found for the original by name.
-            made.name = name + " (UGT fallback)";
+            EngineStrings.SetName(made, name + " (UGT fallback)");
             made.hideFlags |= HideFlags.DontUnloadUnusedAsset;
             _createdFallbackFontNames.Add(made.name);
             _fallbackTwins[id] = twin;
@@ -4779,8 +4779,8 @@ namespace UnityGameTranslator.Core
                 // A derived copy rewritten under the same name (Mono, DerivedFonts) is a NEW font object
                 // each time — named apart, since a component is given a font whose name differs from
                 // the one it wears (TryApplyUnityClone), and the old object holds the old glyphs.
-                if (created != null && derived != null) created.name = derived.CurrentFamily + " #" + derived.Version;
-                else if (created != null) created.name = cleanName;
+                if (created != null && derived != null) EngineStrings.SetName(created, derived.CurrentFamily + " #" + derived.Version);
+                else if (created != null) EngineStrings.SetName(created, cleanName);
                 return created;
             }
 
@@ -4794,7 +4794,7 @@ namespace UnityGameTranslator.Core
                     var created = CreateDynamicOSFont(installed.CurrentFamily);
                     if (created != null)
                     {
-                        created.name = installed.CurrentFamily + " #" + installed.Version;
+                        EngineStrings.SetName(created, installed.CurrentFamily + " #" + installed.Version);
                         return created;
                     }
                 }
@@ -5051,7 +5051,7 @@ namespace UnityGameTranslator.Core
             made = Kept(TypeHelper.NewFontFromFile(CustomFontLoader.FindSystemTtfPath(fontName)));
             if (made != null)
             {
-                made.name = fontName;
+                EngineStrings.SetName(made, fontName);
                 return made;
             }
 
@@ -5205,7 +5205,7 @@ namespace UnityGameTranslator.Core
                 TranslatorCore.LogWarning($"[FontManager] no SDF asset from the file of '{name}' ({System.IO.Path.GetFileName(path)}) — this engine made no usable Font from it");
                 return null;
             }
-            made.name = name;
+            EngineStrings.SetName(made, name);
             TranslatorCore.LogInfo($"[FontManager] SDF asset made from the file of '{name}' ({System.IO.Path.GetFileName(path)})");
             SayWhatTheAssetDraws(result, name, probe);
             return result;
@@ -5275,7 +5275,7 @@ namespace UnityGameTranslator.Core
                             if (result != null)
                             {
                                 if (result is UnityEngine.Object uobj && string.IsNullOrEmpty(uobj.name))
-                                    uobj.name = font.name + " SDF";
+                                    EngineStrings.SetName(uobj, font.name + " SDF");
                                 TranslatorCore.LogDebug($"[FontManager] TMP_FontAsset.CreateFontAsset(Font) succeeded!");
                                 return result;
                             }
@@ -5338,7 +5338,7 @@ namespace UnityGameTranslator.Core
                             if (result != null)
                             {
                                 if (result is UnityEngine.Object uobj && string.IsNullOrEmpty(uobj.name))
-                                    uobj.name = font.name + " SDF";
+                                    EngineStrings.SetName(uobj, font.name + " SDF");
                                 TranslatorCore.LogDebug($"[FontManager] TMP_FontAsset.CreateFontAsset(Font, advanced) succeeded!");
                                 return result;
                             }
@@ -5527,7 +5527,7 @@ namespace UnityGameTranslator.Core
                     {
                         // Ensure the asset has a proper name
                         if (result is UnityEngine.Object uobj && string.IsNullOrEmpty(uobj.name))
-                            uobj.name = font.name + " SDF";
+                            EngineStrings.SetName(uobj, font.name + " SDF");
                         TranslatorCore.LogDebug($"[FontManager] Created TMP font via CreateFontAsset(Font)");
                         return result;
                     }
@@ -5595,7 +5595,7 @@ namespace UnityGameTranslator.Core
                         if (result != null)
                         {
                             if (result is UnityEngine.Object uobj && string.IsNullOrEmpty(uobj.name))
-                                uobj.name = font.name + " SDF";
+                                EngineStrings.SetName(uobj, font.name + " SDF");
                             return result;
                         }
                     }
@@ -5611,7 +5611,7 @@ namespace UnityGameTranslator.Core
                             if (result != null)
                             {
                                 if (result is UnityEngine.Object uobj && string.IsNullOrEmpty(uobj.name))
-                                    uobj.name = font.name + " SDF";
+                                    EngineStrings.SetName(uobj, font.name + " SDF");
                                 return result;
                             }
                         }
@@ -5628,7 +5628,7 @@ namespace UnityGameTranslator.Core
                             if (result != null)
                             {
                                 if (result is UnityEngine.Object uobj && string.IsNullOrEmpty(uobj.name))
-                                    uobj.name = font.name + " SDF";
+                                    EngineStrings.SetName(uobj, font.name + " SDF");
                                 return result;
                             }
                         }

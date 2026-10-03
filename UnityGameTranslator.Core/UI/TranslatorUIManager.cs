@@ -492,6 +492,7 @@ namespace UnityGameTranslator.Core.UI
 
             // UniverseLib finds its children the way the mod does (TransformFind: Unity 2023.1+ IL2CPP).
             UniverseLib.Utility.UnityHelpers.FindChild = TransformFind.Path;
+            UniverseLib.Utility.UnityHelpers.NewGameObject = EngineStrings.NewGameObject;
 
             // Use per-game setting for EventSystem override (stored in translations.json as _settings.disable_eventsystem_override)
             // Default is false (UniverseLib CAN override). Set to true in translations.json if the game's UI animations break.
@@ -703,7 +704,7 @@ namespace UnityGameTranslator.Core.UI
             {
                 if (!on) return;
 
-                _clickAbsorber = new GameObject("UGT_ClickAbsorber");
+                _clickAbsorber = EngineStrings.NewGameObject("UGT_ClickAbsorber");
                 UnityEngine.Object.DontDestroyOnLoad(_clickAbsorber);
 
                 var canvas = _clickAbsorber.AddComponent<Canvas>();
@@ -711,7 +712,7 @@ namespace UnityGameTranslator.Core.UI
                 canvas.sortingOrder = 28000;
                 _clickAbsorber.AddComponent<UnityEngine.UI.GraphicRaycaster>();
 
-                var surface = new GameObject("Surface");
+                var surface = EngineStrings.NewGameObject("Surface");
                 surface.transform.SetParent(_clickAbsorber.transform, false);
                 var rect = surface.AddComponent<RectTransform>();
                 rect.anchorMin = Vector2.zero;

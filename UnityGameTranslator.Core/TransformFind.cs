@@ -37,10 +37,7 @@ namespace UnityGameTranslator.Core
             var self = (IntPtr)_marshalTransform.Invoke(null, new object[] { transform });
             if (self == IntPtr.Zero) throw new NullReferenceException("Transform.Find on a destroyed Transform");
             IntPtr handle = IntPtr.Zero;
-            if (path.Length == 0)
-                handle = (IntPtr)_injected.Invoke(null, new[] { (object)self, SpanWrappers.Wrap(_wrapper, (IntPtr)1, 0), false });
-            else
-                SpanWrappers.WithText(_wrapper, path, wrapper => handle = (IntPtr)_injected.Invoke(null, new[] { (object)self, wrapper, false }));
+            SpanWrappers.WithStringArgument(_wrapper, path, wrapper => handle = (IntPtr)_injected.Invoke(null, new[] { (object)self, wrapper, false }));
             return _unmarshal.Invoke(null, new object[] { handle }) as Transform;
         }
 
@@ -69,16 +66,7 @@ namespace UnityGameTranslator.Core
 
             var wrapper = SpanWrappers.Of(injected, 1);
             var marshal = SpanWrappers.NativePointerOf(typeof(Transform));
-            MethodInfo unmarshal = null;
-            var unmarshalType = typeof(Transform).Assembly.GetType("UnityEngine.Bindings.Unmarshal");
-            if (unmarshalType != null)
-                foreach (var method in unmarshalType.GetMethods(BindingFlags.Public | BindingFlags.Static))
-                    if (method.Name == "UnmarshalUnityObject" && method.IsGenericMethodDefinition
-                        && method.GetParameters().Length == 1 && method.GetParameters()[0].ParameterType == typeof(IntPtr))
-                    {
-                        unmarshal = method.MakeGenericMethod(typeof(Transform));
-                        break;
-                    }
+            var unmarshal = SpanWrappers.UnmarshalOf(typeof(Transform));
             if (wrapper == null || marshal == null || unmarshal == null)
             {
                 TranslatorCore.LogWarning($"[TransformFind] FindRelativeTransformWithPath_Injected found without its parts (wrapper={wrapper != null}, marshal={marshal != null}, unmarshal={unmarshal != null}) — children are found through Transform.Find");

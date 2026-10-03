@@ -72,7 +72,7 @@ namespace UnityGameTranslator.Core.UI
 
                 // ⚠ Kept, never destroyed with the panel: the sprite below points at it, and a
                 // texture collected under a live sprite draws as a magenta square.
-                texture.name = "UGT.Branding." + name;
+                EngineStrings.SetName(texture, "UGT.Branding." + name);
 
                 sprite = TextureUtils.CreateSpriteSafe(texture, new Vector2(0.5f, 0.5f), 100f, Vector4.zero);
                 if (sprite == null)

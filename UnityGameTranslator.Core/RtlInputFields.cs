@@ -846,7 +846,7 @@ namespace UnityGameTranslator.Core.TextShaping
             var labelRect = s.Label.rectTransform;
             if (s.Overlay == null)
             {
-                s.Overlay = new GameObject("UGT RTL caret");
+                s.Overlay = EngineStrings.NewGameObject("UGT RTL caret");
                 s.OverlayRect = s.Overlay.AddComponent<RectTransform>();
                 s.Overlay.transform.SetParent(labelRect.parent, false);
                 s.Quads.Clear();
@@ -873,7 +873,7 @@ namespace UnityGameTranslator.Core.TextShaping
             var pivot = s.Label.rectTransform.pivot;
             while (s.Quads.Count <= index)
             {
-                var go = new GameObject("q" + s.Quads.Count);
+                var go = EngineStrings.NewGameObject("q" + s.Quads.Count);
                 go.transform.SetParent(s.Overlay.transform, false);
                 var image = go.AddComponent<Image>();
                 image.raycastTarget = false;

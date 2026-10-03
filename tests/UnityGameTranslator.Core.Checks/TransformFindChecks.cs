@@ -6,19 +6,33 @@ using System.Text.RegularExpressions;
 namespace UnityGameTranslator.Core.Checks
 {
     /// <summary>
-    /// Every child looked up by name goes through TransformFind.Path (the Core) or
-    /// UnityHelpers.FindChild (UniverseLib, pointed at it).
+    /// Every engine call that hands a string to native code goes through its door: TransformFind.Path
+    /// and EngineStrings in the Core, UnityHelpers.FindChild / NewGameObject in UniverseLib (pointed at
+    /// them).
     ///
-    /// 🔴 Transform.Find throws MissingMethodException at every call on Unity 2023.1+ under IL2CPP in a
-    /// game that never calls it (the interop rebuilds its stripped body around a ReadOnlySpan member
-    /// the game's runtime lacks): the mod's window is never built. A direct call compiles and passes
-    /// every game that kept the method — so it is refused here, by reading the sources. Caught: a
-    /// lookup written on a member or variable named transform / Transform; another receiver's name
-    /// escapes this reading.
+    /// 🔴 On Unity 2023.1+ under IL2CPP such a call throws MissingMethodException at every call in a
+    /// game that never makes it itself (the interop rebuilds its stripped body around a ReadOnlySpan
+    /// member the game's runtime lacks): with Transform.Find, the mod's window was never built. A
+    /// direct call compiles and passes every game that kept the method — so it is refused here, by
+    /// reading the sources. Caught: a lookup written on a member or variable named transform /
+    /// Transform, a GameObject made with a name, GameObject.Find, Application.OpenURL, the clipboard.
+    /// Not caught: Object.name set on an object (the same text sets plain data's names too) — those go
+    /// through EngineStrings.SetName by review.
     /// </summary>
     internal static class TransformFindChecks
     {
-        private static readonly Regex DirectCall = new Regex(@"\b[tT]ransform\s*\.\s*Find\s*\(");
+        private static readonly (Regex Call, string Door)[] DirectCalls =
+        {
+            (new Regex(@"\b[tT]ransform\s*\.\s*Find\s*\("), "TransformFind.Path / UnityHelpers.FindChild"),
+            (new Regex(@"new\s+GameObject\s*\(\s*[^)\s]"), "EngineStrings.NewGameObject / UnityHelpers.NewGameObject"),
+            (new Regex(@"\bGameObject\s*\.\s*Find\s*\("), "EngineStrings.FindGameObject"),
+            (new Regex(@"\bApplication\s*\.\s*OpenURL\s*\("), "EngineStrings.OpenUrl"),
+            (new Regex(@"\bsystemCopyBuffer\s*="), "EngineStrings.SetClipboard"),
+        };
+
+        // Files allowed to name the engine call: the doors and their defaults, and one UniverseLib line
+        // that runs for a single other game only (EventSystemHelper, VRChat).
+        private static readonly HashSet<string> Doors = new HashSet<string> { "TransformFind.cs", "EngineStrings.cs", "UnityHelpers.cs", "EventSystemHelper.cs" };
 
         public static void Run(Action<bool, string, string> check)
         {
@@ -28,7 +42,8 @@ namespace UnityGameTranslator.Core.Checks
                 "the check reads files; without them it proves nothing");
             if (core == null || !Directory.Exists(universe)) return;
 
-            check(File.Exists(Path.Combine(core, "TransformFind.cs")), "TransformFind.cs exists", "the one place a child is found from");
+            check(File.Exists(Path.Combine(core, "TransformFind.cs")) && File.Exists(Path.Combine(core, "EngineStrings.cs")),
+                "TransformFind.cs and EngineStrings.cs exist", "the doors");
 
             int files = 0;
             var offenders = new List<string>();
@@ -36,15 +51,17 @@ namespace UnityGameTranslator.Core.Checks
                 foreach (var file in Directory.GetFiles(root, "*.cs", SearchOption.AllDirectories))
                 {
                     string name = Path.GetFileName(file);
-                    if (name == "TransformFind.cs" || name == "UnityHelpers.cs") continue;   // the door, and its default
+                    if (Doors.Contains(name)) continue;
                     if (file.Contains(Path.DirectorySeparatorChar + "obj" + Path.DirectorySeparatorChar)) continue;
                     files++;
-                    if (DirectCall.IsMatch(StripComments(File.ReadAllText(file)))) offenders.Add(name);
+                    string source = StripComments(File.ReadAllText(file));
+                    foreach (var rule in DirectCalls)
+                        if (rule.Call.IsMatch(source)) offenders.Add(name + " (" + rule.Door + ")");
                 }
             check(files > 0, "the sources hold files to read", "a rule with nothing to guard is decoration");
-            check(offenders.Count == 0, "no file looks a child up with Transform.Find itself",
-                offenders.Count == 0 ? "TransformFind.Path / UnityHelpers.FindChild are the only doors"
-                                     : "direct Transform.Find in: " + string.Join(", ", offenders) + " — call TransformFind.Path (Core) or UnityHelpers.FindChild (UniverseLib)");
+            check(offenders.Count == 0, "no file hands a string to the engine itself",
+                offenders.Count == 0 ? "TransformFind / EngineStrings and UniverseLib's UnityHelpers hooks are the only doors"
+                                     : "direct call in: " + string.Join(", ", offenders));
         }
 
         private static string StripComments(string source)

@@ -39,6 +39,8 @@ namespace UnityGameTranslator.Core
         private static FieldInfo _vertexData, _vertexBufferSize, _meshMaterial, _meshRenderMode;
         private static FieldInfo _refCount, _refMaterial, _refFontAsset;
         private static PropertyInfo _atlasRenderMode;  // FontAsset.atlasRenderMode
+        // For the debug record only — where the '_' was found, over which asset: absent, nothing is said.
+        private static FieldInfo _underline, _underlineAsset, _underlineIndex, _currentAsset;
 
         /// <summary>
         /// Does this engine draw an underline without the crash — its own fix, or ours in place?
@@ -115,6 +117,11 @@ namespace UnityGameTranslator.Core
             if ((_refMaterial = referenceType.GetField("material", Any)) == null) return "MaterialReference.material";
             if ((_refFontAsset = referenceType.GetField("fontAsset", Any)) == null) return "MaterialReference.fontAsset";
             if ((_atlasRenderMode = Members.Property(_refFontAsset.FieldType, "atlasRenderMode", Any)) == null) return "FontAsset.atlasRenderMode";
+
+            _underline = generator.GetField("m_Underline", Any);
+            _underlineAsset = _underline?.FieldType.GetField("fontAsset", Any);
+            _underlineIndex = _underline?.FieldType.GetField("materialIndex", Any);
+            _currentAsset = generator.GetField("m_CurrentFontAsset", Any);
             return null;
         }
 
@@ -130,6 +137,7 @@ namespace UnityGameTranslator.Core
                 _getUnderline.Invoke(__instance, new[] { generationSettings });
                 int count = ((ICollection)_referenceLookup.GetValue(__instance)).Count;
                 var meshes = (Array)_meshInfo.GetValue(textInfo);
+                if (TranslatorCore.DebugMode) Record(__instance, count, meshes.Length);
                 if (count <= meshes.Length) return;
 
                 bool isImgui = (bool)_isImgui.GetValue(generationSettings);
@@ -155,6 +163,24 @@ namespace UnityGameTranslator.Core
                     TranslatorCore.LogInfo($"[TextCore] underline drawn with a material the text had not counted: meshes grown {meshes.Length} → {count} (Unity's fix, carried by the mod)");
             }
             catch (Exception ex) { Faults.Say("TextCoreUnderlineFix", ex.InnerException ?? ex); }
+        }
+
+        // Which asset gave the '_', over which asset's letters, and whether its material was counted —
+        // once per distinct answer: what decides whether this engine would have died. Assets are told
+        // apart by identity: an object's name cannot be read on the text job's thread.
+        private static void Record(object generator, int materials, int meshes)
+        {
+            if (_underline == null || _underlineAsset == null || _underlineIndex == null || _currentAsset == null) return;
+            object underline = _underline.GetValue(generator);
+            object from = _underlineAsset.GetValue(underline);
+            object over = _currentAsset.GetValue(generator);
+            int index = (int)_underlineIndex.GetValue(underline);
+            // An engine object's hash is its instance id, readable on any thread (its name is not).
+            string source = ReferenceEquals(from, over) ? $"the asset of the letters it underlines (#{from?.GetHashCode()})"
+                                                        : $"ANOTHER asset (#{from?.GetHashCode()}) than the letters' (#{over?.GetHashCode()})";
+            string counted = index < meshes ? "counted" : "NOT counted";
+            if (DiagnosticOnce.First("TextCore.underline.source", source + "\u0001" + index + "\u0001" + materials + "\u0001" + meshes))
+                TranslatorCore.LogDebug($"[TextCore] underline '_' from {source}: material {index} of {materials}, {meshes} mesh(es) — {counted}");
         }
     }
 }

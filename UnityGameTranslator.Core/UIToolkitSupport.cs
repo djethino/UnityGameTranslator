@@ -2821,13 +2821,13 @@ namespace UnityGameTranslator.Core
         /// Can THIS element draw an underline/strikethrough over THIS text without dying?
         ///
         /// Yes whenever the engine draws it with Unity's fix in place — its own, or the one the mod
-        /// carries (TextCoreUnderlineFix, which says how the crash happens). Without it the tag is
+        /// carries (TextCoreDecorations, which says how the crash happens). Without it the tag is
         /// refused and the element's font is logged: see the block inside for why font coverage,
         /// the obvious condition, did not predict the crash.
         /// </summary>
         internal static bool UnderlineIsSafe(object element, string text)
         {
-            if (TextCoreUnderlineFix.Present) return true;
+            if (TextCoreDecorations.UnderlineSafe) return true;
             if (!_underlineSafetyResolved)
             {
                 _underlineSafetyResolved = true;

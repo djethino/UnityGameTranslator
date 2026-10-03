@@ -371,7 +371,7 @@ namespace UnityGameTranslator.Core.TextShaping
                         return;
                     }
                     // 🔴 Crash guard. TextCore's DrawUnderlineMesh died on an underline (IndexOutOfRange,
-                    // a material registered while drawing — TextCoreUnderlineFix says how) until
+                    // a material registered while drawing — TextCoreDecorations says how) until
                     // Unity fixed it; the mod carries that fix where it can. Without it, the tag
                     // comes off: underlined Arabic links are normal typography, but not at the
                     // price of the game's panel.

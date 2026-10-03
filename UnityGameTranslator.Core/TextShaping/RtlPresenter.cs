@@ -159,10 +159,14 @@ namespace UnityGameTranslator.Core.TextShaping
 
         /// <summary>
         /// Present one outgoing string in place. Cheap for the overwhelming majority of texts:
-        /// one range scan says "nothing to do".
+        /// one range scan says "nothing to do". <paramref name="knownLogical"/>: the caller knows
+        /// the text is logical and new — a sentence TMP just formatted from a logical format —
+        /// so it is never taken for an echo of something presented before (it can look like one:
+        /// the same format with another number, matched by the number-insensitive index).
         /// </summary>
         internal static void Present(object instance, long compId, ref string value,
-                                     string settingsFontName = null, FontOverrideRule overrideRule = null, bool ownUi = false)
+                                     string settingsFontName = null, FontOverrideRule overrideRule = null, bool ownUi = false,
+                                     bool knownLogical = false)
         {
             if (string.IsNullOrEmpty(value)) return;
 
@@ -170,6 +174,8 @@ namespace UnityGameTranslator.Core.TextShaping
             // logical text alone rather than corrupt another call's.
             if (!TranslatorCore.IsMainThread) return;
             PresentCount++;
+            // A TMP formatted write: presented once TMP has put its numbers in (TranslatorPatches.TMPText_SetTextFormat_Prefix).
+            if (TranslatorPatches.DeferForFormat(instance, compId, settingsFontName, overrideRule, ownUi)) return;
             if (compId != -1) _presented.Add(compId);
 
             // Every game text goes out through here, with its font and still logical: the account
@@ -181,7 +187,7 @@ namespace UnityGameTranslator.Core.TextShaping
             {
                 // Asked of the text AS IT ARRIVED: PresentSyllabic registers its own shaped form
                 // just below, which is no echo — the right-to-left step still has to lay it out.
-                string arrivedLogical = TranslatorCore.TryGetPresentedLogical(value);
+                string arrivedLogical = knownLogical ? null : TranslatorCore.TryGetPresentedLogical(value);
                 bool ownEcho = arrivedLogical != null && arrivedLogical != value;
 
                 // Presented again from its logical text: what arrived was ours, but for another

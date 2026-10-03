@@ -239,17 +239,18 @@ namespace UnityGameTranslator.Core
                         patchCount++;
                     }
 
-                    // TMP_Text.SetText(string) methods
+                    // TMP_Text.SetText(string) methods — and the formatted ones, SetText(format, numbers…),
+                    // whose numbers TMP puts in after the prefix: see TMPText_SetTextFormat_Prefix.
                     var setTextMethods = TypeHelper.TMP_TextType.GetMethods(BindingFlags.Public | BindingFlags.Instance);
                     foreach (var method in setTextMethods)
                     {
-                        if (method.Name == "SetText" && method.GetParameters().Length > 0
-                            && method.GetParameters()[0].ParameterType == typeof(string))
-                        {
-                            var prefix = typeof(TranslatorPatches).GetMethod(nameof(TMPText_SetTextMethod_Prefix), BindingFlags.Static | BindingFlags.Public);
-                            patcher(method, prefix, null);
-                            patchCount++;
-                        }
+                        var ps = method.GetParameters();
+                        if (method.Name != "SetText" || ps.Length == 0 || ps[0].ParameterType != typeof(string)) continue;
+                        bool formatted = Array.Exists(ps, p => p.ParameterType == typeof(float));
+                        var prefix = typeof(TranslatorPatches).GetMethod(formatted ? nameof(TMPText_SetTextFormat_Prefix) : nameof(TMPText_SetTextMethod_Prefix), BindingFlags.Static | BindingFlags.Public);
+                        var postfix = formatted ? typeof(TranslatorPatches).GetMethod(nameof(TMPText_SetTextFormat_Postfix), BindingFlags.Static | BindingFlags.Public) : null;
+                        patcher(method, prefix, postfix);
+                        patchCount++;
                     }
                     // 🔴 **The other ways TMP takes a text — a PROBE, not a translation.**
                     //
@@ -3380,6 +3381,114 @@ namespace UnityGameTranslator.Core
         public static void TMPText_SetTextMethod_Prefix(object __instance, ref string __0)
         {
             ProcessTextPatchPrefix(__instance, ref __0, "TMP");
+        }
+
+        /// <summary>
+        /// The TMP formatted write in progress (main thread): which component, and what the
+        /// presenter would have been given for it — its presentation waits for TMP's numbers.
+        /// </summary>
+        private sealed class FormattedWrite
+        {
+            internal object Instance;
+            internal bool Captured;
+            internal int Nested;       // TMP's overloads call one another: the inner calls are the same write
+            internal int Frame;        // a write whose postfix never ran (TMP threw) is not taken for an outer one later
+            internal long CompId;
+            internal string Font;
+            internal FontOverrideRule Rule;
+            internal bool OwnUi;
+        }
+        private static FormattedWrite _formattedWrite;
+
+        /// <summary>
+        /// TMP's SetText(format, numbers…) — a score, a counter, a timer. 🔴 TMP writes the numbers
+        /// into the format AFTER this prefix, by its own rules ({0}, {0:2}, {0:00.0}, which differ
+        /// between TMP versions). Presented here, a right-to-left format reached TMP in visual order:
+        /// TMP's own reversal then turned the number it inserted backwards ("1234.50" shown
+        /// "05.4321") and its mirrored braces broke the format ("{0:0}" ate the text after it) —
+        /// bench, Hebrew, 2026-10-03. So the format is translated here, left logical; the presenter's
+        /// call is held (<see cref="DeferForFormat"/>), and the sentence TMP made is presented in the
+        /// postfix like any written text.
+        /// </summary>
+        public static void TMPText_SetTextFormat_Prefix(object __instance, ref string __0)
+        {
+            if (!TranslatorCore.IsMainThread) { ProcessTextPatchPrefix(__instance, ref __0, "TMP"); return; }
+            // SetText(format, a) calls SetText(format, a, 0, … 0) on most TMP versions: the inner call
+            // carries the format already translated and must neither translate it again nor take the
+            // write over — the outer postfix presents the sentence (bench: an inner call left the
+            // sentence unpresented, its number backwards).
+            var outer = _formattedWrite;
+            if (outer != null && outer.Frame == Time.frameCount && EngineCollections.Same(outer.Instance, __instance)) { outer.Nested++; return; }
+            var write = new FormattedWrite { Instance = __instance, Frame = Time.frameCount };
+            _formattedWrite = write;
+            try { ProcessTextPatchPrefix(__instance, ref __0, "TMP"); }
+            finally { if (!write.Captured) _formattedWrite = null; }
+        }
+
+        /// <summary>
+        /// Holds the presentation of the formatted write in progress, when that is what the presenter
+        /// is asked to present: true, and the presenter leaves the format logical.
+        /// </summary>
+        internal static bool DeferForFormat(object instance, long compId, string font, FontOverrideRule rule, bool ownUi)
+        {
+            var write = _formattedWrite;
+            if (write == null || write.Captured || !EngineCollections.Same(write.Instance, instance)) return false;
+            write.Captured = true;
+            write.CompId = compId;
+            write.Font = font;
+            write.Rule = rule;
+            write.OwnUi = ownUi;
+            return true;
+        }
+
+        /// <summary>The sentence TMP made of the translated format and the game's numbers, presented.</summary>
+        public static void TMPText_SetTextFormat_Postfix(object __instance)
+        {
+            var write = _formattedWrite;
+            if (write == null || !EngineCollections.Same(write.Instance, __instance)) return;
+            if (write.Nested > 0) { write.Nested--; return; }
+            _formattedWrite = null;
+            try
+            {
+                string formatted = TmpFormattedText(__instance);
+                if (string.IsNullOrEmpty(formatted)) return;
+                string shown = formatted;
+                TextShaping.RtlPresenter.Present(__instance, write.CompId, ref shown, write.Font, write.Rule, write.OwnUi, knownLogical: true);
+                if (string.Equals(shown, formatted, StringComparison.Ordinal)) return;
+                BypassTextPrefix = true;
+                try { TypeHelper.SetText(__instance, shown); }
+                finally { BypassTextPrefix = false; }
+            }
+            catch (Exception ex) { Faults.Say("Patches.TMPText_SetTextFormat_Postfix", ex); }
+        }
+
+        // Where TMP keeps a formatted write: its text getter builds it from the backing array (TMP 2+);
+        // TMP 1.4 leaves the getter on the previous text and keeps it in m_input_CharArray.
+        private static MemberInfo _tmpInputChars, _tmpInputLength, _tmpBackingDirty;
+        private static bool _tmpFormattedResolved;
+
+        private static string TmpFormattedText(object tmp)
+        {
+            if (!_tmpFormattedResolved)
+            {
+                _tmpFormattedResolved = true;
+                const BindingFlags any = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+                var type = TypeHelper.TMP_TextType;
+                _tmpBackingDirty = Members.FieldOrProperty(type, "m_IsTextBackingStringDirty", any);
+                if (_tmpBackingDirty == null)
+                {
+                    _tmpInputChars = Members.FieldOrProperty(type, "m_input_CharArray", any);
+                    _tmpInputLength = Members.FieldOrProperty(type, "m_charArray_Length", any);
+                }
+            }
+            if (_tmpBackingDirty != null || _tmpInputChars == null || _tmpInputLength == null)
+                return TypeHelper.GetText(tmp);
+            object chars = Members.Get(_tmpInputChars, tmp);
+            int length = Convert.ToInt32(Members.Get(_tmpInputLength, tmp));
+            if (chars == null || length <= 0) return null;
+            var sb = new System.Text.StringBuilder(length);
+            for (int i = 0; i < length; i++) sb.Append(Convert.ToChar(EngineCollections.Item(chars, i)));
+            return sb.ToString();
         }
 
         /// <summary>

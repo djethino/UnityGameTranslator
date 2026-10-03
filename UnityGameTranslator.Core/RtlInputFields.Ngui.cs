@@ -167,7 +167,7 @@ namespace UnityGameTranslator.Core.TextShaping
                 int caret = s.Layout.BoundaryOf(__1);
                 if (__0 == __1 || __3 == null) { __0 = __1 = caret; return true; }
 
-                var pieces = DisplayPieces(s, Math.Min(__0, __1), Math.Max(__0, __1));
+                var pieces = DisplayPieces(s.Layout, s.Logical, Math.Min(__0, __1), Math.Max(__0, __1));
                 if (pieces.Count == 1 && (pieces[0].Key == caret || pieces[0].Value == caret))
                 {
                     __0 = pieces[0].Key == caret ? pieces[0].Value : pieces[0].Key;
@@ -200,14 +200,14 @@ namespace UnityGameTranslator.Core.TextShaping
         }
 
         /// <summary>The display gaps a typed range shows, merged where they touch: [start, end) pairs, left to right.</summary>
-        private static List<KeyValuePair<int, int>> DisplayPieces(NguiState s, int from, int to)
+        private static List<KeyValuePair<int, int>> DisplayPieces(RtlFieldLayout layout, string logical, int from, int to)
         {
             var spans = new List<KeyValuePair<int, int>>();
-            for (int i = Math.Max(0, from); i < Math.Min(to, s.Logical.Length); i++)
+            for (int i = Math.Max(0, from); i < Math.Min(to, logical.Length); i++)
             {
-                if (s.Logical[i] == '\n') continue;
-                int d = s.Layout.DisplayOf(i);
-                spans.Add(new KeyValuePair<int, int>(d, d + s.Layout.DisplayLengthOf(i)));
+                if (logical[i] == '\n') continue;
+                int d = layout.DisplayOf(i);
+                spans.Add(new KeyValuePair<int, int>(d, d + layout.DisplayLengthOf(i)));
             }
             spans.Sort((a, b) => a.Key.CompareTo(b.Key));
             var merged = new List<KeyValuePair<int, int>>();

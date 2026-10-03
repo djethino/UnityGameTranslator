@@ -565,6 +565,14 @@ namespace UnityGameTranslator.Core
                 patchCount += UIToolkitSupport.ApplyPatches(patcher);
             });
 
+            Group("UI Toolkit field right-to-left editing", () =>
+            {
+                // A UI Toolkit text field on Unity 6 — the same editing as the other engines' fields
+                // (RtlInputFields.UIToolkit): drawn presented, caret, clicks, arrows and selection
+                // mapped. Another engine's shape is not this one's: nothing placed, nothing said.
+                if (UIToolkitSupport.Available) patchCount += TextShaping.RtlInputFields.PatchUitkFields(patcher);
+            });
+
             // TextCore's decorations: the underline crash Unity fixed in later engines, carried where
             // it is missing, and highlights drawn from the wrong atlas (TextCoreDecorations).
             Group("TextCore decorations", () => patchCount += TextCoreDecorations.Patch(patcher));

@@ -185,6 +185,7 @@ namespace UnityGameTranslator.Core.TextShaping
             // Every game text goes out through here, with its font and still logical: the account
             // of what each font must be able to draw (FontManager.Coverage).
             FontManager.NoteTextDrawn(compId, settingsFontName, value);
+            string arrived = value;
 
             long tPerf = Perf.Start();
             try
@@ -451,7 +452,16 @@ namespace UnityGameTranslator.Core.TextShaping
                 // broken (isolated letters) exactly as before this pipeline existed.
                 TranslatorCore.LogWarning($"[RtlPresenter] compose failed, showing logical text: {ex.Message}");
             }
-            finally { Perf.Stop(Perf.RtlPresent, tPerf); }
+            finally
+            {
+                Perf.Stop(Perf.RtlPresent, tPerf);
+                // And as it is DRAWN: an Arabic letter goes out in its contextual form (ا as U+FE8D,
+                // ى as U+FEF0), a code point of its own the font must hold. Judged on the logical
+                // letters alone, a game font holding ا and not its forms passed, and its letters
+                // went missing from the screen without a word (a game's pixel font, 2026-10-03).
+                if (!string.Equals(value, arrived, StringComparison.Ordinal))
+                    FontManager.NoteTextDrawn(compId, settingsFontName, value);
+            }
         }
 
         /// <summary>

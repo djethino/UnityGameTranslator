@@ -19,7 +19,7 @@ namespace UnityGameTranslator.Core.UI
 
         /// <summary>One game font's problem.</summary>
         internal static string ForFont(FontManager.FontProblem problem) => problem.Missing > 0
-            ? $"Font \"{problem.Font}\" is missing {(string.IsNullOrEmpty(Language) ? "characters of this translation" : Language + " characters")}. Set a fallback font for it."
+            ? $"Font \"{problem.Font}\" is missing {(problem.MissingLetters && !string.IsNullOrEmpty(Language) ? Language + " characters" : "characters of this translation")}. Set a fallback font for it."
             : $"Font \"{problem.Font}\" draws {What} incorrectly. Set a fallback font for it.";
 
         /// <summary>Several game fonts at once — the Fonts tab names each, on its own row.</summary>

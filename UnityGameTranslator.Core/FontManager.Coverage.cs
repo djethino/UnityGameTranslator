@@ -50,6 +50,11 @@ namespace UnityGameTranslator.Core
                 string logical = TranslatorCore.TryGetPresentedLogical(text);
                 if (logical != null) source = TranslatorCore.SourceOfTranslation(logical);
             }
+            // A text the file holds in parts (assembled, translated line by line) has no single
+            // entry to find it by: the game's own text on this component is its source. Without it
+            // every character counted, the game's own "●" bullets reported as missing (2026-10-03).
+            if (source == null && compId != -1 && compId <= int.MaxValue && compId >= int.MinValue)
+                source = TranslatorScanner.GetOriginalText((int)compId);
             // <u>, <s>, <mark> in the translation: drawn by TMP with the "_" of the font it draws with.
             Coverage.NoteDecorated(settingsFontName, text);
             if (source != null && !_crossingFonts.Contains(settingsFontName))
@@ -137,6 +142,26 @@ namespace UnityGameTranslator.Core
             public string Font;
             public int Missing;       // characters of the translation the drawing font lacks
             public bool Unshaped;     // a text needing shaping (joined letters, conjuncts) shown without it
+            public bool MissingLetters; // some of them are written in the target language's own script
+        }
+
+        /// <summary>
+        /// Whether one of these characters is written in the script the target language is written
+        /// in — the catalogue's ISO 15924 code (Languages.ScriptOf) against Unicode's script of the
+        /// character. Only then does a notice say "Arabic characters": a bullet or a stray Japanese
+        /// word missing from a font is not the language missing (2026-10-03). A language written in
+        /// several scripts at once (Japanese: "Jpan") matches none, and the notice stays general.
+        /// </summary>
+        private static bool InTargetScript(List<int> missing)
+        {
+            string script = UnityGameTranslator.Common.Languages.ScriptOf(TranslatorCore.EffectiveTargetLanguage);
+            if (missing == null || string.IsNullOrEmpty(script)) return false;
+            foreach (int cp in missing)
+            {
+                string tag = TextShaping.ShapingTables.ScriptTags[TextShaping.ShapingCommon.ScriptOf(cp)];
+                if (tag != null && string.Equals(tag.TrimEnd(), script, StringComparison.OrdinalIgnoreCase)) return true;
+            }
+            return false;
         }
 
         /// <summary>Every game font that cannot display what the translation wrote with it, by name.</summary>
@@ -149,7 +174,7 @@ namespace UnityGameTranslator.Core
                 _missingByFont.TryGetValue(font, out var missing);
                 int count = missing?.Count ?? 0;
                 bool unshaped = Coverage.IsUnshaped(font);
-                if (count > 0 || unshaped) list.Add(new FontProblem { Font = font, Missing = count, Unshaped = unshaped });
+                if (count > 0 || unshaped) list.Add(new FontProblem { Font = font, Missing = count, Unshaped = unshaped, MissingLetters = InTargetScript(missing) });
             }
             list.Sort((a, b) => string.CompareOrdinal(a.Font, b.Font));
             return list;

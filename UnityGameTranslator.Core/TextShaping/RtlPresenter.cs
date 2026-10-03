@@ -459,7 +459,10 @@ namespace UnityGameTranslator.Core.TextShaping
                 // ى as U+FEF0), a code point of its own the font must hold. Judged on the logical
                 // letters alone, a game font holding ا and not its forms passed, and its letters
                 // went missing from the screen without a word (a game's pixel font, 2026-10-03).
-                if (!string.Equals(value, arrived, StringComparison.Ordinal))
+                // ⚠ Only for a translation: the game's own text is shaped too (a language list's
+                // "हिन्दी"), its drawn form is registered as ours, and counted it reported the game's
+                // own letters as missing from the translation (2026-10-03).
+                if (!string.Equals(value, arrived, StringComparison.Ordinal) && TranslatorCore.IsAlreadyTargetText(arrived))
                     FontManager.NoteTextDrawn(compId, settingsFontName, value);
             }
         }

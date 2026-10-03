@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
@@ -5512,6 +5512,7 @@ namespace UnityGameTranslator.Core
                     // The same TTF name-table resolution is already used for the
                     // Unity Font (LegacyRuntime) path — we mirror it here.
                     string resolvedName = font.name;
+                    string fileFamily = null, fileStyle = null;
                     try
                     {
                         string ttfPath = CustomFontLoader.FindSystemTtfPath(font.name);
@@ -5519,10 +5520,12 @@ namespace UnityGameTranslator.Core
                         {
                             var ttfBytes = System.IO.File.ReadAllBytes(ttfPath);
                             var parser = new Rasterizer.TtfParser(ttfBytes);
+                            fileFamily = parser.Metrics.Family;
+                            fileStyle = parser.Metrics.Style;
                             if (!string.IsNullOrEmpty(parser.Metrics.FontName))
                             {
                                 resolvedName = parser.Metrics.FontName;
-                                TranslatorCore.LogDebug($"[FontManager] Resolved family name '{font.name}' -> '{resolvedName}' from TTF name table");
+                                TranslatorCore.LogDebug($"[FontManager] Resolved family name '{font.name}' -> '{resolvedName}' from TTF name table (family '{fileFamily}', style '{fileStyle}')");
                             }
                         }
                     }
@@ -5532,8 +5535,13 @@ namespace UnityGameTranslator.Core
                         TranslatorCore.LogDebug($"[FontManager] TTF family name lookup failed for '{font.name}': {ttfEx.GetType().Name}: {ttfEx.Message}");
                     }
 
-                    // Parse resolved name to extract family and style
-                    var (familyName, styleName) = ParseFontName(resolvedName);
+                    // The family and style the file itself declares (name ids 16/17, else 1/2) — what the
+                    // system lists the font under. Guessed from the full name only when the file was not
+                    // read: "Adobe Arabic Regular" split on a list of known suffixes stayed whole, and no
+                    // family of that name exists.
+                    var (familyName, styleName) = !string.IsNullOrEmpty(fileFamily)
+                        ? (fileFamily, string.IsNullOrEmpty(fileStyle) ? "Regular" : fileStyle)
+                        : ParseFontName(resolvedName);
 
                     // Try with parsed family/style first
                     TranslatorCore.LogDebug($"[FontManager] Trying CreateFontAsset(\"{familyName}\", \"{styleName}\", 90)");

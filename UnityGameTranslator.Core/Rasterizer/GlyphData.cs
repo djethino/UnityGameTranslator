@@ -61,6 +61,8 @@ namespace UnityGameTranslator.Core.Rasterizer
         public float XHeight = float.NaN;
         public float StrikeoutPosition = float.NaN;
         public string FontName;
+        /// <summary>The family and style the system knows the font by (name ids 16/17, else 1/2); null when the file does not say.</summary>
+        public string Family, Style;
 
         /// <summary>Every family (ids 1, 16) and full name (id 4) the file carries, first seen first.</summary>
         public System.Collections.Generic.List<string> Names = new System.Collections.Generic.List<string>();

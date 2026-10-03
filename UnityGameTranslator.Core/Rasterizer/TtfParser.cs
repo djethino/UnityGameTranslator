@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
@@ -221,6 +221,8 @@ namespace UnityGameTranslator.Core.Rasterizer
                 UnderlinePosition = Metrics?.UnderlinePosition ?? 0,
                 UnderlineThickness = Metrics?.UnderlineThickness ?? 0,
                 FontName = Metrics?.FontName ?? "Unknown",
+                Family = Metrics?.Family,
+                Style = Metrics?.Style,
                 Names = Metrics?.Names ?? new System.Collections.Generic.List<string>()
             };
 
@@ -492,6 +494,11 @@ namespace UnityGameTranslator.Core.Rasterizer
             string familyName = null;
             string fullName = null;
             bool familyEnglish = false, fullEnglish = false;
+            // The family and style an engine asks the system for, typographic first (ids 16, 17 —
+            // "Adobe Arabic" / "Regular"), else the legacy pair (ids 1, 2). The full name (id 4) is
+            // "Adobe Arabic Regular", which no font lookup by family finds.
+            var preferred = new string[18];
+            var preferredEnglish = new bool[18];
 
             for (int i = 0; i < count; i++)
             {
@@ -502,7 +509,7 @@ namespace UnityGameTranslator.Core.Rasterizer
                 int length = ReadUInt16(nameRecOff + 8);
                 int nameOffset = ReadUInt16(nameRecOff + 10);
 
-                if (nameID != 1 && nameID != 4 && nameID != 16)
+                if (nameID != 1 && nameID != 2 && nameID != 4 && nameID != 16 && nameID != 17)
                     continue;
 
                 string name = null;
@@ -522,18 +529,22 @@ namespace UnityGameTranslator.Core.Rasterizer
                     // Every family and full name the file carries, on any platform: an engine that
                     // looks a font up by name may have read any of them (a file can carry its full
                     // name for Mac only, and only a typographic family, id 16, for Windows).
+                    int languageID = ReadUInt16(nameRecOff + 4);
+                    bool english = (platformID == 3 && languageID == 0x409) || (platformID == 1 && languageID == 0);
+                    if (preferred[nameID] == null || (english && !preferredEnglish[nameID])) { preferred[nameID] = name; preferredEnglish[nameID] = english; }
+                    if (nameID == 2 || nameID == 17) continue;   // a style is no name a font is known by
                     if (!Metrics.Names.Contains(name)) Metrics.Names.Add(name);
 
                     // English first (Windows 0x409, Mac 0): the first record can be any language —
                     // Tahoma Bold's full name came out "Tahoma Negreta" (Catalan, 2026-10-02).
-                    int languageID = ReadUInt16(nameRecOff + 4);
-                    bool english = (platformID == 3 && languageID == 0x409) || (platformID == 1 && languageID == 0);
                     if (nameID == 1 && (familyName == null || (english && !familyEnglish))) { familyName = name; familyEnglish = english; }
                     else if (nameID == 4 && (fullName == null || (english && !fullEnglish))) { fullName = name; fullEnglish = english; }
                 }
             }
 
             Metrics.FontName = fullName ?? familyName ?? "Unknown";
+            Metrics.Family = preferred[16] ?? preferred[1];
+            Metrics.Style = preferred[16] != null ? preferred[17] ?? preferred[2] : preferred[2];
         }
 
         #endregion

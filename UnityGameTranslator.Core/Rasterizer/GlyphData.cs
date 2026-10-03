@@ -55,6 +55,11 @@ namespace UnityGameTranslator.Core.Rasterizer
         public float LineGap;
         public float UnderlinePosition;
         public float UnderlineThickness;
+        // The heights a text is set against, from the font itself (TtfParser.MeasureHeights): NaN when
+        // the font does not say — never a guessed share of the ascender.
+        public float CapHeight = float.NaN;
+        public float XHeight = float.NaN;
+        public float StrikeoutPosition = float.NaN;
         public string FontName;
 
         /// <summary>Every family (ids 1, 16) and full name (id 4) the file carries, first seen first.</summary>

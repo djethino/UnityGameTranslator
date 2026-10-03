@@ -61,6 +61,13 @@ namespace UnityGameTranslator.Core
             public float descender { get; set; }
             public float underlineY { get; set; }
             public float underlineThickness { get; set; }
+            // From the font file (TtfParser.MeasureHeights), in em; null when the font does not say,
+            // or when a cache written before them is read (filled again from the file: BackfillHeights).
+            public float? capHeight { get; set; }
+            public float? xHeight { get; set; }
+            public float? strikeoutY { get; set; }
+            // These lines were read from the font file (false in a cache written before them).
+            public bool heightsRead { get; set; }
         }
 
         [Serializable]
@@ -160,6 +167,31 @@ namespace UnityGameTranslator.Core
         /// the user re-rasterizes.
         /// </summary>
         /// <param name="maxAtlasSize">The hardware cap, read by the caller on the main thread: this runs in the background.</param>
+        /// <summary>
+        /// A cache written before the font's own lines were read (MetricsInfo.heightsRead): read
+        /// them once from the font file — the metrics only, no re-rasterizing — and keep them in the
+        /// cache. A font file that cannot be read leaves them unknown (0, as Unity), and says so.
+        /// </summary>
+        private static void BackfillHeights(MsdfAtlasData atlasData, CustomFontInfo fontInfo, string fontName, string jsonPath)
+        {
+            var metrics = atlasData.metrics;
+            if (metrics == null || metrics.heightsRead || string.IsNullOrEmpty(fontInfo.TtfPath) || !File.Exists(fontInfo.TtfPath)) return;
+            try
+            {
+                var m = new Rasterizer.TtfParser(File.ReadAllBytes(fontInfo.TtfPath)).Metrics;
+                float upm = m.UnitsPerEm;
+                if (upm <= 0f) return;
+                metrics.underlineY = m.UnderlinePosition / upm;
+                metrics.underlineThickness = m.UnderlineThickness / upm;
+                metrics.capHeight = Rasterizer.TtfFontPipeline.Em(m.CapHeight, upm);
+                metrics.xHeight = Rasterizer.TtfFontPipeline.Em(m.XHeight, upm);
+                metrics.strikeoutY = Rasterizer.TtfFontPipeline.Em(m.StrikeoutPosition, upm);
+                metrics.heightsRead = true;
+                File.WriteAllText(jsonPath, JsonConvert.SerializeObject(atlasData, Formatting.None));
+            }
+            catch (Exception ex) { Faults.Say("CustomFontLoader.BackfillHeights", ex, fontName); }
+        }
+
         private static bool TryLoadGenCache(CustomFontInfo fontInfo, string cacheDir, string fontName, int maxAtlasSize)
         {
             if (string.IsNullOrEmpty(cacheDir)) return false;
@@ -221,6 +253,8 @@ namespace UnityGameTranslator.Core
                         return false;
                     }
                 }
+
+                BackfillHeights(atlasData, fontInfo, fontName, jsonPath);
 
                 int atlasCount = atlasData.atlases?.Count ?? 1;
 
@@ -2278,6 +2312,34 @@ namespace UnityGameTranslator.Core
         /// here), and on failure the caller keeps the TMP_Character.scale compensation.
         /// Returns true only when the write is VERIFIED by reading pointSize back.
         /// </summary>
+        /// <summary>
+        /// The lines a text is set against, in the units of the atlas point size, from the font's
+        /// own metrics — as Unity's FontEngine writes them in the TMP assets it makes (bench,
+        /// FaceInfoProbe, 2026-10-03), so a font of ours sits where a game's own would:
+        /// cap and mean lines are the font's cap height and x-height, 0 when it gives none (as
+        /// Unity); the underline is the post table's, its offset that position minus half the
+        /// thickness (FreeType's centre of the stroke, which Unity's FontEngine hands TMP as the
+        /// offset — measured on Arial: −12.83 at 90 pt); the strikethrough is the font's own OS/2
+        /// position, else Unity's rule (mean line / 2.5). Nothing guessed from the ascender.
+        /// </summary>
+        internal struct FaceLines
+        {
+            public float Cap, Mean, Underline, Thickness, Strikethrough;
+
+            public static FaceLines Of(MetricsInfo m, float pointSize)
+            {
+                var l = new FaceLines
+                {
+                    Cap = (m.capHeight ?? 0f) * pointSize,
+                    Mean = (m.xHeight ?? 0f) * pointSize,
+                    Thickness = m.underlineThickness * pointSize,
+                };
+                l.Underline = (m.underlineY - m.underlineThickness / 2f) * pointSize;
+                l.Strikethrough = m.strikeoutY.HasValue ? m.strikeoutY.Value * pointSize : l.Mean / 2.5f;
+                return l;
+            }
+        }
+
         private static bool TryRewriteModernFaceInfo(object fontAsset, CustomFontInfo fontInfo, float pointSize)
         {
             try
@@ -2323,18 +2385,20 @@ namespace UnityGameTranslator.Core
                 Set("m_Scale", "scale", 1f);
                 Set("m_LineHeight", "lineHeight", metrics.lineHeight * pointSize);
                 Set("m_AscentLine", "ascentLine", ascent);
-                Set("m_CapLine", "capLine", ascent * 0.8f);
-                Set("m_MeanLine", "meanLine", ascent * 0.5f);
+                var lines = FaceLines.Of(metrics, pointSize);
+                TranslatorCore.LogDebug($"[CustomFontLoader] {fontInfo.Name} lines at {pointSize}: cap {lines.Cap:F2}, mean {lines.Mean:F2}, underline {lines.Underline:F2} x {lines.Thickness:F2}, strikethrough {lines.Strikethrough:F2}");
+                Set("m_CapLine", "capLine", lines.Cap);
+                Set("m_MeanLine", "meanLine", lines.Mean);
                 Set("m_Baseline", "baseline", 0f);
                 Set("m_DescentLine", "descentLine", descent);
                 Set("m_SuperscriptOffset", "superscriptOffset", ascent);
                 Set("m_SuperscriptSize", "superscriptSize", 0.5f);
-                Set("m_SubscriptOffset", "subscriptOffset", descent * 0.5f);
+                Set("m_SubscriptOffset", "subscriptOffset", descent);
                 Set("m_SubscriptSize", "subscriptSize", 0.5f);
-                Set("m_UnderlineOffset", "underlineOffset", (metrics.underlineY != 0 ? metrics.underlineY : -0.1f) * pointSize);
-                Set("m_UnderlineThickness", "underlineThickness", (metrics.underlineThickness != 0 ? metrics.underlineThickness : 0.05f) * pointSize);
+                Set("m_UnderlineOffset", "underlineOffset", lines.Underline);
+                Set("m_UnderlineThickness", "underlineThickness", lines.Thickness);
+                Set("m_StrikethroughOffset", "strikethroughOffset", lines.Strikethrough);
                 Set("m_TabWidth", "tabWidth", spaceAdvance);
-                // strikethrough left as-is: ReadFontAssetDefinition fills it from capLine when 0
 
                 // FaceInfo is a STRUCT: the reads above returned a boxed copy — write it back.
                 if (faceProp != null && faceProp.CanWrite)
@@ -2449,7 +2513,7 @@ namespace UnityGameTranslator.Core
                 // Set fields using reflection (names may vary between TMP versions)
                 float ascender = metrics.ascender * pointSize;
                 float descender = metrics.descender * pointSize;
-                float capHeight = ascender * 0.8f; // Approximate cap height
+                var lines = FaceLines.Of(metrics, pointSize);
 
                 SetFieldValue(faceInfo, "Name", fontInfo.Name);
                 SetFieldValue(faceInfo, "PointSize", pointSize);
@@ -2458,14 +2522,15 @@ namespace UnityGameTranslator.Core
                 SetFieldValue(faceInfo, "LineHeight", metrics.lineHeight * pointSize);
                 SetFieldValue(faceInfo, "Baseline", 0f); // Baseline is reference point, typically 0
                 SetFieldValue(faceInfo, "Ascender", ascender);
-                SetFieldValue(faceInfo, "CapHeight", capHeight);
+                SetFieldValue(faceInfo, "CapHeight", lines.Cap);
                 SetFieldValue(faceInfo, "Descender", descender);
                 SetFieldValue(faceInfo, "CenterLine", (ascender + descender) / 2f);
                 SetFieldValue(faceInfo, "SuperscriptOffset", ascender);
-                SetFieldValue(faceInfo, "SubscriptOffset", descender * 0.5f);
+                SetFieldValue(faceInfo, "SubscriptOffset", descender);
                 SetFieldValue(faceInfo, "SubSize", 0.5f);
-                SetFieldValue(faceInfo, "Underline", (metrics.underlineY != 0 ? metrics.underlineY : -0.1f) * pointSize);
-                SetFieldValue(faceInfo, "UnderlineThickness", (metrics.underlineThickness != 0 ? metrics.underlineThickness : 0.05f) * pointSize);
+                SetFieldValue(faceInfo, "Underline", lines.Underline);
+                SetFieldValue(faceInfo, "UnderlineThickness", lines.Thickness);
+                SetFieldValue(faceInfo, "strikethrough", lines.Strikethrough);
                 SetFieldValue(faceInfo, "TabWidth", pointSize * 4f); // 4 spaces typically
                 SetFieldValue(faceInfo, "Padding", atlas.distanceRange);
                 SetFieldValue(faceInfo, "AtlasWidth", (float)atlas.width);

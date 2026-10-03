@@ -40,6 +40,9 @@ namespace UnityGameTranslator.Core.Rasterizer
         /// </summary>
         public const int PipelineVersion = 6;
 
+        /// <summary>A height in font units as a share of the em, or null when the font does not give it (NaN).</summary>
+        internal static float? Em(float units, float upm) => float.IsNaN(units) || upm <= 0f ? (float?)null : units / upm;
+
         /// <summary>
         /// Private-use codepoints handed to the glyphs no codepoint maps to, in glyph-index
         /// order, skipping any the font's own cmap occupies — so the assignment is stable for
@@ -363,7 +366,11 @@ namespace UnityGameTranslator.Core.Rasterizer
                     ascender = metrics.Ascender / upm,
                     descender = metrics.Descender / upm,
                     underlineY = metrics.UnderlinePosition / upm,
-                    underlineThickness = metrics.UnderlineThickness / upm
+                    underlineThickness = metrics.UnderlineThickness / upm,
+                    capHeight = Em(metrics.CapHeight, upm),
+                    xHeight = Em(metrics.XHeight, upm),
+                    strikeoutY = Em(metrics.StrikeoutPosition, upm),
+                    heightsRead = true
                 },
                 glyphs = glyphInfos,
                 kerning = null // Could be added later from kern/GPOS table

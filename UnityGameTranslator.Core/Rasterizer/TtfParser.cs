@@ -225,6 +225,47 @@ namespace UnityGameTranslator.Core.Rasterizer
             };
 
             GlyphCount = _numGlyphs;
+            MeasureHeights();
+        }
+
+        /// <summary>
+        /// Cap height, x-height and strikeout position, from the font, as Unity's FontEngine reads
+        /// them for its own TMP assets (measured on the bench, FaceInfoProbe, 2026-10-03): the cap
+        /// line is the height of "H" and the mean line that of "x" — the OpenType definitions of both
+        /// (OS/2 sCapHeight / sxHeight) — measured on the glyphs, the OS/2 values where the font has
+        /// no such glyph; the strikeout is the font's own (OS/2 yStrikeoutPosition, every version).
+        /// What the font does not say stays NaN. OS/2 is read within its length: a table shorter
+        /// than its version claims exists among installed fonts.
+        /// </summary>
+        private void MeasureHeights()
+        {
+            float os2Cap = float.NaN, os2X = float.NaN;
+            if (_tables.TryGetValue("OS/2", out var os2))
+            {
+                int version = os2.Length >= 2 ? ReadUInt16(os2.Offset) : -1;
+                if (os2.Length >= 30)
+                {
+                    short strikeout = ReadInt16(os2.Offset + 28);
+                    if (strikeout != 0) Metrics.StrikeoutPosition = strikeout;
+                }
+                if (version >= 2 && os2.Length >= 90)
+                {
+                    short x = ReadInt16(os2.Offset + 86), cap = ReadInt16(os2.Offset + 88);
+                    if (x > 0) os2X = x;
+                    if (cap > 0) os2Cap = cap;
+                }
+            }
+            Metrics.CapHeight = GlyphTop('H') ?? os2Cap;
+            Metrics.XHeight = GlyphTop('x') ?? os2X;
+        }
+
+        /// <summary>The top of a character's glyph above the baseline, in font units; null when the font has no outline for it.</summary>
+        private float? GlyphTop(int unicode)
+        {
+            if (!HasCodepoint(unicode)) return null;
+            var outline = GetGlyphOutline(unicode);
+            if (outline == null || outline.YMax <= 0) return null;
+            return outline.YMax;
         }
 
         #endregion
@@ -420,26 +461,18 @@ namespace UnityGameTranslator.Core.Rasterizer
 
         private void ParsePost()
         {
+            // No post table, or one too short: the font gives no underline, and none is invented
+            // (Unity's FontEngine reads 0 there too). A thickness of 0 stays 0, for the same reason.
             TableRecord rec;
-            if (!_tables.TryGetValue("post", out rec))
-            {
-                if (Metrics == null)
-                    Metrics = new FontMetrics();
-                Metrics.UnderlinePosition = -_unitsPerEm * 0.1f;
-                Metrics.UnderlineThickness = _unitsPerEm * 0.05f;
-                return;
-            }
-
             if (Metrics == null)
                 Metrics = new FontMetrics();
+            if (!_tables.TryGetValue("post", out rec) || rec.Length < 12)
+                return;
 
-            // underlinePosition at offset 8 (Fixed 16.16)
+            // underlinePosition at offset 8 (FWORD)
             Metrics.UnderlinePosition = ReadInt16(rec.Offset + 8);
-            // underlineThickness at offset 10 (Fixed 16.16)
+            // underlineThickness at offset 10 (FWORD)
             Metrics.UnderlineThickness = ReadInt16(rec.Offset + 10);
-
-            if (Metrics.UnderlineThickness == 0)
-                Metrics.UnderlineThickness = _unitsPerEm * 0.05f;
         }
 
         private void ParseName()

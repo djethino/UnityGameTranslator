@@ -38,6 +38,16 @@ namespace UnityGameTranslator.Core
         /// <summary>UnityEngine.UI.InputField</summary>
         public static Type UI_InputFieldType { get; private set; }
 
+        /// <summary>
+        /// NGUI's UIInput, when the game has it. Its one label shows what was typed — or, while
+        /// nothing is, the field's hint (defaultText), which is the game's own text and translated like
+        /// any. So it is an input for the typed-text mirror (<see cref="GetInputFieldText"/>), never a
+        /// textComponent excluded whole (<see cref="GetInputFieldTextComponent"/> answers null for it).
+        /// </summary>
+        public static Type NGUI_InputType { get; private set; }
+        private static PropertyInfo NGUI_Input_ValueProp;
+        private static MemberInfo NGUI_Input_Selection;
+
         /// <summary>UnityEngine.Font</summary>
         public static Type FontType { get; private set; }
 
@@ -135,6 +145,8 @@ namespace UnityGameTranslator.Core
                 UI_TextType = FindType("UnityEngine.UI.Text");
             if (UI_InputFieldType == null)
                 UI_InputFieldType = FindType("UnityEngine.UI.InputField");
+            if (NGUI_InputType == null)
+                NGUI_InputType = FindNguiInput();
 
             // TextMesh - legacy 3D text
             if (TextMeshType == null)
@@ -250,12 +262,55 @@ namespace UnityGameTranslator.Core
                 UI_InputField_TextComponentProp = UI_InputFieldType.GetProperty("textComponent", pubInst);
                 UI_InputField_TextProp = UI_InputFieldType.GetProperty("text", pubInst);
             }
+
+            // NGUI UIInput.value (what was typed) + UIInput.selection (the field being typed in)
+            if (NGUI_InputType != null)
+            {
+                NGUI_Input_ValueProp = NGUI_InputType.GetProperty("value", pubInst);
+                var pubStatic = BindingFlags.Public | BindingFlags.Static;
+                NGUI_Input_Selection = (MemberInfo)NGUI_InputType.GetField("selection", pubStatic)
+                                       ?? NGUI_InputType.GetProperty("selection", pubStatic);
+            }
+        }
+
+        /// <summary>
+        /// NGUI's UIInput, recognised by what it is rather than by its name alone — "UIInput" is a
+        /// name any game may give a class of its own: a component whose <c>label</c> is a UILabel and
+        /// whose <c>value</c> is a string. IL2CPP interop puts it under the Il2Cpp namespace.
+        /// </summary>
+        private static Type FindNguiInput()
+        {
+            foreach (string name in new[] { "UIInput", "Il2Cpp.UIInput" })
+            {
+                var type = AssemblyTypes.Find(name);
+                if (type == null || !typeof(Component).IsAssignableFrom(type)) continue;
+                var pubInst = BindingFlags.Public | BindingFlags.Instance;
+                Type labelType = type.GetField("label", pubInst)?.FieldType ?? type.GetProperty("label", pubInst)?.PropertyType;
+                if (labelType == null || labelType.Name != "UILabel") continue;
+                if (type.GetProperty("value", pubInst)?.PropertyType != typeof(string)) continue;
+                return type;
+            }
+            return null;
+        }
+
+        /// <summary>The NGUI field being typed in (UIInput.selection), or null.</summary>
+        public static object NguiSelectedInput()
+        {
+            if (NGUI_Input_Selection == null) return null;
+            try
+            {
+                object selected = NGUI_Input_Selection is FieldInfo field ? field.GetValue(null)
+                                : ((PropertyInfo)NGUI_Input_Selection).GetValue(null, null);
+                return selected != null && IsUnityObjectAlive(selected) ? selected : null;
+            }
+            // NGUI's own static, reached by reflection: said.
+            catch (Exception ex) { Faults.Say("TypeHelper.NguiSelectedInput", ex); return null; }
         }
 
         private static void LogResults()
         {
             TranslatorCore.LogInfo($"[TypeHelper] Types resolved: TMP_Text={TMP_TextType != null}, UI.Text={UI_TextType != null}, TextMesh={TextMeshType != null}");
-            TranslatorCore.LogInfo($"[TypeHelper] TMP_FontAsset={TMP_FontAssetType != null}, TMP_InputField={TMP_InputFieldType != null}, UI.InputField={UI_InputFieldType != null}");
+            TranslatorCore.LogInfo($"[TypeHelper] TMP_FontAsset={TMP_FontAssetType != null}, TMP_InputField={TMP_InputFieldType != null}, UI.InputField={UI_InputFieldType != null}, NGUI UIInput={NGUI_InputType != null}");
         }
 
         #region Type Helper Methods
@@ -936,7 +991,7 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// Find an InputField or TMP_InputField on this component's GameObject or any
+        /// Find an InputField, TMP_InputField or NGUI UIInput on this component's GameObject or any
         /// parent. Manual transform walk, works on inactive hierarchies.
         /// </summary>
         public static object FindParentInputField(Component component)
@@ -957,6 +1012,11 @@ namespace UnityGameTranslator.Core
                     if (UI_InputFieldType != null)
                     {
                         var field = GetComponentOfType(t, UI_InputFieldType);
+                        if (field != null && IsUnityObjectAlive(field)) return field;
+                    }
+                    if (NGUI_InputType != null)
+                    {
+                        var field = GetComponentOfType(t, NGUI_InputType);
                         if (field != null && IsUnityObjectAlive(field)) return field;
                     }
                     t = t.parent;
@@ -982,6 +1042,8 @@ namespace UnityGameTranslator.Core
                     prop = TMP_InputField_TextProp;
                 else if (UI_InputFieldType != null && UI_InputFieldType.IsAssignableFrom(type))
                     prop = UI_InputField_TextProp;
+                else if (NGUI_InputType != null && NGUI_InputType.IsAssignableFrom(type))
+                    prop = NGUI_Input_ValueProp;
                 if (prop == null)
                     prop = type.GetProperty("text", BindingFlags.Public | BindingFlags.Instance);
 
@@ -1002,6 +1064,10 @@ namespace UnityGameTranslator.Core
             try
             {
                 var type = inputField.GetType();
+                // NGUI's label is the typed text only while something is typed; empty, it shows the
+                // hint, which is translated. The mirror check (GetInputFieldText) is what keeps the
+                // typed text untranslated there — see NGUI_InputType.
+                if (NGUI_InputType != null && NGUI_InputType.IsAssignableFrom(type)) return null;
                 PropertyInfo prop = null;
                 if (TMP_InputFieldType != null && TMP_InputFieldType.IsAssignableFrom(type))
                     prop = TMP_InputField_TextComponentProp;

@@ -116,7 +116,7 @@ namespace UnityGameTranslator.Core
         Translated,
         /// <summary>Leave this setter alone entirely.</summary>
         Stop,
-        /// <summary>Nothing to translate, but the component still needs its scale re-asserted.</summary>
+        /// <summary>Nothing to translate, but the component still needs its scale re-asserted and its text presented (typed text, a re-set translation).</summary>
         StopButRescale,
     }
 

@@ -1107,6 +1107,11 @@ namespace UnityGameTranslator.Core
                     catch (Exception ex) { Faults.Say("Patches.GenericText_GetText font", ex, typeInfo.Name); }
                 }
 
+                // What somebody typed reads back as typed: the setter keeps it (RouteTextBody), and a
+                // translation handed out here was written back by whoever read it — the scanner
+                // first — so a typed line of the game turned into its translation in the field.
+                if (IsUserInputMirror(component, __result)) return;
+
                 __result = TranslatorCore.TranslateTextWithTracking(__result, component, isOwnUI);
             }
             // Inside the game's own getter: the text is returned as it is, and it is said.
@@ -2055,7 +2060,9 @@ namespace UnityGameTranslator.Core
         private static bool MatchesTypedText(string candidate, string inputText)
         {
             if (string.IsNullOrEmpty(inputText)) return false;
-            inputText = inputText.Trim();
+            // Compared as the candidate is: without markup. A field that keeps rich text (NGUI's
+            // label shows its tags' effect) holds "<b>x</b>" for a label read as "x".
+            inputText = Markup.Strip(inputText).Trim();
             if (inputText.Length == 0) return false;
             if (string.Equals(candidate, inputText, StringComparison.Ordinal)) return true;
             // Case-insensitive only for longer values (games display seeds uppercased);
@@ -2074,25 +2081,25 @@ namespace UnityGameTranslator.Core
 
             try
             {
+                object input = null;
                 var eventSystem = UnityEngine.EventSystems.EventSystem.current;
                 var selected = eventSystem != null ? eventSystem.currentSelectedGameObject : null;
-                if (selected != null)
+                if (selected != null) input = TypeHelper.FindParentInputField(selected.transform);
+                // NGUI keeps its own focus, outside the event system.
+                if (input == null) input = TypeHelper.NguiSelectedInput();
+                if (input != null)
                 {
-                    object input = TypeHelper.FindParentInputField(selected.transform);
-                    if (input != null)
+                    string typed = TypeHelper.GetInputFieldText(input);
+                    if (!string.IsNullOrEmpty(typed))
                     {
-                        string typed = TypeHelper.GetInputFieldText(input);
-                        if (!string.IsNullOrEmpty(typed))
-                        {
-                            _focusedInputTextThisFrame = typed;
-                            // ⚠ The keystroke clock moves only when the CONTENT moves. Holding
-                            // focus is not typing, and treating it as such is what kept the
-                            // external mirror armed for as long as a box was selected.
-                            if (typed != _lastFocusedInputText)
-                                _lastTypedChangeTime = Time.realtimeSinceStartup;
-                            _lastFocusedInputText = typed;
-                            _lastFocusedInputTime = Time.realtimeSinceStartup;
-                        }
+                        _focusedInputTextThisFrame = typed;
+                        // ⚠ The keystroke clock moves only when the CONTENT moves. Holding
+                        // focus is not typing, and treating it as such is what kept the
+                        // external mirror armed for as long as a box was selected.
+                        if (typed != _lastFocusedInputText)
+                            _lastTypedChangeTime = Time.realtimeSinceStartup;
+                        _lastFocusedInputText = typed;
+                        _lastFocusedInputTime = Time.realtimeSinceStartup;
                     }
                 }
             }
@@ -3019,10 +3026,13 @@ namespace UnityGameTranslator.Core
             // state for the component: char-by-char typing has the exact
             // signature of a typewriting effect, and a one-frame-late mirror
             // must not leave a stale prefix behind for the stabilizer to queue.
+            // Not translated, but still PRESENTED: typed Arabic is drawn joined and right to left
+            // like any (an NGUI field's own label lands here — its hint is the game's text, so it
+            // is not excluded whole as a uGUI/TMP textComponent is).
             if (IsUserInputMirror(instance, textValue))
             {
                 TranslatorCore.Router.ForgetTyped(compId);
-                return RouteOutcome.Stop;
+                return RouteOutcome.StopButRescale;
             }
 
             // Everything else — assembly in parts, reveals, read-backs, the lookup — is decided by

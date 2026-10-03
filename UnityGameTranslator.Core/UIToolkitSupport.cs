@@ -2671,6 +2671,10 @@ namespace UnityGameTranslator.Core
         // TryBreakLines must measure against the width rather than trust that shortcut.
         private static readonly ConditionalWeakTable<object, object[]> _rtlWrapRestoring =
             new ConditionalWeakTable<object, object[]>();
+        // [0] = VisualElement.languageDirection before OUR right-to-left (SetRtlDirection).
+        private static readonly ConditionalWeakTable<object, object[]> _rtlDirectionOriginal =
+            new ConditionalWeakTable<object, object[]>();
+        private static PropertyInfo _languageDirectionProp;  // VisualElement.languageDirection (Unity 6+, else null)
 
         private static void EnsureRtlPlumbing()
         {
@@ -2698,6 +2702,7 @@ namespace UnityGameTranslator.Core
                 break;
             }
             _contentRectProp = Members.Property(VisualElementType, "contentRect", pubInst);
+            _languageDirectionProp = Members.Property(VisualElementType, "languageDirection", pubInst);
 
             var styleType = _styleProp?.PropertyType;
             _styleTextAlignProp = Members.Property(styleType, "unityTextAlign", pubInst);
@@ -3127,11 +3132,46 @@ namespace UnityGameTranslator.Core
             _rtlWrapRestoring.Add(element, wrap);
         }
 
-        /// <summary>Put back the inline styles an element wore before our RTL adjustments.</summary>
-        internal static void RestoreRtlAdjustments(object element)
+        /// <summary>
+        /// An element the Advanced generator draws: its paragraph read right to left. The ATG does
+        /// the bidi itself but takes the paragraph's direction from the element
+        /// (VisualElement.languageDirection, Inherit → left to right): a right-to-left sentence came
+        /// out with its words in order and its final period on the right, the side it starts on
+        /// (bench, Hebrew and Arabic, 6000.3.6, 2026-10-03). The same paragraph direction the mod
+        /// gives every right-to-left text it composes itself (RtlComposer: paragraph level RTL). The
+        /// element's own value is kept and put back when its text goes back to left to right; only
+        /// written when it differs — a write re-lays the element out.
+        /// </summary>
+        internal static void SetRtlDirection(object element)
+        {
+            EnsureRtlPlumbing();
+            if (_languageDirectionProp == null) return;   // no ATG on this engine either
+            try
+            {
+                object current = _languageDirectionProp.GetValue(element, null);
+                if (!_rtlDirectionOriginal.TryGetValue(element, out _))
+                    _rtlDirectionOriginal.Add(element, new[] { current });
+                object rtl = Enum.Parse(_languageDirectionProp.PropertyType, "RTL");
+                if (!Equals(current, rtl)) _languageDirectionProp.SetValue(element, rtl, null);
+            }
+            catch (Exception ex) { Faults.Say("UIToolkit.SetRtlDirection", ex); }
+        }
+
+        /// <summary>
+        /// Put back what an element wore before our RTL adjustments — its inline styles, and its
+        /// paragraph direction unless <paramref name="keepDirection"/> (an element the ATG still
+        /// draws right to left: put back and set again at each text, it would re-lay out each time).
+        /// </summary>
+        internal static void RestoreRtlAdjustments(object element, bool keepDirection = false)
         {
             try
             {
+                if (!keepDirection && _rtlDirectionOriginal.TryGetValue(element, out var direction))
+                {
+                    _rtlDirectionOriginal.Remove(element);
+                    if (direction[0] != null && !Equals(_languageDirectionProp?.GetValue(element, null), direction[0]))
+                        _languageDirectionProp?.SetValue(element, direction[0], null);
+                }
                 var style = _styleProp?.GetValue(element, null);
                 if (style == null) return;
                 if (_rtlAlignOriginal.TryGetValue(element, out var align))

@@ -364,12 +364,14 @@ namespace UnityGameTranslator.Core.TextShaping
                 }
 
                 // UI Toolkit: an ATG element does bidi natively — presenting on top of it would
-                // double-process. The standard generator gets the measured two-pass.
+                // double-process; it is only told that its paragraph reads right to left. The
+                // standard generator gets the measured two-pass.
                 if (UIToolkitSupport.IsTextElementInstance(instance))
                 {
                     if (UIToolkitSupport.IsAtgActive(instance))
                     {
-                        UIToolkitSupport.RestoreRtlAdjustments(instance);
+                        UIToolkitSupport.RestoreRtlAdjustments(instance, keepDirection: true);
+                        UIToolkitSupport.SetRtlDirection(instance);
                         Log(compId, "native/atg", value, value);
                         return;
                     }

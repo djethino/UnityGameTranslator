@@ -370,15 +370,11 @@ namespace UnityGameTranslator.Core.TextShaping
                         Log(compId, "native/atg", value, value);
                         return;
                     }
-                    // 🔴 CONDITIONAL crash guard, not a ban (user-arbitrated 2026-09-02). Unity's
-                    // tracked bug: an underline spanning glyphs served by a FALLBACK font asset
-                    // dies in DrawUnderlineMesh (IndexOutOfRange, fixed only in 6000.5.0a5) — our
-                    // bench hit it twice with Arabic exactly as their repro hits it with an
-                    // emoji. Underlined Arabic links are perfectly normal typography, so the tag
-                    // is kept whenever this element CAN render it safely — engine carrying the
-                    // fix, or one font asset covering both the RTL text and the '_' glyph (a
-                    // game with a real Arabic font, or the mod's own replacement font) — and
-                    // dropped only in the configuration proven to kill the game.
+                    // 🔴 Crash guard. TextCore's DrawUnderlineMesh died on an underline (IndexOutOfRange,
+                    // a material registered while drawing — TextCoreUnderlineFix says how) until
+                    // Unity fixed it; the mod carries that fix where it can. Without it, the tag
+                    // comes off: underlined Arabic links are normal typography, but not at the
+                    // price of the game's panel.
                     string logicalSource = value;
                     string stripped = RtlComposer.StripUnderlineTags(value);
                     // ⚠ The safety question is asked about the SHAPED form — the glyphs that will
@@ -391,7 +387,7 @@ namespace UnityGameTranslator.Core.TextShaping
                         value = stripped;
                         if (DiagnosticOnce.First("RtlPresenter.underline", instance.GetType().Name))
                         {
-                            TranslatorCore.LogWarning("[RtlPresenter] underline/strikethrough tag dropped on RTL text: this engine's DrawUnderlineMesh crashes laying out an underline over right-to-left glyphs (Unity issue, fixed in 6000.5). The text is unaffected, and translations.json keeps the tag.");
+                            TranslatorCore.LogWarning("[RtlPresenter] underline/strikethrough tag dropped on RTL text: this engine's DrawUnderlineMesh can crash on an underline (a Unity defect, fixed in later engines) and the mod cannot carry the fix here. The text is unaffected, and translations.json keeps the tag.");
                         }
                     }
 

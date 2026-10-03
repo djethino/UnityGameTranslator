@@ -2811,34 +2811,26 @@ namespace UnityGameTranslator.Core
             catch (Exception ex) { Faults.Say("UIToolkit.IsAtgActive", ex); return false; }
         }
 
-        // Underline crash guard plumbing — see UnderlineIsSafe. The font definition property
-        // itself is the font path's _resolvedFontDefProp, resolved at init.
+        // Underline guard plumbing — see UnderlineIsSafe. The font definition property itself is
+        // the font path's _resolvedFontDefProp, resolved at init.
         private static bool _underlineSafetyResolved;
-        private static bool _engineHasUnderlineFix;        // Unity >= 6000.5 (fix landed in 6000.5.0a5)
         private static PropertyInfo _fontDefFontAssetProp; // FontDefinition.fontAsset
         private static MethodInfo _hasCharactersMethod;    // FontAsset.HasCharacters(string, out uint[], bool, bool)
 
         /// <summary>
         /// Can THIS element draw an underline/strikethrough over THIS text without dying?
         ///
-        /// Unity's tracked defect (fixed in 6000.5.0a5, their repro is "&lt;u&gt;Hello 😁&lt;/u&gt;"):
-        /// DrawUnderlineMesh indexes meshInfo with the material of the '_' glyph, and when the
-        /// underlined glyphs come from a FALLBACK font asset that index is out of bounds. So the
-        /// underline is safe only when the engine carries the fix. Everything else is logged and
-        /// refused — see the block inside for why font coverage, the obvious candidate, turned
-        /// out not to predict the crash.
+        /// Yes whenever the engine draws it with Unity's fix in place — its own, or the one the mod
+        /// carries (TextCoreUnderlineFix, which says how the crash happens). Without it the tag is
+        /// refused and the element's font is logged: see the block inside for why font coverage,
+        /// the obvious condition, did not predict the crash.
         /// </summary>
         internal static bool UnderlineIsSafe(object element, string text)
         {
+            if (TextCoreUnderlineFix.Present) return true;
             if (!_underlineSafetyResolved)
             {
                 _underlineSafetyResolved = true;
-                // "6000.3.6f1" → 6000 / 3. Anything at or past 6000.5 ships Unity's fix. TryParse
-                // answers false on anything else; nothing here throws.
-                var v = Application.unityVersion.Split('.');
-                if (v.Length >= 2 && int.TryParse(v[0], out int major) && int.TryParse(v[1], out int minor))
-                    _engineHasUnderlineFix = major > 6000 || (major == 6000 && minor >= 5);
-
                 // A property looked up without the ambiguity trap (Engine/Members), and a method
                 // named WITH its parameter types, which cannot be ambiguous: nothing caught.
                 var pubInst = BindingFlags.Public | BindingFlags.Instance;
@@ -2847,8 +2839,6 @@ namespace UnityGameTranslator.Core
                 _hasCharactersMethod = assetType?.GetMethod("HasCharacters",
                     new[] { typeof(string), typeof(uint[]).MakeByRefType(), typeof(bool), typeof(bool) });
             }
-
-            if (_engineHasUnderlineFix) return true;
 
             try
             {
@@ -2863,20 +2853,11 @@ namespace UnityGameTranslator.Core
 
                 // 🔴 THE ANSWER IS NO, and the bench is what settled it — four crashes, the last
                 // one two lines after this very check logged "carries every glyph to draw".
-                //
-                // Font coverage was a reasonable hypothesis and it is WRONG as a predicate: a
-                // single asset covering every drawn glyph still died. The remaining suspects all
-                // live inside Unity's routine and none is observable from here — multi-atlas
-                // assets give one materialIndex per atlas texture, and the underline's '_' can
-                // sit in a different one from the RTL glyphs; the routine also derives the line
-                // from glyph positions that run right-to-left. Unity fixed it in 6000.5.0a5 and
-                // we cannot second-guess which branch a given frame takes.
-                //
-                // So on an engine without the fix, an RTL text on this generator loses its
-                // underline. Not arbitrary: it is the only rule the evidence supports. Everything
-                // below the return exists to keep LEARNING at zero risk — the details are logged,
-                // and the day one of them turns out to be the real discriminator, it becomes a
-                // condition. TMP is untouched (its bench never crashed), and so is 6000.5+.
+                // Font coverage cannot predict it: the '_' is looked up while the line is drawn, in
+                // the asset of the glyph being drawn, and through its fallbacks — the material it
+                // brings is decided there, out of reach of any question asked from here. So
+                // without the fix an RTL text on this generator loses its underline; the details
+                // stay logged. TMP is untouched (its bench never crashed).
                 LogUnderlineVerdict(element, false, DescribeAsset(fontAsset, text));
                 return false;
             }
@@ -2909,7 +2890,7 @@ namespace UnityGameTranslator.Core
                     atlases = $", {textures.Length} atlas texture(s)";
             }
             catch (Exception ex) { Faults.Say("UIToolkit.DescribeAsset atlases", ex); }
-            return $"'{name}' {coverage}{atlases} — this engine's DrawUnderlineMesh is not safe for RTL whatever the answer";
+            return $"'{name}' {coverage}{atlases} — this engine's DrawUnderlineMesh lacks Unity's fix";
         }
 
         // Every verdict is logged while this engine's underline defect is being characterised:

@@ -536,6 +536,10 @@ namespace UnityGameTranslator.Core
                 patchCount += UIToolkitSupport.ApplyPatches(patcher);
             });
 
+            // TextCore's underline crash, fixed by Unity in later engines: carried where it is
+            // missing, so an underline on UI Toolkit text no longer has to be taken off.
+            Group("TextCore underline fix", () => patchCount += TextCoreUnderlineFix.Patch(patcher));
+
             // uGUI components announce their arrival — see TranslatorScanner.HookComponentAppearance.
             Group("component appearance", () => patchCount += TranslatorScanner.HookComponentAppearance(patcher));
 

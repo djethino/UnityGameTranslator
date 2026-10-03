@@ -2082,9 +2082,16 @@ namespace UnityGameTranslator.Core
                 {
                     var existingFonts = TypeHelper.FindAllAssetsOfType(_tmpFontAssetType);
 
-                    foreach (var existingFont in existingFonts)
+                    foreach (var found in existingFonts)
                     {
-                        if (existingFont == null) continue;
+                        if (found == null) continue;
+                        // 🔴 Cast before any reflective read: on IL2CPP the asset scan can hand back
+                        // the base wrapper (UnityEngine.Object), and reading TMP_FontAsset.material
+                        // on it threw "Object does not match target type" — the clone then kept its
+                        // source's material and drew our glyphs from the source's atlas (pieces of
+                        // letters everywhere, one game start in two, 2026-10-04). The property
+                        // warm-up below only made it rarer.
+                        var existingFont = TypeHelper.Il2CppCast(found, _tmpFontAssetType);
 
                         // Get material from existing font
                         var matField = _tmpFontAssetType.GetField("material", BindingFlags.Public | BindingFlags.Instance);

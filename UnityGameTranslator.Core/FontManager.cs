@@ -5405,6 +5405,9 @@ namespace UnityGameTranslator.Core
         private static object GetFallbackListReflection(object font)
         {
             if (font == null) return null;
+            // The font asset's own type, not the base wrapper IL2CPP may hand back
+            // (UnityEngine.Object): its fallback list was "not accessible" one game start in two.
+            if (TypeHelper.TMP_FontAssetType != null) font = TypeHelper.Il2CppCast(font, TypeHelper.TMP_FontAssetType);
             var fontType = font.GetType();
 
             // Try fallbackFontAssetTable property first (newer TMP versions)

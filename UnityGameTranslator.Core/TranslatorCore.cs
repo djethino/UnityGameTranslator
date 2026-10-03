@@ -4064,10 +4064,11 @@ namespace UnityGameTranslator.Core
             string source = key ?? "";
             string edited = newValue ?? "";
 
-            if (Placeholders.AcceptsEdit(source, edited, Placeholders.FrozenSequences(source), out var errors))
-                return null;
-
-            return string.Join("; ", errors);
+            Placeholders.AcceptsEdit(source, edited, Placeholders.FrozenSequences(source), out var errors);
+            // And the developer's markup, as a model is held to it (Markup.KeptByEdit): a <u> dropped
+            // while retouching a line in this small editor was saved and published (2026-10-04).
+            errors.AddRange(Markup.KeptByEdit(source, edited));
+            return errors.Count == 0 ? null : string.Join("; ", errors);
         }
 
         /// <summary>

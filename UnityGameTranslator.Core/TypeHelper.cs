@@ -644,28 +644,9 @@ namespace UnityGameTranslator.Core
                 if (byPath != null) return byPath.Invoke(new object[] { path }) as Font ?? Refused("Font(path) gave nothing");
 
                 var make = FontFromPathCall(fontType);
-                var fromPointer = fontType.GetConstructor(new[] { typeof(IntPtr) });
-                if (make == null || fromPointer == null) return Refused($"no Font(path) and {(make == null ? "no Internal_CreateFontFromPath" : "no pointer constructor")} on this runtime");
-
-                if (_classPointerStore == null)
-                    foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
-                    {
-                        _classPointerStore = asm.GetType("Il2CppInterop.Runtime.Il2CppClassPointerStore`1");
-                        if (_classPointerStore != null) break;
-                    }
-                Type il2cpp = null;
-                foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
-                    if ((il2cpp = asm.GetType("Il2CppInterop.Runtime.IL2CPP")) != null) break;
-                var classPtr = _classPointerStore?.MakeGenericType(fontType).GetField("NativeClassPtr", BindingFlags.Public | BindingFlags.Static)?.GetValue(null);
-                var objectNew = il2cpp?.GetMethod("il2cpp_object_new", BindingFlags.Public | BindingFlags.Static, null, new[] { typeof(IntPtr) }, null);
-                if (!(classPtr is IntPtr cls) || cls == IntPtr.Zero || objectNew == null)
-                    return Refused(objectNew == null ? "no il2cpp_object_new found" : "no IL2CPP class pointer for Font");
-
-                // 🔴 ReferenceEquals, never `font == null` before the icall: UnityEngine.Object's ==
-                // calls a managed object with no native side null, and a bare Font has none until
-                // Internal_CreateFontFromPath makes it — every Font was refused here (2026-10-02).
-                var font = fromPointer.Invoke(new object[] { (IntPtr)objectNew.Invoke(null, new object[] { cls }) }) as Font;
-                if (ReferenceEquals(font, null)) return Refused("the bare Font could not be made");
+                if (make == null) return Refused("no Font(path) and no Internal_CreateFontFromPath on this runtime");
+                var font = BareFont(out string noShell);
+                if (ReferenceEquals(font, null)) return Refused(noShell);
                 make(font, path);
                 return font != null ? font : Refused("Internal_CreateFontFromPath made no font of it");
             }
@@ -679,12 +660,62 @@ namespace UnityGameTranslator.Core
         /// <summary>Whether this runtime has the two engine calls <see cref="NewDynamicFont"/> is made of.</summary>
         internal static bool CanMakeDynamicFonts =>
             typeof(Font).GetMethod("Internal_CreateDynamicFont", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static) != null
-            && typeof(Font).GetConstructor(Type.EmptyTypes) != null;
+            && (typeof(Font).GetConstructor(new[] { typeof(IntPtr) }) == null || Il2CppFontClass(out _, out _));
+
+        /// <summary>
+        /// A Font with NO native side yet, for one engine call to make it — what Unity's own
+        /// constructors are: Font(string[], int) calls Internal_CreateDynamicFont and nothing else,
+        /// Font(path) Internal_CreateFontFromPath. Never <c>new Font()</c>: its constructor makes a
+        /// native font first (Internal_CreateFont), and a dynamic font made over it is destroyed by the
+        /// next Resources.UnloadUnusedAssets, DontUnloadUnusedAsset and the texts wearing it
+        /// notwithstanding — measured, Mono and IL2CPP, 6000.3 (bench -probeMode fontunload), seen in
+        /// a game as squares in place of letters after every unload (2026-10-03).
+        /// Mono: an uninitialized object (a UnityEngine.Object's managed constructor does nothing).
+        /// IL2CPP: il2cpp_object_new, then the interop's pointer constructor.
+        /// </summary>
+        private static Font BareFont(out string whyNot)
+        {
+            whyNot = null;
+            var fontType = typeof(Font);
+            var fromPointer = fontType.GetConstructor(new[] { typeof(IntPtr) });
+            if (fromPointer == null)
+                return (Font)System.Runtime.Serialization.FormatterServices.GetUninitializedObject(fontType);
+            if (!Il2CppFontClass(out IntPtr cls, out MethodInfo objectNew))
+            {
+                whyNot = objectNew == null ? "no il2cpp_object_new found" : "no IL2CPP class pointer for Font";
+                return null;
+            }
+            // 🔴 ReferenceEquals, never `font == null` before the engine call: UnityEngine.Object's ==
+            // calls a managed object with no native side null, and a bare Font has none until the
+            // call makes it — every Font was refused here (2026-10-02).
+            var font = fromPointer.Invoke(new object[] { (IntPtr)objectNew.Invoke(null, new object[] { cls }) }) as Font;
+            if (ReferenceEquals(font, null)) whyNot = "the bare Font could not be made";
+            return font;
+        }
+
+        /// <summary>IL2CPP's class pointer for Font and its object allocator; false when either is missing.</summary>
+        private static bool Il2CppFontClass(out IntPtr cls, out MethodInfo objectNew)
+        {
+            cls = IntPtr.Zero;
+            if (_classPointerStore == null)
+                foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+                {
+                    _classPointerStore = asm.GetType("Il2CppInterop.Runtime.Il2CppClassPointerStore`1");
+                    if (_classPointerStore != null) break;
+                }
+            Type il2cpp = null;
+            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+                if ((il2cpp = asm.GetType("Il2CppInterop.Runtime.IL2CPP")) != null) break;
+            objectNew = il2cpp?.GetMethod("il2cpp_object_new", BindingFlags.Public | BindingFlags.Static, null, new[] { typeof(IntPtr) }, null);
+            var classPtr = _classPointerStore?.MakeGenericType(typeof(Font)).GetField("NativeClassPtr", BindingFlags.Public | BindingFlags.Static)?.GetValue(null);
+            if (classPtr is IntPtr found) cls = found;
+            return objectNew != null && cls != IntPtr.Zero;
+        }
 
         /// <summary>
         /// An OS font by family names, made as Unity's own CreateDynamicFontFromOSFont makes it —
-        /// <c>new Font()</c>, then the engine's <c>Internal_CreateDynamicFont</c> — for a runtime whose
-        /// build stripped that shortcut but kept the two calls. A real dynamic font, drawn by legacy
+        /// a bare Font (<see cref="BareFont"/>), then the engine's <c>Internal_CreateDynamicFont</c> —
+        /// for a runtime whose build stripped that shortcut but kept the engine call. A real dynamic font, drawn by legacy
         /// text like the shortcut's: a font made from a FILE is not one (new Font(path) is not dynamic,
         /// has no material, answers no character: it only feeds an SDF asset — bench, 2026-10-02).
         /// Null when the runtime has neither.
@@ -703,9 +734,7 @@ namespace UnityGameTranslator.Core
             try
             {
                 var make = fontType.GetMethod("Internal_CreateDynamicFont", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
-                var bare = fontType.GetConstructor(Type.EmptyTypes);
-                if (make == null || bare == null)
-                    return Refused(make == null ? "no Internal_CreateDynamicFont on this runtime" : "no Font() on this runtime");
+                if (make == null) return Refused("no Internal_CreateDynamicFont on this runtime");
 
                 // The names as the engine's parameter takes them: string[] on Mono, the interop's
                 // string array on IL2CPP (made from ours).
@@ -714,8 +743,8 @@ namespace UnityGameTranslator.Core
                     : arrayType.GetConstructor(new[] { typeof(string[]) })?.Invoke(new object[] { names });
                 if (array == null) return Refused($"no way to hand the names as {arrayType.Name}");
 
-                var font = bare.Invoke(null) as Font;
-                if (ReferenceEquals(font, null)) return Refused("Font() gave nothing");
+                var font = BareFont(out string noShell);
+                if (ReferenceEquals(font, null)) return Refused(noShell);
                 make.Invoke(null, new object[] { font, array, size });
                 return font != null ? font : Refused("Internal_CreateDynamicFont made no font of it");
             }

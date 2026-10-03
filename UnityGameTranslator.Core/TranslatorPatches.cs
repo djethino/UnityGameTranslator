@@ -528,6 +528,9 @@ namespace UnityGameTranslator.Core
             // Image replacement patches — intercept sprite/texture assignments
             Group("image replacement", () => patchCount += PatchImageComponents(patcher));
 
+            // Debug mode: who destroys the fonts the mod makes (FontWitness).
+            Group("font witness", () => patchCount += FontWitness.Patch(patcher));
+
             Group("UI Toolkit", () =>
             {
                 // UI Toolkit — a whole framework whose text is not a Component and which none of

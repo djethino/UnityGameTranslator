@@ -1514,7 +1514,7 @@ namespace UnityGameTranslator.Core
                 {
                     _fontCreationProbed = true;
                     var probe = CreateDynamicOSFont("Arial");
-                    if (probe != null) UnityEngine.Object.Destroy(probe);
+                    if (probe != null) { FontWitness.Forget(probe); UnityEngine.Object.Destroy(probe); }
                 }
                 return _dynamicFontCreationAvailable;
             }
@@ -1609,6 +1609,7 @@ namespace UnityGameTranslator.Core
         private static Font Kept(Font font)
         {
             if (font != null) font.hideFlags |= HideFlags.DontUnloadUnusedAsset;
+            FontWitness.Watch(font);
             return font;
         }
 
@@ -4469,7 +4470,7 @@ namespace UnityGameTranslator.Core
             // One the game unloaded all the same is made again, never handed out dead.
             if (_unityFallbackFonts.TryGetValue(originalFontName, out var cached) && !TypeHelper.IsUnityObjectAlive(cached))
             {
-                TranslatorCore.LogWarning($"[FontManager] the replacement for '{originalFontName}' was unloaded by the game — made again");
+                TranslatorCore.LogWarning($"[FontManager] frame {Time.frameCount}: the replacement for '{originalFontName}' was unloaded by the game — made again");
                 _unityFallbackFonts.Remove(originalFontName);
             }
             if (!_unityFallbackFonts.TryGetValue(originalFontName, out var replacementFont))

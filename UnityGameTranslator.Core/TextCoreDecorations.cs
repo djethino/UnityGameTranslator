@@ -25,9 +25,9 @@ namespace UnityGameTranslator.Core
     /// glyph instead of a box (measured, 6000.0.84). The prefix makes the '_''s material current for
     /// the call (<see cref="PointAtUnderscore"/>), the postfix puts the text's back.
     ///
-    /// Which engine needs ① is read from the engine itself, never from a version number. Mono only so
-    /// far: on IL2CPP an engine struct array is an interop wrapper, and the text jobs run on native
-    /// worker threads; neither is proven.
+    /// Which engine needs ① is read from the engine itself, never from a version number. The same
+    /// code serves Mono and IL2CPP: every member is reached as a field or as the property the interop
+    /// makes of it (Members), arrays and dictionaries through what both kinds answer to.
     /// </summary>
     internal static class TextCoreDecorations
     {
@@ -35,20 +35,20 @@ namespace UnityGameTranslator.Core
 
         private static MethodInfo _getUnderline;       // TextGenerator.GetUnderlineSpecialCharacter(TextGenerationSettings)
         private static MethodInfo _engineEnsure;       // TextGenerator.EnsureMeshInfoCapacityForMaterialReferences — Unity's fix, when present
-        private static FieldInfo _referenceLookup;     // TextGenerator.m_MaterialReferenceIndexLookup
-        private static FieldInfo _references;          // TextGenerator.m_MaterialReferences
-        private static FieldInfo _currentIndex;        // TextGenerator.m_CurrentMaterialIndex
-        private static FieldInfo _underline;           // TextGenerator.m_Underline
-        private static FieldInfo _underlineCharacter, _underlineAsset, _underlineIndex;
-        private static FieldInfo _currentAsset;        // TextGenerator.m_CurrentFontAsset (debug record only)
-        private static FieldInfo _meshInfo;            // TextInfo.meshInfo
-        private static FieldInfo _materialCount;       // TextInfo.materialCount
-        private static FieldInfo _isImgui;             // TextGenerationSettings.isIMGUI
+        private static MemberInfo _referenceLookup;    // TextGenerator.m_MaterialReferenceIndexLookup
+        private static MemberInfo _references;         // TextGenerator.m_MaterialReferences
+        private static MemberInfo _currentIndex;       // TextGenerator.m_CurrentMaterialIndex
+        private static MemberInfo _underline;          // TextGenerator.m_Underline
+        private static MemberInfo _underlineCharacter, _underlineAsset, _underlineIndex;
+        private static MemberInfo _currentAsset;       // TextGenerator.m_CurrentFontAsset (debug record only)
+        private static MemberInfo _meshInfo;           // TextInfo.meshInfo
+        private static MemberInfo _materialCount;      // TextInfo.materialCount
+        private static MemberInfo _isImgui;            // TextGenerationSettings.isIMGUI
         private static ConstructorInfo _newMesh;       // MeshInfo(int size, bool isIMGUI)
-        private static MethodInfo _resizeMesh;         // MeshInfo.ResizeMeshInfo(int size, bool isIMGUI)
-        private static FieldInfo _vertexData, _vertexBufferSize, _meshMaterial, _meshRenderMode;
-        private static FieldInfo _refCount, _refMaterial, _refFontAsset;
+        private static MemberInfo _meshMaterial, _meshRenderMode;
+        private static MemberInfo _refCount, _refMaterial, _refFontAsset;
         private static PropertyInfo _atlasRenderMode;  // FontAsset.atlasRenderMode
+        private static Type _meshArrayType;            // MeshInfo[] on Mono, the interop's array on IL2CPP
 
         /// <summary>
         /// Does this engine draw an underline without the crash — its own fix, or ours in place?
@@ -77,13 +77,6 @@ namespace UnityGameTranslator.Core
             {
                 UnderlineSafe = true;
                 TranslatorCore.LogInfo("[TextCore] this engine carries Unity's underline fix");
-            }
-            if (TranslatorCore.Adapter?.IsIL2CPP == true)
-            {
-                TranslatorCore.LogWarning("[TextCore] the mod corrects TextCore's decorations on Mono only:"
-                    + (UnderlineSafe ? "" : " UI Toolkit underlines stay off on right-to-left text, and")
-                    + " a highlight over letters from another font than its '_' stays drawn as the engine draws it");
-                return 0;
             }
 
             string missing = Resolve(generator, underline ?? highlight);
@@ -127,32 +120,31 @@ namespace UnityGameTranslator.Core
 
             _getUnderline = generator.GetMethod("GetUnderlineSpecialCharacter", Any, null, new[] { settingsType }, null);
             if (_getUnderline == null) return "GetUnderlineSpecialCharacter";
-            if ((_referenceLookup = generator.GetField("m_MaterialReferenceIndexLookup", Any)) == null) return "m_MaterialReferenceIndexLookup";
-            if ((_references = generator.GetField("m_MaterialReferences", Any)) == null) return "m_MaterialReferences";
-            if ((_currentIndex = generator.GetField("m_CurrentMaterialIndex", Any)) == null) return "m_CurrentMaterialIndex";
-            if ((_underline = generator.GetField("m_Underline", Any)) == null) return "m_Underline";
-            if ((_underlineCharacter = _underline.FieldType.GetField("character", Any)) == null) return "SpecialCharacter.character";
-            if ((_underlineAsset = _underline.FieldType.GetField("fontAsset", Any)) == null) return "SpecialCharacter.fontAsset";
-            if ((_underlineIndex = _underline.FieldType.GetField("materialIndex", Any)) == null) return "SpecialCharacter.materialIndex";
-            if ((_meshInfo = textInfoType.GetField("meshInfo", Any)) == null) return "TextInfo.meshInfo";
-            if ((_materialCount = textInfoType.GetField("materialCount", Any)) == null) return "TextInfo.materialCount";
-            if ((_isImgui = settingsType.GetField("isIMGUI", Any)) == null) return "TextGenerationSettings.isIMGUI";
+            if ((_referenceLookup = Members.FieldOrProperty(generator, "m_MaterialReferenceIndexLookup", Any)) == null) return "m_MaterialReferenceIndexLookup";
+            if ((_references = Members.FieldOrProperty(generator, "m_MaterialReferences", Any)) == null) return "m_MaterialReferences";
+            if ((_currentIndex = Members.FieldOrProperty(generator, "m_CurrentMaterialIndex", Any)) == null) return "m_CurrentMaterialIndex";
+            if ((_underline = Members.FieldOrProperty(generator, "m_Underline", Any)) == null) return "m_Underline";
+            var special = Members.TypeOf(_underline);
+            if ((_underlineCharacter = Members.FieldOrProperty(special, "character", Any)) == null) return "SpecialCharacter.character";
+            if ((_underlineAsset = Members.FieldOrProperty(special, "fontAsset", Any)) == null) return "SpecialCharacter.fontAsset";
+            if ((_underlineIndex = Members.FieldOrProperty(special, "materialIndex", Any)) == null) return "SpecialCharacter.materialIndex";
+            if ((_meshInfo = Members.FieldOrProperty(textInfoType, "meshInfo", Any)) == null) return "TextInfo.meshInfo";
+            if ((_materialCount = Members.FieldOrProperty(textInfoType, "materialCount", Any)) == null) return "TextInfo.materialCount";
+            if ((_isImgui = Members.FieldOrProperty(settingsType, "isIMGUI", Any)) == null) return "TextGenerationSettings.isIMGUI";
 
-            var meshType = _meshInfo.FieldType.GetElementType();
-            var referenceType = _references.FieldType.GetElementType();
+            _meshArrayType = Members.TypeOf(_meshInfo);
+            var meshType = ElementType(_meshArrayType);
+            var referenceType = ElementType(Members.TypeOf(_references));
             if (meshType == null || referenceType == null) return "the mesh and material arrays";
             if ((_newMesh = meshType.GetConstructor(Any, null, new[] { typeof(int), typeof(bool) }, null)) == null) return "MeshInfo(int, bool)";
-            if ((_resizeMesh = meshType.GetMethod("ResizeMeshInfo", Any, null, new[] { typeof(int), typeof(bool) }, null)) == null) return "MeshInfo.ResizeMeshInfo";
-            if ((_vertexData = meshType.GetField("vertexData", Any)) == null) return "MeshInfo.vertexData";
-            if ((_vertexBufferSize = meshType.GetField("vertexBufferSize", Any)) == null) return "MeshInfo.vertexBufferSize";
-            if ((_meshMaterial = meshType.GetField("material", Any)) == null) return "MeshInfo.material";
-            if ((_meshRenderMode = meshType.GetField("glyphRenderMode", Any)) == null) return "MeshInfo.glyphRenderMode";
-            if ((_refCount = referenceType.GetField("referenceCount", Any)) == null) return "MaterialReference.referenceCount";
-            if ((_refMaterial = referenceType.GetField("material", Any)) == null) return "MaterialReference.material";
-            if ((_refFontAsset = referenceType.GetField("fontAsset", Any)) == null) return "MaterialReference.fontAsset";
-            if ((_atlasRenderMode = Members.Property(_refFontAsset.FieldType, "atlasRenderMode", Any)) == null) return "FontAsset.atlasRenderMode";
+            if ((_meshMaterial = Members.FieldOrProperty(meshType, "material", Any)) == null) return "MeshInfo.material";
+            if ((_meshRenderMode = Members.FieldOrProperty(meshType, "glyphRenderMode", Any)) == null) return "MeshInfo.glyphRenderMode";
+            if ((_refCount = Members.FieldOrProperty(referenceType, "referenceCount", Any)) == null) return "MaterialReference.referenceCount";
+            if ((_refMaterial = Members.FieldOrProperty(referenceType, "material", Any)) == null) return "MaterialReference.material";
+            if ((_refFontAsset = Members.FieldOrProperty(referenceType, "fontAsset", Any)) == null) return "MaterialReference.fontAsset";
+            if ((_atlasRenderMode = Members.Property(Members.TypeOf(_refFontAsset), "atlasRenderMode", Any)) == null) return "FontAsset.atlasRenderMode";
 
-            _currentAsset = generator.GetField("m_CurrentFontAsset", Any);
+            _currentAsset = Members.FieldOrProperty(generator, "m_CurrentFontAsset", Any);
             return null;
         }
 
@@ -166,6 +158,8 @@ namespace UnityGameTranslator.Core
             __state = -1;
             try
             {
+                if (TranslatorCore.DebugMode && DiagnosticOnce.First("TextCore.hook", "underline"))
+                    TranslatorCore.LogDebug("[TextCore] first underline or strikethrough drawn through the mod's correction");
                 _getUnderline.Invoke(__instance, new[] { generationSettings });
                 if (TranslatorCore.DebugMode) Record(__instance, textInfo);
                 EnsureRoom(__instance, generationSettings, textInfo);
@@ -180,6 +174,8 @@ namespace UnityGameTranslator.Core
             __state = -1;
             try
             {
+                if (TranslatorCore.DebugMode && DiagnosticOnce.First("TextCore.hook", "highlight"))
+                    TranslatorCore.LogDebug("[TextCore] first highlight drawn through the mod's correction");
                 _getUnderline.Invoke(__instance, new[] { generationSettings });
                 EnsureRoom(__instance, generationSettings, textInfo);
                 __state = PointAtUnderscore(__instance, "highlight");
@@ -191,7 +187,7 @@ namespace UnityGameTranslator.Core
         public static void Decoration_Postfix(object __instance, int __state)
         {
             if (__state < 0) return;
-            try { _currentIndex.SetValue(__instance, __state); }
+            try { Members.Set(_currentIndex, __instance, __state); }
             catch (Exception ex) { Faults.Say("TextCoreDecorations restore", ex.InnerException ?? ex); }
         }
 
@@ -206,17 +202,17 @@ namespace UnityGameTranslator.Core
         /// </summary>
         private static int PointAtUnderscore(object generator, string what)
         {
-            object underline = _underline.GetValue(generator);
-            if (_underlineCharacter.GetValue(underline) == null) return -1;   // the engine draws nothing
-            object asset = _underlineAsset.GetValue(underline);
-            int current = (int)_currentIndex.GetValue(generator);
-            int count = ((ICollection)_referenceLookup.GetValue(generator)).Count;
-            var references = (Array)_references.GetValue(generator);
-            if (current < count && ReferenceEquals(_refFontAsset.GetValue(references.GetValue(current)), asset)) return -1;
+            object underline = Members.Get(_underline, generator);
+            if (Members.Get(_underlineCharacter, underline) == null) return -1;   // the engine draws nothing
+            object asset = Members.Get(_underlineAsset, underline);
+            int current = (int)Members.Get(_currentIndex, generator);
+            int count = CountOf(Members.Get(_referenceLookup, generator));
+            object references = Members.Get(_references, generator);
+            if (current < count && Same(Members.Get(_refFontAsset, At(references, current)), asset)) return -1;
             for (int i = 0; i < count; i++)
             {
-                if (!ReferenceEquals(_refFontAsset.GetValue(references.GetValue(i)), asset)) continue;
-                _currentIndex.SetValue(generator, i);
+                if (!Same(Members.Get(_refFontAsset, At(references, i)), asset)) continue;
+                Members.Set(_currentIndex, generator, i);
                 if (DiagnosticOnce.First("TextCore.decoration.moved", what))
                     TranslatorCore.LogDebug($"[TextCore] {what} drawn in the mesh of its '_' (material {i}) instead of the letters' ({current})");
                 return current;
@@ -226,38 +222,70 @@ namespace UnityGameTranslator.Core
 
         /// <summary>
         /// A mesh for every material the text now references — the engine's own fix when it has it,
-        /// otherwise the same lines (EnsureMeshInfoCapacityForMaterialReferences, 6000.0.84).
+        /// otherwise the same lines (EnsureMeshInfoCapacityForMaterialReferences, 6000.0.84): the
+        /// slots past the old end are new, so each is made for its material.
         /// </summary>
         private static void EnsureRoom(object generator, object generationSettings, object textInfo)
         {
             if (_engineEnsure != null) { _engineEnsure.Invoke(generator, new[] { textInfo, generationSettings }); return; }
 
-            int count = ((ICollection)_referenceLookup.GetValue(generator)).Count;
-            var meshes = (Array)_meshInfo.GetValue(textInfo);
-            if (count <= meshes.Length) return;
+            int count = CountOf(Members.Get(_referenceLookup, generator));
+            object meshes = Members.Get(_meshInfo, textInfo);
+            int had = LengthOf(meshes);
+            if (count <= had) return;
 
-            bool isImgui = (bool)_isImgui.GetValue(generationSettings);
-            var references = (Array)_references.GetValue(generator);
-            var grown = Array.CreateInstance(meshes.GetType().GetElementType(), count);
-            Array.Copy(meshes, grown, meshes.Length);
-            for (int i = meshes.Length; i < count; i++)
+            bool isImgui = (bool)Members.Get(_isImgui, generationSettings);
+            object references = Members.Get(_references, generator);
+            object grown = NewArray(_meshArrayType, count);
+            for (int i = 0; i < had; i++) Put(grown, i, At(meshes, i));
+            for (int i = had; i < count; i++)
             {
-                object reference = references.GetValue(i);
-                int referenceCount = (int)_refCount.GetValue(reference);
-                object mesh = grown.GetValue(i);
-                if (_vertexData.GetValue(mesh) == null)
-                    mesh = _newMesh.Invoke(new object[] { referenceCount <= 0 ? 1 : referenceCount + 1, isImgui });
-                else if ((int)_vertexBufferSize.GetValue(mesh) < referenceCount * 4)
-                    _resizeMesh.Invoke(mesh, new object[] { referenceCount > 1024 ? referenceCount + 256 : Mathf.NextPowerOfTwo(referenceCount), isImgui });
-                _meshMaterial.SetValue(mesh, _refMaterial.GetValue(reference));
-                _meshRenderMode.SetValue(mesh, _atlasRenderMode.GetValue(_refFontAsset.GetValue(reference), null));
-                grown.SetValue(mesh, i);
+                object reference = At(references, i);
+                int referenceCount = (int)Members.Get(_refCount, reference);
+                object mesh = _newMesh.Invoke(new object[] { referenceCount <= 0 ? 1 : referenceCount + 1, isImgui });
+                Members.Set(_meshMaterial, mesh, Members.Get(_refMaterial, reference));
+                Members.Set(_meshRenderMode, mesh, _atlasRenderMode.GetValue(Members.Get(_refFontAsset, reference), null));
+                Put(grown, i, mesh);
             }
-            _meshInfo.SetValue(textInfo, grown);
-            _materialCount.SetValue(textInfo, count);
+            Members.Set(_meshInfo, textInfo, grown);
+            Members.Set(_materialCount, textInfo, count);
             if (DiagnosticOnce.First("TextCore.underline", "grown"))
-                TranslatorCore.LogInfo($"[TextCore] decoration drawn with a material the text had not counted: meshes grown {meshes.Length} → {count} (Unity's fix, carried by the mod)");
+                TranslatorCore.LogInfo($"[TextCore] decoration drawn with a material the text had not counted: meshes grown {had} → {count} (Unity's fix, carried by the mod)");
         }
+
+        // ── What Mono and IL2CPP hold differently: a managed array or the interop's, a dictionary
+        // either way, and an engine object wrapped anew at every read on IL2CPP — compared by the
+        // object it stands for, never by reference. ──
+
+        private static Type ElementType(Type arrayType)
+        {
+            if (arrayType == null) return null;
+            if (arrayType.IsArray) return arrayType.GetElementType();
+            for (var t = arrayType; t != null; t = t.BaseType)
+                if (t.IsGenericType && t.GetGenericArguments().Length == 1) return t.GetGenericArguments()[0];
+            return null;
+        }
+
+        private static int CountOf(object collection) =>
+            collection is ICollection managed ? managed.Count : Convert.ToInt32(collection.GetType().GetProperty("Count").GetValue(collection, null));
+
+        private static int LengthOf(object array) =>
+            array is Array managed ? managed.Length : Convert.ToInt32(array.GetType().GetProperty("Length").GetValue(array, null));
+
+        private static object At(object array, int i) =>
+            array is Array managed ? managed.GetValue(i) : array.GetType().GetProperty("Item").GetValue(array, new object[] { i });
+
+        private static void Put(object array, int i, object value)
+        {
+            if (array is Array managed) managed.SetValue(value, i);
+            else array.GetType().GetProperty("Item").SetValue(array, value, new object[] { i });
+        }
+
+        private static object NewArray(Type arrayType, int length) =>
+            arrayType.IsArray ? Array.CreateInstance(arrayType.GetElementType(), length)
+                              : arrayType.GetConstructor(new[] { typeof(long) }).Invoke(new object[] { (long)length });
+
+        private static bool Same(object a, object b) => ReferenceEquals(a, b) || (a != null && b != null && a.Equals(b));
 
         // Which asset gave the '_', over which asset's letters, and whether its material was counted —
         // once per distinct answer: what decides whether an engine without Unity's fix would have died.
@@ -265,14 +293,14 @@ namespace UnityGameTranslator.Core
         private static void Record(object generator, object textInfo)
         {
             if (_currentAsset == null) return;
-            object underline = _underline.GetValue(generator);
-            object from = _underlineAsset.GetValue(underline);
-            object over = _currentAsset.GetValue(generator);
-            int index = (int)_underlineIndex.GetValue(underline);
-            int materials = ((ICollection)_referenceLookup.GetValue(generator)).Count;
-            int meshes = ((Array)_meshInfo.GetValue(textInfo)).Length;
-            string source = ReferenceEquals(from, over) ? $"the asset of the letters it underlines (#{from?.GetHashCode()})"
-                                                        : $"ANOTHER asset (#{from?.GetHashCode()}) than the letters' (#{over?.GetHashCode()})";
+            object underline = Members.Get(_underline, generator);
+            object from = Members.Get(_underlineAsset, underline);
+            object over = Members.Get(_currentAsset, generator);
+            int index = (int)Members.Get(_underlineIndex, underline);
+            int materials = CountOf(Members.Get(_referenceLookup, generator));
+            int meshes = LengthOf(Members.Get(_meshInfo, textInfo));
+            string source = Same(from, over) ? $"the asset of the letters it underlines (#{from?.GetHashCode()})"
+                                             : $"ANOTHER asset (#{from?.GetHashCode()}) than the letters' (#{over?.GetHashCode()})";
             string counted = index < meshes ? "counted" : "NOT counted";
             if (DiagnosticOnce.First("TextCore.underline.source", source + "\u0001" + index + "\u0001" + materials + "\u0001" + meshes))
                 TranslatorCore.LogDebug($"[TextCore] underline '_' from {source}: material {index} of {materials}, {meshes} mesh(es) — {counted}");

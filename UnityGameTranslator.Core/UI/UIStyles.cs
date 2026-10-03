@@ -740,7 +740,7 @@ namespace UnityGameTranslator.Core.UI
         {
             if (scrollObj == null) return;
 
-            var viewport = scrollObj.transform.Find("Viewport");
+            var viewport = TransformFind.Path(scrollObj.transform, "Viewport");
             if (viewport != null)
             {
                 var image = viewport.GetComponent<Image>();

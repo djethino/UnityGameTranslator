@@ -490,6 +490,9 @@ namespace UnityGameTranslator.Core.UI
             UIFactory.Colors.DropdownItemNormal    = UIStyles.DropdownItemNormal;
             UIFactory.Colors.DropdownItemHighlight = UIStyles.DropdownItemHighlight;
 
+            // UniverseLib finds its children the way the mod does (TransformFind: Unity 2023.1+ IL2CPP).
+            UniverseLib.Utility.UnityHelpers.FindChild = TransformFind.Path;
+
             // Use per-game setting for EventSystem override (stored in translations.json as _settings.disable_eventsystem_override)
             // Default is false (UniverseLib CAN override). Set to true in translations.json if the game's UI animations break.
             Universe.Init(1f, OnUniverseLibInitialized, LogHandler, new UniverseLib.Config.UniverseLibConfig

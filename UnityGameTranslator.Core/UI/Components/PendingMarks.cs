@@ -150,7 +150,7 @@ namespace UnityGameTranslator.Core.UI.Components
         /// </summary>
         private static Image ChildImage(GameObject target, string name, bool wanted)
         {
-            Transform existing = target.transform.Find(name);
+            Transform existing = TransformFind.Path(target.transform, name);
             if (!wanted)
             {
                 if (existing != null) UnityEngine.Object.Destroy(existing.gameObject);

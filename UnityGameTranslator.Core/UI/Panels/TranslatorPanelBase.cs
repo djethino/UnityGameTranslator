@@ -89,7 +89,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             UIFactory.SetLayoutElement(header, flexibleWidth: 9999, flexibleHeight: 0);
 
             // Pin right above the scroll view
-            var scroll = ContentRoot.transform.Find("PanelScroll");
+            var scroll = TransformFind.Path(ContentRoot.transform, "PanelScroll");
             if (scroll != null)
                 header.transform.SetSiblingIndex(scroll.GetSiblingIndex());
 
@@ -552,7 +552,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             {
                 if (ContentRoot == null) return 0f;
 
-                var scroll = ContentRoot.transform.Find("PanelScroll");
+                var scroll = TransformFind.Path(ContentRoot.transform, "PanelScroll");
                 var rect = scroll != null ? scroll.GetComponent<ScrollRect>() : null;
                 var viewport = rect != null ? rect.viewport : null;
 
@@ -659,7 +659,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             // answers true for a destroyed one, so a rebuilt body is found again.
             if (_trembleScroll == null)
             {
-                var scroll = ContentRoot.transform.Find("PanelScroll");
+                var scroll = TransformFind.Path(ContentRoot.transform, "PanelScroll");
                 _trembleScroll = scroll != null ? scroll.GetComponent<ScrollRect>() : null;
             }
 
@@ -727,7 +727,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             {
                 if (ContentRoot == null) return Vector2.zero;
 
-                var scroll = ContentRoot.transform.Find("PanelScroll");
+                var scroll = TransformFind.Path(ContentRoot.transform, "PanelScroll");
                 var rect = scroll != null ? scroll.GetComponent<ScrollRect>() : null;
                 var viewport = rect != null ? rect.viewport : null;
 

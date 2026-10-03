@@ -66,7 +66,7 @@ namespace UnityGameTranslator.Core.UI.Components
             if (!TryReadSide(buttonObj, out current)) return;
             if (current == side) return;
 
-            var record = buttonObj.transform.Find(SideRecordPrefix + current);
+            var record = TransformFind.Path(buttonObj.transform, SideRecordPrefix + current);
             if (record == null) return;
 
             record.gameObject.name = SideRecordPrefix + side;
@@ -85,7 +85,7 @@ namespace UnityGameTranslator.Core.UI.Components
         {
             foreach (EditSide candidate in System.Enum.GetValues(typeof(EditSide)))
             {
-                if (buttonObj.transform.Find(SideRecordPrefix + candidate) != null)
+                if (TransformFind.Path(buttonObj.transform, SideRecordPrefix + candidate) != null)
                 {
                     side = candidate;
                     return true;
@@ -135,7 +135,7 @@ namespace UnityGameTranslator.Core.UI.Components
         {
             if (buttonObj == null) return;
 
-            var label = buttonObj.transform.Find("Text");
+            var label = TransformFind.Path(buttonObj.transform, "Text");
             if (label == null) return;
 
             var text = label.GetComponent<Text>();
@@ -196,9 +196,9 @@ namespace UnityGameTranslator.Core.UI.Components
 
             // Built once. Adorning twice would stack a second set of marks over the first, and the
             // panels rebuild their cards on every refresh.
-            if (buttonObj.transform.Find("ScopeMark0") != null) return;
+            if (TransformFind.Path(buttonObj.transform, "ScopeMark0") != null) return;
 
-            var label = buttonObj.transform.Find("Text");
+            var label = TransformFind.Path(buttonObj.transform, "Text");
             if (label == null) return;
 
             // ⚠ **The library anchors a button's label to FILL its button**, which is why the two
@@ -379,7 +379,7 @@ namespace UnityGameTranslator.Core.UI.Components
                                                      signedIn: true, publishedByThisAccount: true,
                                                      publishedBySomebodyElse: false))
             {
-                var mark = buttonObj.transform.Find("ScopeMark" + index);
+                var mark = TransformFind.Path(buttonObj.transform, "ScopeMark" + index);
                 index++;
 
                 var image = mark == null ? null : mark.GetComponent<Image>();
@@ -400,7 +400,7 @@ namespace UnityGameTranslator.Core.UI.Components
                     : UIStyles.MarkDimOn(FillOf(buttonObj));
             }
 
-            var rule = buttonObj.transform.Find("ScopeMarkBar/ScopeMarkRule");
+            var rule = TransformFind.Path(buttonObj.transform, "ScopeMarkBar/ScopeMarkRule");
             var ruleImage = rule == null ? null : rule.GetComponent<Image>();
             // ⚠ The same colour Adorn builds it with — and this line is why setting it there alone
             // changed nothing: every Tint put the old one straight back.

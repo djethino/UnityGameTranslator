@@ -234,9 +234,9 @@ namespace UnityGameTranslator.Core.UI.Components
         /// <summary>The product's colours on the rail, the fill and the handle.</summary>
         private static void Paint(GameObject slider)
         {
-            Tint(slider.transform.Find("Background"), UIStyles.SliderBackgroundColor);
-            Tint(slider.transform.Find("Fill Area/Fill"), UIStyles.SliderFillColor);
-            Tint(slider.transform.Find("Handle Slide Area/Handle"), UIStyles.SliderHandleColor);
+            Tint(TransformFind.Path(slider.transform, "Background"), UIStyles.SliderBackgroundColor);
+            Tint(TransformFind.Path(slider.transform, "Fill Area/Fill"), UIStyles.SliderFillColor);
+            Tint(TransformFind.Path(slider.transform, "Handle Slide Area/Handle"), UIStyles.SliderHandleColor);
         }
 
         private static void Tint(Transform part, Color colour)

@@ -134,6 +134,15 @@ namespace UnityGameTranslator.Core.Checks
                 check(apostrophe == comma.Replace(',', '\''), "3'000 stays one number after " + label,
                     Escape(apostrophe) + " | with a comma: " + Escape(comma));
             }
+            // The spaces a formatted number groups with (.NET's French culture writes U+202F or U+00A0)
+            // are common separators in UAX #9 itself: 1 000 stays one number with either.
+            foreach (string space in new[] { " ", " " })
+            {
+                string grouped = RtlComposer.Compose("السعر 1" + space + "000", RtlOutput.VisualOrder);
+                string comma = RtlComposer.Compose("السعر 1,000", RtlOutput.VisualOrder);
+                check(grouped == comma.Replace(",", space), "1 000 grouped by U+" + ((int)space[0]).ToString("X4") + " stays one number",
+                    Escape(grouped) + " | with a comma: " + Escape(comma));
+            }
             check(RtlText.ContainsStrongRtl("x\U0001E900"), "a right-to-left letter beyond U+FFFF is found",
                 "Adlam is in a supplementary plane: read as one code point, not two halves");
             check(!RtlText.IsStrongRtl(0x0915) && !RtlText.IsStrongRtl(0x4E2D) && !RtlText.IsStrongRtl(0x0416),

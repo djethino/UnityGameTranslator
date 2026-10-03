@@ -101,8 +101,13 @@ namespace UnityGameTranslator.Core
         // set says "this is ours"; only this map can say "and HERE is its truth" — without it the
         // in-game editor resolved a shaped display back to a shaped KEY and offered to save it
         // (found by the user: an Arabic key in the text editor).
-        private readonly ConcurrentDictionary<string, string> _presentedToLogical =
-            new ConcurrentDictionary<string, string>();
+        // 🔴 Keyed loosely (NormalizeForReadbackMatch sets numbers aside), so the form registered is
+        // kept beside its logical text: a displayed text whose NUMBERS differ is not that form. Two
+        // level counters, "13/25" beside "25/50": the game's own write of the first (read back and
+        // appended to) was taken for our presentation of the second, left as it was, and drawn
+        // backwards ("52/13") until a sweep put it right — then the game wrote it again (2026-10-03).
+        private readonly ConcurrentDictionary<string, KeyValuePair<string, string>> _presentedToLogical =
+            new ConcurrentDictionary<string, KeyValuePair<string, string>>();
 
         // The same, EXACTLY, for a presented form too short for the decoration-insensitive key
         // (NormalizeForReadbackMatch wants a run of letters): a line of one-glyph conjuncts — "ष्ट
@@ -207,7 +212,7 @@ namespace UnityGameTranslator.Core
                 // "logical" handed here is the first stage's output, itself registered — the
                 // readback must reach the translation's own text, never a stage in between.
                 string deeper = PresentedLogical(logical);
-                _presentedToLogical[n] = deeper ?? logical;
+                _presentedToLogical[n] = new KeyValuePair<string, string>(presented, deeper ?? logical);
             }
         }
 
@@ -217,7 +222,27 @@ namespace UnityGameTranslator.Core
             if (string.IsNullOrEmpty(displayed)) return null;
             string n = NormalizeForReadbackMatch(displayed);
             if (n == null) return _presentedExact.TryGetValue(displayed, out var exact) ? exact : null;
-            return _presentedToLogical.TryGetValue(n, out var logical) ? logical : null;
+            if (!_presentedToLogical.TryGetValue(n, out var entry)) return null;
+            return SameNumbers(entry.Key, displayed) ? entry.Value : null;
+        }
+
+        /// <summary>Whether two texts carry the same digits, run for run, in the same order — the decorations aside.</summary>
+        internal static bool SameNumbers(string a, string b)
+        {
+            int i = 0, j = 0;
+            while (true)
+            {
+                while (i < a.Length && !TextShaping.UnicodeInfo.IsDigit(a[i])) i++;
+                while (j < b.Length && !TextShaping.UnicodeInfo.IsDigit(b[j])) j++;
+                if (i >= a.Length || j >= b.Length) return i >= a.Length && j >= b.Length;
+                while (i < a.Length && j < b.Length && TextShaping.UnicodeInfo.IsDigit(a[i]) && TextShaping.UnicodeInfo.IsDigit(b[j]))
+                {
+                    if (a[i] != b[j]) return false;
+                    i++; j++;
+                }
+                // One run ended before the other: different numbers.
+                if ((i < a.Length && TextShaping.UnicodeInfo.IsDigit(a[i])) || (j < b.Length && TextShaping.UnicodeInfo.IsDigit(b[j]))) return false;
+            }
         }
 
         /// <summary>

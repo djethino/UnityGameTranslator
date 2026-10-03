@@ -178,6 +178,18 @@ namespace UnityGameTranslator.Core.Checks
                 "and null for a text that is not ours",
                 "a caller reads null as 'resolve the displayed text as it is'");
 
+            // Two counters side by side, presented right to left (digits reversed for the flag): the
+            // second's own write — our "ﺍﻟﻤﺴﺘﻮﻯ 31" read back by the game, "/25" appended — differs from
+            // the first's presented form only by its numbers. It is not that form (a level counter
+            // drawn "52/13", 2026-10-03).
+            var counters = new ReadbackIndex();
+            counters.RegisterPresented("ﺍﻟﻤﺴﺘﻮﻯ 05/52", "المستوى 25/50");
+            check(counters.PresentedLogical("ﺍﻟﻤﺴﺘﻮﻯ 05/52") == "المستوى 25/50",
+                "a presented counter is ours, with its logical text", "");
+            check(counters.PresentedLogical("ﺍﻟﻤﺴﺘﻮﻯ 31/25") == null,
+                "a text differing from it only by its numbers is not",
+                "taken for ours, the game's read-back-and-append was left as written and drawn backwards");
+
             // One glyph per word (conjuncts shaped to a private codepoint each): too short for the
             // decoration-insensitive key, still ours and still resolvable — as written.
             var shortForms = new ReadbackIndex();

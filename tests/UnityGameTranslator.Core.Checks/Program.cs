@@ -283,6 +283,7 @@ namespace UnityGameTranslator.Core.Checks
             Section("Silent catches (a ratchet down to none)", SilentCatchChecks.Run);
             Section("Font atlases filled through FontAtlas only", FontAtlasChecks.Run);
             Section("No character decision written for one script", CharacterRangeChecks.Run);
+            Section("Underlines and strikethroughs over their letters", DecorationSpansChecks.Run);
             Section("No diagnostic capped by a count", DiagnosticCapChecks.Run);
             Section("Reflection lookups that answer instead of throwing", MembersChecks.Run);
             Section("Screens in data (the documents and the vocabulary)", ScreenDocumentChecks.Run);

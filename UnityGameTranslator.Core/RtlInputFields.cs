@@ -475,29 +475,23 @@ namespace UnityGameTranslator.Core.TextShaping
         // ══ TMP: the glyphs moved into visual order after each layout ══════════════════════
 
         /// <summary>
-        /// After TMP laid out and uploaded a label: when it is a presented field's label, move its
-        /// glyphs into visual order, line by line, and upload the vertices again. The lines are
-        /// TMP's own — it wrapped the typed-order text, which is exactly where a paragraph is cut.
+        /// After TMP laid out a label (TmpMeshDone): when it is a presented field's label, move its
+        /// glyphs into visual order, line by line. The lines are TMP's own — it wrapped the
+        /// typed-order text, which is exactly where a paragraph is cut. Returns how far each
+        /// character moved (null: nothing moved); the caller uploads the vertices.
         /// </summary>
-        public static void Tmp_GenerateTextMesh_Postfix(object __instance)
+        internal static float[] GenerateTextMeshDone(object __instance)
         {
-            long tLayout = Perf.Start();
-            try { GenerateTextMeshDone(__instance); }
-            finally { Perf.Stop(Perf.TmpLayout, tLayout); }
-        }
-
-        private static void GenerateTextMeshDone(object __instance)
-        {
-            if (_byTmpLabel.Count == 0 || __instance == null) return;
+            if (_byTmpLabel.Count == 0 || __instance == null) return null;
             try
             {
                 int labelId = TypeHelper.GetInstanceID(__instance);
-                if (!_byTmpLabel.TryGetValue(labelId, out var s)) return;
-                if (LabelText(s) != s.Shown) return;
+                if (!_byTmpLabel.TryGetValue(labelId, out var s)) return null;
+                if (LabelText(s) != s.Shown) return null;
                 TellTypedPositions(s, __instance);
-                MoveTmpGlyphs(s, __instance);
+                return MoveTmpGlyphs(s, __instance);
             }
-            catch (Exception ex) { Note("TMP glyph move failed: " + ex.Message); }
+            catch (Exception ex) { Note("TMP glyph move failed: " + ex.Message); return null; }
         }
 
         /// <summary>
@@ -508,33 +502,33 @@ namespace UnityGameTranslator.Core.TextShaping
         /// </summary>
         private static void TellTypedPositions(FieldState s, object label)
         {
-            if (s.LabelIndex == null || Tmp.CiStringLength == null) return;
-            var info = Tmp.TextInfo.GetValue(label, null);
+            if (s.LabelIndex == null || TmpLayout.CiStringLength == null) return;
+            var info = TmpLayout.TextInfo.GetValue(label, null);
             if (info == null) return;
-            int count = Convert.ToInt32(Tmp.Get(Tmp.CharacterCount, info));
-            var chars = Tmp.Get(Tmp.CharacterInfo, info);
+            int count = Convert.ToInt32(TmpLayout.Get(TmpLayout.CharacterCount, info));
+            var chars = TmpLayout.Get(TmpLayout.CharacterInfo, info);
             if (chars == null) return;
             for (int k = 0; k < count; k++)
             {
-                var c = Tmp.Item(chars, k);
-                int at = Convert.ToInt32(Tmp.Get(Tmp.CiIndex, c));
+                var c = TmpLayout.Item(chars, k);
+                int at = Convert.ToInt32(TmpLayout.Get(TmpLayout.CiIndex, c));
                 if (at < 0 || at >= s.LabelIndex.Length) continue;
-                Tmp.Set(Tmp.CiIndex, c, s.LabelIndex[at]);
-                Tmp.Set(Tmp.CiStringLength, c, s.LabelLength[at]);
-                Tmp.SetItem(chars, k, c);
+                TmpLayout.Set(TmpLayout.CiIndex, c, s.LabelIndex[at]);
+                TmpLayout.Set(TmpLayout.CiStringLength, c, s.LabelLength[at]);
+                TmpLayout.SetItem(chars, k, c);
             }
         }
 
-        private static void MoveTmpGlyphs(FieldState s, object label)
+        private static float[] MoveTmpGlyphs(FieldState s, object label)
         {
-            var info = Tmp.TextInfo.GetValue(label, null);
-            if (info == null) return;
-            int count = Convert.ToInt32(Tmp.Get(Tmp.CharacterCount, info));
-            int lineCount = Convert.ToInt32(Tmp.Get(Tmp.LineCount, info));
-            var chars = Tmp.Get(Tmp.CharacterInfo, info);
-            var lines = Tmp.Get(Tmp.LineInfo, info);
-            var meshes = Tmp.Get(Tmp.MeshInfo, info);
-            if (chars == null || lines == null || count <= 0) return;
+            var info = TmpLayout.TextInfo.GetValue(label, null);
+            if (info == null) return null;
+            int count = Convert.ToInt32(TmpLayout.Get(TmpLayout.CharacterCount, info));
+            int lineCount = Convert.ToInt32(TmpLayout.Get(TmpLayout.LineCount, info));
+            var chars = TmpLayout.Get(TmpLayout.CharacterInfo, info);
+            var lines = TmpLayout.Get(TmpLayout.LineInfo, info);
+            var meshes = TmpLayout.Get(TmpLayout.MeshInfo, info);
+            if (chars == null || lines == null || count <= 0) return null;
 
             int n = s.Logical.Length;
             // The label characters drawing each typed one, in label order — several for a typed
@@ -546,11 +540,11 @@ namespace UnityGameTranslator.Core.TextShaping
             var indexOf = new int[count];
             for (int k = 0; k < count; k++)
             {
-                var c = Tmp.Item(chars, k);
-                indexOf[k] = Convert.ToInt32(Tmp.Get(Tmp.CiIndex, c));
-                origin[k] = Convert.ToSingle(Tmp.Get(Tmp.CiOrigin, c));
-                advance[k] = Convert.ToSingle(Tmp.Get(Tmp.CiXAdvance, c));
-                lineOf[k] = Convert.ToInt32(Tmp.Get(Tmp.CiLine, c));
+                var c = TmpLayout.Item(chars, k);
+                indexOf[k] = Convert.ToInt32(TmpLayout.Get(TmpLayout.CiIndex, c));
+                origin[k] = Convert.ToSingle(TmpLayout.Get(TmpLayout.CiOrigin, c));
+                advance[k] = Convert.ToSingle(TmpLayout.Get(TmpLayout.CiXAdvance, c));
+                lineOf[k] = Convert.ToInt32(TmpLayout.Get(TmpLayout.CiLine, c));
                 if (indexOf[k] >= 0 && indexOf[k] < n) (kOf[indexOf[k]] ?? (kOf[indexOf[k]] = new List<int>())).Add(k);
             }
             // How far the pen moves past each character as TMP laid the label out: to the next
@@ -566,11 +560,11 @@ namespace UnityGameTranslator.Core.TextShaping
             s.LineTop.Clear(); s.LineBottom.Clear();
             for (int g = 0; g < lineCount; g++)
             {
-                var li = Tmp.Item(lines, g);
-                s.LineTop.Add(Convert.ToSingle(Tmp.Get(Tmp.LiAscender, li)));
-                s.LineBottom.Add(Convert.ToSingle(Tmp.Get(Tmp.LiDescender, li)));
+                var li = TmpLayout.Item(lines, g);
+                s.LineTop.Add(Convert.ToSingle(TmpLayout.Get(TmpLayout.LiAscender, li)));
+                s.LineBottom.Add(Convert.ToSingle(TmpLayout.Get(TmpLayout.LiDescender, li)));
                 if (g == 0) continue;
-                int first = Convert.ToInt32(Tmp.Get(Tmp.LiFirst, li));
+                int first = Convert.ToInt32(TmpLayout.Get(TmpLayout.LiFirst, li));
                 if (first < 0 || first >= count) continue;
                 int idx = indexOf[first];
                 if (idx > 0 && idx < n && s.Logical[idx - 1] != '\n') wraps.Add(idx);
@@ -586,6 +580,7 @@ namespace UnityGameTranslator.Core.TextShaping
             for (int i = 0; i < n; i++) { s.BoxL[i] = s.BoxR[i] = float.NaN; s.BoxLine[i] = -1; }
 
             bool moved = false;
+            var shift = new float[count];
             s.EngineLineOfLine = new int[s.Layout.LineCount];
             for (int L = 0; L < s.Layout.LineCount; L++)
             {
@@ -622,6 +617,7 @@ namespace UnityGameTranslator.Core.TextShaping
                         if (Math.Abs(delta) > 0.001f)
                         {
                             MoveTmpQuad(chars, meshes, k, delta);
+                            shift[k] += delta;
                             moved = true;
                         }
                         cursor += w;
@@ -640,24 +636,24 @@ namespace UnityGameTranslator.Core.TextShaping
                 }
 
             s.BoxesFromReorder = true;
-            if (moved && Tmp.UpdateVertexData != null) Tmp.UpdateVertexData.Invoke(label, null);
+            return moved ? shift : null;
         }
 
         /// <summary>Shift one character's four vertices horizontally in the mesh TMP just built.</summary>
         private static void MoveTmpQuad(object chars, object meshes, int k, float delta)
         {
-            var c = Tmp.Item(chars, k);
-            if (!Convert.ToBoolean(Tmp.Get(Tmp.CiVisible, c))) return;
-            int material = Convert.ToInt32(Tmp.Get(Tmp.CiMaterial, c));
-            int vertex = Convert.ToInt32(Tmp.Get(Tmp.CiVertex, c));
-            var mesh = Tmp.Item(meshes, material);
-            var vertices = mesh == null ? null : Tmp.Get(Tmp.MiVertices, mesh);
+            var c = TmpLayout.Item(chars, k);
+            if (!Convert.ToBoolean(TmpLayout.Get(TmpLayout.CiVisible, c))) return;
+            int material = Convert.ToInt32(TmpLayout.Get(TmpLayout.CiMaterial, c));
+            int vertex = Convert.ToInt32(TmpLayout.Get(TmpLayout.CiVertex, c));
+            var mesh = TmpLayout.Item(meshes, material);
+            var vertices = mesh == null ? null : TmpLayout.Get(TmpLayout.MiVertices, mesh);
             if (vertices == null) return;
             for (int v = 0; v < 4; v++)
             {
-                var p = (Vector3)Tmp.Item(vertices, vertex + v);
+                var p = (Vector3)TmpLayout.Item(vertices, vertex + v);
                 p.x += delta;
-                Tmp.SetItem(vertices, vertex + v, p);
+                TmpLayout.SetItem(vertices, vertex + v, p);
             }
         }
 
@@ -1017,17 +1013,14 @@ namespace UnityGameTranslator.Core.TextShaping
         }
 
         // ══ TMP by reflection: the Core names no TMP type (it may not be in the game) ═══════
+        // The text's layout is TmpLayout's; what is the input field's own is here.
 
         private static class Tmp
         {
             private static bool _resolved, _ok;
             internal static PropertyInfo FieldText, FieldIsFocused, FieldBlinkRate, FieldCaretWidth;
             internal static PropertyInfo FieldStringPosition, FieldStringAnchor, FieldStringFocus;
-            internal static PropertyInfo LabelText, TextInfo;
-            internal static MethodInfo UpdateVertexData;
-            internal static MemberInfo CharacterCount, CharacterInfo, LineCount, LineInfo, MeshInfo;
-            internal static MemberInfo CiIndex, CiStringLength, CiOrigin, CiXAdvance, CiLine, CiVisible, CiMaterial, CiVertex;
-            internal static MemberInfo LiFirst, LiAscender, LiDescender, MiVertices;
+            internal static PropertyInfo LabelText;
             private static readonly Dictionary<string, PropertyInfo> _fieldProps = new Dictionary<string, PropertyInfo>();
 
             internal static bool Resolve()
@@ -1038,7 +1031,7 @@ namespace UnityGameTranslator.Core.TextShaping
                 {
                     var field = TypeHelper.TMP_InputFieldType;
                     var text = TypeHelper.TMP_TextType;
-                    if (field == null || text == null) return _ok = false;
+                    if (field == null || text == null || !TmpLayout.Resolve()) return _ok = false;
                     const BindingFlags pub = BindingFlags.Public | BindingFlags.Instance;
 
                     FieldText = field.GetProperty("text", pub);
@@ -1049,39 +1042,11 @@ namespace UnityGameTranslator.Core.TextShaping
                     FieldStringAnchor = field.GetProperty("selectionStringAnchorPosition", pub);
                     FieldStringFocus = field.GetProperty("selectionStringFocusPosition", pub);
                     LabelText = text.GetProperty("text", pub);
-                    TextInfo = text.GetProperty("textInfo", pub);
-                    UpdateVertexData = text.GetMethod("UpdateVertexData", pub, null, Type.EmptyTypes, null);
-
-                    var infoType = TextInfo?.PropertyType;
-                    CharacterCount = Member(infoType, "characterCount");
-                    CharacterInfo = Member(infoType, "characterInfo");
-                    LineCount = Member(infoType, "lineCount");
-                    LineInfo = Member(infoType, "lineInfo");
-                    MeshInfo = Member(infoType, "meshInfo");
-
-                    var ciType = ElementType(TypeOf(CharacterInfo));
-                    CiIndex = Member(ciType, "index");
-                    CiStringLength = Member(ciType, "stringLength");
-                    CiOrigin = Member(ciType, "origin");
-                    CiXAdvance = Member(ciType, "xAdvance");
-                    CiLine = Member(ciType, "lineNumber");
-                    CiVisible = Member(ciType, "isVisible");
-                    CiMaterial = Member(ciType, "materialReferenceIndex");
-                    CiVertex = Member(ciType, "vertexIndex");
-
-                    var liType = ElementType(TypeOf(LineInfo));
-                    LiFirst = Member(liType, "firstCharacterIndex");
-                    LiAscender = Member(liType, "ascender");
-                    LiDescender = Member(liType, "descender");
-
-                    var miType = ElementType(TypeOf(MeshInfo));
-                    MiVertices = Member(miType, "vertices");
 
                     _ok = FieldText != null && FieldIsFocused != null && FieldStringPosition != null
                           && FieldStringAnchor != null && FieldStringFocus != null && LabelText != null
-                          && TextInfo != null && CharacterInfo != null && LineInfo != null && MeshInfo != null
-                          && CiIndex != null && CiStringLength != null && CiOrigin != null && CiXAdvance != null && CiLine != null
-                          && LiFirst != null && LiAscender != null && LiDescender != null && MiVertices != null
+                          && TmpLayout.CiStringLength != null && TmpLayout.LiFirst != null
+                          && TmpLayout.LiAscender != null && TmpLayout.LiDescender != null
                           && FieldProp("caretColor") != null && FieldProp("selectionColor") != null
                           && FieldProp("customCaretColor") != null;
                     if (!_ok) Note("TMP input fields: a member this needs is missing — left to TMP's own drawing");
@@ -1100,37 +1065,6 @@ namespace UnityGameTranslator.Core.TextShaping
                 p = TypeHelper.TMP_InputFieldType?.GetProperty(name, BindingFlags.Public | BindingFlags.Instance);
                 _fieldProps[name] = p;
                 return p;
-            }
-
-            private static MemberInfo Member(Type t, string name) =>
-                Members.FieldOrProperty(t, name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-
-            private static Type TypeOf(MemberInfo m) => Members.TypeOf(m);
-
-            /// <summary>The element of an array — a managed T[] on Mono, an interop array's indexer on IL2CPP.</summary>
-            private static Type ElementType(Type arrayType)
-            {
-                if (arrayType == null) return null;
-                if (arrayType.IsArray) return arrayType.GetElementType();
-                var item = arrayType.GetProperty("Item");
-                return item?.PropertyType;
-            }
-
-            internal static object Get(MemberInfo m, object target) => Members.Get(m, target);
-
-            /// <summary>Sets a member of an element read with <see cref="Item"/> — a boxed struct on Mono, written back with <see cref="SetItem"/>.</summary>
-            internal static void Set(MemberInfo m, object target, object value) => Members.Set(m, target, value);
-
-            internal static object Item(object array, int index)
-            {
-                if (array is Array a) return index >= 0 && index < a.Length ? a.GetValue(index) : null;
-                return array.GetType().GetProperty("Item")?.GetValue(array, new object[] { index });
-            }
-
-            internal static void SetItem(object array, int index, object value)
-            {
-                if (array is Array a) { a.SetValue(value, index); return; }
-                array.GetType().GetProperty("Item")?.SetValue(array, value, new object[] { index });
             }
         }
     }

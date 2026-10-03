@@ -398,6 +398,25 @@ namespace UnityGameTranslator.Core
                 }
             });
 
+            Group("TMP mesh built", () =>
+            {
+                // After TMP built a text's mesh: a presented field's glyphs into visual order, then
+                // underlines and strikethroughs over their letters (TmpMeshDone). Every TMP text, the
+                // UI one and the 3D one: TMP's right-to-left setting draws both backwards.
+                if (TypeHelper.TMP_TextType != null)
+                {
+                    const BindingFlags any = BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public;
+                    var hook = typeof(TextShaping.TmpMeshDone).GetMethod(nameof(TextShaping.TmpMeshDone.Tmp_GenerateTextMesh_Postfix), BindingFlags.Static | BindingFlags.Public);
+                    foreach (var name in new[] { ".TextMeshProUGUI", ".TextMeshPro" })
+                    {
+                        var type = TypeHelper.TMP_TextType.Assembly.GetType(TypeHelper.TMP_TextType.Namespace + name);
+                        var generate = type?.GetMethod("GenerateTextMesh", any, null, Type.EmptyTypes, null);
+                        if (generate != null) { patcher(generate, null, hook); patchCount++; }
+                        else if (type != null) TranslatorCore.LogWarning($"[Patches] no GenerateTextMesh on {type.Name}: its glyphs and decorations stay as TMP laid them out");
+                    }
+                }
+            });
+
             Group("TMP_InputField right-to-left editing", () =>
             {
                 // TMP_InputField — the same editing, TMP's way: its label keeps the typed order and
@@ -411,21 +430,19 @@ namespace UnityGameTranslator.Core
                     var fields = typeof(TextShaping.RtlInputFields);
                     MethodInfo Hook(string name) => fields.GetMethod(name, BindingFlags.Static | BindingFlags.Public);
 
-                    var ugui = TypeHelper.TMP_TextType.Assembly.GetType(TypeHelper.TMP_TextType.Namespace + ".TextMeshProUGUI");
-                    var generate = ugui?.GetMethod("GenerateTextMesh", any, null, Type.EmptyTypes, null);
                     var down = t.GetMethod("OnPointerDown", any, null, new[] { typeof(UnityEngine.EventSystems.PointerEventData) }, null);
                     var drag = t.GetMethod("OnDrag", any, null, new[] { typeof(UnityEngine.EventSystems.PointerEventData) }, null);
                     var left = t.GetMethod("MoveLeft", any, null, new[] { typeof(bool), typeof(bool) }, null);
                     var right = t.GetMethod("MoveRight", any, null, new[] { typeof(bool), typeof(bool) }, null);
 
-                    if (generate != null) { patcher(generate, null, Hook(nameof(TextShaping.RtlInputFields.Tmp_GenerateTextMesh_Postfix))); patchCount++; }
                     if (down != null) { patcher(down, Hook(nameof(TextShaping.RtlInputFields.Tmp_OnPointerDown_Prefix)), Hook(nameof(TextShaping.RtlInputFields.Tmp_OnPointerDown_Postfix))); patchCount++; }
                     if (drag != null) { patcher(drag, null, Hook(nameof(TextShaping.RtlInputFields.Tmp_OnDrag_Postfix))); patchCount++; }
                     if (left != null) { patcher(left, Hook(nameof(TextShaping.RtlInputFields.Tmp_MoveLeft_Prefix)), null); patchCount++; }
                     if (right != null) { patcher(right, Hook(nameof(TextShaping.RtlInputFields.Tmp_MoveRight_Prefix)), null); patchCount++; }
 
-                    if (generate == null || down == null || drag == null || left == null || right == null)
-                        TranslatorCore.LogWarning($"[Patches] TMP_InputField right-to-left editing incomplete: layout={(generate != null)} click={(down != null)} drag={(drag != null)} left={(left != null)} right={(right != null)}");
+                    // Its layout half is the "TMP mesh built" hook, said there when it is missing.
+                    if (down == null || drag == null || left == null || right == null)
+                        TranslatorCore.LogWarning($"[Patches] TMP_InputField right-to-left editing incomplete: click={(down != null)} drag={(drag != null)} left={(left != null)} right={(right != null)}");
                 }
             });
 

@@ -58,7 +58,7 @@ namespace UnityGameTranslator.Core
         internal const int Setter = 18;          // the whole TMP/UI.Text/TextMesh setter prefix
         internal const int SetterNote = 19;      // ...of which: recording the text system (texts-seen)
         internal const int SetterRelease = 20;   // ...of which: handing a right-to-left state back
-        internal const int TmpLayout = 21;       // the GenerateTextMesh postfix (input fields, probe)
+        internal const int TmpLayout = 21;       // the GenerateTextMesh postfix (TmpMeshDone: input fields, decorations)
         internal const int Reveal = 22;          // the maxVisibleCharacters setter prefix (RevealScale)
         internal const int RenderWatch = 23;     // TranslatorScanner.TickRenderWatch, every frame before the draw
 

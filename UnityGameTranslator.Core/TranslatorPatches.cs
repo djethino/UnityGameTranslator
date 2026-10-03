@@ -3503,15 +3503,50 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static void TMPText_OtherWrite_Probe(object __instance)
         {
-            if (!TranslatorCore.DebugMode) return;
-
             try
             {
-                string written = TypeHelper.GetText(__instance);
-                if (string.IsNullOrEmpty(written)) return;
-                NoteSetterFired(__instance, written, "TMP-other");
+                if (TranslatorCore.DebugMode)
+                {
+                    string seen = TypeHelper.GetText(__instance);
+                    if (!string.IsNullOrEmpty(seen)) NoteSetterFired(__instance, seen, "TMP-other");
+                }
+                PresentOtherWrite(__instance);
             }
             catch (Exception ex) { Faults.Say("Patches.TMPText_OtherWrite_Probe", ex); }
+        }
+
+        private static object _otherWriteInstance;
+        private static string _otherWriteShown;
+
+        /// <summary>
+        /// What a game wrote through TMP's other doors is still LAID OUT by the mod's state: a
+        /// component the mod turned right to left for an earlier text kept the flag, and a counter
+        /// written by StringBuilder into it came out backwards ("7/10" shown "01/7" — a game's level
+        /// labels, 2026-10-03; bench <c>tmpsb</c>). Not translated here (see the summary above): presented
+        /// like any written text — its own right-to-left lines composed, a left-to-right one given the
+        /// component's own state back. Only where it can matter: a component holding the mod's
+        /// right-to-left state, or a game translated into a right-to-left language.
+        /// </summary>
+        private static void PresentOtherWrite(object tmp)
+        {
+            if (BypassTextPrefix || !TranslatorCore.IsMainThread) return;
+            int compId = TypeHelper.GetInstanceID(tmp);
+            if (!TextShaping.RtlPresenter.HoldsRtlState(compId) && !(TranslatorCore.TranslationsActive && TranslatorCore.TargetIsRightToLeft)) return;
+            string written = TmpFormattedText(tmp);
+            if (string.IsNullOrEmpty(written)) return;
+            // TMP's overloads call one another (SetText(StringBuilder) → SetText(StringBuilder, start,
+            // length)): the outer postfix then reads back what the inner one presented.
+            if (EngineCollections.Same(_otherWriteInstance, tmp) && string.Equals(written, _otherWriteShown, StringComparison.Ordinal)) return;
+            string font = compId != -1 && _fontNameCache.TryGetValue(compId, out var fontName) && fontName != null
+                ? FontManager.GetSettingsFontName(compId, fontName) : null;
+            string shown = written;
+            TextShaping.RtlPresenter.Present(tmp, compId, ref shown, font, null, false, knownLogical: true);
+            if (string.Equals(shown, written, StringComparison.Ordinal)) return;
+            _otherWriteInstance = tmp;
+            _otherWriteShown = shown;
+            BypassTextPrefix = true;
+            try { TypeHelper.SetText(tmp, shown); }
+            finally { BypassTextPrefix = false; }
         }
 
         /// <summary>

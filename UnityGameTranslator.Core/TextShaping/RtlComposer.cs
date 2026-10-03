@@ -95,6 +95,10 @@ namespace UnityGameTranslator.Core.TextShaping
         /// </summary>
         private static MarkupSyntax _markup = MarkupSyntax.AngleTags;
 
+        // The placeholder sentinels standing for a <br> in the text being composed (Tokenize):
+        // content for the stream, a paragraph separator for the bidi (Resolve).
+        private static readonly HashSet<int> _lineBreakSentinels = new HashSet<int>();
+
         /// <summary>Composes with this markup until the returned scope is disposed.</summary>
         internal static IDisposable UseMarkup(MarkupSyntax markup) => new MarkupScope(markup);
 
@@ -224,6 +228,12 @@ namespace UnityGameTranslator.Core.TextShaping
                     if (ReferenceEquals(bidiInput, arr)) bidiInput = (int[])arr.Clone();
                     bidiInput[i] = 0x0300;
                 }
+                else if (_lineBreakSentinels.Contains(arr[i]))
+                {
+                    // A <br>: the paragraph separator for the bidi, like '\n' (Tokenize).
+                    if (ReferenceEquals(bidiInput, arr)) bidiInput = (int[])arr.Clone();
+                    bidiInput[i] = '\n';
+                }
             _bidiData.Init(new Slice<int>(bidiInput), 1);
             _bidi.Process(_bidiData);
             levels = _bidi.ResolvedLevels;
@@ -315,6 +325,7 @@ namespace UnityGameTranslator.Core.TextShaping
         private static string Tokenize(string text, List<string> placeholders, List<string> tags)
         {
             var sb = new StringBuilder(text.Length);
+            _lineBreakSentinels.Clear();
             int i = 0;
             while (i < text.Length)
             {
@@ -322,6 +333,21 @@ namespace UnityGameTranslator.Core.TextShaping
                 int length;
                 if ((length = Placeholders.LengthAt(text, i)) > 0 && placeholders.Count < SentinelMax)
                 {
+                    sb.Append((char)(PlaceholderBase + placeholders.Count));
+                    placeholders.Add(text.Substring(i, length));
+                    i += length;
+                    continue;
+                }
+                // 🔴 <br> is a LINE BREAK, not styling: lifted out with the tags, it let the bidi
+                // order both lines as one, and a price under its label came out with its first digit
+                // on the second line and the rest on the first ("شراء<br>173.28" shown "شراء73.28" /
+                // "1", 2026-10-03). Kept in the stream as content, read by the bidi as the paragraph
+                // separator '\n' is (Resolve): each line ordered on its own, as TMP and UI Toolkit
+                // break them. An engine that shows <br> as text gets it at its reading place.
+                if (_markup == MarkupSyntax.AngleTags && placeholders.Count < SentinelMax
+                    && (length = MarkupLengthAt(text, i)) > 0 && Markup.NameOf(text.Substring(i, length)) == "br")
+                {
+                    _lineBreakSentinels.Add(PlaceholderBase + placeholders.Count);
                     sb.Append((char)(PlaceholderBase + placeholders.Count));
                     placeholders.Add(text.Substring(i, length));
                     i += length;

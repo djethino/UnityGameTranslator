@@ -157,6 +157,10 @@ namespace UnityGameTranslator.Core.TextShaping
             catch (Exception ex) { TranslatorCore.LogDebug($"[RtlPresenter] release failed: {ex.Message}"); }
         }
 
+        /// <summary>Whether the mod set this component's right-to-left flag or alignment, and has the game's to give back.</summary>
+        internal static bool HoldsRtlState(long compId) =>
+            compId != -1 && (_flaggedOriginal.ContainsKey(compId) || _alignedOriginal.ContainsKey(compId));
+
         /// <summary>
         /// Present one outgoing string in place. Cheap for the overwhelming majority of texts:
         /// one range scan says "nothing to do". <paramref name="knownLogical"/>: the caller knows

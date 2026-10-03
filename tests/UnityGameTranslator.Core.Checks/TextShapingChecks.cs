@@ -116,6 +116,15 @@ namespace UnityGameTranslator.Core.Checks
             check(arabicVisual.Contains("%2") && new string(arabicFlagged).Contains("%2") && hebrewVisual.Contains("2%"),
                 "a percentage reads as UAX #9 lays it out: %2 after Arabic, 2% after Hebrew",
                 "Arabic " + string.Join(" ", arabicVisual.Select(c => ((int)c).ToString("X4"))) + " | Hebrew " + string.Join(" ", hebrewVisual.Select(c => ((int)c).ToString("X4"))));
+            // A <br> breaks the line as '\n' does (a price under its label, 2026-10-03): composed, each
+            // line keeps its own letters and number — the same string as with '\n', the break kept as written.
+            string withBr = RtlComposer.Compose("קנה<br>173.28 ש", RtlOutput.RtlFlagged);
+            string withNl = RtlComposer.Compose("קנה\n173.28 ש", RtlOutput.RtlFlagged);
+            check(withBr == withNl.Replace("\n", "<br>"), "<br> splits a right-to-left text into lines as '\\n' does",
+                Escape(withBr) + " | with \\n: " + Escape(withNl));
+            string visualBr = RtlComposer.Compose("קנה<br>173.28 ש", RtlOutput.VisualOrder);
+            string visualNl = RtlComposer.Compose("קנה\n173.28 ש", RtlOutput.VisualOrder);
+            check(visualBr == visualNl.Replace("\n", "<br>"), "and in visual order", Escape(visualBr) + " | with \\n: " + Escape(visualNl));
             check(RtlText.ContainsStrongRtl("x\U0001E900"), "a right-to-left letter beyond U+FFFF is found",
                 "Adlam is in a supplementary plane: read as one code point, not two halves");
             check(!RtlText.IsStrongRtl(0x0915) && !RtlText.IsStrongRtl(0x4E2D) && !RtlText.IsStrongRtl(0x0416),

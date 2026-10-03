@@ -355,8 +355,11 @@ namespace UnityGameTranslator.Core.TextShaping
                 if (ProcessedTextProp(type) != null)
                 {
                     MirrorAlignment(instance, compId, mirror);
-                    if (PresentTemplate(instance, compId, ref value)) return;
-                    QueueReflow(instance, compId, ref value, ReflowKind.Ngui, mirror, "logical+reflow/ngui");
+                    using (RtlComposer.UseMarkup(MarkupOf(instance)))
+                    {
+                        if (PresentTemplate(instance, compId, ref value)) return;
+                        QueueReflow(instance, compId, ref value, ReflowKind.Ngui, mirror, "logical+reflow/ngui");
+                    }
                     return;
                 }
 
@@ -981,7 +984,9 @@ namespace UnityGameTranslator.Core.TextShaping
                             else
                                 TranslatorCore.LogWarning($"[RtlPresenter] reflow gave up ({whyNot}{(whyOwn != null ? " | populate: " + whyOwn : "")}) — whole-string visual order, line stack may read bottom-up: comp={id}");
                         }
-                        if (final == null) final = RtlComposer.Compose(entry.Logical, RtlOutput.VisualOrder);
+                        if (final == null)
+                            using (RtlComposer.UseMarkup(entry.Kind == ReflowKind.Ngui ? MarkupOf(comp) : MarkupSyntax.AngleTags))
+                                final = RtlComposer.Compose(entry.Logical, RtlOutput.VisualOrder);
                     }
 
                     RegisterShown(id, final, entry.Logical);
@@ -1640,7 +1645,25 @@ namespace UnityGameTranslator.Core.TextShaping
             if (!EqualsIgnoringWhitespace(processed, assigned))
             { whyNot = "processedText diverges from the assigned text (markup, ellipsis or shrink)"; return null; }
 
-            return ComposeLines(processed.Split('\n'));
+            using (RtlComposer.UseMarkup(MarkupOf(comp)))
+                return ComposeLines(processed.Split('\n'));
+        }
+
+        private static readonly Dictionary<Type, PropertyInfo> _supportEncodingProps = new Dictionary<Type, PropertyInfo>();
+
+        /// <summary>
+        /// The markup an NGUI label reads: its [codes] while its <c>supportEncoding</c> is on (NGUI's
+        /// default), none otherwise — a label with encoding off shows its brackets as text, and so
+        /// are they composed.
+        /// </summary>
+        private static MarkupSyntax MarkupOf(object label)
+        {
+            var type = label.GetType();
+            if (!_supportEncodingProps.TryGetValue(type, out var prop))
+                _supportEncodingProps[type] = prop = Members.Property(type, "supportEncoding", BindingFlags.Public | BindingFlags.Instance);
+            if (prop == null || prop.PropertyType != typeof(bool)) return MarkupSyntax.NguiCodes;
+            try { return (bool)prop.GetValue(label, null) ? MarkupSyntax.NguiCodes : MarkupSyntax.None; }
+            catch (Exception ex) { Faults.Say("RtlPresenter.MarkupOf", ex, type.Name); return MarkupSyntax.NguiCodes; }
         }
 
         private static PropertyInfo ProcessedTextProp(Type type)

@@ -7,6 +7,18 @@ using UnityGameTranslator.Common;
 
 namespace UnityGameTranslator.Core.TextShaping
 {
+    /// <summary>
+    /// Which markup a text carries — what the composer keeps as structure rather than content: Unity's
+    /// and TextMesh Pro's &lt;tags&gt;, or NGUI's [codes] (<see cref="NguiMarkup"/>).
+    /// </summary>
+    internal enum MarkupSyntax
+    {
+        AngleTags,
+        NguiCodes,
+        /// <summary>No markup at all: every character is text (an NGUI label with its encoding off).</summary>
+        None,
+    }
+
     /// <summary>How the composed string will be consumed — the two shapes stage D hands out.</summary>
     internal enum RtlOutput
     {
@@ -74,6 +86,40 @@ namespace UnityGameTranslator.Core.TextShaping
         /// bound stops a lone '&lt;' in a sentence from swallowing what follows.
         /// </summary>
         internal const int TagSpan = 128;
+
+        /// <summary>
+        /// The markup of the text being composed, for the length of a <see cref="UseMarkup"/> scope —
+        /// a setting of the call, like the output shape, held here because every entry (Compose,
+        /// ShapeLogicalOnly, HasLtrRunAcrossSpace) reaches the same tokenizer. Main thread only, as the
+        /// whole composer is.
+        /// </summary>
+        private static MarkupSyntax _markup = MarkupSyntax.AngleTags;
+
+        /// <summary>Composes with this markup until the returned scope is disposed.</summary>
+        internal static IDisposable UseMarkup(MarkupSyntax markup) => new MarkupScope(markup);
+
+        private sealed class MarkupScope : IDisposable
+        {
+            private readonly MarkupSyntax _before;
+            internal MarkupScope(MarkupSyntax markup) { _before = _markup; _markup = markup; }
+            public void Dispose() => _markup = _before;
+        }
+
+        /// <summary>The length of the markup token at <paramref name="at"/> under the current syntax, or 0.</summary>
+        private static int MarkupLengthAt(string text, int at)
+        {
+            if (_markup == MarkupSyntax.NguiCodes) return NguiMarkup.LengthAt(text, at);
+            if (_markup == MarkupSyntax.None) return 0;
+            int end;
+            if (text[at] == '<' && at + 1 < text.Length && text[at + 1] != ' ' && text[at + 1] != '<'
+                && (end = TagEnd(text, at, stopAtLineBreak: false)) > 0)
+                return end + 1 - at;
+            return 0;
+        }
+
+        private static bool MarkupIsClosing(string tag) => _markup == MarkupSyntax.NguiCodes ? NguiMarkup.IsClosing(tag) : Markup.IsClosing(tag);
+
+        private static string MarkupPairName(string tag) => _markup == MarkupSyntax.NguiCodes ? NguiMarkup.PairName(tag) : Markup.NameOf(tag);
 
         private sealed class TagInfo
         {
@@ -261,9 +307,10 @@ namespace UnityGameTranslator.Core.TextShaping
 
         /// <summary>
         /// Swap every protected span for one sentinel codepoint. Placeholders as the socle's grammar
-        /// names them (<see cref="Placeholders.LengthAt"/>), and rich-text tags <c>&lt;…&gt;</c>
-        /// under the rule the measured implementation uses — no space after <c>&lt;</c>, no nested
-        /// <c>&lt;</c>, closed within <see cref="TagSpan"/>.
+        /// names them (<see cref="Placeholders.LengthAt"/>), and the markup of the text's engine
+        /// (<see cref="UseMarkup"/>): rich-text tags <c>&lt;…&gt;</c> under the rule the measured
+        /// implementation uses — no space after <c>&lt;</c>, no nested <c>&lt;</c>, closed within
+        /// <see cref="TagSpan"/> — or NGUI's codes.
         /// </summary>
         private static string Tokenize(string text, List<string> placeholders, List<string> tags)
         {
@@ -272,7 +319,7 @@ namespace UnityGameTranslator.Core.TextShaping
             while (i < text.Length)
             {
                 char c = text[i];
-                int end, length;
+                int length;
                 if ((length = Placeholders.LengthAt(text, i)) > 0 && placeholders.Count < SentinelMax)
                 {
                     sb.Append((char)(PlaceholderBase + placeholders.Count));
@@ -280,13 +327,11 @@ namespace UnityGameTranslator.Core.TextShaping
                     i += length;
                     continue;
                 }
-                if (c == '<' && i + 1 < text.Length && text[i + 1] != ' ' && text[i + 1] != '<'
-                    && (end = TagEnd(text, i, stopAtLineBreak: false)) > 0
-                    && tags.Count < SentinelMax)
+                if (tags.Count < SentinelMax && (length = MarkupLengthAt(text, i)) > 0)
                 {
                     sb.Append((char)(TagBase + tags.Count));
-                    tags.Add(text.Substring(i, end - i + 1));
-                    i = end + 1;
+                    tags.Add(text.Substring(i, length));
+                    i += length;
                     continue;
                 }
                 sb.Append(c);
@@ -315,27 +360,27 @@ namespace UnityGameTranslator.Core.TextShaping
 
         #region Tag pairing and reinsertion
 
-        /// <summary>Match &lt;x…&gt; with &lt;/x&gt; by name, tracking nesting depth.</summary>
+        /// <summary>Match an opening with its closing by name (&lt;x…&gt; / &lt;/x&gt;, [b] / [/b], a colour / [-]), tracking nesting depth.</summary>
         private static void MatchTagPairs(List<TagInfo> tagInfos)
         {
             var stack = new List<int>();
             for (int i = 0; i < tagInfos.Count; i++)
             {
                 string t = tagInfos[i].Text;
-                if (Markup.IsClosing(t))
+                if (MarkupIsClosing(t))
                 {
-                    // Named by the socle, so a model's answer and the screen pair tags alike.
-                    string name = Markup.NameOf(t);
+                    // Named by the socle for tags, so a model's answer and the screen pair them alike.
+                    string name = MarkupPairName(t);
                     for (int s = stack.Count - 1; s >= 0; s--)
                     {
-                        if (Markup.NameOf(tagInfos[stack[s]].Text) != name) continue;
+                        if (MarkupPairName(tagInfos[stack[s]].Text) != name) continue;
                         tagInfos[i].PairOpen = stack[s];
                         tagInfos[i].Depth = tagInfos[stack[s]].Depth = s;
                         stack.RemoveRange(s, stack.Count - s);
                         break;
                     }
                 }
-                else
+                else if (MarkupPairName(t) != null)
                 {
                     tagInfos[i].Depth = stack.Count;
                     stack.Add(i);

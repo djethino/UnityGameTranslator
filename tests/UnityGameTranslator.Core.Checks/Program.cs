@@ -283,6 +283,7 @@ namespace UnityGameTranslator.Core.Checks
             Section("Silent catches (a ratchet down to none)", SilentCatchChecks.Run);
             Section("Font atlases filled through FontAtlas only", FontAtlasChecks.Run);
             Section("Strings handed to the engine through their doors only", TransformFindChecks.Run);
+            Section("NGUI's [codes] kept as markup in right-to-left lines", NguiMarkupChecks.Run);
             Section("No character decision written for one script", CharacterRangeChecks.Run);
             Section("Underlines and strikethroughs over their letters", DecorationSpansChecks.Run);
             Section("A font's own lines (cap, mean, strikeout, underline)", FontLinesChecks.Run);

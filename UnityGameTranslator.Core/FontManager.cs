@@ -2828,6 +2828,7 @@ namespace UnityGameTranslator.Core
                 {
                     addMethod.Invoke(fallbackList, new[] { fallbackAsset });
                     TranslatorCore.LogDebug($"[FontManager] Added fallback '{systemFontName}' to: {fontName}");
+                    ForgetBorrowedLetters();
                     return true;
                 }
             }
@@ -2866,7 +2867,10 @@ namespace UnityGameTranslator.Core
                 {
                     bool removed = (bool)removeMethod.Invoke(fallbackList, new[] { FallbackListAsset(oldFallbackAsset, make: false) });
                     if (removed)
+                    {
                         TranslatorCore.LogDebug($"[FontManager] Removed old fallback '{oldFallbackName}' from: {gameFontName}");
+                        ForgetBorrowedLetters();
+                    }
                 }
             }
             catch (Exception ex)
@@ -3354,7 +3358,10 @@ namespace UnityGameTranslator.Core
                             }
                             catch (Exception ex) { Faults.Say("FontManager.ApplyFontReplacement fallback Contains", ex); }
                             if (!alreadyThere)
+                            {
                                 addMethod.Invoke(fallbackList, new[] { castedOriginal });
+                                ForgetBorrowedLetters();
+                            }
                             _fallbackAppliedFonts.Add(originalFontName + "_reverse");
                         }
                         catch (Exception ex) { Faults.Say("FontManager.ApplyFontReplacement reverse fallback", ex); }
@@ -5359,6 +5366,42 @@ namespace UnityGameTranslator.Core
         /// Handles different TMP versions (fallbackFontAssets vs fallbackFontAssetTable).
         /// Returns an IList (or similar) that supports Add/Remove/Contains.
         /// </summary>
+        private static MethodInfo _clearBorrowed;
+        private static bool _clearBorrowedSought;
+
+        /// <summary>
+        /// After a fallback list changed: every TMP font asset forgets the letters it found in OTHER
+        /// assets — what TMP itself does when a font asset changes (TMP_FontAsset.ClearFallbackCharacterTable
+        /// on every instance).
+        ///
+        /// 🔴 The TMP of Unity 6 caches, in the font a text was searched from, each letter found
+        /// elsewhere (AddCharacterToLookupCache, keyed by the character alone). A letter asked before
+        /// our fallback was in the list stays answered from wherever it was found then — inside a
+        /// &lt;font&gt; tag, the component's own font, drawn with the tag font's material on the tag
+        /// font's atlas: an Arabic word invisible in every text of the session, Mono and IL2CPP
+        /// (bench 6000.3.6, 2026-10-03). TMP 3.0 keeps no such cache: there is nothing to forget.
+        /// </summary>
+        private static void ForgetBorrowedLetters()
+        {
+            var tmpType = TypeHelper.TMP_FontAssetType;
+            if (tmpType == null) return;
+            if (!_clearBorrowedSought)
+            {
+                _clearBorrowedSought = true;
+                _clearBorrowed = tmpType.GetMethod("ClearFallbackCharacterTable", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, Type.EmptyTypes, null);
+            }
+            if (_clearBorrowed == null) return;
+            int cleared = 0;
+            foreach (var obj in TypeHelper.FindAllAssetsOfType(tmpType))
+            {
+                var asset = TypeHelper.Il2CppCast(obj, tmpType);
+                if (asset == null) continue;
+                try { _clearBorrowed.Invoke(asset, null); cleared++; }
+                catch (Exception ex) { Faults.Say("FontManager.ForgetBorrowedLetters", ex, (asset as UnityEngine.Object)?.name); }
+            }
+            TranslatorCore.LogDebug($"[FontManager] fallback list changed: {cleared} TMP font asset(s) forgot the letters they had found elsewhere");
+        }
+
         private static object GetFallbackListReflection(object font)
         {
             if (font == null) return null;

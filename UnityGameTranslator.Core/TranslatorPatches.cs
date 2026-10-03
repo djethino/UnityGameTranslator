@@ -3284,12 +3284,18 @@ namespace UnityGameTranslator.Core
                         // ⚠ Present anyway: this outcome also fires when a stored LOGICAL
                         // translation is re-set (scanner refresh) — the bookkeeping matched, the
                         // screen still needs the shaped form.
+                        if (componentType == "TMP") FontManager.NoteFontTags(textValue, compId);
                         TextShaping.RtlPresenter.Present(__instance, compId, ref textValue,
                                                          settingsFontName ?? fontName, fontOverrideMatched);
                         ApplyFontScaleGated(__instance, unityCloneFont, unityCloneName, settingsFontName ?? fontName);
                         RelayoutIfResized(__instance, compId, ref textValue);
                         return;
                 }
+
+                // The <font> tags of what is about to be WRITTEN — the translation's, not the game's
+                // text seen above: a tag only the translation carries was found by the next scan,
+                // after this text had drawn its letters without the tag font's fallback.
+                if (componentType == "TMP") FontManager.NoteFontTags(textValue, compId);
 
                 // Stage D of the RTL pipeline, LAST on purpose: everything above — routing,
                 // concat/typewriter bookkeeping, caches — works on the logical text; only the

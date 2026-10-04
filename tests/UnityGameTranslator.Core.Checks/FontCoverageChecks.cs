@@ -22,7 +22,8 @@ namespace UnityGameTranslator.Core.Checks
                 "a Hebrew letter is Hebrew, not Arabic", "by Unicode's script of the character, not a range");
 
             // The three decorations TMP draws with the "_" of the component's own font (user, 2026-10-03):
-            // the message is due only when the translation itself carries one.
+            // the message is due only when the game's text carries one — the source, what the developer
+            // wanted shown (2026-10-04); FontManager.NoteTextDrawn passes it.
             foreach (var text in new[] { "a <u>b</u>", "<s>x</s>", "<mark=#FFD00080>x</mark>", "<U>x</U>", "<u color=#f00>x</u>" })
                 check(FontCoverage.DecoratesText(text), "decorates: " + text, "TMP draws it with the font's \"_\"");
             foreach (var text in new[] { "<sprite=1>", "<size=150%>x</size>", "<sub>2</sub>", "<b>x</b>", "a < b", "<style=u>", "plain", "<", "<u" })
@@ -65,6 +66,30 @@ namespace UnityGameTranslator.Core.Checks
             check(pair.Count == 1 && pair[0] == 'a', "a source character above U+FFFF is found whole", string.Join(",", pair));
             c.Record("Menu3", "\U0001F601", "\uD83D");
             check(c.Missing("Menu3", cp => false).Count == 1, "half a pair in the source is not the character", "");
+
+            // Per line (2026-10-04): a line corrected in the editor takes back what it alone brought,
+            // without a restart; a character another line still brings stays needed.
+            var l = new FontCoverage();
+            Func<int, bool?> latinOnly = cp => cp < 0x250;
+            l.Record("Dlg", "الギリ", "Greek");
+            l.Record("Dlg", "يونانيギ", "Greek letters");
+            check(string.Join(",", l.Missing("Dlg", latinOnly)).Contains(((int)'リ').ToString()), "a bad line's characters are missing", "");
+            int v = l.Version;
+            check(l.Record("Dlg", "اليونانية", "Greek") && l.Version > v, "a corrected line changes the account", "its リ went with it");
+            var after = l.Missing("Dlg", cp => cp < 0x250 || (cp >= 0x600 && cp <= 0x6FF));
+            check(after.Count == 1 && after[0] == 'ギ', "what the corrected line alone brought is no longer missing; what another line brings is",
+                string.Join(",", after));
+            var bringing = l.LinesBringing("Dlg", new HashSet<int>(after));
+            check(bringing.Count == 1 && bringing[0].Source == "Greek letters" && bringing[0].Text == "يونانيギ",
+                "the lines bringing a missing character are named by source and text", bringing.Count.ToString());
+            l.Record("Dlg", "الギリ", "Greek");
+            check(l.Missing("Dlg", latinOnly).Contains('リ'), "the old text coming back is read again", "the correction undone");
+            var latest = l.LinesBringing("Dlg", new HashSet<int> { 'ギ' });
+            check(latest.Count == 2 && latest[0].Source == "Greek", "the latest line drawn comes first", latest.Count > 0 ? latest[0].Source : "");
+            l.Record("Dlg", "يوناني", "Greek letters");
+            l.Record("Dlg", "يونانية", "Greek");
+            check(l.Missing("Dlg", latinOnly).TrueForAll(cp => cp >= 0x600 && cp <= 0x6FF) && l.LinesBringing("Dlg", new HashSet<int> { 'ギ' }).Count == 0,
+                "every line corrected: no foreign character left", "");
 
             int before = c.Version;
             c.Record("Title", "H");

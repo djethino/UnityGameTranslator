@@ -37,8 +37,9 @@ namespace UnityGameTranslator.Core
             if (Coverage.Seen(settingsFontName, text)) return;
             if (!TranslatorCore.IsAlreadyTargetText(text))
             {
-                // Remembered as read: a text that is not ours now is the source of one, a different string.
-                Coverage.Record(settingsFontName, "");
+                // The game's own text: its characters are its font's business, its decorations are
+                // what the developer asked for — and the fallback draws them too.
+                Coverage.NoteDecorated(settingsFontName, text);
                 return;
             }
             // Only what the translation BRINGS is judged: the letters of its own source line are the
@@ -55,8 +56,11 @@ namespace UnityGameTranslator.Core
             // every character counted, the game's own "●" bullets reported as missing (2026-10-03).
             if (source == null && compId != -1 && compId <= int.MaxValue && compId >= int.MinValue)
                 source = TranslatorScanner.GetOriginalText((int)compId);
-            // <u>, <s>, <mark> in the translation: drawn by TMP with the "_" of the font it draws with.
-            Coverage.NoteDecorated(settingsFontName, text);
+            // <u>, <s>, <mark> in the SOURCE line: drawn by TMP with the "_" of the font it draws with.
+            // 🔴 The source and not the translation (user, 2026-10-04): what counts is what the
+            // developer wanted shown. A translation that dropped the tag would silence the notice
+            // while the line still lacks it (the editor refuses that edit, Markup.KeptByEdit).
+            if (source != null) Coverage.NoteDecorated(settingsFontName, source);
             if (source != null && !_crossingFonts.Contains(settingsFontName))
             {
                 int from = TextShaping.RtlText.ParagraphDirection(UnityGameTranslator.Common.Markup.Strip(source));
@@ -108,7 +112,7 @@ namespace UnityGameTranslator.Core
         private static int _missingAtVersion = -1;
         private static int _missingAtSettings;
         private static readonly Dictionary<string, List<int>> _missingByFont = new Dictionary<string, List<int>>(StringComparer.Ordinal);
-        // Game fonts whose translation underlines, strikes or highlights, by the fallback drawing them that has no "_".
+        // Game fonts whose game text underlines, strikes or highlights, by the fallback drawing them that has no "_".
         private static readonly Dictionary<string, string> _undecoratedBy = new Dictionary<string, string>(StringComparer.Ordinal);
         private static readonly Dictionary<string, HashSet<int>> _cmapByPath = new Dictionary<string, HashSet<int>>(StringComparer.OrdinalIgnoreCase);
         private static readonly Dictionary<string, string> _installedPathByName = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -143,6 +147,18 @@ namespace UnityGameTranslator.Core
             public int Missing;       // characters of the translation the drawing font lacks
             public bool Unshaped;     // a text needing shaping (joined letters, conjuncts) shown without it
             public bool MissingLetters; // some of them are written in the target language's own script
+            public bool HasFallback;  // a fallback is set and in use: the translator chose it (see InCorner)
+            public int MissingLines;  // lines of the translation that bring one of the missing characters
+            public long? LastLineIndex; // the latest such line: its entry's "i", when it has one
+            public string LastLineText; // and its text as drawn
+
+            /// <summary>
+            /// Whether the corner says it. 🔴 Setting a fallback validates the characters (user,
+            /// 2026-10-04): the translator chose that font, so nobody — players included — is asked
+            /// again in the corner; its row in the Fonts tab keeps saying what it still lacks. Text
+            /// it cannot shape is still said: no choice of font accepted that.
+            /// </summary>
+            public bool InCorner => Unshaped || (Missing > 0 && !HasFallback);
         }
 
         /// <summary>Whether a missing character is a letter of the target language's own script (FontCoverage.AnyWrittenIn).</summary>
@@ -159,14 +175,38 @@ namespace UnityGameTranslator.Core
                 _missingByFont.TryGetValue(font, out var missing);
                 int count = missing?.Count ?? 0;
                 bool unshaped = Coverage.IsUnshaped(font);
-                if (count > 0 || unshaped) list.Add(new FontProblem { Font = font, Missing = count, Unshaped = unshaped, MissingLetters = InTargetScript(missing) });
+                if (count == 0 && !unshaped) continue;
+                var problem = new FontProblem { Font = font, Missing = count, Unshaped = unshaped, MissingLetters = InTargetScript(missing) };
+                // A fallback set but not drawing (replacing is off) chose nothing on screen.
+                problem.HasFallback = TranslatorCore.FontReplacementActive
+                    && TranslatorCore.FontSettingsMap.TryGetValue(font, out var settings) && !string.IsNullOrEmpty(settings?.fallback);
+                if (count > 0)
+                {
+                    var lines = Coverage.LinesBringing(font, new HashSet<int>(missing));
+                    problem.MissingLines = lines.Count;
+                    if (lines.Count > 0)
+                    {
+                        problem.LastLineText = lines[0].Text;
+                        if (lines[0].Source != null && TranslatorCore.TranslationCache.TryGetValue(lines[0].Source, out var entry))
+                            problem.LastLineIndex = entry?.Index;
+                    }
+                }
+                list.Add(problem);
             }
             list.Sort((a, b) => string.CompareOrdinal(a.Font, b.Font));
             return list;
         }
 
+        /// <summary>The game fonts the corner speaks of (FontProblem.InCorner).</summary>
+        internal static List<FontProblem> CornerFontProblems()
+        {
+            var list = FontProblems();
+            list.RemoveAll(p => !p.InCorner);
+            return list;
+        }
+
         /// <summary>
-        /// A game font whose translation uses &lt;u&gt;, &lt;s&gt; or &lt;mark&gt; while its fallback
+        /// A game font whose game text (a source line, or the game's own) uses &lt;u&gt;, &lt;s&gt; or &lt;mark&gt; while its fallback
         /// has no "_" — the character TextMesh Pro draws all three with, taken from the component's
         /// own font only: they do not show. Accepted: the translator kept that fallback anyway
         /// (FontSettings.decorations_accepted_without) — the corner no longer asks, the Fonts tab
@@ -338,7 +378,7 @@ namespace UnityGameTranslator.Core
             // Said in the log when it changes — the first thing to read when the corner speaks of it.
             foreach (var kv in _undecoratedBy)
                 if (!undecoratedBefore.TryGetValue(kv.Key, out var was) || was != kv.Value)
-                    TranslatorCore.LogInfo($"[FontManager] '{kv.Key}': its translation underlines, strikes or highlights, and its fallback '{kv.Value}' has no \"_\" — TextMesh Pro draws none of them");
+                    TranslatorCore.LogInfo($"[FontManager] '{kv.Key}': its game text underlines, strikes or highlights, and its fallback '{kv.Value}' has no \"_\" — TextMesh Pro draws none of them");
             foreach (var kv in _missingByFont)
             {
                 before.TryGetValue(kv.Key, out int was);
@@ -350,7 +390,7 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// The fallback of a TextMesh Pro game font whose translation decorates (FontCoverage
+        /// The fallback of a TextMesh Pro game font whose game text decorates (FontCoverage
         /// .IsDecorated) when that fallback provably has no "_": TMP takes the character from the
         /// component's own font — the fallback, once it replaces the game's — and from no fallback of
         /// it (TMP_Text.GetUnderlineSpecialCharacter). Null otherwise, and when nothing can tell.

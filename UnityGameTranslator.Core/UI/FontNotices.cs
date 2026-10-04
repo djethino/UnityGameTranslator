@@ -17,29 +17,58 @@ namespace UnityGameTranslator.Core.UI
 
         private static string What => string.IsNullOrEmpty(Language) ? "this translation" : Language;
 
-        /// <summary>One game font's problem.</summary>
-        internal static string ForFont(FontManager.FontProblem problem) => problem.Missing > 0
-            ? $"Font \"{problem.Font}\" is missing {(problem.MissingLetters && !string.IsNullOrEmpty(Language) ? Language + " characters" : "characters of this translation")}. Set a fallback font for it."
-            : $"Font \"{problem.Font}\" draws {What} incorrectly. Set a fallback font for it.";
+        /// <summary>
+        /// One game font's problem — the corner's sentence, said the same under the font's row and
+        /// under the texts the inspector found. A font whose fallback the translator chose is no
+        /// longer asked to get one: what that fallback lacks is said instead (FallbackLacks).
+        /// </summary>
+        internal static string ForFont(FontManager.FontProblem problem)
+        {
+            if (problem.Missing > 0 && !problem.HasFallback)
+                return $"Font \"{problem.Font}\" is missing {(problem.MissingLetters && !string.IsNullOrEmpty(Language) ? Language + " characters" : "characters of this translation")}. Set a fallback font for it.";
+            if (problem.Unshaped)
+                return $"Font \"{problem.Font}\" draws {What} incorrectly. Set a fallback font for it.";
+            return FallbackLacks(problem);
+        }
+
+        /// <summary>
+        /// What a chosen fallback still lacks (user, 2026-10-04). The language's own letters, said as
+        /// such; otherwise characters a few lines use — how many lines, and the last one seen, by its
+        /// number in the translation file and its text, to find it in the editor. Never the list of
+        /// lines: twenty would not fit under a row.
+        /// </summary>
+        internal static string FallbackLacks(FontManager.FontProblem problem)
+        {
+            if (problem.Missing == 0) return null;
+            if (problem.MissingLetters && !string.IsNullOrEmpty(Language))
+                return $"This fallback font is missing {Language} letters.";
+            if (problem.MissingLines == 0)
+                return "This fallback font is missing characters of this translation.";
+            string last = (problem.LastLineIndex.HasValue ? "#" + problem.LastLineIndex.Value + " " : "")
+                + "\"" + UnityGameTranslator.Common.Markup.Strip(problem.LastLineText ?? "") + "\"";
+            return problem.MissingLines == 1
+                ? $"1 line of the translation uses characters this font does not have: {last}"
+                : $"{problem.MissingLines} lines of the translation use characters this font does not have. Last one: {last}";
+        }
 
         /// <summary>Several game fonts at once — the Fonts tab names each, on its own row.</summary>
         internal static string ForFonts(int count) => $"{count} fonts draw {What} incorrectly. Set a fallback font for each.";
 
         /// <summary>
         /// A fallback without the character TextMesh Pro draws underlines, strikethroughs and
-        /// highlights with, for a translation that uses them (FontManager.DecorationProblems). The
+        /// highlights with, for a game text that asks for them (FontManager.DecorationProblems). The
         /// fact, then why it matters here; the box's buttons are the way out (Fonts, Ignore).
         /// </summary>
         internal static string DecorationsFor(FontManager.DecorationProblem problem) =>
-            $"Fallback font \"{problem.Fallback}\" cannot draw underline, strikethrough or highlight. This translation uses them.";
+            $"Fallback font \"{problem.Fallback}\" cannot draw underline, strikethrough or highlight. The game's text uses them.";
 
         /// <summary>Several fallbacks at once — the Fonts tab says it on each row.</summary>
         internal static string DecorationsForFonts(int count) =>
-            $"{count} fallback fonts cannot draw underline, strikethrough or highlight. This translation uses them.";
+            $"{count} fallback fonts cannot draw underline, strikethrough or highlight. The game's text uses them.";
 
         /// <summary>The same fact on the font's own row of the Fonts tab, where the fallback is chosen.</summary>
         internal static string DecorationsOnRow() =>
-            "This fallback cannot draw underline, strikethrough or highlight. This translation uses them.";
+            "This fallback cannot draw underline, strikethrough or highlight. The game's text uses them.";
 
         /// <summary>
         /// A part of the mod's own window that cannot shape what it shows (FontManager.WindowCannotShape):

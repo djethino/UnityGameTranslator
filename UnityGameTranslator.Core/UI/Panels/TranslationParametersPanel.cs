@@ -2029,16 +2029,13 @@ namespace UnityGameTranslator.Core.UI.Panels
                 }
 
                 // What the translation wrote with this font and the font cannot display — characters it
-                // lacks, or text it cannot shape — measured, any language (FontManager.Coverage); the
-                // corner says it too. The way out is the fallback picker of this same row.
+                // lacks, or text it cannot shape — measured, any language (FontManager.Coverage). The
+                // corner's own sentence while no fallback is chosen (the way out is this row's picker);
+                // once one is, what that fallback still lacks — the corner no longer asks (FontNotices).
                 var problem = FontManager.ProblemOf(capturedFontName);
                 if (problem != null)
                 {
-                    string language = TranslatorCore.EffectiveTargetLanguage;
-                    string what = string.IsNullOrEmpty(language) ? "this translation" : language;
-                    row.Say("missingChars", problem.Value.Missing > 0
-                        ? $"Missing {problem.Value.Missing} characters of {what}."
-                        : $"Draws {what} incorrectly. Choose a System or Custom font.");
+                    row.Say("missingChars", FontNotices.ForFont(problem.Value));
                     row.Label("MissingChars").Visible = true;
                 }
 

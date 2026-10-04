@@ -342,11 +342,14 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             if (panelsOpen) return false;
             int weight = MissingWeight(out _);
+            // A corrected line takes its characters back (FontCoverage.Record): the Ignore then
+            // stands for what is left, and a new missing character shows the box again.
+            if (weight < _fontCoverageIgnoredAt) _fontCoverageIgnoredAt = weight;
             return weight > 0 && weight > _fontCoverageIgnoredAt;
         }
 
         /// <summary>
-        /// A game font whose translation underlines, strikes or highlights, while its fallback cannot
+        /// A game font whose game text underlines, strikes or highlights, while its fallback cannot
         /// draw that — not accepted for that fallback by the translator. Unlike the other boxes, its
         /// Ignore is the translator's choice and is kept with the translation, per font and fallback
         /// (FontManager.AcceptWithoutDecorations): asked once, not every session.
@@ -383,12 +386,16 @@ namespace UnityGameTranslator.Core.UI.Panels
             return state.ToString();
         }
 
-        /// <summary>Characters missing over every game font, plus one per font that cannot shape: more of either shows the box again after Ignore.</summary>
+        /// <summary>
+        /// Characters missing over the game fonts the corner speaks of — none whose fallback was chosen
+        /// (FontProblem.InCorner) — plus one per font that cannot shape: more of either shows the box
+        /// again after Ignore.
+        /// </summary>
         private static int MissingWeight(out List<FontManager.FontProblem> fonts)
         {
-            fonts = FontManager.FontProblems();
+            fonts = FontManager.CornerFontProblems();
             int weight = 0;
-            foreach (var f in fonts) weight += f.Missing + (f.Unshaped ? 1 : 0);
+            foreach (var f in fonts) weight += (f.HasFallback ? 0 : f.Missing) + (f.Unshaped ? 1 : 0);
             return weight;
         }
 

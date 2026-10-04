@@ -19,7 +19,23 @@ namespace UnityGameTranslator.Core
     /// </summary>
     internal sealed class FontCoverage
     {
-        private readonly Dictionary<string, HashSet<int>> _needed = new Dictionary<string, HashSet<int>>(StringComparer.Ordinal);
+        /// <summary>One line of the translation drawn with a font: what it brought, and when it was last drawn.</summary>
+        internal sealed class Line
+        {
+            public string Source;     // the source line it translates, null when unknown
+            public string Text;       // the translated text as last drawn
+            public HashSet<int> Brings = new HashSet<int>();
+            public long Order;        // when it was last recorded: the latest is the one a row names
+        }
+
+        // Per font, the lines it drew, by identity: the source line, else the text itself. 🔴 Per line
+        // and not one set per font (2026-10-04): a line corrected in the editor takes back what it
+        // alone brought when it is drawn again — with one set, the notice stayed until the game was
+        // restarted — and a font with a fallback can say how many lines lack characters, and which.
+        private readonly Dictionary<string, Dictionary<string, Line>> _lines = new Dictionary<string, Dictionary<string, Line>>(StringComparer.Ordinal);
+        // Per font, how many of its lines bring each character: needed while one does.
+        private readonly Dictionary<string, Dictionary<int, int>> _needed = new Dictionary<string, Dictionary<int, int>>(StringComparer.Ordinal);
+        private long _order;
         // Hashes of the texts already read per font: a text drawn again costs one lookup. A collision
         // skips one text, whose characters any other text of the translation almost always carries.
         private readonly Dictionary<string, HashSet<int>> _seen = new Dictionary<string, HashSet<int>>(StringComparer.Ordinal);
@@ -71,8 +87,10 @@ namespace UnityGameTranslator.Core
             if (string.IsNullOrEmpty(font) || string.IsNullOrEmpty(text)) return false;
             if (!_seen.TryGetValue(font, out var seen)) _seen[font] = seen = new HashSet<int>();
             if (!seen.Add(text.GetHashCode())) return false;
-            if (!_needed.TryGetValue(font, out var needed)) _needed[font] = needed = new HashSet<int>();
-            bool added = false;
+            if (!_lines.TryGetValue(font, out var lines)) _lines[font] = lines = new Dictionary<string, Line>(StringComparer.Ordinal);
+            if (!_needed.TryGetValue(font, out var needed)) _needed[font] = needed = new Dictionary<int, int>();
+
+            var brings = new HashSet<int>();
             for (int i = 0; i < text.Length; i++)
             {
                 int cp = text[i];
@@ -83,10 +101,54 @@ namespace UnityGameTranslator.Core
                 }
                 if (!Counts(cp)) continue;
                 if (source != null && SourceHas(source, cp)) continue;
-                if (needed.Add(cp)) added = true;
+                brings.Add(cp);
             }
-            if (added) Version++;
-            return added;
+
+            bool changed = false;
+            if (source != null && lines.TryGetValue(source, out var line))
+            {
+                // The same line drawn with another text (corrected, retranslated): its new characters
+                // replace its old ones, and its old text is read again if it ever comes back.
+                seen.Remove(line.Text.GetHashCode());
+                foreach (int cp in line.Brings)
+                    if (!brings.Contains(cp) && --needed[cp] == 0) { needed.Remove(cp); changed = true; }
+                foreach (int cp in brings)
+                    if (!line.Brings.Contains(cp)) changed |= Need(needed, cp);
+                line.Text = text;
+                line.Brings = brings;
+                line.Order = ++_order;
+            }
+            else if (source != null || brings.Count > 0)
+            {
+                // A line known by its source is kept even bringing nothing: its next text replaces it.
+                // A text with no source cannot be replaced, and one bringing nothing is not kept.
+                lines[source ?? text] = new Line { Source = source, Text = text, Brings = brings, Order = ++_order };
+                foreach (int cp in brings) changed |= Need(needed, cp);
+            }
+            if (changed) Version++;
+            return changed;
+        }
+
+        private static bool Need(Dictionary<int, int> needed, int cp)
+        {
+            needed.TryGetValue(cp, out int count);
+            needed[cp] = count + 1;
+            return count == 0;
+        }
+
+        /// <summary>
+        /// The lines drawn with this font that bring one of <paramref name="missing"/>, the latest
+        /// first — what a font with a fallback says under its row: how many, and the last one seen.
+        /// </summary>
+        internal List<Line> LinesBringing(string font, ICollection<int> missing)
+        {
+            var found = new List<Line>();
+            if (font == null || missing == null || missing.Count == 0 || !_lines.TryGetValue(font, out var lines)) return found;
+            foreach (var line in lines.Values)
+                foreach (int cp in line.Brings)
+                    if (missing.Contains(cp)) { found.Add(line); break; }
+            found.Sort((a, b) => b.Order.CompareTo(a.Order));
+            return found;
         }
 
         /// <summary>Whether the source line holds this codepoint (a surrogate pair read as one).</summary>
@@ -150,18 +212,19 @@ namespace UnityGameTranslator.Core
         {
             var missing = new List<int>();
             if (font == null || covers == null || !_needed.TryGetValue(font, out var needed)) return missing;
-            foreach (int cp in needed)
+            foreach (int cp in needed.Keys)
                 if (covers(cp) == false) missing.Add(cp);
             missing.Sort();
             return missing;
         }
 
-        // Fonts whose translated texts underline, strike through or highlight (DecoratesText).
+        // Fonts whose game texts underline, strike through or highlight (DecoratesText).
         private readonly HashSet<string> _decorated = new HashSet<string>(StringComparer.Ordinal);
 
         /// <summary>
-        /// A translated text drawn with this font carries a decoration TMP draws with the font's "_"
-        /// (DecoratesText). True when that is new for the font.
+        /// A game text drawn with this font — the source line of a translation, or the game's own
+        /// text — carries a decoration TMP draws with the font's "_" (DecoratesText). Judged on the
+        /// source: what the developer wanted shown (user, 2026-10-04). True when that is new for the font.
         /// </summary>
         internal bool NoteDecorated(string font, string text)
         {
@@ -203,6 +266,7 @@ namespace UnityGameTranslator.Core
         internal void Clear()
         {
             _needed.Clear();
+            _lines.Clear();
             _seen.Clear();
             _unshaped.Clear();
             _decorated.Clear();

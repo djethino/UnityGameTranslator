@@ -170,8 +170,8 @@ namespace UnityGameTranslator.Core.TextShaping
             /// those into characterInfo after each layout (RtlInputFields), so every edit lands on what
             /// was typed whatever the label holds.
             ///
-            /// The shaped text in LOGICAL order, tokens as typed: a unit's glyphs, then a zero-width
-            /// space for each typed character left (a letter merged into the glyph before it); a unit
+            /// The shaped text in LOGICAL order, tokens as typed: a unit's glyphs, then a word joiner
+            /// (<see cref="MergedSlot"/>) for each typed character left (a letter merged into the glyph before it); a unit
             /// drawing MORE glyphs than it has characters (a split vowel: কো is ে + ক + া) gives them all,
             /// spread over its characters in order — its first glyph stands for its first character
             /// (Delete takes it), its last for its last (Backspace takes it, as every editor does).
@@ -214,7 +214,7 @@ namespace UnityGameTranslator.Core.TextShaping
                         {
                             // One label character per typed character: the glyphs, then a zero-width
                             // space for each character merged away.
-                            for (int k = glyphs.Length; k < m; k++) sb.Append(ZeroWidthSpace);
+                            for (int k = glyphs.Length; k < m; k++) sb.Append(MergedSlot);
                             for (int k = 0; k < m; k++) Map(starts[k], 1);
                         }
                         else
@@ -228,7 +228,7 @@ namespace UnityGameTranslator.Core.TextShaping
                     int width = char.IsHighSurrogate(Logical[i]) && i + 1 < Logical.Length ? 2 : 1;
                     if (cp == lastCp)
                     {
-                        for (int k = 0; k < width; k++) { sb.Append(ZeroWidthSpace); Map(i + k, 1); }
+                        for (int k = 0; k < width; k++) { sb.Append(MergedSlot); Map(i + k, 1); }
                     }
                     else
                     {
@@ -250,6 +250,15 @@ namespace UnityGameTranslator.Core.TextShaping
 
         /// <summary>What <see cref="Prepared.LabelFor"/> puts in a merged character's slot (U+200B).</summary>
         internal const char ZeroWidthSpace = (char)0x200B;
+
+        /// <summary>
+        /// What <see cref="Prepared.LabelFor"/> puts in the slot of a typed character drawn by the glyph
+        /// before it (the alef of a lam-alef): U+2060 WORD JOINER — zero-width in every TMP (synthesized
+        /// when the font lacks it, 1.x to 3.x) and, unlike U+200B, NOT a place TMP may wrap a line at.
+        /// With U+200B a word was cut inside its ligature, its last letter alone on the next line
+        /// (bench 2026-10-04, « جولات » in a narrow field).
+        /// </summary>
+        internal const char MergedSlot = (char)0x2060;
 
         /// <summary>
         /// Shape the text and protect its tokens. Null when there is nothing to present (no
@@ -663,6 +672,17 @@ namespace UnityGameTranslator.Core.TextShaping
         internal int LineDisplayStart(int line) => _lineDispStart[line];
         internal int LineDisplayEnd(int line) => _lineDispEnd[line];
         internal int LineLogicalStart(int line) => _lineLogStart[line];
+        /// <summary>
+        /// Where End takes the caret: the last caret drawn on the line — before its line break, or,
+        /// on a line a soft wrap ended, before the place where the next line starts (that caret is
+        /// drawn at the start of the next line, and End must stay on this one).
+        /// </summary>
+        internal int LineEndCaret(int line)
+        {
+            int last = _lineLogStart[line];
+            foreach (int c in CaretsOf(line)) last = c;
+            return last;
+        }
 
         /// <summary>The first typed character the glyph at display index <paramref name="d"/> shows, or -1.</summary>
         internal int LogicalAtDisplay(int d) =>

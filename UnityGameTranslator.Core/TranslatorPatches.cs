@@ -448,10 +448,13 @@ namespace UnityGameTranslator.Core
                     var downKey = t.GetMethod("MoveDown", any, null, new[] { typeof(bool), typeof(bool) }, null);
                     if (up != null) { patcher(up, Hook(nameof(TextShaping.RtlInputFields.Tmp_MoveUp_Prefix)), null); patchCount++; }
                     if (downKey != null) { patcher(downKey, Hook(nameof(TextShaping.RtlInputFields.Tmp_MoveDown_Prefix)), null); patchCount++; }
+                    // Home / End: around the key handling itself (its line moves are compiled into it on IL2CPP).
+                    var keyPressed = t.GetMethod("KeyPressed", any, null, new[] { typeof(Event) }, null);
+                    if (keyPressed != null) { patcher(keyPressed, Hook(nameof(TextShaping.RtlInputFields.Tmp_KeyPressed_Prefix)), Hook(nameof(TextShaping.RtlInputFields.Tmp_KeyPressed_Postfix))); patchCount++; }
 
                     // Its layout half is the "TMP mesh built" hook, said there when it is missing.
-                    if (down == null || drag == null || left == null || right == null || up == null || downKey == null)
-                        TranslatorCore.LogWarning($"[Patches] TMP_InputField right-to-left editing incomplete: click={(down != null)} drag={(drag != null)} left={(left != null)} right={(right != null)} up={(up != null)} down={(downKey != null)}");
+                    if (down == null || drag == null || left == null || right == null || up == null || downKey == null || keyPressed == null)
+                        TranslatorCore.LogWarning($"[Patches] TMP_InputField right-to-left editing incomplete: click={(down != null)} drag={(drag != null)} left={(left != null)} right={(right != null)} up={(up != null)} down={(downKey != null)} home-end={(keyPressed != null)}");
                 }
             });
 

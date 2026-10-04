@@ -1905,14 +1905,15 @@ namespace UnityGameTranslator.Core.TextShaping
         /// as every editor aligns a field set to follow its text. The mod's own window: mirrored
         /// while it reads right to left, as its other texts.
         /// </summary>
-        internal static void AlignTypedLabel(object label, string typed, string settingsFontName, FontOverrideRule overrideRule, bool ownUi)
+        /// <param name="uitkKey">A UI Toolkit field's stable key (UIToolkitSupport.MirrorAlign), null otherwise.</param>
+        internal static void AlignTypedLabel(object label, string typed, string settingsFontName, FontOverrideRule overrideRule, bool ownUi, long? uitkKey = null)
         {
             if (label == null) return;
             bool rightToLeft = !string.IsNullOrEmpty(typed) && RtlText.ParagraphDirection(typed) < 0;
             bool mirror = rightToLeft
                 ? ownUi || TranslatorCore.ShouldMirrorRtlAlignment(settingsFontName, overrideRule)
                 : !ownUi && MirrorsEveryText(settingsFontName, overrideRule);
-            if (UIToolkitSupport.IsTextElementInstance(label)) UIToolkitSupport.MirrorAlign(label, mirror);
+            if (UIToolkitSupport.IsTextElementInstance(label)) UIToolkitSupport.MirrorAlign(label, mirror, uitkKey);
             else MirrorAlignment(label, TypeHelper.GetInstanceID(label), mirror);
         }
 

@@ -50,9 +50,9 @@ namespace UnityGameTranslator.Core.Checks
                 "Arabic: the label is as long as the typed text, each character standing for its own",
                 "every drawn character's index is the typed one's — the field's own editing stays right");
             // "السلام": alef, lam, seen, LAM, ALEF, meem — the ligature is at 3, the alef at 4.
-            check(padded[3] != 'ل' && padded[4] == RtlFieldLayout.ZeroWidthSpace,
-                "a lam-alef: the ligature in the lam's slot, a zero-width space in the alef's",
-                "the glyph where it is drawn, nothing visible where it merged");
+            check(padded[3] != 'ل' && padded[4] == RtlFieldLayout.MergedSlot,
+                "a lam-alef: the ligature in the lam's slot, a word joiner in the alef's",
+                "nothing visible where it merged, and no place for TMP to cut the word: a zero-width space was one");
 
             // Brackets in a right-to-left field: TMP draws its label's characters as they are, so the
             // label gives "(" mirrored where the uGUI field's display mirrors it (found on the bench:
@@ -65,7 +65,7 @@ namespace UnityGameTranslator.Core.Checks
                 var drawn = new System.Text.StringBuilder();
                 foreach (int i in lay.LogicalOnScreen(0))
                     for (int k = 0; k < tmpLabel.Length; k++)
-                        if (at[k] == i && tmpLabel[k] != RtlFieldLayout.ZeroWidthSpace) drawn.Append(tmpLabel[k]);
+                        if (at[k] == i && tmpLabel[k] != RtlFieldLayout.MergedSlot) drawn.Append(tmpLabel[k]);
                 check(drawn.ToString() == lay.Display.Replace(RtlFieldLayout.ZeroWidthSpace.ToString(), ""),
                     "brackets in a right-to-left field: TMP's label, moved into screen order, shows what the uGUI field shows",
                     drawn + " vs " + lay.Display);

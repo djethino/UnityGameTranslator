@@ -129,7 +129,7 @@ namespace UnityGameTranslator.Core.Checks
             var onScreen = new System.Text.StringBuilder();
             foreach (int i in layout.LogicalOnScreen(0))
                 for (int k = 0; k < tmpLabel.Length; k++)
-                    if (index[k] == i && tmpLabel[k] != RtlFieldLayout.ZeroWidthSpace) onScreen.Append(tmpLabel[k]);
+                    if (index[k] == i && tmpLabel[k] != RtlFieldLayout.MergedSlot) onScreen.Append(tmpLabel[k]);
             string uguiShows = layout.Display.Replace(RtlFieldLayout.ZeroWidthSpace.ToString(), "");
             check(onScreen.ToString() == uguiShows, $"{name}: TMP's glyphs moved into screen order show what the uGUI field shows",
                 $"TMP {Codes(onScreen.ToString())} · uGUI {Codes(uguiShows)}");

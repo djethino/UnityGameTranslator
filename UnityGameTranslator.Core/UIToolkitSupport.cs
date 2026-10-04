@@ -2595,31 +2595,25 @@ namespace UnityGameTranslator.Core
         /// A field's text element showing what was typed: aligned as the game's texts of its font are
         /// (RtlPresenter.AlignTypedLabel), with the font it is filed under and the rule matching it.
         /// </summary>
-        internal static void AlignTypedField(object element, string typed)
+        /// <returns>false when the field is not styled yet: the caller asks again at its next
+        /// UpdateVisibleText (RtlInputFields keeps it, by the object's native key on IL2CPP).</returns>
+        internal static bool AlignTypedField(object element, string typed, long key)
         {
             // 🔴 Only once the panel has styled and laid it out: the alignment is mirrored from the
-            // RESOLVED style, the engine default before that (see TryFinishPending). Until then it
-            // waits for the field's next UpdateVisibleText (FinishTypedFieldAlign).
-            if (!IsElementAttached(element) || !(ContentWidth(element) > 0f))   // NaN: no box yet
-            {
-                _typedAlignPending.Remove(element);
-                _typedAlignPending.Add(element, typed);
-                return;
-            }
-            _typedAlignPending.Remove(element);
+            // RESOLVED style, the engine default before that (see TryFinishPending).
+            bool attached = IsElementAttached(element);
+            float width = ContentWidth(element);
+            if (TranslatorCore.DebugMode && DiagnosticOnce.First("UITK.typedAlign", key + "\u0001" + attached + "\u0001" + (width > 0f)))
+                TranslatorCore.LogDebug($"[RtlInputFields] UI Toolkit field {key}: attached {attached}, width {width} — alignment {(attached && width > 0f ? "decided now" : "waits for its box")}");
+            if (!attached || !(width > 0f)) return false;   // NaN: no box yet
             string font = SettingsFontNameOf(element);
             FontOverrideRule rule = TranslatorCore.FontOverrides.Count > 0
                 ? TranslatorCore.FindFontOverride(IdFor(element), PathOf(element), font, null) : null;
-            TextShaping.RtlPresenter.AlignTypedLabel(element, typed, font, rule, false);
-        }
-
-        // Fields written before their panel styled them: the typed text whose alignment waits.
-        private static readonly ConditionalWeakTable<object, string> _typedAlignPending = new ConditionalWeakTable<object, string>();
-
-        /// <summary>From the field's UpdateVisibleText (its box is known): the alignment that waited, decided now.</summary>
-        internal static void FinishTypedFieldAlign(object element)
-        {
-            if (_typedAlignPending.TryGetValue(element, out var typed)) AlignTypedField(element, typed);
+            TextShaping.RtlPresenter.AlignTypedLabel(element, typed, font, rule, false, key);
+            if (TranslatorCore.DebugMode && _resolvedStyleProp != null && _resolvedTextAlignProp != null
+                && DiagnosticOnce.First("UITK.typedAlignResult", key + "\u0001" + typed))
+                TranslatorCore.LogDebug($"[RtlInputFields] UI Toolkit field {key} aligned for its text: inline {StyleGet(_styleTextAlignProp, _styleProp.GetValue(element, null))}, resolved {_resolvedTextAlignProp.GetValue(_resolvedStyleProp.GetValue(element, null), null)}");
+            return true;
         }
 
         /// <summary>The font this element is filed under: the one it had before any replacement.</summary>
@@ -2693,6 +2687,8 @@ namespace UnityGameTranslator.Core
         // [0] = inline unityTextAlign, [1] = the RESOLVED original the mirror is computed from.
         private static readonly ConditionalWeakTable<object, object[]> _rtlAlignOriginal =
             new ConditionalWeakTable<object, object[]>();
+        // The same, for an element the caller names by a stable key (MirrorAlign's stableKey).
+        private static readonly Dictionary<long, object[]> _rtlAlignOriginalByKey = new Dictionary<long, object[]>();
         // [0] = inline whiteSpace, before OUR NoWrap (DisableWrap).
         private static readonly ConditionalWeakTable<object, object[]> _rtlWrapOriginal =
             new ConditionalWeakTable<object, object[]>();
@@ -2735,13 +2731,23 @@ namespace UnityGameTranslator.Core
             _contentRectProp = Members.Property(VisualElementType, "contentRect", pubInst);
             _languageDirectionProp = Members.Property(VisualElementType, "languageDirection", pubInst);
 
+            // 🔴 On IL2CPP 2022.3 the interop's IStyle does not declare unityTextAlign (stripped): the
+            // inline style keeps it as InlineStyleAccess's explicit implementation, read and written
+            // there (StyleAccessor casts the style to that class, as for whiteSpace).
             var styleType = _styleProp?.PropertyType;
-            _styleTextAlignProp = Members.Property(styleType, "unityTextAlign", pubInst);
-            _styleWhiteSpaceProp = Members.Property(styleType, "whiteSpace", pubInst);
+            var inlineType = AssemblyTypes.Find("UnityEngine.UIElements.InlineStyleAccess");
+            _styleTextAlignProp = Members.Property(styleType, "unityTextAlign", pubInst) ?? ExplicitStyleProperty(inlineType, "IStyle", "unityTextAlign");
+            _styleWhiteSpaceProp = Members.Property(styleType, "whiteSpace", pubInst) ?? ExplicitStyleProperty(inlineType, "IStyle", "whiteSpace");
 
+            // ⚠ The RESOLVED unityTextAlign and whiteSpace were stripped from IResolvedStyle there too,
+            // and VisualElement's explicit implementation the interop generates is not usable: read on
+            // the element, it threw "Object was garbage collected in IL2CPP domain" and left the
+            // element's style unwritable (bench 2026-10-04). Missing, then — and said.
             var resolvedType = _resolvedStyleProp?.PropertyType;
             _resolvedWhiteSpaceProp = Members.Property(resolvedType, "whiteSpace", pubInst);
             _resolvedTextAlignProp = Members.Property(resolvedType, "unityTextAlign", pubInst);
+            if (_resolvedTextAlignProp == null && _resolvedStyleProp != null)
+                TranslatorCore.LogWarning("[UIToolkit] the resolved text alignment cannot be read on this runtime: right-to-left text keeps the game's alignment (no mirror)");
             _resolvedTextGenProp = Members.Property(resolvedType, "unityTextGenerator", pubInst);
             _resolvedDisplayProp = Members.Property(resolvedType, "display", pubInst);
 
@@ -2954,11 +2960,27 @@ namespace UnityGameTranslator.Core
         private static Type _inlineStyleType;
         private static bool _inlineStyleTypeSought;
 
+        /// <summary>A class's explicit implementation of an interface's style property (IStyle.x, IResolvedStyle.x), or null.</summary>
+        private static PropertyInfo ExplicitStyleProperty(Type type, string iface, string name)
+        {
+            if (type == null) return null;
+            foreach (var p in type.GetProperties(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
+                if (p.GetIndexParameters().Length == 0
+                    && (p.Name.EndsWith(iface + "." + name, StringComparison.Ordinal) || p.Name.EndsWith(iface + "_" + name, StringComparison.Ordinal)))
+                    return p;
+            return null;
+        }
+
+        /// <summary>The object a style property is read on: itself, or cast to the class that declares the property.</summary>
+        private static object StyleOwner(PropertyInfo p, object target) =>
+            p == null || target == null || p.DeclaringType == null || p.DeclaringType.IsInterface || p.DeclaringType.IsInstanceOfType(target)
+                ? target : TypeHelper.Il2CppCast(target, p.DeclaringType);
+
         private static PropertyInfo StyleAccessor(PropertyInfo declared, ref object style, bool write)
         {
             if (declared == null || style == null) return null;
             var accessor = write ? declared.GetSetMethod(true) : declared.GetGetMethod(true);
-            if (accessor != null) return declared;
+            if (accessor != null) { style = StyleOwner(declared, style); return declared; }
             if (!_inlineStyleTypeSought)
             {
                 _inlineStyleTypeSought = true;
@@ -3116,19 +3138,28 @@ namespace UnityGameTranslator.Core
         /// gone by): the resolved value read before that is the engine default, and it would be
         /// stored as the original for the life of the element.
         /// </summary>
-        internal static void MirrorAlign(object element, bool mirror)
+        /// <param name="stableKey">The element's own key when the caller has one (an input field: its
+        /// native key) — 🔴 on IL2CPP a hook receives a NEW wrapper of the same element at each call:
+        /// kept by the object, the original was never found again, the mirrored side was taken for
+        /// the original and the field flipped back (bench 2026-10-04, 2022.3 IL2CPP).</param>
+        internal static void MirrorAlign(object element, bool mirror, long? stableKey = null)
         {
             EnsureRtlPlumbing();
             if (_styleTextAlignProp == null || _resolvedTextAlignProp == null) return;
+            // Where the original is kept: by the given key, or by the element object itself.
+            bool Find(out object[] found) =>
+                stableKey.HasValue ? _rtlAlignOriginalByKey.TryGetValue(stableKey.Value, out found) : _rtlAlignOriginal.TryGetValue(element, out found);
+            void Forget() { if (stableKey.HasValue) _rtlAlignOriginalByKey.Remove(stableKey.Value); else _rtlAlignOriginal.Remove(element); }
+            void Keep(object[] original) { if (stableKey.HasValue) _rtlAlignOriginalByKey[stableKey.Value] = original; else _rtlAlignOriginal.Add(element, original); }
             if (!mirror)
             {
                 // "Keep the game's": an element mirrored under an earlier choice gets its inline
                 // value back (see RtlPresenter.MirrorAlignment — same rule, same reason).
                 try
                 {
-                    if (_rtlAlignOriginal.TryGetValue(element, out var align))
+                    if (Find(out var align))
                     {
-                        _rtlAlignOriginal.Remove(element);
+                        Forget();
                         var styleBack = _styleProp.GetValue(element, null);
                         if (styleBack != null && align[0] != null) StyleSet(_styleTextAlignProp, styleBack, align[0]);
                     }
@@ -3139,7 +3170,7 @@ namespace UnityGameTranslator.Core
             try
             {
                 object[] stored;
-                if (!_rtlAlignOriginal.TryGetValue(element, out stored))
+                if (!Find(out stored))
                 {
                     var style = _styleProp.GetValue(element, null);
                     var resolved = _resolvedStyleProp.GetValue(element, null);
@@ -3149,7 +3180,7 @@ namespace UnityGameTranslator.Core
                         StyleGet(_styleTextAlignProp, style),
                         _resolvedTextAlignProp.GetValue(resolved, null),
                     };
-                    _rtlAlignOriginal.Add(element, stored);
+                    Keep(stored);
                 }
 
                 object originalEnum = stored[1];

@@ -275,13 +275,32 @@ namespace UnityGameTranslator.Core.TextShaping
                 if (__0 == null || !Ngui.ResolveField()) return true;
                 var key = (KeyCode)Ngui.EventKeyCode.GetValue(__0, null);
                 bool vertical = key == KeyCode.UpArrow || key == KeyCode.DownArrow;
-                if (key != KeyCode.LeftArrow && key != KeyCode.RightArrow && !vertical) return true;
+                bool lineEdge = key == KeyCode.Home || key == KeyCode.End;
+                if (key != KeyCode.LeftArrow && key != KeyCode.RightArrow && !vertical && !lineEdge) return true;
                 var label = TypeHelper.NguiInputLabel(__instance);
                 var s = NguiStateOf(label);
                 if (s == null) return true;
 
                 var modifiers = (EventModifiers)Ngui.EventModifiers.GetValue(__0, null);
                 bool shift = (modifiers & EventModifiers.Shift) != 0;
+                if (lineEdge)
+                {
+                    // Home / End on a multi-line label: NGUI asked the drawn label with the typed index
+                    // (GetCharacterIndex); the line's start or end in reading order instead. On one line
+                    // NGUI goes to the start or end of the text, which is right as it is.
+                    if (!Ngui.IsMultiLine(label)) return true;
+                    int start = Ngui.DrawStart(__instance);
+                    int from = Ngui.SelectionEnd(__instance) - start;
+                    int line = s.Layout.LineOfCaret(from);
+                    int target = key == KeyCode.Home ? s.Layout.LineLogicalStart(line) : s.Layout.LineEndCaret(line);
+                    s.GoalLanded = -1;
+                    Ngui.SetSelectionEnd(__instance, target + start);
+                    if (!shift) Ngui.SetSelectionStart(__instance, target + start);
+                    Ngui.UpdateLabel.Invoke(__instance, null);
+                    Ngui.EventUse.Invoke(__0, null);
+                    __result = true;
+                    return false;
+                }
                 if (vertical)
                 {
                     if (Ngui.PrintOverlay == null) return true;   // no way to measure where a caret is drawn
@@ -455,6 +474,28 @@ namespace UnityGameTranslator.Core.TextShaping
                         && m.GetParameters()[0].ParameterType.Name == "Event")
                         return ProcessEvent = m;
                 return null;
+            }
+
+            private static PropertyInfo _multiLine;
+            private static bool _multiLineResolved;
+
+            /// <summary>UILabel.multiLine — what NGUI's own Home / End ask. A label without it: one line.</summary>
+            internal static bool IsMultiLine(object label)
+            {
+                if (!_multiLineResolved)
+                {
+                    _multiLineResolved = true;
+                    _multiLine = Members.Property(LabelType, "multiLine", BindingFlags.Instance | BindingFlags.Public);
+                    if (_multiLine == null) Note("NGUI fields: UILabel.multiLine not found — Home / End stay NGUI's");
+                }
+                try
+                {
+                    object value = _multiLine?.GetValue(label, null);
+                    if (TranslatorCore.DebugMode && DiagnosticOnce.First("RtlInputFields.Ngui.multiLine", value?.GetType().Name + "\u0001" + value))
+                        TranslatorCore.LogDebug($"[RtlInputFields] NGUI UILabel.multiLine reads {value ?? "null"} ({value?.GetType().FullName ?? "-"})");
+                    return value is bool multi && multi;
+                }
+                catch (Exception ex) { Faults.Say("RtlInputFields.Ngui.IsMultiLine", ex); return false; }
             }
 
             private static bool _arrowCallbacksResolved;

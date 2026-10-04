@@ -89,6 +89,10 @@ namespace UnityGameTranslator.Core.TextShaping
                 patcher(move.Value, Hook(move.Key), null);
                 count++;
             }
+            if (Uitk.PerformOperation != null) { patcher(Uitk.PerformOperation, Hook(nameof(Uitk_PerformOperation_Prefix)), null); count++; }
+            if (Uitk.EditPerformOperation != null) { patcher(Uitk.EditPerformOperation, Hook(nameof(Uitk_EditPerformOperation_Prefix)), null); count++; }
+            if (Uitk.PerformOperation == null || Uitk.EditPerformOperation == null)
+                TranslatorCore.LogWarning($"[Patches] UI Toolkit field Home / End stay the engine's: with Shift {(Uitk.PerformOperation != null)}, without {(Uitk.EditPerformOperation != null)}");
             if (Uitk.DrawHighlighting != null) { patcher(Uitk.DrawHighlighting, Hook(nameof(Uitk_DrawHighlighting_Prefix)), null); count++; }
             if (Uitk.UpdateVisibleText != null) { patcher(Uitk.UpdateVisibleText, null, Hook(nameof(Uitk_UpdateVisibleText_Postfix))); count++; }
             else TranslatorCore.LogWarning("[Patches] UI Toolkit fields: a multi-line field resized after it was filled keeps the lines it was first cut into (no TextElement.UpdateVisibleText or IncrementVersion)");
@@ -138,17 +142,28 @@ namespace UnityGameTranslator.Core.TextShaping
                     string value = UIToolkitSupport.GetElementText(__instance);
                     if (RtlText.ParagraphDirection(value) < 0) UIToolkitSupport.SetRtlDirection(__instance);
                     else UIToolkitSupport.RestoreRtlAdjustments(__instance, keepAlignment: true);
-                    UIToolkitSupport.AlignTypedField(__instance, value);
+                    AlignTypedField(__instance, id, value);
                     return;
                 }
                 if (kind == Uitk.FieldKind.None) return;
-                UIToolkitSupport.AlignTypedField(__instance, UIToolkitSupport.GetElementText(__instance));
+                AlignTypedField(__instance, id, UIToolkitSupport.GetElementText(__instance));
                 string rendered = Uitk.RenderedText(__instance);
                 if (_uitk.TryGetValue(id, out var held) && held.Rendered == rendered) return;
                 string suffix = rendered != null && rendered.EndsWith(RenderedSuffix, StringComparison.Ordinal) ? RenderedSuffix : "";
                 PresentUitkField(__instance, id, rendered?.Substring(0, rendered.Length - suffix.Length), suffix);
             }
             catch (Exception ex) { Note("UI Toolkit field presentation failed, drawn as typed: " + ex.Message); }
+        }
+
+        // Fields written before their panel styled them, by the object's key (ObjectKey: on IL2CPP the
+        // wrapper met at the next UpdateVisibleText is another one) — the typed text whose alignment waits.
+        private static readonly Dictionary<long, string> _uitkAlignPending = new Dictionary<long, string>();
+
+        /// <summary>A field's alignment as the game's texts of its font (UIToolkitSupport.AlignTypedField), or kept for later.</summary>
+        private static void AlignTypedField(object element, long id, string typed)
+        {
+            if (UIToolkitSupport.AlignTypedField(element, typed, id)) _uitkAlignPending.Remove(id);
+            else _uitkAlignPending[id] = typed;
         }
 
         /// <summary>
@@ -203,7 +218,9 @@ namespace UnityGameTranslator.Core.TextShaping
             try
             {
                 if (__instance == null || !TranslatorCore.IsMainThread) return;
-                UIToolkitSupport.FinishTypedFieldAlign(__instance);   // a field written before its panel styled it
+                // A field written before its panel styled it: its alignment, decided now.
+                if (_uitkAlignPending.Count > 0 && _uitkAlignPending.TryGetValue(ObjectKey(__instance), out var waiting))
+                    AlignTypedField(__instance, ObjectKey(__instance), waiting);
                 if (_uitk.Count == 0) return;
                 long id = ObjectKey(__instance);
                 if (!_uitk.TryGetValue(id, out var s) || Uitk.RenderedText(__instance) != s.Rendered) return;
@@ -509,6 +526,118 @@ namespace UnityGameTranslator.Core.TextShaping
             }
         }
 
+        // ══ Home / End ═══════════════════════════════════════════════════════════════════════
+
+        /// <summary>
+        /// TextSelectingUtilities.PerformOperation(TextSelectOp) — where a key becomes an operation
+        /// (2022.3 and Unity 6): the six that go to a line's edge are ours. 🔴 Hooked here and not on
+        /// MoveGraphicalLineStart and its kind: those are small and IL2CPP compiles them into this
+        /// switch — hooked, Home and End stayed the engine's on IL2CPP (bench 2026-10-04, 2022.3).
+        /// </summary>
+        public static bool Uitk_PerformOperation_Prefix(object __instance, object __0, ref bool __result)
+        {
+            LineEdgeOp op;
+            bool end;
+            switch (__0?.ToString())
+            {
+                case "MoveGraphicalLineStart": op = LineEdgeOp.Move; end = false; break;
+                case "MoveGraphicalLineEnd": op = LineEdgeOp.Move; end = true; break;
+                case "SelectGraphicalLineStart": op = LineEdgeOp.Select; end = false; break;
+                case "SelectGraphicalLineEnd": op = LineEdgeOp.Select; end = true; break;
+                case "ExpandSelectGraphicalLineStart": op = LineEdgeOp.Expand; end = false; break;
+                case "ExpandSelectGraphicalLineEnd": op = LineEdgeOp.Expand; end = true; break;
+                default: return true;
+            }
+            if (!UitkLineEdge(__instance, op, end)) return true;
+            __result = true;
+            return false;
+        }
+
+        /// <summary>
+        /// TextEditingUtilities.PerformOperation(TextEditOp) — Home / End WITHOUT Shift (and Ctrl+←/→):
+        /// the editing side of the field asks its selecting utilities to MoveGraphicalLine{Start,End}
+        /// from its own switch (2022.3 and Unity 6). Same rule as the selecting side's.
+        /// </summary>
+        public static bool Uitk_EditPerformOperation_Prefix(object __instance, object __0)
+        {
+            string name = __0?.ToString();
+            if (name != "MoveGraphicalLineStart" && name != "MoveGraphicalLineEnd") return true;
+            var utilities = Uitk.SelectingOfEditing(__instance);
+            return utilities == null || !UitkLineEdge(utilities, LineEdgeOp.Move, name == "MoveGraphicalLineEnd");
+        }
+
+        private enum LineEdgeOp { Move, Select, Expand }
+
+        /// <summary>
+        /// TextSelectingUtilities.{Move,Select,ExpandSelect}GraphicalLine{Start,End} (Home / End, with
+        /// Shift, on Windows and Linux) on a presented field: the start or end of the line IN READING
+        /// ORDER — typed, as every editor (user's decision, 2026-10-04: the standard). The engine asked
+        /// the drawn text: in 2022.3 a click at x 0 (the left, the END of a right-to-left line), in
+        /// Unity 6 the drawn line's first character by a typed index. Each keeps the engine's own index
+        /// logic, only the line edge is ours. An ATG field holding right-to-left text: the ATG's own
+        /// went to the line's LEFT and RIGHT (40 presses in 44 wrong, bench 6000.6) — there the edge is
+        /// the smallest or largest typed caret the ATG draws on that line.
+        /// </summary>
+        private static bool UitkLineEdge(object utilities, LineEdgeOp op, bool end)
+        {
+            try
+            {
+                var handle = Uitk.HandleOf(utilities);
+                var s = UitkStateOfHandle(handle);
+                Func<int, int> Edge;
+                if (s != null)
+                    Edge = p =>
+                    {
+                        int line = s.Layout.LineOfCaret(p);
+                        return end ? s.Layout.LineEndCaret(line) : s.Layout.LineLogicalStart(line);
+                    };
+                else
+                {
+                    var atg = UitkAtgStateOf(handle);
+                    if (atg == null) return false;
+                    int n = atg.Logical.Length;
+                    var y = new float[n + 1];
+                    for (int i = 0; i <= n; i++) y[i] = Uitk.PositionOf(handle, i).y;
+                    Edge = p =>
+                    {
+                        int edge = p;
+                        for (int i = 0; i <= n; i++)
+                            if (Math.Abs(y[i] - y[p]) < 1f && (end ? i > edge : i < edge)) edge = i;
+                        return edge;
+                    };
+                }
+                ForgetVerticalGoal(handle);   // as the engine's ClearCursorPos: a new column
+                int cursor = Uitk.CursorIndex(utilities), select = Uitk.SelectIndex(utilities);
+                switch (op)
+                {
+                    case LineEdgeOp.Move:
+                    {
+                        int to = Edge(end ? Math.Max(cursor, select) : Math.Min(cursor, select));
+                        Uitk.SetSelectIndex(utilities, to);
+                        Uitk.SetCursorIndex(utilities, to);
+                        break;
+                    }
+                    case LineEdgeOp.Select:
+                        Uitk.SetCursorIndex(utilities, Edge(cursor));
+                        break;
+                    default:
+                        if (end ? cursor > select : cursor < select) Uitk.SetCursorIndex(utilities, Edge(cursor));
+                        else
+                        {
+                            Uitk.SetCursorIndex(utilities, Edge(select));
+                            Uitk.SetSelectIndex(utilities, cursor);
+                        }
+                        break;
+                }
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Note("UI Toolkit Home/End failed, the field's own used: " + (ex.InnerException ?? ex).Message);
+                return false;
+            }
+        }
+
         public static bool Uitk_MoveUp_Prefix(object __instance) => !UitkAtgVertical(__instance, false, false);
         public static bool Uitk_MoveDown_Prefix(object __instance) => !UitkAtgVertical(__instance, true, false);
         public static bool Uitk_SelectUp_Prefix(object __instance) => !UitkAtgVertical(__instance, false, true);
@@ -732,6 +861,11 @@ namespace UnityGameTranslator.Core.TextShaping
                 Convert.ToInt32(IndexFromPosition.Invoke(handle, new object[] { point, true }));
             internal static readonly List<KeyValuePair<string, MethodInfo>> Moves = new List<KeyValuePair<string, MethodInfo>>();
             internal static readonly List<KeyValuePair<string, MethodInfo>> Verticals = new List<KeyValuePair<string, MethodInfo>>();
+            internal static MethodInfo PerformOperation, EditPerformOperation;
+            private static MemberInfo _editingSelecting;
+
+            /// <summary>The selecting utilities an editing utilities works with (its m_TextSelectingUtility).</summary>
+            internal static object SelectingOfEditing(object editing) => _editingSelecting == null ? null : Members.Get(_editingSelecting, editing);
             private static MemberInfo _isInputField, _isPassword, _renderedText, _handleElement, _utilitiesHandle;
             private static MemberInfo _selectingManipulator, _manipulatorUtilities, _uitkTextHandle, _selectionColor;
             private static PropertyInfo _cursorIndex, _selectIndex, _contentRect;
@@ -812,6 +946,19 @@ namespace UnityGameTranslator.Core.TextShaping
                         var m = utilities.GetMethod(move, Inst, null, Type.EmptyTypes, null);
                         if (m != null) Moves.Add(new KeyValuePair<string, MethodInfo>("Uitk_" + move + "_Prefix", m));
                     }
+                    // Home / End (with Shift): where a key becomes an operation — PerformOperation(TextSelectOp).
+                    foreach (var m in utilities.GetMethods(Inst))
+                        if (m.Name == "PerformOperation" && m.ReturnType == typeof(bool) && m.GetParameters().Length == 1
+                            && m.GetParameters()[0].ParameterType.IsEnum && m.GetParameters()[0].ParameterType.Name == "TextSelectOp")
+                            PerformOperation = m;
+                    // …and Home / End without Shift: the editing utilities' own PerformOperation(TextEditOp).
+                    var editing = utilities.Assembly.GetType(utilities.Namespace + ".TextEditingUtilities");
+                    _editingSelecting = Members.FieldOrProperty(editing, "m_TextSelectingUtility", Inst);
+                    if (editing != null && _editingSelecting != null)
+                        foreach (var m in editing.GetMethods(Inst))
+                            if (m.Name == "PerformOperation" && m.GetParameters().Length == 1
+                                && m.GetParameters()[0].ParameterType.IsEnum && m.GetParameters()[0].ParameterType.Name == "TextEditOp")
+                                EditPerformOperation = m;
                     // Up / Down on an ATG field: the selecting utilities' own (the standard generator's
                     // go through LineUp / LineDown) — only where the ATG exists.
                     if (_isAdvanced != null)

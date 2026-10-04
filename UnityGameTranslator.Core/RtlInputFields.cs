@@ -916,6 +916,58 @@ namespace UnityGameTranslator.Core.TextShaping
             }
         }
 
+        // ══ Home / End (TMP) ═════════════════════════════════════════════════════════════════
+
+        /// <summary>
+        /// TMP_InputField.KeyPressed(Event), before TMP: a Home or End on a presented field — the typed
+        /// caret it starts from, and the key, kept for the postfix (null otherwise).
+        /// </summary>
+        public static void Tmp_KeyPressed_Prefix(object __instance, Event __0, out int[] __state)
+        {
+            __state = null;
+            try
+            {
+                if (__0 == null) return;
+                var key = __0.keyCode;
+                if (key != KeyCode.Home && key != KeyCode.End) return;
+                var s = StateOf(__instance);
+                if (s == null || s.Kind != Engine.Tmp) return;
+                var modifiers = __0.modifiers;
+                bool mac = Application.platform == RuntimePlatform.OSXPlayer || Application.platform == RuntimePlatform.OSXEditor;
+                bool ctrl = (modifiers & (mac ? EventModifiers.Command : EventModifiers.Control)) != 0;
+                bool shift = (modifiers & EventModifiers.Shift) != 0;
+                __state = new[] { Focus(s), key == KeyCode.End ? 1 : 0, shift ? 1 : 0, ctrl ? 1 : 0 };
+            }
+            catch (Exception ex) { Note("Home/End reading failed, TMP's own used: " + ex.Message); }
+        }
+
+        /// <summary>
+        /// After TMP's KeyPressed: a Home / End on a presented field lands at the start or end of the line
+        /// in reading order, or of the text with Ctrl — TMP's own rule, from the TYPED caret. TMP reads its
+        /// internal caret (a label index) that the arrows, the clicks and Up/Down here leave as they found
+        /// it: Home went to another line's start (bench 2026-10-04). After KeyPressed, not on
+        /// MoveToStartOfLine: IL2CPP compiled that one into its caller in a 2022.3 build, and a hook on it
+        /// never ran. uGUI's Home / End go to the text's start and end, whatever it draws, and stay its own.
+        /// </summary>
+        public static void Tmp_KeyPressed_Postfix(object __instance, int[] __state)
+        {
+            if (__state == null) return;
+            try
+            {
+                var s = StateOf(__instance);
+                if (s == null) return;
+                s.GoalLanded = -1;
+                int from = Math.Max(0, Math.Min(__state[0], s.Logical.Length));
+                bool end = __state[1] == 1, shift = __state[2] == 1, ctrl = __state[3] == 1;
+                int line = s.Layout.LineOfCaret(from);
+                int target = ctrl ? (end ? s.Logical.Length : 0)
+                           : end ? s.Layout.LineEndCaret(line) : s.Layout.LineLogicalStart(line);
+                if (shift) SetFocus(s, target);
+                else SetCaret(s, target);
+            }
+            catch (Exception ex) { Note("Home/End failed, TMP's own used: " + ex.Message); }
+        }
+
         // ══ Up / Down ════════════════════════════════════════════════════════════════════════
 
         public static bool UGui_MoveUp_Prefix(object __instance, bool __0, bool __1) => !Vertical(__instance, false, __0, __1);

@@ -81,8 +81,9 @@ namespace UnityGameTranslator.Core.TextShaping
                 count++;
             }
             if (Uitk.DrawHighlighting != null) { patcher(Uitk.DrawHighlighting, Hook(nameof(Uitk_DrawHighlighting_Prefix)), null); count++; }
-            if (Uitk.PositionByLine == null || Uitk.IndexFromPosition == null || Uitk.Moves.Count < 6 || Uitk.DrawHighlighting == null)
-                TranslatorCore.LogWarning($"[Patches] UI Toolkit field right-to-left editing incomplete: caret={(Uitk.PositionByLine != null)} click={(Uitk.IndexFromPosition != null)} arrows={Uitk.Moves.Count}/6 selection={(Uitk.DrawHighlighting != null)}");
+            if (Uitk.WordEdges != null) { patcher(Uitk.WordEdges, Hook(nameof(Uitk_FindEndOfClassification_Prefix)), null); count++; }
+            if (Uitk.PositionByLine == null || Uitk.IndexFromPosition == null || Uitk.Moves.Count < 6 || Uitk.DrawHighlighting == null || Uitk.WordEdges == null)
+                TranslatorCore.LogWarning($"[Patches] UI Toolkit field right-to-left editing incomplete: caret={(Uitk.PositionByLine != null)} click={(Uitk.IndexFromPosition != null)} arrows={Uitk.Moves.Count}/6 selection={(Uitk.DrawHighlighting != null)} words={(Uitk.WordEdges != null)}");
             return count;
         }
 
@@ -102,11 +103,24 @@ namespace UnityGameTranslator.Core.TextShaping
             {
                 if (!TranslatorCore.IsMainThread || __instance == null) return;
                 long id = ObjectKey(__instance);
-                if (!Uitk.IsPresentableField(__instance))
+                var kind = Uitk.KindOf(__instance);
+                if (kind != Uitk.FieldKind.Standard) _uitk.Remove(id);
+                if (kind == Uitk.FieldKind.Advanced)
                 {
-                    _uitk.Remove(id);
+                    // 🔴 The Advanced Text Generator does the bidi and the caret itself, but reads
+                    // the paragraph's direction from the element (languageDirection, Inherit → left
+                    // to right): a typed Arabic sentence came out with its words in order and its
+                    // blocks left to right — and it is the DEFAULT generator from 6000.6 on
+                    // (InitialStyle.unityTextGenerator = Advanced; Standard in 6000.3). The same
+                    // answer the mod gives an ATG label (RtlPresenter): the direction of the typed
+                    // text's paragraph (UAX #9 P2, a field draws its markup as text), put back when
+                    // it reads left to right again.
+                    string value = UIToolkitSupport.GetElementText(__instance);
+                    if (RtlText.ParagraphDirection(value) < 0) UIToolkitSupport.SetRtlDirection(__instance);
+                    else UIToolkitSupport.RestoreRtlAdjustments(__instance);
                     return;
                 }
+                if (kind == Uitk.FieldKind.None) return;
                 string rendered = Uitk.RenderedText(__instance);
                 if (_uitk.TryGetValue(id, out var held) && held.Rendered == rendered) return;
                 string suffix = rendered != null && rendered.EndsWith(RenderedSuffix, StringComparison.Ordinal) ? RenderedSuffix : "";
@@ -170,13 +184,84 @@ namespace UnityGameTranslator.Core.TextShaping
         public static bool Uitk_MoveWordLeft_Prefix(object __instance) => !UitkMove(__instance, false, false, true);
         public static bool Uitk_MoveWordRight_Prefix(object __instance) => !UitkMove(__instance, true, false, true);
 
-        /// <summary>One arrow press on a presented field's selecting utilities, by screen position. True when handled.</summary>
+        // A field the Advanced Text Generator draws: no presented form, only the typed text's layout,
+        // for the arrows (the ATG draws, places the caret and answers clicks itself, bidi included).
+        private static readonly Dictionary<long, UitkState> _uitkAtg = new Dictionary<long, UitkState>();
+
+        /// <summary>
+        /// The layout of an ATG field's typed text — the same Unicode bidi the ATG applies — when it
+        /// reads right to left somewhere; null otherwise. The ATG's own arrows step through the TYPED
+        /// order: on a mixed line they went the other way in the Latin runs (bench, 6000.6.3).
+        /// </summary>
+        private static UitkState UitkAtgStateOf(object handle)
+        {
+            var element = Uitk.ElementOf(handle);
+            if (element == null || Uitk.KindOf(element) != Uitk.FieldKind.Advanced) return null;
+            string value = UIToolkitSupport.GetElementText(element);
+            long id = ObjectKey(element);
+            if (_uitkAtg.TryGetValue(id, out var held) && held.Logical == value) return held;
+            var prep = string.IsNullOrEmpty(value) ? null : RtlFieldLayout.Prepare(value);
+            if (prep == null) { _uitkAtg.Remove(id); return null; }
+            var s = new UitkState { Logical = value, Layout = prep.Lay(null) };
+            _uitkAtg[id] = s;
+            return s;
+        }
+
+        /// <summary>
+        /// One arrow press on an ATG field, from the positions the ATG draws: the caret goes to the
+        /// nearest place on screen in the arrow's direction. 🔴 Measured, not laid out by us: where
+        /// two runs of opposite direction meet, one typed position has two places on screen, and the
+        /// ATG (ICU) does not always take the one our layout takes — stepped by our layout, the drawn
+        /// caret went back now and then (bench, 6000.6.3). Ctrl: on to the start of a word.
+        /// </summary>
+        private static int UitkAtgStep(object handle, string logical, int caret, bool toRight, bool word)
+        {
+            int n = logical.Length;
+            var x = new float[n + 1];
+            for (int i = 0; i <= n; i++) x[i] = Uitk.PositionOf(handle, i).x;
+            int current = caret;
+            for (int guard = 0; guard <= n; guard++)
+            {
+                int next = -1;
+                for (int i = 0; i <= n; i++)
+                {
+                    bool ahead = toRight ? x[i] > x[current] + 0.01f : x[i] < x[current] - 0.01f;
+                    if (ahead && (next < 0 || (toRight ? x[i] < x[next] : x[i] > x[next]))) next = i;
+                }
+                if (next < 0) return current;   // at the edge of the screen, the caret stays
+                current = next;
+                if (!word) return current;
+                bool atWordStart = current < n && !UnicodeInfo.IsWhiteSpace(logical[current])
+                                   && (current == 0 || UnicodeInfo.IsWhiteSpace(logical[current - 1]));
+                if (atWordStart || current == 0 || current == n) return current;
+            }
+            return current;
+        }
+
+        /// <summary>One arrow press on a presented (or ATG) field's selecting utilities, by screen position. True when handled.</summary>
         private static bool UitkMove(object utilities, bool toRight, bool shift, bool word)
         {
             try
             {
-                var s = UitkStateOfHandle(Uitk.HandleOf(utilities));
-                if (s == null) return false;
+                var handle = Uitk.HandleOf(utilities);
+                var presented = UitkStateOfHandle(handle);
+                if (presented == null)
+                {
+                    var atg = UitkAtgStateOf(handle);
+                    if (atg == null) return false;
+                    int anchor0 = Uitk.SelectIndex(utilities), focus0 = Uitk.CursorIndex(utilities);
+                    int target;
+                    if (!shift && anchor0 != focus0)
+                    {
+                        float xa = Uitk.PositionOf(handle, anchor0).x, xf = Uitk.PositionOf(handle, focus0).x;
+                        target = (toRight ? xa > xf : xa < xf) ? anchor0 : focus0;
+                    }
+                    else target = UitkAtgStep(handle, atg.Logical, focus0, toRight, word);
+                    Uitk.SetCursorIndex(utilities, target);
+                    if (!shift) Uitk.SetSelectIndex(utilities, target);
+                    return true;
+                }
+                var s = presented;
                 int anchor = Uitk.SelectIndex(utilities), focus = Uitk.CursorIndex(utilities);
                 var layout = s.Layout;
                 int next;
@@ -199,6 +284,30 @@ namespace UnityGameTranslator.Core.TextShaping
             {
                 Note("UI Toolkit arrow move failed, the field's own used: " + (ex.InnerException ?? ex).Message);
                 return false;
+            }
+        }
+
+        // ══ Words ════════════════════════════════════════════════════════════════════════════
+
+        /// <summary>
+        /// TextSelectingUtilities.FindEndOfClassification(position, direction) — the edges of the word
+        /// a double-click selects, and of each word a drag by words takes. It reads the characters of
+        /// the drawn text at typed positions: on a presented field, its presented form — measured on
+        /// the typed text instead (<see cref="RtlFieldLayout.WordEdge"/>).
+        /// </summary>
+        public static bool Uitk_FindEndOfClassification_Prefix(object __instance, int __0, object __1, ref int __result)
+        {
+            try
+            {
+                var s = UitkStateOfHandle(Uitk.HandleOf(__instance));
+                if (s == null) return true;
+                __result = RtlFieldLayout.WordEdge(s.Logical, Math.Max(0, Math.Min(__0, s.Logical.Length)), __1 != null && __1.ToString() == "Forward");
+                return false;
+            }
+            catch (Exception ex)
+            {
+                Note("UI Toolkit word selection failed, the field's own used: " + (ex.InnerException ?? ex).Message);
+                return true;
             }
         }
 
@@ -247,7 +356,7 @@ namespace UnityGameTranslator.Core.TextShaping
         {
             private const BindingFlags Inst = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
             private static bool _resolved, _ok;
-            internal static MethodInfo SetValueWithoutNotify, PositionByLine, PositionByCharacter, IndexFromPosition, DrawHighlighting;
+            internal static MethodInfo SetValueWithoutNotify, PositionByLine, PositionByCharacter, IndexFromPosition, DrawHighlighting, WordEdges;
             internal static readonly List<KeyValuePair<string, MethodInfo>> Moves = new List<KeyValuePair<string, MethodInfo>>();
             private static MemberInfo _isInputField, _isPassword, _renderedText, _handleElement, _utilitiesHandle;
             private static MemberInfo _selectingManipulator, _manipulatorUtilities, _uitkTextHandle, _selectionColor;
@@ -274,11 +383,13 @@ namespace UnityGameTranslator.Core.TextShaping
                     }
 
                     // Not this shape (no rendered text apart from the value): another engine's fields —
-                    // 2021's draw the typed text themselves. Private in Unity 6, an explicit
-                    // ITextElementExperimentalFeatures member in 2022.3: found by what its name ends with.
-                    if (EndingWith(element, "SetRenderedText", typeof(string)) == null)
+                    // 2021's draw the typed text themselves. 🔴 Asked of the member this WRITES
+                    // (m_RenderedText), not of a method beside it: SetRenderedText is private in Unity 6,
+                    // explicit in 2022.3 and absent from 2022.2 — whose fields are the same — and
+                    // asked for, it left 2022.2 drawn as typed (bench, 2022.2.11).
+                    if (Members.FieldOrProperty(element, "m_RenderedText", Inst) == null)
                     {
-                        TranslatorCore.LogDebug("[RtlInputFields] UI Toolkit fields not this shape: no TextElement.SetRenderedText(string)");
+                        TranslatorCore.LogDebug("[RtlInputFields] UI Toolkit fields not this shape: no TextElement.m_RenderedText");
                         return _ok = false;
                     }
                     // The explicit INotifyValueChanged<string> implementation: its name is the interface's
@@ -323,6 +434,11 @@ namespace UnityGameTranslator.Core.TextShaping
                         var m = utilities.GetMethod(move, Inst, null, Type.EmptyTypes, null);
                         if (m != null) Moves.Add(new KeyValuePair<string, MethodInfo>("Uitk_" + move + "_Prefix", m));
                     }
+                    // A word's edges (double-click, drag by words): private, (int position, Direction).
+                    foreach (var m in utilities.GetMethods(Inst))
+                        if (m.Name == "FindEndOfClassification" && m.ReturnType == typeof(int) && m.GetParameters().Length == 2
+                            && m.GetParameters()[0].ParameterType == typeof(int) && m.GetParameters()[1].ParameterType.IsEnum)
+                            WordEdges = m;
                     var mgc = AssemblyTypes.Find("UnityEngine.UIElements.MeshGenerationContext");
                     // A rectangle: through the context's mesh generator in Unity 6, through the
                     // MeshGenerationContextUtils.Rectangle extension in 2022.3.
@@ -347,15 +463,20 @@ namespace UnityGameTranslator.Core.TextShaping
                 return _ok;
             }
 
-            /// <summary>A field's text element, drawing with the standard generator, not a password.</summary>
-            internal static bool IsPresentableField(object element)
+            internal enum FieldKind { None, Standard, Advanced }
+
+            /// <summary>
+            /// A field's text element (not a password), and the generator drawing it: the standard
+            /// one gets the presented form, the Advanced Text Generator only its paragraph direction.
+            /// </summary>
+            internal static FieldKind KindOf(object element)
             {
                 bool input = _isInputField != null
                     ? Members.Get(_isInputField, element) is bool isInput && isInput
                     : _classListContains.Invoke(element, new object[] { _innerFieldClass }) is bool hasClass && hasClass;
-                if (!input) return false;
-                if (_isPassword != null && Members.Get(_isPassword, element) is bool password && password) return false;
-                return _isAdvanced == null || !(bool)_isAdvanced.Invoke(null, new[] { element });
+                if (!input) return FieldKind.None;
+                if (_isPassword != null && Members.Get(_isPassword, element) is bool password && password) return FieldKind.None;
+                return _isAdvanced != null && (bool)_isAdvanced.Invoke(null, new[] { element }) ? FieldKind.Advanced : FieldKind.Standard;
             }
 
             /// <summary>

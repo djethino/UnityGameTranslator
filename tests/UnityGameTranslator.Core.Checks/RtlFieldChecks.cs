@@ -32,6 +32,7 @@ namespace UnityGameTranslator.Core.Checks
             WhereTheCaretGoes(check);
             WhereAClickLands(check);
             HowTheArrowsMove(check);
+            WhatADoubleClickSelects(check);
             SeveralLines(check);
             ForAnEngineThatMovesGlyphs(check);
         }
@@ -239,6 +240,27 @@ namespace UnityGameTranslator.Core.Checks
                           wrong != null ? "a step went the other way: " + wrong : $"reached {reached.Count} of {visible.Count} gaps");
                 }
             }
+        }
+
+        /// <summary>The word a double-click takes: measured on the typed text (RtlFieldLayout.WordEdge).</summary>
+        private static void WhatADoubleClickSelects(Action<bool, string, string> check)
+        {
+            string Word(string text, int at) =>
+                text.Substring(RtlFieldLayout.WordEdge(text, at, false), RtlFieldLayout.WordEdge(text, at, true) - RtlFieldLayout.WordEdge(text, at, false));
+
+            const string sentence = "الآن جاهز ABC من 123 الإصدار";
+            check(Word(sentence, 7) == "جاهز", "a double-click on an Arabic word takes that word", Word(sentence, 7));
+            check(Word(sentence, 11) == "ABC" && Word(sentence, 18) == "123", "a Latin word and a number in the same line are words of their own",
+                  Word(sentence, 11) + " | " + Word(sentence, 18));
+            // Vowel signs and joiners inside a word: the engines' own rule (char.IsLetterOrDigit) cut
+            // the word at each of them.
+            const string voweled = "كَتَبَ الدَّرْسَ";
+            check(Word(voweled, 2) == "كَتَبَ" && Word(voweled, 9) == "الدَّرْسَ", "harakat stay inside their word",
+                  Word(voweled, 2) + " | " + Word(voweled, 9));
+            check(Word("می‌خواهم بروم", 1) == "می‌خواهم", "a zero-width non-joiner stays inside its word (Persian)", Word("می‌خواهم بروم", 1));
+            check(Word("שלום, עולם", 4) == "," && Word("שלום, עולם", 1) == "שלום", "punctuation is a class of its own, as the engines have it",
+                  Word("שלום, עולם", 4) + " | " + Word("שלום, עולם", 1));
+            check(Word("ab\U0001F600\U0001F600 cd", 3) == "\U0001F600\U0001F600", "a character above U+FFFF is never cut in half", "");
         }
 
         private static void SeveralLines(Action<bool, string, string> check)

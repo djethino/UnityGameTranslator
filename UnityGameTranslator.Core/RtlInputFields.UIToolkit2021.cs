@@ -58,6 +58,7 @@ namespace UnityGameTranslator.Core.TextShaping
             if (Uitk21.Drag != null) { patcher(Uitk21.Drag, Hook(nameof(Uitk21_SelectToPosition_Prefix)), null); count++; }
             if (Uitk21.Scrolling != null) { patcher(Uitk21.Scrolling, Hook(nameof(Uitk21_UpdateScrollOffset_Prefix)), Hook(nameof(Uitk21_UpdateScrollOffset_Postfix))); count++; }
             if (Uitk21.PreDrawCursor != null) { patcher(Uitk21.PreDrawCursor, null, Hook(nameof(Uitk21_PreDrawCursor_Postfix))); count++; }
+            if (Uitk21.WordEdges != null) { patcher(Uitk21.WordEdges, Hook(nameof(Uitk21_FindEndOfClassification_Prefix)), null); count++; }
             foreach (var move in Uitk21.Moves)
             {
                 patcher(move.Value, Hook(move.Key), null);
@@ -373,6 +374,30 @@ namespace UnityGameTranslator.Core.TextShaping
             catch (Exception ex) { Note("UI Toolkit 2021 caret position failed: " + (ex.InnerException ?? ex).Message); }
         }
 
+        // ══ Words ════════════════════════════════════════════════════════════════════════════
+
+        /// <summary>
+        /// TextEditor.FindEndOfClassification(position, direction) — the word a double-click selects
+        /// and the words a drag takes. IMGUI reads the typed text, rightly, but classes a vowel sign
+        /// or a joiner apart (char.IsLetterOrDigit) and stops the word at it: the rule every other
+        /// field of the mod keeps (<see cref="RtlFieldLayout.WordEdge"/>).
+        /// </summary>
+        public static bool Uitk21_FindEndOfClassification_Prefix(TextEditor __instance, int __0, object __1, ref int __result)
+        {
+            try
+            {
+                var s = Uitk21StateOfEditor(__instance);
+                if (s == null) return true;
+                __result = RtlFieldLayout.WordEdge(s.Logical, Math.Max(0, Math.Min(__0, s.Logical.Length)), __1 != null && __1.ToString() == "Forward");
+                return false;
+            }
+            catch (Exception ex)
+            {
+                Note("UI Toolkit 2021 word selection failed, the field's own used: " + (ex.InnerException ?? ex).Message);
+                return true;
+            }
+        }
+
         // ══ Arrow keys ═══════════════════════════════════════════════════════════════════════
 
         public static bool Uitk21_MoveLeft_Prefix(TextEditor __instance) => !Uitk21Move(__instance, false, false, false);
@@ -422,7 +447,7 @@ namespace UnityGameTranslator.Core.TextShaping
             // The class every single-line field gives its input element (TextInputBaseField.singleLineInputUssClassName).
             private const string SingleLineInput = "unity-base-text-field__input--single-line";
             private static bool _resolved, _ok;
-            internal static MethodInfo Text, CursorPosition, Rectangle, Click, Drag, Scrolling, PreDrawCursor;
+            internal static MethodInfo Text, CursorPosition, Rectangle, Click, Drag, Scrolling, PreDrawCursor, WordEdges;
             private static PropertyInfo _handlerEditor, _localPosition;
             private static MemberInfo _revealCursor, _dragWords, _graphicalCursor;
             internal static readonly List<KeyValuePair<string, MethodInfo>> Moves = new List<KeyValuePair<string, MethodInfo>>();
@@ -471,6 +496,10 @@ namespace UnityGameTranslator.Core.TextShaping
                     Scrolling = typeof(TextEditor).GetMethod("UpdateScrollOffset", Inst, null, Type.EmptyTypes, null);
                     PreDrawCursor = AssemblyTypes.Find("UnityEngine.UIElements.KeyboardTextEditorEventHandler")
                         ?.GetMethod("PreDrawCursor", Inst, null, new[] { typeof(string) }, null);
+                    foreach (var m in typeof(TextEditor).GetMethods(Inst))
+                        if (m.Name == "FindEndOfClassification" && m.ReturnType == typeof(int) && m.GetParameters().Length == 2
+                            && m.GetParameters()[0].ParameterType == typeof(int) && m.GetParameters()[1].ParameterType.IsEnum)
+                            WordEdges = m;
                     _handlerEditor = Members.Property(AssemblyTypes.Find("UnityEngine.UIElements.TextEditorEventHandler"), "editorEngine", Inst);
                     _localPosition = Members.Property(typeof(TextEditor), "localPosition", Inst);
                     _revealCursor = Members.FieldOrProperty(typeof(TextEditor), "m_RevealCursor", Inst);

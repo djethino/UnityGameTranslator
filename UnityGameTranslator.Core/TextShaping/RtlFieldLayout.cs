@@ -809,5 +809,77 @@ namespace UnityGameTranslator.Core.TextShaping
 
         /// <summary>Whether logical character <paramref name="i"/> is laid out right-to-left.</summary>
         internal bool IsRtl(int i) => i >= 0 && i < _logical.Length && _rtlOfLogical[i];
+
+        // ══ Words: double-click, drag by words ═══════════════════════════════════════════════
+
+        private enum WordClass { Word, Other, Space, NewLine }
+
+        /// <summary>
+        /// What a typed character is for word selection — the engines' own four classes (UI Toolkit's
+        /// TextSelectingUtilities.ClassifyChar, IMGUI's TextEditor), asked of Unicode's data instead of
+        /// the runtime (char.IsLetterOrDigit — refused here, CharacterRangeChecks). One difference, on
+        /// purpose: a combining mark (Arabic harakat, Hebrew points, Indic vowel signs) and a joiner
+        /// stay inside their word, as Unicode's word boundaries keep them (UAX #29, Extend/Format);
+        /// classed apart, a double-click stopped at every vowel sign.
+        /// </summary>
+        private static WordClass ClassOf(string logical, int i)
+        {
+            int cp = i + 1 < logical.Length && char.IsSurrogatePair(logical[i], logical[i + 1])
+                ? char.ConvertToUtf32(logical[i], logical[i + 1]) : logical[i];
+            if (cp == '\n') return WordClass.NewLine;
+            if (UnicodeInfo.IsWhiteSpace(cp)) return WordClass.Space;
+            if (cp == '\'' || cp == 0x200C || cp == 0x200D) return WordClass.Word;
+            switch (UnicodeInfo.CategoryOf(cp))
+            {
+                case System.Globalization.UnicodeCategory.UppercaseLetter:
+                case System.Globalization.UnicodeCategory.LowercaseLetter:
+                case System.Globalization.UnicodeCategory.TitlecaseLetter:
+                case System.Globalization.UnicodeCategory.ModifierLetter:
+                case System.Globalization.UnicodeCategory.OtherLetter:
+                case System.Globalization.UnicodeCategory.DecimalDigitNumber:
+                case System.Globalization.UnicodeCategory.NonSpacingMark:
+                case System.Globalization.UnicodeCategory.SpacingCombiningMark:
+                case System.Globalization.UnicodeCategory.EnclosingMark:
+                    return WordClass.Word;
+                default:
+                    return WordClass.Other;
+            }
+        }
+
+        private static int NextCodePoint(string s, int i) =>
+            i + (i + 1 < s.Length && char.IsSurrogatePair(s[i], s[i + 1]) ? 2 : 1);
+
+        private static int PreviousCodePoint(string s, int i) =>
+            i - (i >= 2 && char.IsSurrogatePair(s[i - 2], s[i - 1]) ? 2 : 1);
+
+        /// <summary>
+        /// The edge of the run of one class around typed position <paramref name="p"/>, toward the end
+        /// (<paramref name="forward"/>) or the start — the engines' FindEndOfClassification, step for
+        /// step, on the TYPED text. Theirs read the drawn text at typed positions: on a presented
+        /// field, the presented form — a double-click selected other letters than the word clicked.
+        /// </summary>
+        internal static int WordEdge(string logical, int p, bool forward)
+        {
+            int count = logical.Length;
+            if (count == 0) return 0;
+            if (p >= count) p = count - 1;
+            var kind = ClassOf(logical, p);
+            if (kind == WordClass.NewLine) return p;
+            do
+            {
+                if (forward)
+                {
+                    p = NextCodePoint(logical, p);
+                    if (p >= count) return count;
+                }
+                else
+                {
+                    p = PreviousCodePoint(logical, p);
+                    if (p <= 0) return ClassOf(logical, 0) != kind ? NextCodePoint(logical, 0) : 0;
+                }
+            }
+            while (ClassOf(logical, p) == kind);
+            return forward ? p : NextCodePoint(logical, p);
+        }
     }
 }

@@ -4420,12 +4420,23 @@ namespace UnityGameTranslator.Core
 
             RetranslateResult result = Retranslation.Run(normalizedKey, request.HadEntry, request.PreviousValue, rounds, round =>
             {
-                if (service) return TranslateWithAPI(normalizedKey);
-
-                int seed = Retranslation.SeedFor(Config.ai_seed_retranslate, round,
-                    () => { lock (retranslateRandom) { return retranslateRandom.Next(1, int.MaxValue); } });
-                string candidate = TranslateWithAI(normalizedKey, request.IsOwnUI,
-                    new Variation { Temperature = Config.TemperatureRetranslate, Seed = seed });
+                string candidate;
+                // A round cut because who answers changed is asked again of the new answerer
+                // (AbandonRequestInFlight), as the worker does for any line.
+                do
+                {
+                    if (LineTranslation.IsTranslationService(Config.translation_backend))
+                    {
+                        candidate = TranslateWithAPI(normalizedKey);
+                        continue;
+                    }
+                    int seed = Retranslation.SeedFor(Config.ai_seed_retranslate, round,
+                        () => { lock (retranslateRandom) { return retranslateRandom.Next(1, int.MaxValue); } });
+                    candidate = TranslateWithAI(normalizedKey, request.IsOwnUI,
+                        new Variation { Temperature = Config.TemperatureRetranslate, Seed = seed });
+                }
+                while (candidate == null && TakeAbandoned() && Config.IsTranslationEnabled && !ShuttingDown);
+                if (LineTranslation.IsTranslationService(Config.translation_backend)) return candidate;
 
                 if (candidate != null && Answers.Read(candidate) != AnswerKind.Translation)
                     Adapter?.LogWarning("[Retranslate] Backend refused the line, keeping the previous translation");
@@ -4884,9 +4895,10 @@ namespace UnityGameTranslator.Core
         /// </summary>
         private static HttpResponseMessage SendForTranslation(HttpRequestMessage request)
         {
+            var abandon = _answererChanged.Token;
             try
             {
-                var response = httpClient.SendAsync(request).Result;
+                var response = httpClient.SendAsync(request, abandon).Result;
                 _backendSilent = false;
                 if (_unreachable != ConnectionProblem.None)
                 {
@@ -4894,6 +4906,14 @@ namespace UnityGameTranslator.Core
                     Adapter?.LogInfo("[Translation] The translation server answers again: the queue resumes.");
                 }
                 return response;
+            }
+            // Cut on purpose: who answers changed while this line was being asked (AbandonRequestInFlight).
+            // Not a silence and not a failure — the caller asks the same line again of the new one.
+            catch (AggregateException) when (abandon.IsCancellationRequested)
+            {
+                _requestAbandoned = true;
+                Adapter?.LogInfo("[Translation] The line in flight was dropped: the translation settings changed. It is asked again of the new model.");
+                return null;
             }
             // Never reached: a firewall, no network, an address that does not resolve. Nothing
             // left the machine, so there is no answer to wait for — only a cause to name, and a
@@ -5073,6 +5093,34 @@ namespace UnityGameTranslator.Core
         /// and we are exactly where we were. Nothing waits for the result and nothing reports it —
         /// a model left loaded is a slowdown, not a failure.
         /// </summary>
+        // Cancelled when who answers changes (AbandonRequestInFlight); every request of the worker
+        // carries the token current when it leaves. Replaced, never reset: a request already
+        // holding the old token must see it cancelled.
+        private static CancellationTokenSource _answererChanged = new CancellationTokenSource();
+        // Raised by SendForTranslation when it cut a request on purpose, lowered by the one who
+        // asks the line again. Worker thread only.
+        private static bool _requestAbandoned;
+
+        /// <summary>
+        /// Who answers translation requests changed (a model, a server, a backend, a key): the line
+        /// being asked of the previous one is cut now — its server stops generating when the
+        /// connection closes — and asked again of the new one. Waiting for it is what kept a model
+        /// too heavy for the game holding the queue after the player had left it for that reason.
+        /// </summary>
+        public static void AbandonRequestInFlight()
+        {
+            var previous = Interlocked.Exchange(ref _answererChanged, new CancellationTokenSource());
+            previous.Cancel();
+        }
+
+        /// <summary>Whether the last request was cut by <see cref="AbandonRequestInFlight"/> — and forget it.</summary>
+        private static bool TakeAbandoned()
+        {
+            bool abandoned = _requestAbandoned;
+            _requestAbandoned = false;
+            return abandoned;
+        }
+
         public static void ReleaseModel(string baseUrl, string model) =>
             SendModelMemory(ModelMemory.Release(baseUrl, model), wait: false);
 
@@ -6375,9 +6423,16 @@ namespace UnityGameTranslator.Core
 
             public string Translate(string normalized, bool ownUi, out bool rateLimited)
             {
-                string answer = LineTranslation.IsTranslationService(Config.translation_backend)
-                    ? TranslateWithAPI(normalized)
-                    : TranslateWithAI(normalized, ownUi);   // LLM backend (default)
+                string answer;
+                // Asked again, of whoever answers now, while the settings keep changing under it
+                // (AbandonRequestInFlight) — and not at all once translation is switched off.
+                do
+                {
+                    answer = LineTranslation.IsTranslationService(Config.translation_backend)
+                        ? TranslateWithAPI(normalized)
+                        : TranslateWithAI(normalized, ownUi);   // LLM backend (default)
+                }
+                while (answer == null && TakeAbandoned() && Config.IsTranslationEnabled && !ShuttingDown);
                 rateLimited = answer == null && _apiRateLimited;
                 if (rateLimited) _apiRateLimited = false;
                 return answer;

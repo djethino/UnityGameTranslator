@@ -1806,6 +1806,11 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // classified, redraws exactly as today. See ConfigEffects, and its checks.
                 var changedKeys = ConfigEffects.Changed(before, ConfigEffects.Snapshot(TranslatorCore.Config));
 
+                // Who answers changed (a model, a server, a backend, a key, translation switched
+                // off): the line being asked of the previous one is cut now and asked again of the
+                // new one, never waited for (ConfigEffects.WhoAnswers).
+                if (ConfigEffects.ChangesWhoAnswers(changedKeys)) TranslatorCore.AbandonRequestInFlight();
+
                 // ⚠ The one setting on this screen that is NOT in the config: it lives in the
                 // translation's own settings, so the comparison above cannot see it. Named rather
                 // than left out — ConfigEffects decides what it means, like every other key.

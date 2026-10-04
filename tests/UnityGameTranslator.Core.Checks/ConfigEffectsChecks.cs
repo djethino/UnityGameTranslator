@@ -66,6 +66,16 @@ namespace UnityGameTranslator.Core.Checks
                     $"{visible} redraws", "a text on screen shows what this decides");
             }
 
+            // Who answers a request: changing it abandons the one in flight (asked again of the new
+            // answerer); the dials that only shape the next request do not.
+            foreach (var who in ConfigEffects.WhoAnswers)
+                check(snapshot.ContainsKey(who) && ConfigEffects.ChangesWhoAnswers(new[] { who }),
+                    $"{who} changes who answers", "a request in flight to the previous one is asked again");
+            check(!ConfigEffects.ChangesWhoAnswers(new[] { "game_context", "ai_temperature", "timeout_ms", "settings_hotkey" }),
+                "the dials and the keys leave the request in flight alone", "it is asked of the same answerer");
+            check(!ConfigEffects.ChangesWhoAnswers(null), "no list of changes abandons nothing",
+                "cutting a request needs a reason");
+
             // The comparison itself: it is what makes an unclassified field fail safe.
             var before = ConfigEffects.Snapshot(fresh);
             check(ConfigEffects.Changed(before, ConfigEffects.Snapshot(fresh)).Count == 0,

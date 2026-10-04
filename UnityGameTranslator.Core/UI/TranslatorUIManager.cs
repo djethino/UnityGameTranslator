@@ -6000,6 +6000,8 @@ namespace UnityGameTranslator.Core.UI
             else
             {
                 TranslatorCore.ClearQueue();
+                // The line being asked too: paused means the model stops working now, not after it.
+                TranslatorCore.AbandonRequestInFlight();
                 ShowHotkeyFeedback("Translation: OFF", false);
             }
 

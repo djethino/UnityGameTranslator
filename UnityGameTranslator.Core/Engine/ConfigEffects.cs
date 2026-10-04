@@ -140,6 +140,29 @@ namespace UnityGameTranslator.Core
         /// in <see cref="NeverOnScreen"/> — and true when nothing changed is not asked here: with
         /// no change at all there is nothing to apply, which the caller decides.
         /// </summary>
+        /// <summary>
+        /// The settings that decide WHO answers a translation request: the backend, whether it
+        /// runs, and where and as whom it is asked. A request in flight to an answerer that is no
+        /// longer the chosen one is abandoned and asked again of the new one — nobody switches model
+        /// to wait for the old one to finish (user's words, 2026-10-04: a model too heavy for this
+        /// game held the queue until its line was done).
+        /// </summary>
+        public static readonly IReadOnlyList<string> WhoAnswers = new[]
+        {
+            "translation_backend", "enable_ai", "enable_translations",
+            "ai_url", "ai_model", "ai_api_key", "google_api_key", "deepl_api_key", "deepl_use_free",
+        };
+
+        /// <summary>Whether a change of settings makes the request in flight one asked of the wrong answerer (<see cref="WhoAnswers"/>).</summary>
+        public static bool ChangesWhoAnswers(IEnumerable<string> changed)
+        {
+            if (changed == null) return false;
+            var who = new HashSet<string>(WhoAnswers, StringComparer.Ordinal);
+            foreach (var key in changed)
+                if (who.Contains(key)) return true;
+            return false;
+        }
+
         public static bool NeedsRedraw(IEnumerable<string> changed)
         {
             if (changed == null) return true;

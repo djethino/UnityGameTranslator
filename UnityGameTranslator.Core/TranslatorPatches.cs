@@ -567,10 +567,16 @@ namespace UnityGameTranslator.Core
 
             Group("UI Toolkit field right-to-left editing", () =>
             {
-                // A UI Toolkit text field on Unity 6 — the same editing as the other engines' fields
-                // (RtlInputFields.UIToolkit): drawn presented, caret, clicks, arrows and selection
-                // mapped. Another engine's shape is not this one's: nothing placed, nothing said.
-                if (UIToolkitSupport.Available) patchCount += TextShaping.RtlInputFields.PatchUitkFields(patcher);
+                // A UI Toolkit text field — the same editing as the other engines' fields: drawn
+                // presented, caret, clicks, arrows and selection mapped. Two shapes: a TextElement
+                // inside (2022.3, Unity 6 — RtlInputFields.UIToolkit) or an input element drawing
+                // and editing through IMGUI's TextEditor (2021 — RtlInputFields.UIToolkit2021). Each
+                // checks its own shape: on another engine nothing is placed, nothing said.
+                if (UIToolkitSupport.Available)
+                {
+                    patchCount += TextShaping.RtlInputFields.PatchUitkFields(patcher);
+                    patchCount += TextShaping.RtlInputFields.PatchUitk2021Fields(patcher);
+                }
             });
 
             // TextCore's decorations: the underline crash Unity fixed in later engines, carried where

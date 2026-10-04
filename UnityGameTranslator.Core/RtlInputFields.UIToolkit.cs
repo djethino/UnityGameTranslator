@@ -32,7 +32,6 @@ namespace UnityGameTranslator.Core.TextShaping
     {
         private sealed class UitkState
         {
-            public WeakReference Element;
             public RtlFieldLayout Layout;
             public string Logical;
             public string Shown;
@@ -44,8 +43,25 @@ namespace UnityGameTranslator.Core.TextShaping
         // the typed text is laid out without it, and it is put back after the presented form.
         private static readonly string RenderedSuffix = ((char)0x200B).ToString();
 
-        // By the element's id (UIToolkitSupport.IdFor): a text element is no UnityEngine.Object.
+        // By the element's key (ObjectKey): a text element is no UnityEngine.Object.
         private static readonly Dictionary<long, UitkState> _uitk = new Dictionary<long, UitkState>();
+
+        private static readonly Type _il2cppObject = Type.GetType("Il2CppInterop.Runtime.InteropTypes.Il2CppObjectBase, Il2CppInterop.Runtime");
+        private static readonly PropertyInfo _il2cppPointer = _il2cppObject?.GetProperty("Pointer", BindingFlags.Instance | BindingFlags.Public);
+
+        /// <summary>
+        /// The same number for the same engine object, every time it is met. On IL2CPP an object
+        /// reaches managed code through a wrapper the interop may let go and make again: keyed by
+        /// the wrapper, a field's text info or editor met later no longer found its field (bench,
+        /// 2021.3 IL2CPP: one case in eight left unmapped). The native pointer is the object; on
+        /// Mono the object is itself (UIToolkitSupport.IdFor).
+        /// </summary>
+        private static long ObjectKey(object o)
+        {
+            if (o != null && _il2cppPointer != null && _il2cppObject.IsInstanceOfType(o))
+                return ((IntPtr)_il2cppPointer.GetValue(o, null)).ToInt64();
+            return UIToolkitSupport.IdFor(o);
+        }
         [ThreadStatic] private static bool _uitkRawIndices;
 
         /// <summary>The hooks, when this engine has the shape they are written for (Unity 6).</summary>
@@ -85,7 +101,7 @@ namespace UnityGameTranslator.Core.TextShaping
             try
             {
                 if (!TranslatorCore.IsMainThread || __instance == null) return;
-                long id = UIToolkitSupport.IdFor(__instance);
+                long id = ObjectKey(__instance);
                 if (!Uitk.IsPresentableField(__instance))
                 {
                     _uitk.Remove(id);
@@ -98,7 +114,7 @@ namespace UnityGameTranslator.Core.TextShaping
                 var prep = string.IsNullOrEmpty(typed) ? null : RtlFieldLayout.Prepare(typed);
                 if (prep == null) { _uitk.Remove(id); return; }
 
-                var s = new UitkState { Element = new WeakReference(__instance), Logical = typed, Suffix = suffix };
+                var s = new UitkState { Logical = typed, Suffix = suffix };
                 s.Layout = prep.Lay(null);
                 s.Shown = s.Layout.Display;
                 _uitk[id] = s;
@@ -116,7 +132,7 @@ namespace UnityGameTranslator.Core.TextShaping
         private static UitkState UitkStateOf(object element)
         {
             if (element == null || _uitk.Count == 0) return null;
-            if (!_uitk.TryGetValue(UIToolkitSupport.IdFor(element), out var s)) return null;
+            if (!_uitk.TryGetValue(ObjectKey(element), out var s)) return null;
             return Uitk.RenderedText(element) == s.Rendered ? s : null;
         }
 

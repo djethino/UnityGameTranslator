@@ -736,19 +736,10 @@ namespace UnityGameTranslator.Core.TextShaping
             catch (Exception ex) { Note("click mapping failed: " + ex.Message); }
         }
 
-        private static int _tmpAnchorBefore = -1, _tmpFocusBefore = -1;
-
-        public static void Tmp_OnPointerDown_Prefix(object __instance)
-        {
-            var s = StateOf(__instance);
-            _tmpAnchorBefore = s == null ? -1 : Anchor(s);
-            _tmpFocusBefore = s == null ? -1 : Focus(s);
-        }
-
         /// <summary>
         /// TMP: the field placed the caret from its own reading of the glyphs; put it where the
-        /// click was, from the map. A double click has selected a word by typed indices, which is
-        /// right as it is and is left alone.
+        /// click was, from the map — a Shift-click extending the selection there, a double-click
+        /// selecting the word drawn under the pointer.
         /// </summary>
         public static void Tmp_OnPointerDown_Postfix(object __instance, PointerEventData __0)
         {
@@ -758,12 +749,29 @@ namespace UnityGameTranslator.Core.TextShaping
                 if (s == null || __0 == null || !ReadBoxes(s)) return;
                 s.GoalLanded = -1;   // a click starts a new column
                 int anchor = Anchor(s), focus = Focus(s);
-                bool wordSelected = anchor != focus && anchor != _tmpAnchorBefore;
-                if (wordSelected) return;
+                // As TMP decides it: without Shift a single click leaves no selection, so a selection
+                // after it is a double-click's word. (Told apart by the anchor moving, a word TMP chose
+                // starting where the previous selection did read as a Shift-click extending it.)
+                bool shift = UniverseLib.Input.InputManager.GetKey(KeyCode.LeftShift) || UniverseLib.Input.InputManager.GetKey(KeyCode.RightShift);
+                bool wordSelected = anchor != focus && !shift;
                 if (!ScreenToLocal(s.Label.rectTransform, __0.position, __0.pressEventCamera, out Vector2 local)) return;
                 int caret = CaretAt(s, local);
-                bool extending = anchor != focus && anchor == _tmpAnchorBefore;
-                if (extending) SetFocus(s, caret);
+                if (wordSelected)
+                {
+                    // A double-click: TMP chose the word from where its characters stood in TYPED order
+                    // (FindIntersectingWord reads characterInfo, the glyphs we moved are not there) — six
+                    // words in six another one (bench 2026-10-04). The word around the caret under the
+                    // pointer, on the typed text, as the UI Toolkit fields do (RtlFieldLayout.WordEdge,
+                    // which reads the CHARACTER at the position: the one drawn under the pointer — from
+                    // the caret, a click on a one-letter word took the space after it).
+                    int under = CharacterAt(s, local);
+                    if (under < 0) under = Math.Min(caret, Math.Max(0, s.Logical.Length - 1));
+                    int back = RtlFieldLayout.WordEdge(s.Logical, under, false), forward = RtlFieldLayout.WordEdge(s.Logical, under, true);
+                    Tmp.FieldStringAnchor.SetValue(s.Field, back, null);
+                    SetFocus(s, forward);
+                    return;
+                }
+                if (shift) SetFocus(s, caret);   // Shift-click: the selection extended to the click
                 else SetCaret(s, caret);
             }
             catch (Exception ex) { Note("TMP click mapping failed: " + ex.Message); }
@@ -782,10 +790,9 @@ namespace UnityGameTranslator.Core.TextShaping
             catch (Exception ex) { Note("TMP drag mapping failed: " + ex.Message); }
         }
 
-        /// <summary>The caret under a point of the label's local space.</summary>
-        private static int CaretAt(FieldState s, Vector2 pos)
+        /// <summary>The engine line under a point of the label's local space: the nearest by its band.</summary>
+        private static int EngineLineAt(FieldState s, Vector2 pos)
         {
-            // The engine line under the point: nearest by its band.
             int g = 0;
             float best = float.MaxValue;
             for (int k = 0; k < s.LineTop.Count; k++)
@@ -794,7 +801,26 @@ namespace UnityGameTranslator.Core.TextShaping
                 float dist = pos.y > top ? pos.y - top : pos.y < bottom ? bottom - pos.y : 0f;
                 if (dist < best) { best = dist; g = k; }
             }
+            return g;
+        }
 
+        /// <summary>The typed character drawn under a point of the label's local space, -1 when none.</summary>
+        private static int CharacterAt(FieldState s, Vector2 pos)
+        {
+            int g = EngineLineAt(s, pos);
+            for (int i = 0; i < s.Logical.Length; i++)
+            {
+                if (s.BoxLine[i] != g || s.Logical[i] == '\n' || float.IsNaN(s.BoxL[i])) continue;
+                float x0 = Math.Min(s.BoxL[i], s.BoxR[i]), x1 = Math.Max(s.BoxL[i], s.BoxR[i]);
+                if (x1 - x0 >= 0.01f && pos.x >= x0 && pos.x < x1) return i;
+            }
+            return -1;
+        }
+
+        /// <summary>The caret under a point of the label's local space.</summary>
+        private static int CaretAt(FieldState s, Vector2 pos)
+        {
+            int g = EngineLineAt(s, pos);
             float minX = float.MaxValue, maxX = float.MinValue;
             for (int i = 0; i < s.Logical.Length; i++)
             {

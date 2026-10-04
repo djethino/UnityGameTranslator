@@ -440,7 +440,7 @@ namespace UnityGameTranslator.Core
                     var left = t.GetMethod("MoveLeft", any, null, new[] { typeof(bool), typeof(bool) }, null);
                     var right = t.GetMethod("MoveRight", any, null, new[] { typeof(bool), typeof(bool) }, null);
 
-                    if (down != null) { patcher(down, Hook(nameof(TextShaping.RtlInputFields.Tmp_OnPointerDown_Prefix)), Hook(nameof(TextShaping.RtlInputFields.Tmp_OnPointerDown_Postfix))); patchCount++; }
+                    if (down != null) { patcher(down, null, Hook(nameof(TextShaping.RtlInputFields.Tmp_OnPointerDown_Postfix))); patchCount++; }
                     if (drag != null) { patcher(drag, null, Hook(nameof(TextShaping.RtlInputFields.Tmp_OnDrag_Postfix))); patchCount++; }
                     if (left != null) { patcher(left, Hook(nameof(TextShaping.RtlInputFields.Tmp_MoveLeft_Prefix)), null); patchCount++; }
                     if (right != null) { patcher(right, Hook(nameof(TextShaping.RtlInputFields.Tmp_MoveRight_Prefix)), null); patchCount++; }

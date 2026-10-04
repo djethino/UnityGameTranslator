@@ -106,8 +106,15 @@ namespace UnityGameTranslator.Core
         // level counters, "13/25" beside "25/50": the game's own write of the first (read back and
         // appended to) was taken for our presentation of the second, left as it was, and drawn
         // backwards ("52/13") until a sweep put it right — then the game wrote it again (2026-10-03).
-        private readonly ConcurrentDictionary<string, KeyValuePair<string, string>> _presentedToLogical =
-            new ConcurrentDictionary<string, KeyValuePair<string, string>>();
+        // 🔴 And one form PER WAY OF WRITING ITS DIGITS (DigitOrder), not one per key (2026-10-04):
+        // the same translation is written with its digits as read on one component ("400",
+        // presented logically — the mod's own window among them) and reversed on another ("004",
+        // TMP's flag reverses the whole string as it draws). Kept as one entry, the last write won,
+        // and the other form, its numbers no longer the same, was not known as ours: the in-game
+        // editor took a shaped text for a key again. Bounded: a counter changing its numbers
+        // replaces its own form, as before.
+        private readonly ConcurrentDictionary<string, ConcurrentDictionary<string, KeyValuePair<string, string>>> _presentedToLogical =
+            new ConcurrentDictionary<string, ConcurrentDictionary<string, KeyValuePair<string, string>>>();
 
         // The same, EXACTLY, for a presented form too short for the decoration-insensitive key
         // (NormalizeForReadbackMatch wants a run of letters): a line of one-glyph conjuncts — "ष्ट
@@ -212,8 +219,51 @@ namespace UnityGameTranslator.Core
                 // "logical" handed here is the first stage's output, itself registered — the
                 // readback must reach the translation's own text, never a stage in between.
                 string deeper = PresentedLogical(logical);
-                _presentedToLogical[n] = new KeyValuePair<string, string>(presented, deeper ?? logical);
+                var forms = _presentedToLogical.GetOrAdd(n, _ => new ConcurrentDictionary<string, KeyValuePair<string, string>>(StringComparer.Ordinal));
+                forms[DigitOrder(presented, logical)] =new KeyValuePair<string, string>(presented, deeper ?? logical);
             }
+        }
+
+        /// <summary>
+        /// How a presented form writes the digits of its logical text, run by run: "S" as written,
+        /// "R" reversed (a whole-string reversal at draw time), "?" otherwise — what tells two
+        /// presentations of one translation apart, whatever its numbers are.
+        /// </summary>
+        internal static string DigitOrder(string presented, string logical)
+        {
+            var shown = DigitRuns(presented);
+            var written = DigitRuns(logical);
+            var order = new System.Text.StringBuilder(shown.Count);
+            for (int k = 0; k < shown.Count; k++)
+            {
+                string w = k < written.Count ? written[k] : null;
+                if (w == null) order.Append('?');
+                else if (shown[k] == w && Reverse(w) == w) order.Append('-');   // "7", "44": either way
+                else if (shown[k] == w) order.Append('S');
+                else if (shown[k] == Reverse(w)) order.Append('R');
+                else order.Append('?');
+            }
+            return order.ToString();
+        }
+
+        private static List<string> DigitRuns(string text)
+        {
+            var runs = new List<string>();
+            for (int i = 0; i < text.Length;)
+            {
+                if (!TextShaping.UnicodeInfo.IsDigit(text[i])) { i++; continue; }
+                int start = i;
+                while (i < text.Length && TextShaping.UnicodeInfo.IsDigit(text[i])) i++;
+                runs.Add(text.Substring(start, i - start));
+            }
+            return runs;
+        }
+
+        private static string Reverse(string s)
+        {
+            var chars = s.ToCharArray();
+            Array.Reverse(chars);
+            return new string(chars);
         }
 
         /// <summary>The logical string behind a presented one, or null when the text is not ours.</summary>
@@ -222,8 +272,10 @@ namespace UnityGameTranslator.Core
             if (string.IsNullOrEmpty(displayed)) return null;
             string n = NormalizeForReadbackMatch(displayed);
             if (n == null) return _presentedExact.TryGetValue(displayed, out var exact) ? exact : null;
-            if (!_presentedToLogical.TryGetValue(n, out var entry)) return null;
-            return SameNumbers(entry.Key, displayed) ? entry.Value : null;
+            if (!_presentedToLogical.TryGetValue(n, out var forms)) return null;
+            foreach (var entry in forms.Values)
+                if (SameNumbers(entry.Key, displayed)) return entry.Value;
+            return null;
         }
 
         /// <summary>Whether two texts carry the same digits, run for run, in the same order — the decorations aside.</summary>

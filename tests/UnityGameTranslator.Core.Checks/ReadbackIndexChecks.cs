@@ -189,6 +189,22 @@ namespace UnityGameTranslator.Core.Checks
             check(counters.PresentedLogical("ﺍﻟﻤﺴﺘﻮﻯ 31/25") == null,
                 "a text differing from it only by its numbers is not",
                 "taken for ours, the game's read-back-and-append was left as written and drawn backwards");
+            counters.RegisterPresented("ﺍﻟﻤﺴﺘﻮﻯ 06/52", "المستوى 25/60");
+            check(counters.PresentedLogical("ﺍﻟﻤﺴﺘﻮﻯ 05/52") == null && counters.PresentedLogical("ﺍﻟﻤﺴﺘﻮﻯ 06/52") == "المستوى 25/60",
+                "a counter changing its numbers replaces its own form", "the account stays one form per way of writing digits");
+
+            // One translation, two presentations (2026-10-04): reversed digits on a game component
+            // (TMP's flag), digits as read in the mod's own window. The second written must not
+            // make the first a stranger — the in-game editor then took the shaped text for a key.
+            var both = new ReadbackIndex();
+            both.RegisterPresented("ﺍﺷﺘﺮِ 004 ﻣﻦ ﺍﻟﻤﺒﺎﻧﻲ", "اشترِ 400 من المباني");
+            both.RegisterPresented("ﺍﺷﺘﺮِ 400 ﻣﻦ ﺍﻟﻤﺒﺎﻧﻲ", "اشترِ 400 من المباني");
+            check(both.PresentedLogical("ﺍﺷﺘﺮِ 004 ﻣﻦ ﺍﻟﻤﺒﺎﻧﻲ") == "اشترِ 400 من المباني"
+                && both.PresentedLogical("ﺍﺷﺘﺮِ 400 ﻣﻦ ﺍﻟﻤﺒﺎﻧﻲ") == "اشترِ 400 من المباني",
+                "the same translation presented with its digits reversed and as read: both are ours",
+                "one kept per way of writing digits, not one per key");
+            check(ReadbackIndex.DigitOrder("x 004 y 7", "x 400 y 7") == "R-" && ReadbackIndex.DigitOrder("x 400", "x 400") == "S",
+                "the way of writing digits is told run by run", "a one-digit run reads the same either way");
 
             // One glyph per word (conjuncts shaped to a private codepoint each): too short for the
             // decoration-insensitive key, still ours and still resolvable — as written.

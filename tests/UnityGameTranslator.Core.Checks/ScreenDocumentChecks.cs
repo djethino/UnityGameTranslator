@@ -107,8 +107,8 @@ namespace UnityGameTranslator.Core.Checks
                 "upload-setup.json asks for five acts, two of them from dropdowns", $"got {string.Join(",", setup.Acts.Keys)}");
             check(setup.Acts["sourceChanged"].Kind == "dropdown" && setup.Acts["sourceChanged"].Word("options") == "languages",
                 "a dropdown asks for an act when its choice changes, and names where its choices come from", "the languages are the catalogue's, never a list in a document");
-            check(setup.Binds.Keys.OrderBy(k => k).SequenceEqual(new[] { "adultNote", "continue", "game", "gameSource", "instructions", "legend", "searchStatus", "title", "validation" }),
-                "its nine slots are the lines the code writes from the facts — three of them say which of its two uses is open (Change, or a first publication)", $"got {string.Join(",", setup.Binds.Keys)}");
+            check(setup.Binds.Keys.OrderBy(k => k).SequenceEqual(new[] { "adultNote", "continue", "game", "gameSource", "instructions", "legend", "title", "validation" }),
+                "its eight slots are the lines the code writes from the facts — three of them say which of its two uses is open (Change, or a first publication)", $"got {string.Join(",", setup.Binds.Keys)}");
             // 🔴 The adult box is only ever READ at Continue (no act): whether it is offered, ticked
             // or locked is the site's answer, applied by the code (analyse/adult-declaration-at-publish.md).
             check(setup.Nodes["AdultBox"].Kind == "checkbox" && !setup.Nodes["AdultBox"].StartsVisible

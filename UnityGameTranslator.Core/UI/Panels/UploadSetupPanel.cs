@@ -86,7 +86,9 @@ namespace UnityGameTranslator.Core.UI.Panels
         private FieldHandle GameSearchInput => _screen.Field("GameSearchInput");
         private ButtonHandle GameSearchBtn => _screen.Button("SearchBtn");
         private ScrollList ResultsList => _screen.List("ResultsScroll");
-        private LabelHandle GameSearchStatus => _screen.Label("SearchStatus");
+        // A status line, not a label: it can say that the site is being asked, animated, for as
+        // long as it is — the search at opening included, which nobody pressed (2026-10-05).
+        private StatusLine GameSearchStatus => _screen.Status("SearchStatus");
         private LabelHandle Validation => _screen.Label("Validation");
         private ButtonHandle ContinueBtn => _screen.Button("ContinueBtn");
 
@@ -418,11 +420,14 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             try
             {
-                // Search server by steam_id to get canonical info (name, image)
+                // Search server by steam_id to get canonical info (name, image) — said while it
+                // is asked: nobody pressed anything, and a still screen reads as a stuck one.
+                GameSearchStatus.Say("Searching...", Tone.Muted, waiting: true);
                 var result = await ApiClient.SearchGamesExternal(null, detectedGame.steam_id);
 
                 TranslatorUIManager.RunOnMainThread(() =>
                 {
+                    GameSearchStatus.Clear();
                     if (result.Success && result.Games != null && result.Games.Count > 0)
                     {
                         // Game exists on server — use the server's canonical info
@@ -450,6 +455,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 TranslatorCore.LogWarning($"[UploadSetup] Game lookup on the site failed, using local detection: {ex.Message}");
                 TranslatorUIManager.RunOnMainThread(() =>
                 {
+                    GameSearchStatus.Clear();
                     if (!_gameOnly) SelectGame(detectedGame, null);
                     UpdateValidation();
                 });
@@ -461,14 +467,12 @@ namespace UnityGameTranslator.Core.UI.Panels
             string query = GameSearchInput.Text?.Trim();
             if (string.IsNullOrEmpty(query) || query.Length < 2)
             {
-                GameSearchStatus.Say("Enter at least 2 characters");
-                GameSearchStatus.Tone = Tone.Warning;
+                GameSearchStatus.Say("Enter at least 2 characters", Tone.Warning);
                 return;
             }
 
             GameSearchBtn.Enabled = false;
-            GameSearchStatus.Say("Searching...");
-            GameSearchStatus.Tone = Tone.Muted;
+            GameSearchStatus.Say("Searching...", Tone.Muted, waiting: true);
 
             // Clear previous results
             ForgetCovers();
@@ -488,20 +492,18 @@ namespace UnityGameTranslator.Core.UI.Panels
                     if (success && games != null && games.Count > 0)
                     {
                         _gameSearchResults = games;
-                        GameSearchStatus.Say($"Found {games.Count} game(s)");
-                        GameSearchStatus.Tone = Tone.Success;
+                        GameSearchStatus.Say($"Found {games.Count} game(s)", Tone.Success);
 
                         PopulateGameResults();
                     }
                     else if (success)
                     {
-                        GameSearchStatus.Say("No games found");
-                        GameSearchStatus.Tone = Tone.Muted;
+                        // The way out, in the words of the site's own list (GameCandidates.NothingFound).
+                        GameSearchStatus.Say(GameCandidates.NothingFound, Tone.Muted);
                     }
                     else
                     {
-                        GameSearchStatus.Show($"Error: {error}");
-                        GameSearchStatus.Tone = Tone.Error;
+                        GameSearchStatus.Show($"Error: {error}", Tone.Error);
                     }
 
                     GameSearchBtn.Enabled = true;
@@ -513,8 +515,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 TranslatorUIManager.RunOnMainThread(() =>
                 {
                     TranslatorCore.LogWarning($"[UploadSetup] Game search error: {errorMsg}");
-                    GameSearchStatus.Show($"Error: {errorMsg}");
-                    GameSearchStatus.Tone = Tone.Error;
+                    GameSearchStatus.Show($"Error: {errorMsg}", Tone.Error);
                     GameSearchBtn.Enabled = true;
                 });
             }
@@ -563,7 +564,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Clear search
             _gameSearchResults = null;
             GameSearchInput.Text = "";
-            GameSearchStatus.Show("");
+            GameSearchStatus.Clear();
             ForgetCovers();
             ResultsList.Clear();
 

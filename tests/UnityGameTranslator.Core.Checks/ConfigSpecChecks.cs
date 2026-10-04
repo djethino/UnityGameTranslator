@@ -96,6 +96,8 @@ namespace UnityGameTranslator.Core.Checks
             return new Dictionary<string, object>
             {
                 ["translation_backend"] = c.translation_backend,
+                ["ConfirmedGameSource"] = c.ConfirmedGame()?.Source,
+                ["ConfirmedGameId"] = c.ConfirmedGame()?.Id,
                 ["ai_url"] = c.ai_url,
                 ["ai_model"] = c.ai_model,
                 ["target_language"] = c.target_language,

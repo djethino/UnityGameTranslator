@@ -39,10 +39,27 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         // Game
         private GameInfo _selectedGame = null;
+
+        /// <summary>
+        /// The list answer the selected game came from, as a publication sends it (`game_pick`) —
+        /// null when the game was taken as detected (no answer of the site named it).
+        /// </summary>
+        private GameChoice _selectedPick = null;
         private List<GameApiInfo> _gameSearchResults = null;
 
         // Callback
-        private Action<GameInfo, string, string, bool> _onSetupComplete;
+        private Action<GameInfo, GameChoice, string, string, bool> _onSetupComplete;
+
+        /// <summary>
+        /// 🔴 **Two uses, one screen** (user, 2026-10-05: Change opens "le même écran qu'à la
+        /// publication"). Opened by Change, only the game is asked, and the answer is kept as the
+        /// game confirmed in this game (`game_choice`); before a first publication, the languages
+        /// too, and the answers go to the upload.
+        /// </summary>
+        private bool _gameOnly;
+        private Action<GameChoice> _onGameChosen;
+
+        private Host LanguagesSection => _screen.Host("LanguagesSection");
 
         // What the site said about the picked game being for adults only — null until it answered
         // about THIS game (analyse/adult-declaration-at-publish.md). The counter drops an answer
@@ -104,9 +121,11 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// <summary>
         /// Show the panel for new upload setup.
         /// </summary>
-        public void ShowForSetup(Action<GameInfo, string, string, bool> onComplete)
+        public void ShowForSetup(Action<GameInfo, GameChoice, string, string, bool> onComplete)
         {
             _onSetupComplete = onComplete;
+            _onGameChosen = null;
+            SetMode(gameOnly: false);
 
             // For NEW uploads, game MUST be confirmed by user. The previous selection is cleared
             // below, once the screen is laid out (SelectGame(null)).
@@ -173,13 +192,62 @@ namespace UnityGameTranslator.Core.UI.Panels
             _gameSearchResults = null;
             ResultsList.Clear();
 
-            SelectGame(null);
+            OpenOnTheGame();
+        }
+
+        /// <summary>
+        /// Change: which game this is, and nothing else. The answer is kept as the game confirmed
+        /// in this game (`game_choice`) and handed to the caller; only an answer of the site's list
+        /// is a choice — a game nobody can identify is none.
+        /// </summary>
+        public void ShowForGame(Action<GameChoice> onChosen)
+        {
+            _onSetupComplete = null;
+            _onGameChosen = onChosen;
+            SetMode(gameOnly: true);
+
+            _gameSearchResults = null;
+            ResultsList.Clear();
+
+            OpenOnTheGame();
+        }
+
+        /// <summary>The words and the parts of each use; the game block is the same in both.</summary>
+        private void SetMode(bool gameOnly)
+        {
+            _gameOnly = gameOnly;
+            _screen.Say("title", gameOnly ? "Game" : "New Upload Setup");
+            _screen.Say("instructions", gameOnly
+                ? "Used to publish this game's translation and to find translations shared for it."
+                : "Configure your translation before uploading:");
+            _screen.Say("continue", gameOnly ? "Select" : "Continue to Upload");
+            LanguagesSection.Visible = !gameOnly;
+        }
+
+        /// <summary>
+        /// Opens on the game already confirmed in this game, shown as it is; otherwise on the
+        /// detected one, looked up on the site.
+        /// </summary>
+        private void OpenOnTheGame()
+        {
+            SelectGame(null, null);
             UpdateValidation();
 
             SetActive(true);
 
+            if (TranslatorCore.ConfirmedGame is GameChoice confirmed)
+            {
+                SelectGame(new GameInfo
+                {
+                    name = confirmed.Name,
+                    steam_id = confirmed.Source == "steam" ? confirmed.Id : null,
+                }, confirmed);
+                return;
+            }
+
             // Auto-select detected game: search by steam_id first, fall back to local detection.
-            // Server creates the game on upload if it doesn't exist yet.
+            // The site decides at upload, and refuses a game nothing identifies — said before the
+            // click from its answer (UpdateValidation).
             var currentGame = TranslatorCore.CurrentGame;
             if (currentGame != null && !string.IsNullOrEmpty(currentGame.name))
             {
@@ -238,9 +306,10 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// follow it. Several paths pick a game (auto-detection, a search result, a reset); none of
         /// them may leave the box answering about the previous one.
         /// </summary>
-        private void SelectGame(GameInfo game)
+        private void SelectGame(GameInfo game, GameChoice pick)
         {
             _selectedGame = game;
+            _selectedPick = pick;
             RefreshGameDisplay();
             AskAboutAdultContent();
         }
@@ -258,13 +327,16 @@ namespace UnityGameTranslator.Core.UI.Panels
             var game = _selectedGame;
             if (game == null || string.IsNullOrEmpty(game.name)) return;
 
-            var rating = await ApiClient.CheckGameAdult(game.steam_id, game.PublishName());
+            // With the answer taken, as the upload will send it: the site resolves it the same way
+            // — and says when nothing identifies the game.
+            var rating = await ApiClient.CheckGameAdult(game.steam_id, game.PublishName(), _selectedPick?.AsPick());
 
             TranslatorUIManager.RunOnMainThread(() =>
             {
                 if (asked != _adultAsked) return; // another game was picked meanwhile
                 _adultRating = rating.Success ? rating : null;
                 RefreshAdultBox();
+                UpdateValidation();
             });
         }
 
@@ -283,7 +355,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (_screen == null) return;
 
             var rating = _adultRating;
-            bool shown = rating != null && AdultMarks.Shown(rating.Adult, rating.Declarable);
+            // Asked of a publication only: choosing which game this is declares nothing.
+            bool shown = !_gameOnly && rating != null && AdultMarks.Shown(rating.Adult, rating.Declarable);
 
             AdultBox.Visible = shown;
             AdultNote.Visible = shown;
@@ -350,13 +423,14 @@ namespace UnityGameTranslator.Core.UI.Panels
                         {
                             name = serverGame.Name,
                             steam_id = serverGame.SteamId
-                        });
+                        }, ChoiceOf(serverGame));
                     }
-                    else
+                    else if (!_gameOnly)
                     {
-                        // Game not on server yet — use local detection.
-                        // Server will create it on upload via findOrCreateGame.
-                        SelectGame(detectedGame);
+                        // Nothing answers to that id on the site: taken as detected, and the site
+                        // decides at upload (it refuses a game nothing identifies — said before the
+                        // click from its answer). Change takes only an answer of the list.
+                        SelectGame(detectedGame, null);
                     }
 
                     UpdateValidation();
@@ -368,7 +442,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 TranslatorCore.LogWarning($"[UploadSetup] Game lookup on the site failed, using local detection: {ex.Message}");
                 TranslatorUIManager.RunOnMainThread(() =>
                 {
-                    SelectGame(detectedGame);
+                    if (!_gameOnly) SelectGame(detectedGame, null);
                     UpdateValidation();
                 });
             }
@@ -479,7 +553,14 @@ namespace UnityGameTranslator.Core.UI.Panels
             {
                 name = gameApi.Name,
                 steam_id = gameApi.SteamId
-            });
+            }, ChoiceOf(gameApi));
+        }
+
+        /// <summary>A list answer as a choice (common GameCandidates.PickOf), or null when it carries no usable id.</summary>
+        private static GameChoice ChoiceOf(GameApiInfo game)
+        {
+            var pick = GameCandidates.PickOf(game.Source, game.Id, game.SteamId);
+            return pick == null ? null : new GameChoice(pick.Source, pick.Id, game.Name);
         }
 
         private void UpdateValidation()
@@ -498,11 +579,24 @@ namespace UnityGameTranslator.Core.UI.Panels
             bool hasValidTarget = !string.IsNullOrEmpty(target);
             bool differentLangs = hasValidSource && hasValidTarget && source != target;
 
-            if (!hasGame)
+            if (!hasGame || (_gameOnly && _selectedPick == null))
             {
                 Validation.Say("Please select a game");
                 Validation.Tone = Tone.Warning;
                 ContinueBtn.Enabled = false;
+            }
+            else if (_adultRating?.Identified == false)
+            {
+                // The site would refuse it (game_not_found): said before the click, in its words.
+                Validation.Say(GameChoices.NotIdentified);
+                Validation.Tone = Tone.Warning;
+                ContinueBtn.Enabled = false;
+            }
+            else if (_gameOnly)
+            {
+                Validation.Show(game.name);
+                Validation.Tone = Tone.Success;
+                ContinueBtn.Enabled = true;
             }
             else if (!hasValidSource)
             {
@@ -539,22 +633,25 @@ namespace UnityGameTranslator.Core.UI.Panels
                 return;
             }
 
-            // Update CurrentGame with user's confirmed selection
-            TranslatorCore.CurrentGame = _selectedGame;
-
-            // ⚠ The declaration carried on every call names the game, so it has to follow when the
-            // game changes here — this is the one place it can. Detection had already run when the
-            // token was set, so without this a game somebody names by hand would never reach the
-            // access it belongs to. The site fills an empty line and never corrects a filled one,
-            // so re-declaring is free and cannot relabel anything.
-            ApiClient.DeclareGame();
+            // 🔴 **The detection is never written over** (analyse/identite-des-jeux-parcours.md): it
+            // used to be, here, so the game picked replaced what the game's own files say and every
+            // later upload sent the pick as if it had been read on disk. The choice now travels
+            // apart — kept as the game confirmed (Change), or handed to the upload (`game_pick`).
+            if (_gameOnly)
+            {
+                if (_selectedPick == null) return;
+                TranslatorCore.ConfirmGame(_selectedPick);
+                _onGameChosen?.Invoke(_selectedPick);
+                SetActive(false);
+                return;
+            }
 
             // Only where the site offered the box, and only when ticked. A classified game shows it
             // ticked but locked — the stores already said it, nothing to declare.
             bool adultDeclared = _adultRating != null && AdultMarks.Open(_adultRating.Adult, _adultRating.Declarable)
                                  && AdultBox.IsOn;
 
-            _onSetupComplete?.Invoke(_selectedGame, SourceDropdown.SelectedValue, TargetDropdown.SelectedValue, adultDeclared);
+            _onSetupComplete?.Invoke(_selectedGame, _selectedPick, SourceDropdown.SelectedValue, TargetDropdown.SelectedValue, adultDeclared);
             SetActive(false);
         }
     }

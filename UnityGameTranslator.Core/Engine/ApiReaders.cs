@@ -176,6 +176,25 @@ namespace UnityGameTranslator.Core
             return result;
         }
 
+        /// <summary>
+        /// A lineage's game — `{id, name, steam_id?, igdb_id?, rawg_id?}` in check-uuid, the public
+        /// check and every listing row — or null when absent or without an id and a name.
+        /// </summary>
+        public static LineageGame ReadLineageGame(JToken g)
+        {
+            if (!(g is JObject game)) return null;
+
+            long? id = game["id"]?.Type == JTokenType.Integer ? game["id"].Value<long>() : (long?)null;
+            string name = game["name"]?.Type == JTokenType.String ? game["name"].Value<string>() : null;
+            if (id == null || id <= 0 || string.IsNullOrEmpty(name)) return null;
+
+            long? Number(string key) => game[key]?.Type == JTokenType.Integer ? game[key].Value<long>() : (long?)null;
+
+            return new LineageGame(id.Value, name,
+                game["steam_id"]?.Type == JTokenType.String ? game["steam_id"].Value<string>() : null,
+                Number("igdb_id"), Number("rawg_id"));
+        }
+
         /// <summary>One translation as every listing describes it (<c>ListingRow</c> in the spec).</summary>
         public static TranslationInfo ReadListingRow(JToken t)
         {
@@ -187,6 +206,7 @@ namespace UnityGameTranslator.Core
                 GameSlug = game?["slug"]?.Value<string>(),
                 GameSteamId = game?["steam_id"]?.Value<string>(),
                 GameImageUrl = game?["image_url"]?.Value<string>(),
+                Game = ReadLineageGame(game),
                 Uploader = t["uploader"]?.Value<string>(),
                 SourceLanguage = t["source_language"]?.Value<string>(),
                 TargetLanguage = t["target_language"]?.Value<string>(),
@@ -276,6 +296,7 @@ namespace UnityGameTranslator.Core
             return new TranslationCheckResult
             {
                 Success = true,
+                Game = ReadLineageGame(data["game"]),
                 FileHash = serverHash,
                 LineCount = data["line_count"]?.Value<int>() ?? 0,
                 VoteCount = data["vote_count"]?.Value<int>() ?? 0,
@@ -327,7 +348,9 @@ namespace UnityGameTranslator.Core
                 LinesToReview = (data["lines_waiting"] as JObject)?["review"]?.ToObject<int?>(),
                 LinesNew = TallyOf(data["lines_waiting"], "new"),
                 LinesDiffering = TallyOf(data["lines_waiting"], "differing"),
-                LinesOffered = data["lines_offered"]?.ToObject<int?>()
+                LinesOffered = data["lines_offered"]?.ToObject<int?>(),
+                Game = ReadLineageGame(data["game"]),
+                GameSwitchPending = data["game_switch_pending"]?.ToObject<bool?>()
             };
 
             // Votes on the published translation of this lineage. Absent on older servers,
@@ -542,6 +565,7 @@ namespace UnityGameTranslator.Core
             {
                 Success = true,
                 Known = data["known"]?.Value<bool>() ?? false,
+                Identified = data["identified"]?.Type == JTokenType.Boolean ? data["identified"].Value<bool>() : (bool?)null,
                 Adult = data["adult"]?.Value<bool>() ?? false,
                 Source = data["source"]?.Type == JTokenType.String ? data["source"].Value<string>() : null,
                 Declarable = data["declarable"]?.Value<bool>() ?? false,
@@ -863,6 +887,14 @@ namespace UnityGameTranslator.Core
                 // player running somebody else's translation too, who is precisely the person
                 // deciding whether to send their corrections back.
                 AcceptsBranches = data["accepts_branches"]?.ToObject<bool?>(),
+
+                // The game the lineage is filed under, and this branch's hold since its Main moved
+                // (2026-10-05). Kept when the payload does not carry them: an older site, or a
+                // stream event that leaves them out, says nothing about the game.
+                Game = data["game"] != null ? ReadLineageGame(data["game"]) : previous?.Game,
+                GameSwitchPending = data["game_switch_pending"] != null
+                    ? data["game_switch_pending"].ToObject<bool?>()
+                    : previous?.GameSwitchPending,
 
                 MergedLinesTotal = data["merged_lines_total"] != null
                     ? (data["merged_lines_total"].ToObject<int?>() ?? 0)

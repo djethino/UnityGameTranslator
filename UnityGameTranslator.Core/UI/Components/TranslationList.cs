@@ -264,7 +264,12 @@ namespace UnityGameTranslator.Core.UI.Components
         /// <summary>
         /// Search for translations by steam ID or game name.
         /// </summary>
-        public async System.Threading.Tasks.Task SearchAsync(string steamId, string gameName, string targetLanguage)
+        /// <param name="confirmed">
+        /// The game its player confirmed (`game_choice`), when there is one: it decides, before
+        /// the Steam id and the name read on disk — which can be another game's (2026-10-05).
+        /// </param>
+        public async System.Threading.Tasks.Task SearchAsync(string steamId, string gameName, string targetLanguage,
+                                                             GameChoice confirmed = null)
         {
             if (_isSearching) return;
 
@@ -279,14 +284,26 @@ namespace UnityGameTranslator.Core.UI.Components
                 var library = EnsureLibraryAsync();
                 TranslationSearchResult result = null;
 
-                // Try Steam ID first
-                if (!string.IsNullOrEmpty(steamId))
+                // The game confirmed here first: a card of the site, or a Steam app.
+                if (confirmed != null && confirmed.Source == GameCandidates.CatalogueSource)
+                {
+                    result = await ApiClient.SearchByCard(confirmed.Id, targetLanguage);
+                }
+                else if (confirmed != null && confirmed.Source == "steam")
+                {
+                    result = await ApiClient.SearchBysteamId(confirmed.Id, targetLanguage);
+                }
+                // Then the Steam id read on disk
+                else if (!string.IsNullOrEmpty(steamId))
                 {
                     result = await ApiClient.SearchBysteamId(steamId, targetLanguage);
                 }
 
-                // Fallback to game name
-                if ((result == null || !result.Success || result.Count == 0) && !string.IsNullOrEmpty(gameName))
+                // Fallback to game name — never for a game confirmed here: it is known, and a name
+                // search would offer another game's translations under its name.
+                bool confirmedHere = confirmed != null
+                                     && (confirmed.Source == GameCandidates.CatalogueSource || confirmed.Source == "steam");
+                if (!confirmedHere && (result == null || !result.Success || result.Count == 0) && !string.IsNullOrEmpty(gameName))
                 {
                     result = await ApiClient.SearchByGameName(gameName, targetLanguage);
                 }

@@ -55,6 +55,39 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public bool ai_keep_loaded { get; set; } = false;
         public string game_context { get; set; } = "";
+
+        /// <summary>
+        /// The game the player confirmed for this installation (common GameChoices, spec/config) —
+        /// never what was detected, which is read again at each launch and never written over this.
+        /// Null until confirmed: by Change, by the first publication, or by taking a translation
+        /// from the site. Local to this installation; it does not travel with the translation.
+        /// </summary>
+        public GameChoiceEntry game_choice { get; set; } = null;
+
+        /// <summary>
+        /// <see cref="game_choice"/> in the socle's terms, or null when nothing was confirmed — or
+        /// when the value is not one a publication could send (an unknown source, an id that is not
+        /// a number, no name): a hand-edited file says nothing rather than something wrong.
+        /// </summary>
+        public GameChoice ConfirmedGame()
+        {
+            var entry = game_choice;
+            if (entry == null || string.IsNullOrEmpty(entry.id) || string.IsNullOrEmpty(entry.name)) return null;
+
+            switch (entry.source)
+            {
+                case "local": case "steam": case "igdb": case "rawg": break;
+                default: return null;
+            }
+
+            foreach (char c in entry.id)
+            {
+                if (c < '0' || c > '9') return null;
+            }
+
+            return new GameChoice(entry.source, entry.id, entry.name);
+        }
+
         /// <summary>
         /// How long the mod waits for a translation backend before giving up on ONE request.
         ///
@@ -637,6 +670,17 @@ namespace UnityGameTranslator.Core
         {
             return storedFrequency == LegacyAuto || storedFrequency == LegacyRealtime;
         }
+    }
+
+    /// <summary>`game_choice` as config.json holds it: `{source, id, name}` (spec/config/schema.json).</summary>
+    public class GameChoiceEntry
+    {
+        public string source { get; set; }
+        public string id { get; set; }
+        public string name { get; set; }
+
+        public static GameChoiceEntry Of(GameChoice choice) =>
+            choice == null ? null : new GameChoiceEntry { source = choice.Source, id = choice.Id, name = choice.Name };
     }
 
     public class SyncConfig

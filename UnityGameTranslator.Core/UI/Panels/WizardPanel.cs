@@ -345,6 +345,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             switch (act)
             {
+                case "changeGame": return OnChangeGameClicked;
                 case "welcomeNext": return () => ShowStep(WizardStep.OnlineMode);
                 case "onlineChanged": return OnOnlineToggled;
                 case "offlineChanged": return OnOfflineToggled;
@@ -408,6 +409,20 @@ namespace UnityGameTranslator.Core.UI.Panels
             Stacks.Highlight(_offlineChoiceBox, !_onlineMode);
         }
 
+        /// <summary>
+        /// Change: which game this is — the publication's own game screen, alone. Its answer is kept
+        /// as the game confirmed here, and the community list is asked again for it.
+        /// </summary>
+        private void OnChangeGameClicked()
+        {
+            Intents.ChooseGame(async chosen =>
+            {
+                _gameLabel.Show(Tr("Game:") + $" {chosen.Name}");
+                if (_onlineMode && !_translationList.IsSearching)
+                    await _translationList.SearchAsync(_detectedGame?.steam_id, _detectedGame?.name, _targetLanguage, chosen);
+            });
+        }
+
         private async void OnTranslationChoiceEnter()
         {
             try
@@ -417,19 +432,25 @@ namespace UnityGameTranslator.Core.UI.Panels
                 if (_detectedGame == null)
                 {
                     _detectedGame = GameDetector.DetectGame();
-                    if (_detectedGame != null)
+
+                    // Online, which game this is can be confirmed here (2026-10-05): the same game
+                    // screen as Change and the publication.
+                    _screen.Button("WizardChangeGameBtn").Visible = _onlineMode;
+
+                    if (_detectedGame != null || TranslatorCore.ConfirmedGame != null)
                     {
-                        _gameLabel.Show(Tr("Game:") + $" {_detectedGame.name}");
+                        // The game confirmed here first: it is the one searched.
+                        _gameLabel.Show(Tr("Game:") + $" {TranslatorCore.ConfirmedGame?.Name ?? _detectedGame.name}");
                         if (_onlineMode && !_translationList.IsSearching)
                         {
                             // Use the selected target language from wizard
                             string targetLang = _targetLanguage;
 
                             // Capture values for closure
-                            var steamId = _detectedGame.steam_id;
-                            var gameName = _detectedGame.name;
+                            var steamId = _detectedGame?.steam_id;
+                            var gameName = _detectedGame?.name;
 
-                            await _translationList.SearchAsync(steamId, gameName, targetLang);
+                            await _translationList.SearchAsync(steamId, gameName, targetLang, TranslatorCore.ConfirmedGame);
                         }
                     }
                     else

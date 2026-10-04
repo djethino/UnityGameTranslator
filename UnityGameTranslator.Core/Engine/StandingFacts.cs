@@ -34,6 +34,9 @@ namespace UnityGameTranslator.Core
                     ? TranslatorCore.ComputeContentHash()
                     : null,
                 ForkStillTheCopy = TranslatorCore.ForkIsStillTheCopy,
+                // The game the player confirmed (config.json): a contribution waits for Switch
+                // game when the lineage is filed under another one (common Uploads.GameWall).
+                ConfirmedGame = TranslatorCore.ConfirmedGame,
             };
         }
 

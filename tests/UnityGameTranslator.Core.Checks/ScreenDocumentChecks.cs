@@ -107,8 +107,8 @@ namespace UnityGameTranslator.Core.Checks
                 "upload-setup.json asks for five acts, two of them from dropdowns", $"got {string.Join(",", setup.Acts.Keys)}");
             check(setup.Acts["sourceChanged"].Kind == "dropdown" && setup.Acts["sourceChanged"].Word("options") == "languages",
                 "a dropdown asks for an act when its choice changes, and names where its choices come from", "the languages are the catalogue's, never a list in a document");
-            check(setup.Binds.Keys.OrderBy(k => k).SequenceEqual(new[] { "adultNote", "game", "gameSource", "legend", "searchStatus", "validation" }),
-                "its six slots are the lines the code writes from the facts", $"got {string.Join(",", setup.Binds.Keys)}");
+            check(setup.Binds.Keys.OrderBy(k => k).SequenceEqual(new[] { "adultNote", "continue", "game", "gameSource", "instructions", "legend", "searchStatus", "title", "validation" }),
+                "its nine slots are the lines the code writes from the facts — three of them say which of its two uses is open (Change, or a first publication)", $"got {string.Join(",", setup.Binds.Keys)}");
             // 🔴 The adult box is only ever READ at Continue (no act): whether it is offered, ticked
             // or locked is the site's answer, applied by the code (analyse/adult-declaration-at-publish.md).
             check(setup.Nodes["AdultBox"].Kind == "checkbox" && !setup.Nodes["AdultBox"].StartsVisible
@@ -129,17 +129,18 @@ namespace UnityGameTranslator.Core.Checks
             // ── The main screen: a row of tabs in the header, its contents in the body ─────
             var main = ScreenDocument.FromFile(Path.Combine(folder, "main.json"));
             check(main.Acts.Keys.OrderBy(k => k).SequenceEqual(new[] {
-                      "backups", "close", "compare", "contribute", "createIndependent", "ctaLogin", "download", "downloadLatest",
+                      "backups", "changeGame", "close", "compare", "contribute", "createIndependent", "ctaLogin", "download", "downloadLatest",
                       "editDetails", "fix", "fork", "loginLogout", "mergeWithMain", "modManager", "modUpdate", "options", "resourcesOpen",
-                      "review", "search", "transParams", "updateFromMain", "upload" }),
-                "main.json asks for the twenty-two acts its code handles", $"got {string.Join(",", main.Acts.Keys)}");
+                      "review", "search", "switchGame", "transParams", "updateFromMain", "upload" }),
+                "main.json asks for the twenty-four acts its code handles", $"got {string.Join(",", main.Acts.Keys)}");
             check(main.Binds.Keys.OrderBy(k => k).SequenceEqual(new[] {
                       "account", "backups", "branchDesc", "communityGame", "downloadDesc", "failures", "failuresFix", "forkDesc",
+                      "gameChange", "gameDiffers", "gameName",
                       "loginLogout", "mergeDesc", "modManager", "modUpdate", "modUpdateVerb", "noTranslation",
                       "resourcesBy", "resourcesUrl", "roleActionsHint", "upload", "uploadHint" }),
                 "its slots are the lines the code writes on every redraw", $"got {string.Join(",", main.Binds.Keys)}");
-            check(main.Body.Count == 0 && main.Header.Count == 5 && main.Header[4].Kind == "tabs" && main.Header[4].Children.Count == 2
-                  && main.Header[4].Children.All(t => t.Kind == "tab" && t.Text != null && ScreenDocument.HelpOf(t) != null),
+            check(main.Body.Count == 0 && main.Header.Count == 7 && main.Header[6].Kind == "tabs" && main.Header[6].Children.Count == 2
+                  && main.Header[6].Children.All(t => t.Kind == "tab" && t.Text != null && ScreenDocument.HelpOf(t) != null),
                 "the row of tabs stays in the header and holds two named tabs; the body is theirs",
                 "the buttons stay put while what they show scrolls — the builder puts a tab's contents in the body");
             check(main.Nodes["StatusCardHost"].Kind == "stack" && main.Nodes["StatusCardHost"].Children.Count == 0
@@ -252,10 +253,10 @@ namespace UnityGameTranslator.Core.Checks
                 "wizard.json: seven steps, all hidden, no shared footer, nothing remembered", "one step at a time, each with its own buttons; the window is sized to the step");
             check(wizard.Nodes["OnlineToggle"].Text == null && wizard.Nodes["OfflineToggle"].Text == null && wizard.Nodes["DeepLFreeToggle"].Text != null,
                 "the two mode boxes are bare, the DeepL one carries its words", "a bare box's words are the title beside it, and the whole box is highlighted");
-            check(wizard.Acts.Count == 31 && wizard.Acts.Values.Count(n => n.Kind == "field") == 5 && wizard.Acts.Values.Count(n => n.Kind == "dropdown") == 4
+            check(wizard.Acts.Count == 32 && wizard.Acts.Values.Count(n => n.Kind == "field") == 5 && wizard.Acts.Values.Count(n => n.Kind == "dropdown") == 4
                   && wizard.Acts.Values.Count(n => n.Kind == "checkbox") == 4
                   && wizard.Nodes["AIUrl"].Word("placeholder") == UnityGameTranslator.Common.Endpoints.OllamaDefault,
-                "wizard.json asks for 31 acts — five as fields are typed in, four as choices change, four as boxes flip — and offers the socle's default AI address",
+                "wizard.json asks for 32 acts — five as fields are typed in, four as choices change, four as boxes flip — and offers the socle's default AI address",
                 $"got {wizard.Acts.Count} acts; the address is {wizard.Nodes["AIUrl"].Word("placeholder")}");
             check(wizard.Nodes["HotkeyHost"].Children.Count == 0 && wizard.Nodes["TranslationListHost"].Children.Count == 0,
                 "the hotkey capture and the community list have hosts the document leaves empty", "two components the vocabulary does not describe");
@@ -490,7 +491,10 @@ namespace UnityGameTranslator.Core.Checks
                     @"Stacks\.(Vertical|Horizontal|Row|Card|Section|ListItem|Spacer|FlexSpacer)\(", @"Labels\.\w+\(", @"Buttons\.\w+\(",
                     @"Fields\.\w+\(", @"CheckBoxes\.\w+\(", @"Sliders\.\w+\(", @"Choices\.\w+\(", @"TagChips\.\w+\(",
                     @"ScrollList\.Create\(", @"StatusLine\.Create\(", @"Toasts\.Create\(", @"Callout\.Create\(", @"Collapsible\.Create\(",
-                    @"new SearchableDropdown\(", @"new TabBar\(", @"UIFactory\.", @"UIStyles\.Create" };
+                    @"new SearchableDropdown\(", @"new TabBar\(", @"UIFactory\.", @"UIStyles\.Create" }
+                    // ⚠ A whole name, never the end of another: `GameChoices.Banner(` is the socle's
+                    // sentence, not the `Choices` component (found 2026-10-05).
+                    .Select(c => @"(?<!\w)" + c).ToArray();
                 int scanned = 0;
                 foreach (var file in Directory.GetFiles(panels, "*.cs"))
                 {
@@ -506,6 +510,9 @@ namespace UnityGameTranslator.Core.Checks
                 check(scanned >= 12, $"{scanned} panels scanned", "a rule with nothing to guard is decoration");
                 check(System.Text.RegularExpressions.Regex.IsMatch("            var row = Stacks.Row(body, \"X\");", construction[0]),
                     "the frontier would catch a row built by hand", "a pattern that matches nothing guards nothing");
+                check(System.Text.RegularExpressions.Regex.IsMatch("            var c = Choices.Create(body, \"X\");", construction[6])
+                      && !System.Text.RegularExpressions.Regex.IsMatch("            var s = GameChoices.Banner(a, b);", construction[6]),
+                    "it catches the Choices component and not a name that ends the same way", "the socle's GameChoices is not a factory");
             }
 
             // ── Refusals ──────────────────────────────────────────────────────

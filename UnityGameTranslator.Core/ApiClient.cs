@@ -894,6 +894,31 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// The translations of one card of the site — the game its player confirmed
+        /// (`game_choice`, 2026-10-05) — whatever the Steam id or the name read on disk say.
+        /// </summary>
+        public static async Task<TranslationSearchResult> SearchByCard(string cardId, string targetLang)
+        {
+            try
+            {
+                string url = $"{DefaultBaseUrl}/translations?game={Uri.EscapeDataString(cardId)}&lang={Uri.EscapeDataString(targetLang)}";
+                var response = await client.GetAsync(url);
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    return new TranslationSearchResult { Success = false, Error = $"HTTP {response.StatusCode}" };
+                }
+
+                return ApiReaders.ReadSearch(ParseJsonSafe(await response.Content.ReadAsStringAsync()));
+            }
+            catch (Exception e)
+            {
+                TranslatorCore.LogWarning($"[ApiClient] Search error: {e.Message}");
+                return new TranslationSearchResult { Success = false, Error = Connectivity.Describe(e) };
+            }
+        }
+
+        /// <summary>
         /// Search for translations by game name. The answer can describe SEVERAL games, on
         /// purpose; which group was asked about is decided in <see cref="ApiReaders.ReadSearchByName"/>.
         /// </summary>
@@ -1300,13 +1325,21 @@ namespace UnityGameTranslator.Core
         /// (<see cref="GameInfo.PublishName"/>), so the site answers about the game it will file
         /// under. See analyse/adult-declaration-at-publish.md.
         /// </summary>
-        public static async Task<GameAdultRating> CheckGameAdult(string steamId, string gameName)
+        public static async Task<GameAdultRating> CheckGameAdult(string steamId, string gameName, GameCandidates.Pick pick = null)
         {
             try
             {
                 var query = new List<string>();
                 if (!string.IsNullOrEmpty(steamId)) query.Add("steam_id=" + Uri.EscapeDataString(steamId));
                 if (!string.IsNullOrEmpty(gameName)) query.Add("game_name=" + Uri.EscapeDataString(gameName));
+
+                // The answer of the list taken, as the upload will send it (`game_pick`): the site
+                // resolves it exactly as the upload will.
+                if (pick != null)
+                {
+                    query.Add("game_pick%5Bsource%5D=" + Uri.EscapeDataString(pick.Source));
+                    query.Add("game_pick%5Bid%5D=" + Uri.EscapeDataString(pick.Id));
+                }
                 if (query.Count == 0) return new GameAdultRating { Success = false, Error = "No game to ask about" };
 
                 var response = await client.GetAsync($"{DefaultBaseUrl}/games/adult?{string.Join("&", query)}");
@@ -1560,7 +1593,24 @@ namespace UnityGameTranslator.Core
                     // before — nothing here is required.
                     forked_from_id = TranslatorCore.ForkedFromSiteId,
                     forked_from_hash = TranslatorCore.ForkedFromHash,
-                    forked_from_lines = TranslatorCore.ForkedFromResolvedLines
+                    forked_from_lines = TranslatorCore.ForkedFromResolvedLines,
+
+                    // 🔴 The game, as a list answer — the picked one on a first publication, the
+                    // one confirmed here on every other (the site files a new translation under
+                    // THAT game, and holds a branch to its Main's game with it).
+                    game_pick = request.GamePick == null ? null : new { source = request.GamePick.Source, id = request.GamePick.Id },
+
+                    // What this machine read in the game's files — facts, kept on the translation:
+                    // the key other machines resolve the game by, and what the site checks a
+                    // lineage's game against.
+                    game_read = request.GameRead == null ? null : new
+                    {
+                        product_name = request.GameRead.ProductName,
+                        company_name = request.GameRead.CompanyName,
+                        steam_id = request.GameRead.SteamId,
+                        steam_id_from = request.GameRead.SteamIdFrom,
+                        engine = request.GameRead.Engine,
+                    }
                 };
 
                 var jsonPayload = JsonConvert.SerializeObject(payload);

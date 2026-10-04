@@ -276,8 +276,17 @@ namespace UnityGameTranslator.Core.UI.Panels
         // alone: a choice not sent does not survive the window.
         private bool _adultDeclared;
 
-        public void ContinueAfterSetup(GameInfo game, string sourceLanguage, string targetLanguage, bool adultDeclared)
+        // The game the setup of a first publication confirmed, held for this sending alone, like
+        // the box above: the game as the site named it, and the list answer it came from.
+        private GameInfo _setupGame;
+        private GameChoice _setupPick;
+
+        public void ContinueAfterSetup(GameInfo game, GameChoice pick, string sourceLanguage, string targetLanguage, bool adultDeclared)
         {
+            // The game picked for this first publication, kept apart from the detection: sent as
+            // `game_pick`, and kept as the game confirmed in this game once the upload succeeds.
+            _setupGame = game;
+            _setupPick = pick;
             _selectedSourceLanguage = sourceLanguage;
             _selectedTargetLanguage = targetLanguage;
             _adultDeclared = adultDeclared;
@@ -368,7 +377,11 @@ namespace UnityGameTranslator.Core.UI.Panels
                             MainUsername = result.MainUsername,
                             MainMissing = result.MainMissing,
                             MainAbandoned = result.MainAbandoned,
-                            BranchFrozen = result.BranchFrozen
+                            BranchFrozen = result.BranchFrozen,
+                            // The lineage's game and this branch's hold (2026-10-05): the button
+                            // below is judged on them, as the main panel's is.
+                            Game = result.Game,
+                            GameSwitchPending = result.GameSwitchPending
                         };
 
                         // 🔴 **A branch whose road has ended cannot be updated, only left.** The
@@ -467,6 +480,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                             // "Role == Branch" could mean somebody who had never sent anything.
                             Role = LineageRole.None,
                             MainUsername = result.MainUsername,
+                            // The game the contribution would go to (2026-10-05).
+                            Game = result.Game,
                             SiteId = result.OriginalTranslation?.Id,
                             Uploader = result.OriginalTranslation?.Uploader,
                             Origin = result.OriginalTranslation?.Origin,
@@ -836,15 +851,25 @@ namespace UnityGameTranslator.Core.UI.Panels
 
                 // Build upload request
                 // Note: Type is auto-calculated by server from HVASM tags in the content
+                // 🔴 The game this publication is for: the one picked in the setup of a first
+                // publication, the one confirmed in this game otherwise (`game_pick`). What the
+                // game's own files say travels apart (`game_read`) and is never replaced by a pick.
+                var pickedGame = _uploadMode == UploadMode.New ? _setupPick : TranslatorCore.ConfirmedGame;
+
                 var request = new UploadRequest
                 {
                     SteamId = TranslatorCore.CurrentGame?.steam_id,
                     // ⚠ **The name the GAME states, never the folder it sits in.** `name` falls
                     // back to the folder — "HyperEchelon6vYY3", "Forsaken.Frontiers.v1510" — and
                     // publishing under that makes the translation unfindable from any other
-                    // install, because no other machine reads that string. See GameInfo.
-                    GameName = TranslatorCore.CurrentGame?.PublishName() ?? "Unknown Game",
+                    // install, because no other machine reads that string. See GameInfo. With a
+                    // game picked, its title: the key comes from `game_read` then.
+                    GameName = pickedGame?.Name
+                               ?? (_uploadMode == UploadMode.New ? _setupGame?.PublishName() : null)
+                               ?? TranslatorCore.CurrentGame?.PublishName() ?? "Unknown Game",
                     GameCompany = TranslatorCore.CurrentGame?.company_name,
+                    GamePick = pickedGame?.AsPick(),
+                    GameRead = TranslatorCore.ReadFacts(),
                     SourceLanguage = srcLang,
                     TargetLanguage = tgtLang,
                     // ⚠ Null for a Branch: the server makes it inherit its Main's, and sending a
@@ -902,6 +927,10 @@ namespace UnityGameTranslator.Core.UI.Panels
                         // As the site recorded it, which is not always as it was declared.
                         Origin = result.Origin,
 
+                        // The game is the one this upload named; the next answer of the site
+                        // says it again. Kept rather than blanked in between.
+                        Game = TranslatorCore.ServerState?.Game,
+
                         // What was just sent IS what the site now holds — reading it back would
                         // cost a round trip to learn something this client decided a second ago.
                         // ⚠ Null wherever nothing was sent about it, so the same reasoning as
@@ -937,6 +966,13 @@ namespace UnityGameTranslator.Core.UI.Panels
                         TranslatorCore.LogInfo($"[UploadPanel] Source language recorded from upload: {srcLang}");
                     }
                     TranslatorCore.ResetMetadataDirty();
+
+                    // 🔴 **The game is fixed by the publication** (user, 2026-10-05): the game picked
+                    // for a first one becomes this game's confirmed game. Any other publication
+                    // named the confirmed one already — or none, when nothing was confirmed yet,
+                    // and the site's answer then fixes it (GameChoices.Adopt, on the next state).
+                    if (uploadMode == UploadMode.New && _setupPick != null)
+                        TranslatorCore.ConfirmGame(_setupPick);
 
                     // ⚠ The ancestor moves FIRST, then the file is written. SaveAncestorCache is
                     // what makes "published" true — it makes the ancestor equal to what we just

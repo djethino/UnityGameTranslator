@@ -2258,6 +2258,7 @@ namespace UnityGameTranslator.Core.UI
                 var uploader = result.Uploader;
                 var origin = result.Origin;
                 var etag = result.ETag;
+                var lineageGame = result.Game;
 
                 RunOnMainThread(() =>
                 {
@@ -2319,6 +2320,11 @@ namespace UnityGameTranslator.Core.UI
                     if (!string.IsNullOrEmpty(uploader)) state.Uploader = uploader;
                     // Same rule: a value is taken, an absence leaves what was held.
                     if (origin.HasValue) state.Origin = origin;
+
+                    // The game it is filed under, to anybody holding it (common GameChoices): a
+                    // difference with the game confirmed here is said under the game's name.
+                    if (lineageGame != null) state.Game = lineageGame;
+                    TranslatorCore.AdoptLineageGame(lineageGame);
 
                     // With no account there is nothing to vote WITH, but the count is public and
                     // worth seeing: it is what tells someone the translation they installed was
@@ -3016,6 +3022,10 @@ namespace UnityGameTranslator.Core.UI
                 var main = data["main"];
 
                 TranslatorCore.ServerState = serverState;
+
+                // The site named the game this translation is filed under: nothing confirmed here
+                // yet takes it as it stands; a confirmed game is never replaced (common GameChoices).
+                TranslatorCore.AdoptLineageGame(serverState.Game);
 
                 // The lineage has spoken about its own languages, so the machine stops guessing —
                 // this is what repairs every translation whose source stayed "auto" because only
@@ -5422,6 +5432,7 @@ namespace UnityGameTranslator.Core.UI
             var translationType = translation.Type;
             var translationNotes = translation.Notes;
             var translationResourcesUrl = translation.ResourcesUrl;
+            var translationGame = translation.Game;
             var translationSourceLang = translation.SourceLanguage;
             var translationTargetLang = translation.TargetLanguage;
 
@@ -5482,8 +5493,17 @@ namespace UnityGameTranslator.Core.UI
                             Notes = translationNotes,
                             ResourcesUrl = translationResourcesUrl,
                             SourceLanguage = translationSourceLang,
-                            TargetLanguage = translationTargetLang
+                            TargetLanguage = translationTargetLang,
+                            // The game it is filed under, from the listing it was taken from.
+                            Game = translationGame
                         };
+
+                        // 🔴 **Taking a translation from the site fixes the game when nothing did
+                        // yet** (user, 2026-10-05: "si un jeu est téléchargé, il a été publié"). A
+                        // game already confirmed here is never replaced: a difference is asked about
+                        // under the game's name (common GameChoices.Adopt).
+                        if (TranslatorCore.ConfirmedGame == null && GameChoices.Adopt(null, translationGame) is GameChoice taken)
+                            TranslatorCore.ConfirmGame(taken);
 
                         // Taking somebody's translation settles what languages this game is now
                         // being played in. Before this, a download left the configuration on the
@@ -5554,6 +5574,7 @@ namespace UnityGameTranslator.Core.UI
             var translationType = translation.Type;
             var translationNotes = translation.Notes;
             var translationResourcesUrl = translation.ResourcesUrl;
+            var translationGame = translation.Game;
 
             try
             {
@@ -5601,7 +5622,8 @@ namespace UnityGameTranslator.Core.UI
                             Hash = fileHash ?? translationFileHash,
                             Type = translationType,
                             Notes = translationNotes,
-                            ResourcesUrl = translationResourcesUrl
+                            ResourcesUrl = translationResourcesUrl,
+                            Game = translationGame
                         };
 
                         if (mergeResult.ConflictCount > 0)

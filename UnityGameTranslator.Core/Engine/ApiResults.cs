@@ -76,6 +76,9 @@ namespace UnityGameTranslator.Core
         public string GameSlug { get; set; }
         public string GameSteamId { get; set; }
         public string GameImageUrl { get; set; }
+
+        /// <summary>The game this translation is filed under, with every id it answers to (common GameChoices).</summary>
+        public LineageGame Game { get; set; }
         public string Uploader { get; set; }
         public string SourceLanguage { get; set; }
         public string TargetLanguage { get; set; }
@@ -175,6 +178,9 @@ namespace UnityGameTranslator.Core
     {
         public bool Success { get; set; }
         public string Error { get; set; }
+
+        /// <summary>The game the translation is filed under (`game`), to anybody holding it. Null on an older site.</summary>
+        public LineageGame Game { get; set; }
         public bool HasUpdate { get; set; }
         public string FileHash { get; set; }
         public int LineCount { get; set; }
@@ -246,6 +252,12 @@ namespace UnityGameTranslator.Core
 
         /// <summary>A card already answers: the upload lands on it and creates nothing.</summary>
         public bool Known { get; set; }
+
+        /// <summary>
+        /// False when no card answers and no store describes the game: the upload would be refused,
+        /// so the screen says so before sending (GameChoices.NotIdentified). Null on an older site.
+        /// </summary>
+        public bool? Identified { get; set; }
 
         public bool Adult { get; set; }
 
@@ -321,6 +333,32 @@ namespace UnityGameTranslator.Core
         /// this upload creates the game.
         /// </summary>
         public bool AdultDeclared { get; set; }
+
+        /// <summary>
+        /// The game this publication is for, as a list answer (`game_pick`): the one picked on a
+        /// first publication, the one confirmed in this game on every other — the site holds a
+        /// branch to its Main's game with it (2026-10-05). Null when nothing names one.
+        /// </summary>
+        public GameCandidates.Pick GamePick { get; set; }
+
+        /// <summary>
+        /// What this machine read in the game's own files (`game_read`) — facts about this
+        /// installation, kept on the translation; the key other machines resolve the game by.
+        /// </summary>
+        public GameReadFacts GameRead { get; set; }
+    }
+
+    /// <summary>`game_read` of an upload: what was read in the game's own files, each null when not read.</summary>
+    public class GameReadFacts
+    {
+        public string ProductName { get; set; }
+        public string CompanyName { get; set; }
+        public string SteamId { get; set; }
+
+        /// <summary>Where the Steam id was read: "steam_appid.txt", "appmanifest".</summary>
+        public string SteamIdFrom { get; set; }
+
+        public string Engine { get; set; }
     }
 
     public class UploadResult
@@ -405,6 +443,12 @@ namespace UnityGameTranslator.Core
 
         /// <summary>On a branch: what this contribution still holds for its Main. Null if unknown.</summary>
         public int? LinesOffered { get; set; }
+
+        /// <summary>The game the lineage is filed under (`game`). Null on an older site.</summary>
+        public LineageGame Game { get; set; }
+
+        /// <summary>This branch is held since its Main moved to another game (`game_switch_pending`). Null when not said.</summary>
+        public bool? GameSwitchPending { get; set; }
 
         public UuidCheckTranslationInfo ExistingTranslation { get; set; } // For UPDATE
         public UuidCheckTranslationInfo OriginalTranslation { get; set; } // For FORK
@@ -667,6 +711,8 @@ namespace UnityGameTranslator.Core
                 BranchFrozen = state.BranchFrozen,
                 MainIgnoring = state.MainIgnoring,
                 Status = state.Status,
+                Game = state.Game,
+                GameSwitchPending = state.GameSwitchPending,
             };
         }
 
@@ -875,6 +921,16 @@ namespace UnityGameTranslator.Core
         /// sent and not taken in. Its author's own business, and nobody else's.
         /// </summary>
         public int? LinesOffered { get; set; }
+
+        /// <summary>
+        /// The game the lineage is filed under on the site, compared with the game the player
+        /// confirmed here (common GameChoices). Kept when an answer does not carry it: a game
+        /// does not stop being known because one payload is older.
+        /// </summary>
+        public LineageGame Game { get; set; }
+
+        /// <summary>This account's branch is held since its Main moved to another game. Null when not said.</summary>
+        public bool? GameSwitchPending { get; set; }
 
         /// <summary>
         /// Votes on the PUBLISHED translation of this lineage — count, this player's own vote,

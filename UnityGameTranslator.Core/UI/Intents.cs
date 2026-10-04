@@ -1,4 +1,5 @@
 using System;
+using UnityGameTranslator.Common;
 using UnityGameTranslator.Core.UI.Panels;
 
 namespace UnityGameTranslator.Core.UI
@@ -88,8 +89,15 @@ namespace UnityGameTranslator.Core.UI
         /// The questions an upload needs first (game, languages, whether the game is for adults
         /// only when this publication may say so); the answers go to the caller.
         /// </summary>
-        public static void SetUpUpload(Action<GameInfo, string, string, bool> onComplete)
+        public static void SetUpUpload(Action<GameInfo, GameChoice, string, string, bool> onComplete)
             => TranslatorUIManager.UploadSetupPanel?.ShowForSetup(onComplete);
+
+        /// <summary>
+        /// Change: which game this is — the publication's own game block, alone. The answer is kept
+        /// as the game confirmed in this game (`game_choice`), then handed to the caller.
+        /// </summary>
+        public static void ChooseGame(Action<GameChoice> onChosen)
+            => TranslatorUIManager.UploadSetupPanel?.ShowForGame(onChosen);
 
         public static void OpenInspector(InspectorMode mode = InspectorMode.Exclusion)
             => TranslatorUIManager.OpenInspectorPanel(mode);

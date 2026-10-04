@@ -169,6 +169,13 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         // UI references - Mod update banner
         private Host _modUpdateBanner;
+
+        // The game line at the top (2026-10-05): which game this is, the act that says it, and the
+        // line saying the site files the translation under another game.
+        private LabelHandle _gameLineName;
+        private ButtonHandle _gameChangeBtn;
+        private Host _gameDiffersBanner;
+        private LabelHandle _gameDiffersLabel;
         private LabelHandle _modUpdateLabel;
         private ButtonHandle _modUpdateBtn;
         private ButtonHandle _modManagerBtn;
@@ -247,6 +254,11 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             _accountLabel = _screen.Label("AccountLabel");
             _loginLogoutBtn = _screen.Button("LoginLogoutBtn");
+
+            _gameLineName = _screen.Label("GameLineName");
+            _gameChangeBtn = _screen.Button("GameChangeBtn");
+            _gameDiffersBanner = _screen.Host("GameDiffersBanner");
+            _gameDiffersLabel = _screen.Label("GameDiffersLabel");
 
             _modUpdateBanner = _screen.Host("ModUpdateBanner");
             _modUpdateLabel = _screen.Label("ModUpdateLabel");
@@ -331,6 +343,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             switch (act)
             {
                 case "loginLogout": return OnLoginLogoutClicked;
+                case "changeGame": return OnChangeGameClicked;
+                case "switchGame": return OnSwitchGameClicked;
                 case "modManager": return OnModManagerClicked;
                 case "modUpdate": return OnModUpdateClicked;
                 case "ctaLogin": return () => Intents.OpenLogin();
@@ -482,7 +496,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// </summary>
         private async void SearchCommunityAsync(string steamId, string gameName, string targetLang)
         {
-            await _translationList.SearchAsync(steamId, gameName, targetLang);
+            await _translationList.SearchAsync(steamId, gameName, targetLang, TranslatorCore.ConfirmedGame);
 
             // After await, we may be on a background thread (IL2CPP issue)
             TranslatorUIManager.RunOnMainThread(() =>
@@ -558,6 +572,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             ReadFacts();
 
             // Refresh all sections
+            RefreshGameLine();
             RefreshModUpdateBanner();
             RefreshAccountSection();
             // ⚠ Called from here since the legacy section went: it used to be the last thing that
@@ -568,6 +583,87 @@ namespace UnityGameTranslator.Core.UI.Panels
             RefreshCommunitySection();
             RefreshActionsSection();
             RefreshLayoutVisibility();
+        }
+
+        /// <summary>
+        /// The game line at the top: which game this is — the one confirmed here, else the one
+        /// detected — and the act that says it (user, 2026-10-05).
+        ///
+        /// · no translation of the site here → <b>Change</b>: the publication's own game screen,
+        ///   alone (UploadSetupPanel.ShowForGame); its answer is kept as the confirmed game;
+        /// · a translation of the site here → the site decides its game: a link to its page for
+        ///   the owner of the Main, nothing for anybody else;
+        /// · offline → nothing.
+        ///
+        /// And under it, when the site files the translation under another game than the one
+        /// confirmed: one line, one act (common GameChoices) — small, never a second title. A move
+        /// made on the site is never followed in silence: the line stays until Switch game.
+        /// </summary>
+        private void RefreshGameLine()
+        {
+            if (_gameLineName == null) return;
+
+            var confirmed = TranslatorCore.ConfirmedGame;
+            var detected = TranslatorCore.CurrentGame;
+            string name = confirmed?.Name ?? detected?.product_name ?? detected?.name;
+
+            // A game's name is data, never translated.
+            if (string.IsNullOrEmpty(name)) _gameLineName.Say("No game detected");
+            else _gameLineName.Show(name);
+
+            var server = TranslatorCore.ServerState;
+            bool fromTheSite = server?.Game != null || TranslatorCore.SourceSiteId > 0;
+            bool mainOwner = server != null && server.IsOwner && server.Role == LineageRole.Main;
+
+            if (!TranslatorCore.Config.online_mode || (fromTheSite && !mainOwner))
+            {
+                _gameChangeBtn.Visible = false;
+            }
+            else
+            {
+                _gameChangeBtn.Visible = true;
+                _screen.Say("gameChange", fromTheSite ? "Change on website" : "Change");
+            }
+
+            string differs = GameChoices.Banner(confirmed, server?.Game);
+            _gameDiffersBanner.Visible = differs != null;
+            if (differs != null) _gameDiffersLabel.Show(differs);
+        }
+
+        /// <summary>Change: the game screen alone — or, on a translation of the site, its page there.</summary>
+        private void OnChangeGameClicked()
+        {
+            var server = TranslatorCore.ServerState;
+            bool fromTheSite = server?.Game != null || TranslatorCore.SourceSiteId > 0;
+
+            if (fromTheSite)
+            {
+                // Only offered to the owner of the Main (RefreshGameLine): the site moves the
+                // translation and its contributions to another game.
+                if (server?.SiteId is int siteId)
+                    TranslatorCore.OpenUrlSafe($"{ApiClient.WebsiteBaseUrl}/translations/{siteId}/edit");
+                return;
+            }
+
+            Intents.ChooseGame(_ => RefreshUI());
+        }
+
+        /// <summary>
+        /// Switch game: the game the site files this translation under becomes the game confirmed
+        /// here — asked first, naming the consequence (common GameChoices, wording of 2026-10-05).
+        /// </summary>
+        private void OnSwitchGameClicked()
+        {
+            var siteGame = TranslatorCore.ServerState?.Game;
+            if (siteGame == null) return;
+
+            Intents.Confirm(GameChoices.ConfirmTitle, GameChoices.ConfirmBody(siteGame.Name), GameChoices.ConfirmVerb,
+                () =>
+                {
+                    TranslatorCore.ConfirmGame(GameChoices.Of(siteGame));
+                    RefreshUI();
+                },
+                isDanger: false);
         }
 
         private void RefreshModUpdateBanner()
@@ -1709,8 +1805,9 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Check online mode
             bool isOnline = TranslatorCore.Config.online_mode;
 
-            // Update game label
+            // Update game label — the game confirmed here first: it is the one searched.
             var game = TranslatorCore.CurrentGame;
+            var confirmedGame = TranslatorCore.ConfirmedGame;
             if (!isOnline)
             {
                 _communityGameLabel.Say("Offline mode - enable Online Mode in Mod Options");
@@ -1721,10 +1818,10 @@ namespace UnityGameTranslator.Core.UI.Panels
                 _translationList?.Clear();
                 return;
             }
-            else if (game != null && !string.IsNullOrEmpty(game.name))
+            else if (confirmedGame != null || (game != null && !string.IsNullOrEmpty(game.name)))
             {
                 // Game name is data — never translated
-                _communityGameLabel.Show(Tr("Game:") + $" {game.name}");
+                _communityGameLabel.Show(Tr("Game:") + $" {confirmedGame?.Name ?? game.name}");
                 _communityGameLabel.Tone = Tone.Secondary;
                 _searchBtn.Enabled = true;
             }
@@ -1744,7 +1841,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (!TranslatorCore.Config.online_mode) return;
 
             var game = TranslatorCore.CurrentGame;
-            if (game == null)
+            if (game == null && TranslatorCore.ConfirmedGame == null)
             {
                 _translationList.SetStatus("No game detected", Tone.Warning);
                 return;
@@ -1753,7 +1850,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (_translationList.IsSearching) return;
 
             string targetLang = TranslatorCore.Config.GetTargetLanguage();
-            SearchCommunityAsync(game.steam_id, game.name, targetLang);
+            SearchCommunityAsync(game?.steam_id, game?.name, targetLang);
         }
 
         private void OnDownloadCommunityClicked()

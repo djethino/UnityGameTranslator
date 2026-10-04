@@ -134,7 +134,61 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static Dictionary<string, FontSettings> FontSettingsMap { get; set; } = new Dictionary<string, FontSettings>(StringComparer.OrdinalIgnoreCase);
 
+        /// <summary>
+        /// What was DETECTED at launch (steam_appid.txt, Application.productName). Never the game
+        /// the player confirmed — see <see cref="ConfirmedGame"/>.
+        /// </summary>
         public static GameInfo CurrentGame { get; internal set; }
+
+        /// <summary>
+        /// The game the player confirmed for this installation (`config.json`, `game_choice`), or
+        /// null when none was yet. What a publication sends (`game_pick`) and Community searches
+        /// with; compared with the game the site files the translation under (common GameChoices).
+        /// </summary>
+        public static GameChoice ConfirmedGame => Config?.ConfirmedGame();
+
+        /// <summary>
+        /// Keeps the game the player confirmed — on the acts that confirm one: Change, Switch game,
+        /// a publication (the game picked), taking a translation from the site when nothing was
+        /// confirmed yet. Never on a move made on the site.
+        /// </summary>
+        public static void ConfirmGame(GameChoice choice)
+        {
+            if (choice == null) return;
+            Config.game_choice = GameChoiceEntry.Of(choice);
+            SaveConfig();
+        }
+
+        /// <summary>
+        /// The site named the game the installed translation is filed under: when nothing was
+        /// confirmed here yet, that game is taken as it stands — the translation was taken from the
+        /// site, or published from here, before the choice existed. A game already confirmed is
+        /// never replaced: a difference is asked about under the game's name (GameChoices.Adopt).
+        /// </summary>
+        public static void AdoptLineageGame(LineageGame game)
+        {
+            if (ConfirmedGame == null && GameChoices.Adopt(null, game) is GameChoice taken)
+                ConfirmGame(taken);
+        }
+
+        /// <summary>
+        /// What this machine read in the game's own files, as an upload states it (`game_read`) —
+        /// the detection, never the game confirmed. Null when nothing was detected.
+        /// </summary>
+        public static GameReadFacts ReadFacts()
+        {
+            var game = CurrentGame;
+            if (game == null) return null;
+
+            return new GameReadFacts
+            {
+                ProductName = game.product_name,
+                CompanyName = game.company_name,
+                SteamId = game.steam_id,
+                SteamIdFrom = game.detection_method,
+                Engine = "Unity",
+            };
+        }
 
         /// <summary>
         /// Server state for current translation (populated via check-uuid, not persisted)

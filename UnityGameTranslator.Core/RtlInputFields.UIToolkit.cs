@@ -84,6 +84,8 @@ namespace UnityGameTranslator.Core.TextShaping
             else TranslatorCore.LogWarning("[Patches] UI Toolkit fields: a multi-line field resized after it was filled keeps the lines it was first cut into (no TextElement.UpdateVisibleText or IncrementVersion)");
             if (Uitk.SelectCurrentWord != null) { patcher(Uitk.SelectCurrentWord, Hook(nameof(Uitk_SelectCurrentWord_Prefix)), null); count++; }
             if (Uitk.SelectToPosition != null && Uitk.IndexFromPosition != null) { patcher(Uitk.SelectToPosition, Hook(nameof(Uitk_SelectToPosition_Prefix)), null); count++; }
+            // Only where the ATG exists: its drag state is native, the word a drag starts from is kept here.
+            if (Uitk.KnowsCharacterBoxes && Uitk.MouseDragSelectsWholeWords != null) { patcher(Uitk.MouseDragSelectsWholeWords, null, Hook(nameof(Uitk_MouseDragSelectsWholeWords_Postfix))); count++; }
             if (Uitk.LineUp != null && Uitk.LineDown != null && Uitk.PositionByLine != null)
             {
                 patcher(Uitk.LineUp, Hook(nameof(Uitk_LineUp_Prefix)), null);
@@ -775,6 +777,28 @@ namespace UnityGameTranslator.Core.TextShaping
             }
         }
 
+        // ATG fields: the word a drag by words starts from — the selection when the drag began (by element).
+        private static readonly Dictionary<long, int[]> _uitkAtgDrag = new Dictionary<long, int[]>();
+
+        /// <summary>
+        /// TextSelectingUtilities.MouseDragSelectsWholeWords(on) on a field the Advanced Text Generator
+        /// draws right to left: the engine keeps the drag's state natively there, out of reach; the word
+        /// the double-click selected is kept here when it turns on, forgotten when it turns off.
+        /// </summary>
+        public static void Uitk_MouseDragSelectsWholeWords_Postfix(object __instance, bool __0)
+        {
+            try
+            {
+                var handle = Uitk.HandleOf(__instance);
+                if (UitkAtgStateOf(handle) == null) return;
+                long id = ObjectKey(Uitk.ElementOf(handle));
+                if (!__0) { _uitkAtgDrag.Remove(id); return; }
+                int a = Uitk.CursorIndex(__instance), b = Uitk.SelectIndex(__instance);
+                _uitkAtgDrag[id] = new[] { Math.Min(a, b), Math.Max(a, b) };
+            }
+            catch (Exception ex) { Note("UI Toolkit drag by words could not be followed on an Advanced Text Generator field", ex); }
+        }
+
         /// <summary>
         /// TextSelectingUtilities.SelectToPosition(point) — a drag. Only a drag that snaps to words
         /// (after a double-click) is taken here; the others are the field's, through the click mapping.
@@ -783,13 +807,41 @@ namespace UnityGameTranslator.Core.TextShaping
         {
             try
             {
-                if (!Uitk.DragSnapsToWords(__instance)) return true;
                 var handle = Uitk.HandleOf(__instance);
-                var s = UitkStateOfHandle(handle);
-                if (s == null) return true;
-                string typed = s.Logical;
+                string typed;
+                int start, end;
+                bool range;
+                var presented = UitkStateOfHandle(handle);
+                if (presented != null)
+                {
+                    if (!Uitk.DragSnapsToWords(__instance)) return true;
+                    typed = presented.Logical;
+                    range = Uitk.DoubleClickRange(__instance, out start, out end);
+                }
+                else
+                {
+                    // A field the Advanced Text Generator draws right to left: its own drag by words
+                    // lost the second word in a right-to-left paragraph (bench 6000.6; the same field
+                    // in Latin is right). Its drag state lives in the native engine, so the word the
+                    // double-click took is the one kept when the drag began (Uitk_MouseDragSelectsWholeWords_Postfix).
+                    var atg = UitkAtgStateOf(handle);
+                    if (atg == null || !Uitk.SnapsToWords(__instance)
+                        || !_uitkAtgDrag.TryGetValue(ObjectKey(Uitk.ElementOf(handle)), out var word)) return true;
+                    typed = atg.Logical;
+                    start = word[0];
+                    end = word[1];
+                    range = true;
+                }
                 int under = Uitk.IndexAt(handle, __0);          // the click mapping makes it a typed caret
-                Uitk.DoubleClickRange(__instance, out int start, out int end);
+                if (!range)
+                {
+                    // 2022.2's rule on its one position (the engine's own, as IMGUI's TextEditor and
+                    // RtlInputFields.UIToolkit2021): the words around the pointer and the double-click.
+                    bool before = under < start;
+                    Uitk.SetCursorIndex(__instance, RtlFieldLayout.WordEdge(typed, under, !before));
+                    Uitk.SetSelectIndex(__instance, RtlFieldLayout.WordEdge(typed, start, before));
+                    return false;
+                }
                 if (under <= start)
                 {
                     Uitk.SetCursorIndex(__instance, RtlFieldLayout.WordEdge(typed, under, false));
@@ -859,9 +911,9 @@ namespace UnityGameTranslator.Core.TextShaping
         {
             private const BindingFlags Inst = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
             private static bool _resolved, _ok;
-            internal static MethodInfo SetValueWithoutNotify, PositionByLine, PositionByCharacter, IndexFromPosition, DrawHighlighting, SelectCurrentWord, SelectToPosition, LineUp, LineDown;
+            internal static MethodInfo SetValueWithoutNotify, PositionByLine, PositionByCharacter, IndexFromPosition, DrawHighlighting, SelectCurrentWord, SelectToPosition, MouseDragSelectsWholeWords, LineUp, LineDown;
             private static MethodInfo _clearCursorPos;
-            private static MemberInfo _justSelected, _dragWords, _snap, _dblStart, _dblEnd;
+            private static MemberInfo _justSelected, _dragWords, _snap, _dblStart, _dblEnd, _dblAt;
 
             internal static MethodInfo UpdateVisibleText;
             private static MethodInfo _incrementVersion;
@@ -883,12 +935,25 @@ namespace UnityGameTranslator.Core.TextShaping
 
             /// <summary>A drag after a double-click, snapping to words (not paragraphs).</summary>
             internal static bool DragSnapsToWords(object utilities) =>
-                Members.Get(_dragWords, utilities) is bool words && words && Members.Get(_snap, utilities)?.ToString() == "WORDS";
+                Members.Get(_dragWords, utilities) is bool words && words && SnapsToWords(utilities);
 
-            internal static void DoubleClickRange(object utilities, out int start, out int end)
+            /// <summary>A drag after a double-click snaps to words, not to paragraphs (the field's own setting, on every generator).</summary>
+            internal static bool SnapsToWords(object utilities) => Members.Get(_snap, utilities)?.ToString() == "WORDS";
+
+            /// <summary>
+            /// Where the double-click's word lay when the drag began: its two ends (2022.3, Unity 6), or —
+            /// false — the single caret 2022.2 keeps (m_DblClickInitPos), returned as both.
+            /// </summary>
+            internal static bool DoubleClickRange(object utilities, out int start, out int end)
             {
-                start = Convert.ToInt32(Members.Get(_dblStart, utilities));
-                end = Convert.ToInt32(Members.Get(_dblEnd, utilities));
+                if (_dblStart != null && _dblEnd != null)
+                {
+                    start = Convert.ToInt32(Members.Get(_dblStart, utilities));
+                    end = Convert.ToInt32(Members.Get(_dblEnd, utilities));
+                    return true;
+                }
+                start = end = Convert.ToInt32(Members.Get(_dblAt, utilities));
+                return false;
             }
 
             /// <summary>The typed caret under a point — the field's own question, answered through the click mapping.</summary>
@@ -1016,14 +1081,17 @@ namespace UnityGameTranslator.Core.TextShaping
                     // The two that find a word's edges (FindEndOfClassification's callers): double-click, drag by words.
                     SelectCurrentWord = utilities.GetMethod("SelectCurrentWord", Inst, null, Type.EmptyTypes, null);
                     SelectToPosition = utilities.GetMethod("SelectToPosition", Inst, null, new[] { typeof(Vector2) }, null);
+                    MouseDragSelectsWholeWords = utilities.GetMethod("MouseDragSelectsWholeWords", Inst, null, new[] { typeof(bool) }, null);
                     _clearCursorPos = utilities.GetMethod("ClearCursorPos", Inst, null, Type.EmptyTypes, null);
                     _justSelected = Members.FieldOrProperty(utilities, "m_bJustSelected", Inst);
                     _dragWords = Members.FieldOrProperty(utilities, "m_MouseDragSelectsWholeWords", Inst);
                     _snap = Members.FieldOrProperty(utilities, "dblClickSnap", Inst);
                     _dblStart = Members.FieldOrProperty(utilities, "m_DblClickInitPosStart", Inst);
                     _dblEnd = Members.FieldOrProperty(utilities, "m_DblClickInitPosEnd", Inst);
+                    // 2022.2 keeps one position, as IMGUI's TextEditor does.
+                    _dblAt = Members.FieldOrProperty(utilities, "m_DblClickInitPos", Inst);
                     if (_clearCursorPos == null || _justSelected == null) SelectCurrentWord = null;
-                    if (_dragWords == null || _snap == null || _dblStart == null || _dblEnd == null) SelectToPosition = null;
+                    if (_dragWords == null || _snap == null || ((_dblStart == null || _dblEnd == null) && _dblAt == null)) SelectToPosition = null;
                     var mgc = AssemblyTypes.Find("UnityEngine.UIElements.MeshGenerationContext");
                     // A rectangle: through the context's mesh generator in Unity 6, through the
                     // MeshGenerationContextUtils.Rectangle extension in 2022.3.

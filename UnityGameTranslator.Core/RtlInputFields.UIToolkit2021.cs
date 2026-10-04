@@ -12,18 +12,20 @@ namespace UnityGameTranslator.Core.TextShaping
     /// itself and edits it with IMGUI's TextEditor, which measures with a GUIStyle of its own.
     ///
     /// Nothing here names a type of that generic input element: it is recognised by the USS class
-    /// every single-line field gives it, and reached through what it calls —
+    /// every field gives it (single-line or multi-line), and reached through what it calls —
     /// - its text: <c>MeshGenerationContextUtils.Text</c> draws the presented form
     ///   (<see cref="RtlFieldLayout.Display"/>) where the element drew the typed one;
     /// - its caret: <c>TextCore.Text.TextGenerator.GetCursorPosition(textInfo, rect, index)</c> on the
     ///   element's own text info gets the display gap of the typed caret;
     /// - its selection: the rectangle it draws in the selection colour becomes one per piece the typed
     ///   range shows;
-    /// - clicks, drags and scrolling: the field's own GUIStyle measures the presented form
-    ///   (<c>GetCursorStringIndex</c>, <c>GetCursorPixelPosition</c>);
+    /// - clicks, drags and scrolling: the carets the field DRAWS (the same text info), never the
+    ///   TextEditor's GUIStyle, which lays the text out with IMGUI's own font and line height;
     /// - the arrows: its TextEditor's MoveLeft/MoveRight/SelectLeft/SelectRight/MoveWord* step by
-    ///   screen position (user's decision, 2026-09-25).
-    /// The value stays as typed. Up/Down, Home/End and a multi-line field stay the engine's.
+    ///   screen position (user's decision, 2026-09-25); Up/Down and Home/End through its
+    ///   PerformOperation, as on the other engines (the drawn line, the reading order).
+    /// A multi-line field is cut where the element wraps the shaped text (the labels' measure,
+    /// UIToolkitSupport.TryBreakLines) and drawn with no wrap of its own. The value stays as typed.
     /// </summary>
     internal static partial class RtlInputFields
     {
@@ -37,6 +39,13 @@ namespace UnityGameTranslator.Core.TextShaping
             public RtlFieldLayout Layout;
             public string Logical;
             public string Shown;
+            public long Id;                       // the input element's (IdFor): read again through UIToolkitSupport.ElementFor
+            public bool Multi;                    // a multi-line field: its own lines, drawn with no wrap of the engine's
+            public float LaidWidth = float.NaN;   // the width those lines were cut for: another width cuts them again
+            public int GoalLanded = -1;           // Up/Down: the caret the last press landed on, and the column it aimed at
+            public float GoalX;
+            public int Draws;                     // texts drawn: the selection's rectangles of one draw come before its text
+            public int SelectionDrawnAt = -1;
         }
 
         // By the input element's id, and by the ids of its GUIStyle, TextEditor and text info.
@@ -59,6 +68,8 @@ namespace UnityGameTranslator.Core.TextShaping
             if (Uitk21.Scrolling != null) { patcher(Uitk21.Scrolling, Hook(nameof(Uitk21_UpdateScrollOffset_Prefix)), Hook(nameof(Uitk21_UpdateScrollOffset_Postfix))); count++; }
             if (Uitk21.PreDrawCursor != null) { patcher(Uitk21.PreDrawCursor, null, Hook(nameof(Uitk21_PreDrawCursor_Postfix))); count++; }
             if (Uitk21.SelectCurrentWord != null) { patcher(Uitk21.SelectCurrentWord, Hook(nameof(Uitk21_SelectCurrentWord_Prefix)), null); count++; }
+            if (Uitk21.PerformOperation != null) { patcher(Uitk21.PerformOperation, Hook(nameof(Uitk21_PerformOperation_Prefix)), null); count++; }
+            else TranslatorCore.LogWarning("[Patches] UI Toolkit 2021 fields: Up/Down and Home/End stay the engine's (no TextEditor.PerformOperation)");
             foreach (var move in Uitk21.Moves)
             {
                 patcher(move.Value, Hook(move.Key), null);
@@ -94,16 +105,20 @@ namespace UnityGameTranslator.Core.TextShaping
                 if (_uitk21.TryGetValue(id, out var held) && held.Shown == text) return true;
                 var s = Uitk21Prepare(id, element, text);
                 if (s == null || s.Shown == text) return true;
+                s.Draws++;
 
                 _uitk21Own = true;
+                bool wrapped = s.Multi && Uitk21.ParamsWrap(__1);
                 try
                 {
                     Uitk21.SetParamsText(__1, s.Shown);
+                    if (wrapped) Uitk21.SetParamsWrap(__1, false);
                     Uitk21.Text.Invoke(null, new[] { __0, __1, __2, __3 });
                 }
                 finally
                 {
                     Uitk21.SetParamsText(__1, text);
+                    if (wrapped) Uitk21.SetParamsWrap(__1, true);
                     _uitk21Own = false;
                 }
                 return false;
@@ -115,9 +130,17 @@ namespace UnityGameTranslator.Core.TextShaping
             }
         }
 
+        // The text each field's alignment was last decided for (by its id): once per text, not per draw.
+        private static readonly Dictionary<long, string> _uitk21Aligned = new Dictionary<long, string>();
+
         /// <summary>The field's state for this text, laid out again when the text changed; null when there is nothing to present.</summary>
         private static Uitk21State Uitk21Prepare(long id, object element, string text)
         {
+            // Its alignment, as the game's texts of its font (the rule of every engine's fields,
+            // RtlPresenter.AlignTypedLabel): decided again when its text changes, typed or not.
+            if (!Uitk21.IsPassword(element) && !(_uitk21Aligned.TryGetValue(id, out var aligned) && aligned == text)
+                && UIToolkitSupport.AlignTypedField(element, text ?? "", id))
+                _uitk21Aligned[id] = text;
             if (string.IsNullOrEmpty(text) || Uitk21.IsPassword(element))
             {
                 if (TranslatorCore.DebugMode && _uitk21.ContainsKey(id))
@@ -125,16 +148,35 @@ namespace UnityGameTranslator.Core.TextShaping
                 Uitk21Forget(id);
                 return null;
             }
-            if (_uitk21.TryGetValue(id, out var held) && held.Logical == text) return held;
+            var editor = Uitk21.EditorOf(element);
+            bool multi = editor != null && Uitk21.IsMultiline(editor);
+            // A multi-line field's lines are the box's: drawn in another width, cut again (the draw
+            // is the event — no other notice of a resize reaches this path).
+            float width = multi ? UIToolkitSupport.ContentWidth(element) : float.NaN;
+            if (_uitk21.TryGetValue(id, out var held) && held.Logical == text
+                && (!multi || (float.IsNaN(width) ? float.IsNaN(held.LaidWidth) : Math.Abs(width - held.LaidWidth) <= 0.5f)))
+                return held;
             if (held != null && TranslatorCore.DebugMode)
-                TranslatorCore.LogDebug($"[RtlInputFields] UI Toolkit 2021 field {id} drawn with another text: was {RtlPresenter.Escape(held.Logical)} now {RtlPresenter.Escape(text)}");
+                TranslatorCore.LogDebug($"[RtlInputFields] UI Toolkit 2021 field {id} drawn with another {(held.Logical == text ? "width" : "text")}: was {RtlPresenter.Escape(held.Logical)} now {RtlPresenter.Escape(text)}");
             var prep = RtlFieldLayout.Prepare(text);
             if (prep == null) { Uitk21Forget(id); return null; }
 
-            var s = new Uitk21State { Logical = text };
-            s.Layout = prep.Lay(null);
+            List<int> wraps = null;
+            if (multi)
+            {
+                // Cut where THIS element wraps the shaped text (the labels' measure, on its own text
+                // handle), each line laid out right to left; the draw then asks for no wrap of its
+                // own (Uitk21_Text_Prefix), which would cut the visual order again.
+                var lines = UIToolkitSupport.TryBreakLines(element, prep.MeasureText, out string whyNot, Uitk21.TextHandleOf(element));
+                wraps = lines == null ? null : SoftWrapStarts(prep.MeasureText, lines);
+                if (lines == null && whyNot != null && DiagnosticOnce.First("RtlInputFields.uitk21.wrap", whyNot))
+                    TranslatorCore.LogDebug("[RtlInputFields] UI Toolkit 2021 field laid out on its hard breaks only: " + whyNot);
+                prep = prep.SplitTokensAt(prep.TokenSplitsAt(wraps));   // a tag wider than the line, cut by the element: cut there too
+            }
+
+            var s = new Uitk21State { Logical = text, Id = id, Multi = multi, LaidWidth = width };
+            s.Layout = prep.Lay(wraps);
             s.Shown = s.Layout.Display;
-            var editor = Uitk21.EditorOf(element);
             var textInfo = Uitk21.TextInfoOf(element);
             Uitk21Forget(id);
             _uitk21[id] = s;
@@ -232,20 +274,26 @@ namespace UnityGameTranslator.Core.TextShaping
                 var textInfo = Uitk21.TextInfoOf(element);
                 if (editor == null || textInfo == null || Uitk21.EditorText(editor) != s.Logical) return true;
 
+                // The field draws a selection over several lines as up to three rectangles (its first
+                // line's end, the lines between, its last line's start): the whole typed range is drawn
+                // at the first, and the others of the same draw are left out.
+                if (s.SelectionDrawnAt == s.Draws) return false;
+                s.SelectionDrawnAt = s.Draws;
                 int a = Uitk21.CursorIndex(editor), b = Uitk21.SelectIndex(editor);
                 var pieces = DisplayPieces(s.Layout, s.Logical, Math.Min(a, b), Math.Max(a, b));
                 Rect original = Uitk21.ParamsRect(__1);
                 Rect content = Uitk21.ContentRect(element);
-                float scroll = Uitk21.ScrollX(editor);
+                var scroll = Uitk21.Scroll(editor);
                 _uitk21Own = true;
                 try
                 {
-                    // The parameters written for each piece and put back (never copied: see the text's prefix).
+                    // The parameters written for each piece and put back (never copied: see the text's
+                    // prefix) — at the height of its own line, as the field places its rectangles.
                     foreach (var piece in pieces)
                     {
-                        float from = Uitk21.PositionOf(textInfo, content, piece.Key).x - scroll;
-                        float to = Uitk21.PositionOf(textInfo, content, piece.Value).x - scroll;
-                        Uitk21.SetParamsRect(__1, new Rect(from, original.y, to - from, original.height));
+                        var from = Uitk21.PositionOf(textInfo, content, piece.Key) - scroll;
+                        float to = Uitk21.PositionOf(textInfo, content, piece.Value).x - scroll.x;
+                        Uitk21.SetParamsRect(__1, new Rect(from.x, from.y, to - from.x, original.height));
                         Uitk21.Rectangle.Invoke(null, new[] { __0, __1 });
                     }
                 }
@@ -268,20 +316,56 @@ namespace UnityGameTranslator.Core.TextShaping
         // Those are hooked through their callers, not themselves: on IL2CPP the small GUIStyle methods
         // are compiled into the TextEditor's, and a hook on them never ran (bench, 2021.3).
 
-        /// <summary>The caret standing under a point of the field (in its TextEditor's coordinates), measured on the presented form.</summary>
-        private static int Uitk21CaretAt(TextEditor editor, Uitk21State s, Vector2 point)
+        /// <summary>
+        /// Where the field draws a display gap of its presented text, in the element's own space (the
+        /// TextEditor's too: its local position is the element's box at 0,0), unscrolled — the call the
+        /// field makes for its caret, on the text info it drew. Null when the field cannot be read.
+        /// </summary>
+        private static Func<int, Vector2> Uitk21Drawn(Uitk21State s)
         {
-            var style = Uitk21.StyleOf(editor) as GUIStyle;
-            int gap = style.GetCursorStringIndex(Uitk21.LocalPosition(editor), new GUIContent(s.Shown), point + Uitk21.Scroll(editor));
-            if (DiagnosticOnce.First("RtlInputFields.Uitk21", "click")) TranslatorCore.LogInfo("[RtlInputFields] UI Toolkit 2021 field: click mapped");
-            return s.Layout.CaretAtBoundary(gap);
+            var element = UIToolkitSupport.ElementFor(s.Id);
+            var textInfo = element == null ? null : Uitk21.TextInfoOf(element);
+            if (textInfo == null) return null;
+            Rect content = Uitk21.ContentRect(element);
+            return display =>
+            {
+                bool was = _uitk21Own;
+                _uitk21Own = true;   // a display gap already: not mapped again
+                try { return Uitk21.PositionOf(textInfo, content, display); }
+                finally { _uitk21Own = was; }
+            };
         }
 
-        /// <summary>Where the presented caret is drawn, in the TextEditor's terms (its graphicalCursorPos).</summary>
-        private static Vector2 Uitk21CaretPixel(TextEditor editor, Uitk21State s, Rect within)
+        /// <summary>
+        /// The caret standing under a point of the field (in its TextEditor's coordinates): the line
+        /// drawn there, then the gap of that line nearest the point — what the field draws, not what
+        /// its TextEditor's GUIStyle would lay out with IMGUI's font and line height (one line or many).
+        /// </summary>
+        private static int Uitk21CaretAt(TextEditor editor, Uitk21State s, Vector2 point)
         {
-            var style = Uitk21.StyleOf(editor) as GUIStyle;
-            return style.GetCursorPixelPosition(within, new GUIContent(s.Shown), s.Layout.BoundaryOf(Math.Min(editor.cursorIndex, s.Logical.Length)));
+            var drawn = Uitk21Drawn(s) ?? throw new InvalidOperationException("the field's drawn text could not be read");
+            var at = point + Uitk21.Scroll(editor);
+            var layout = s.Layout;
+            // The last line whose top is above the point (the first one above them all).
+            int line = 0;
+            for (int L = 1; L < layout.LineCount; L++)
+                if (drawn(layout.LineDisplayStart(L)).y <= at.y + 0.5f) line = L;
+            int gap = layout.LineDisplayStart(line);
+            float best = float.MaxValue;
+            for (int d = layout.LineDisplayStart(line); d <= layout.LineDisplayEnd(line); d++)
+            {
+                float distance = Math.Abs(drawn(d).x - at.x);
+                if (distance < best) { best = distance; gap = d; }
+            }
+            if (DiagnosticOnce.First("RtlInputFields.Uitk21", "click")) TranslatorCore.LogInfo("[RtlInputFields] UI Toolkit 2021 field: click mapped");
+            return layout.CaretAtBoundary(gap);
+        }
+
+        /// <summary>Where the presented caret is drawn, in the TextEditor's terms (its graphicalCursorPos: the element's space, unscrolled).</summary>
+        private static Vector2 Uitk21CaretPixel(TextEditor editor, Uitk21State s)
+        {
+            var drawn = Uitk21Drawn(s) ?? throw new InvalidOperationException("the field's drawn text could not be read");
+            return drawn(s.Layout.BoundaryOf(Math.Min(editor.cursorIndex, s.Logical.Length)));
         }
 
         /// <summary>TextEditor.MoveCursorToPosition_Internal(point, shift) — a click (and a shift-click).</summary>
@@ -291,6 +375,7 @@ namespace UnityGameTranslator.Core.TextShaping
             {
                 var s = Uitk21StateOfEditor(__instance);
                 if (s == null) return true;
+                s.GoalLanded = -1;   // a click: the next Up/Down starts a new column
                 __instance.selectIndex = Uitk21CaretAt(__instance, s, __0);
                 if (!__1) __instance.cursorIndex = __instance.selectIndex;
                 __instance.DetectFocusChange();
@@ -359,7 +444,7 @@ namespace UnityGameTranslator.Core.TextShaping
                 if (s == null) return;
                 var style = Uitk21.StyleOf(__instance) as GUIStyle;
                 var position = __instance.position;
-                var caret = Uitk21CaretPixel(__instance, s, new Rect(0f, 0f, position.width, position.height));
+                var caret = Uitk21CaretPixel(__instance, s);
                 Uitk21.SetGraphicalCursor(__instance, caret);
                 var view = style.padding.Remove(position);
                 float x = caret.x - style.padding.left;
@@ -370,6 +455,24 @@ namespace UnityGameTranslator.Core.TextShaping
                 {
                     if (x + 1f > scroll.x + view.width) scroll.x = x - view.width + 1f;
                     if (x < scroll.x) scroll.x = x;
+                }
+                if (s.Multi)
+                {
+                    // Vertically, the editor's own rule on the lines as drawn: the caret's line kept in
+                    // view, no space left below the last line (TextEditor.UpdateScrollOffset).
+                    var drawn = Uitk21Drawn(s);
+                    var layout = s.Layout;
+                    float top = drawn(layout.LineDisplayStart(0)).y;
+                    float height = drawn(layout.LineDisplayStart(layout.LineCount - 1)).y - top + style.lineHeight;
+                    float y = caret.y - top;
+                    if (height < view.height) scroll.y = 0f;
+                    else if (__state)
+                    {
+                        if (y + style.lineHeight > scroll.y + view.height) scroll.y = y - view.height + style.lineHeight;
+                        if (y < scroll.y) scroll.y = y;
+                    }
+                    if (scroll.y > 0f && height - scroll.y < view.height) scroll.y = height - view.height;
+                    if (scroll.y < 0f) scroll.y = 0f;
                 }
                 Uitk21.SetScroll(__instance, scroll);
             }
@@ -387,7 +490,7 @@ namespace UnityGameTranslator.Core.TextShaping
                 if (!(Uitk21.EditorOfHandler(__instance) is TextEditor editor)) return;
                 var s = Uitk21StateOfEditor(editor);
                 if (s == null) return;
-                Uitk21.SetGraphicalCursor(editor, Uitk21CaretPixel(editor, s, Uitk21.LocalPosition(editor)));
+                Uitk21.SetGraphicalCursor(editor, Uitk21CaretPixel(editor, s));
             }
             catch (Exception ex) { Note("UI Toolkit 2021 caret position failed", ex); }
         }
@@ -437,6 +540,7 @@ namespace UnityGameTranslator.Core.TextShaping
             {
                 var s = Uitk21StateOfEditor(editor);
                 if (s == null) return false;
+                s.GoalLanded = -1;   // a move along the line: the next Up/Down starts a new column
                 int anchor = editor.selectIndex, focus = editor.cursorIndex;
                 var layout = s.Layout;
                 int next;
@@ -461,16 +565,112 @@ namespace UnityGameTranslator.Core.TextShaping
             }
         }
 
+        // ══ Up / Down, Home / End ═══════════════════════════════════════════════════════════════
+
+        /// <summary>
+        /// TextEditor.PerformOperation(TextEditOp, readOnly) — where a key press becomes the move (the
+        /// field's key handler calls HandleKeyEvent, which maps the key and calls this). 🔴 Hooked here
+        /// and not on MoveUp, MoveGraphicalLineStart and their kind: small, and an IL2CPP build compiles
+        /// them into this switch (as on 2022.3, RtlInputFields.UIToolkit). The engine measured the TYPED
+        /// text with its GUIStyle: Up/Down and Home/End on the drawn lines are ours, as on every engine.
+        /// </summary>
+        public static bool Uitk21_PerformOperation_Prefix(TextEditor __instance, object __0, ref bool __result)
+        {
+            string op = __0?.ToString();
+            bool handled;
+            switch (op)
+            {
+                case "MoveUp": handled = Uitk21Vertical(__instance, false, true); break;
+                case "MoveDown": handled = Uitk21Vertical(__instance, true, true); break;
+                case "SelectUp": handled = Uitk21Vertical(__instance, false, false); break;
+                case "SelectDown": handled = Uitk21Vertical(__instance, true, false); break;
+                case "MoveGraphicalLineStart": handled = Uitk21LineEdge(__instance, LineEdgeOp.Move, false); break;
+                case "MoveGraphicalLineEnd": handled = Uitk21LineEdge(__instance, LineEdgeOp.Move, true); break;
+                case "SelectGraphicalLineStart": handled = Uitk21LineEdge(__instance, LineEdgeOp.Select, false); break;
+                case "SelectGraphicalLineEnd": handled = Uitk21LineEdge(__instance, LineEdgeOp.Select, true); break;
+                case "ExpandSelectGraphicalLineStart": handled = Uitk21LineEdge(__instance, LineEdgeOp.Expand, false); break;
+                case "ExpandSelectGraphicalLineEnd": handled = Uitk21LineEdge(__instance, LineEdgeOp.Expand, true); break;
+                default: return true;
+            }
+            if (!handled) return true;
+            Uitk21.RevealCursor(__instance, true);   // as the operation does first: the caret is scrolled into view
+            __result = false;                         // a move changes no text
+            return false;
+        }
+
+        /// <summary>
+        /// Up or Down on a presented field: the line drawn above or below, the caret nearest ON SCREEN
+        /// to the column kept from one press to the next (RtlFieldLayout.VerticalStep, x as the field
+        /// draws it). A move collapses a selection first as the TextEditor does (Up from its last caret,
+        /// Down from its first); past the first or last line, the start or end of the text.
+        /// </summary>
+        private static bool Uitk21Vertical(TextEditor editor, bool down, bool move)
+        {
+            try
+            {
+                var s = Uitk21StateOfEditor(editor);
+                if (s == null) return false;
+                var drawn = Uitk21Drawn(s);
+                if (drawn == null) return false;
+                int from = move ? (down ? Math.Min(editor.cursorIndex, editor.selectIndex) : Math.Max(editor.cursorIndex, editor.selectIndex))
+                                : editor.cursorIndex;
+                from = Math.Max(0, Math.Min(from, s.Logical.Length));
+                Func<int, float> xOf = c => drawn(s.Layout.BoundaryOf(c)).x;
+                float goal = s.GoalLanded == from ? s.GoalX : xOf(from);
+                int next = s.Layout.VerticalStep(from, down, goal, xOf);
+                if (next < 0) next = down ? s.Logical.Length : 0;
+                s.GoalLanded = next;
+                s.GoalX = goal;
+                editor.cursorIndex = next;
+                if (move) editor.selectIndex = next;
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Note("UI Toolkit 2021 Up/Down failed, the field's own used", ex);
+                return false;
+            }
+        }
+
+        /// <summary>Home / End (with Shift) on a presented field: the start or end of the line IN READING ORDER (LineEdgeMove).</summary>
+        private static bool Uitk21LineEdge(TextEditor editor, LineEdgeOp op, bool end)
+        {
+            try
+            {
+                var s = Uitk21StateOfEditor(editor);
+                if (s == null) return false;
+                s.GoalLanded = -1;
+                Func<int, int> edge = p =>
+                {
+                    int line = s.Layout.LineOfCaret(p);
+                    return end ? s.Layout.LineEndCaret(line) : s.Layout.LineLogicalStart(line);
+                };
+                int cursor = editor.cursorIndex, select = editor.selectIndex;
+                LineEdgeMove(op, end, edge, ref cursor, ref select);
+                editor.cursorIndex = cursor;
+                editor.selectIndex = select;
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Note("UI Toolkit 2021 Home/End failed, the field's own used", ex);
+                return false;
+            }
+        }
+
         // ══ UI Toolkit 2021 by reflection ═════════════════════════════════════════════════════
 
         internal static class Uitk21
         {
             private const BindingFlags Inst = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
             private const BindingFlags Stat = BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
-            // The class every single-line field gives its input element (TextInputBaseField.singleLineInputUssClassName).
+            // The classes a field gives its input element (TextInputBaseField.singleLineInputUssClassName,
+            // multilineInputUssClassName): one or the other, as the field is set.
             private const string SingleLineInput = "unity-base-text-field__input--single-line";
+            private const string MultiLineInput = "unity-base-text-field__input--multiline";
             private static bool _resolved, _ok;
-            internal static MethodInfo Text, CursorPosition, Rectangle, Click, Drag, Scrolling, PreDrawCursor, SelectCurrentWord;
+            internal static MethodInfo Text, CursorPosition, Rectangle, Click, Drag, Scrolling, PreDrawCursor, SelectCurrentWord, PerformOperation;
+            private static MemberInfo _multiline, _paramsWrap;
             private static MethodInfo _clearCursorPos;
             private static MemberInfo _justSelected, _snap, _dblClickAt;
             private static PropertyInfo _handlerEditor, _localPosition;
@@ -522,6 +722,13 @@ namespace UnityGameTranslator.Core.TextShaping
                     PreDrawCursor = AssemblyTypes.Find("UnityEngine.UIElements.KeyboardTextEditorEventHandler")
                         ?.GetMethod("PreDrawCursor", Inst, null, new[] { typeof(string) }, null);
                     SelectCurrentWord = typeof(TextEditor).GetMethod("SelectCurrentWord", Inst, null, Type.EmptyTypes, null);
+                    foreach (var m in typeof(TextEditor).GetMethods(Inst))
+                    {
+                        var ps = m.GetParameters();
+                        if (m.Name == "PerformOperation" && ps.Length == 2 && ps[0].ParameterType.IsEnum && ps[1].ParameterType == typeof(bool)) PerformOperation = m;
+                    }
+                    // A public field on Mono, a property of the IL2CPP interop: read by name.
+                    _multiline = Members.FieldOrProperty(typeof(TextEditor), "multiline", BindingFlags.Instance | BindingFlags.Public);
                     _clearCursorPos = typeof(TextEditor).GetMethod("ClearCursorPos", Inst, null, Type.EmptyTypes, null);
                     _justSelected = Members.FieldOrProperty(typeof(TextEditor), "m_bJustSelected", Inst);
                     _snap = Members.FieldOrProperty(typeof(TextEditor), "m_DblClickSnap", Inst);
@@ -553,6 +760,11 @@ namespace UnityGameTranslator.Core.TextShaping
                     _isPassword = InHierarchy(_inputType, "isPasswordField");
                     _selectionColor = InHierarchy(_inputType, "selectionColor");
                     if (Text != null) _paramsText = Members.FieldOrProperty(Text.GetParameters()[1].ParameterType, "text", Inst);
+                    if (Text != null) _paramsWrap = Members.FieldOrProperty(Text.GetParameters()[1].ParameterType, "wordWrap", Inst);
+                    // A multi-line field without these would be cut by us and wrapped again by the engine:
+                    // left to the engine instead (InputOf), and said.
+                    if (_multiline == null || _paramsWrap == null || _textHandle == null)
+                        Note($"UI Toolkit 2021 fields: multi-line fields stay the engine's (multiline={_multiline != null} wrap={_paramsWrap != null} handle={_textHandle != null})");
                     if (Rectangle != null)
                     {
                         var rectParams = Rectangle.GetParameters()[1].ParameterType;
@@ -604,7 +816,11 @@ namespace UnityGameTranslator.Core.TextShaping
             internal static object InputOf(object mgc)
             {
                 var element = DrawnElement(mgc);
-                if (element == null || !(_classListContains.Invoke(element, new object[] { SingleLineInput }) is bool single) || !single) return null;
+                if (element == null) return null;
+                bool single = _classListContains.Invoke(element, new object[] { SingleLineInput }) is bool s1 && s1;
+                bool multi = !single && _multiline != null && _paramsWrap != null
+                             && _classListContains.Invoke(element, new object[] { MultiLineInput }) is bool m1 && m1;
+                if (!single && !multi) return null;
                 var input = TypeHelper.Il2CppCast(element, _inputType);
                 return _inputType.IsInstanceOfType(input) ? input : null;
             }
@@ -629,6 +845,9 @@ namespace UnityGameTranslator.Core.TextShaping
             internal static void SetGraphicalCursor(object editor, Vector2 at) => Members.Set(_graphicalCursor, editor, at);
             internal static Rect LocalPosition(object editor) => (Rect)_localPosition.GetValue(editor, null);
             internal static bool RevealCursor(object editor) => Members.Get(_revealCursor, editor) is bool reveal && reveal;
+            internal static void RevealCursor(object editor, bool reveal) { if (_revealCursor != null) Members.Set(_revealCursor, editor, reveal); }
+            internal static bool IsMultiline(object editor) => _multiline != null && Members.Get(_multiline, editor) is bool multi && multi;
+            internal static object TextHandleOf(object element) => Members.Get(_textHandle, element);
             internal static bool DragSelectsWords(object editor) => Members.Get(_dragWords, editor) is bool words && words;
             internal static bool SnapsToWords(object editor) => Members.Get(_snap, editor)?.ToString() == "WORDS";
             internal static int DoubleClickAt(object editor) => Convert.ToInt32(Members.Get(_dblClickAt, editor));
@@ -659,6 +878,8 @@ namespace UnityGameTranslator.Core.TextShaping
 
             internal static string ParamsText(object parameters) => Members.Get(_paramsText, parameters) as string;
             internal static void SetParamsText(object parameters, string text) => Members.Set(_paramsText, parameters, text);
+            internal static bool ParamsWrap(object parameters) => _paramsWrap != null && Members.Get(_paramsWrap, parameters) is bool wrap && wrap;
+            internal static void SetParamsWrap(object parameters, bool wrap) => Members.Set(_paramsWrap, parameters, wrap);
 
             internal static Rect ParamsRect(object parameters) => (Rect)Members.Get(_rectRect, parameters);
             internal static void SetParamsRect(object parameters, Rect rect) => Members.Set(_rectRect, parameters, rect);

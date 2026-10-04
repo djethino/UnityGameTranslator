@@ -579,6 +579,34 @@ namespace UnityGameTranslator.Core.TextShaping
         private enum LineEdgeOp { Move, Select, Expand }
 
         /// <summary>
+        /// Where Home / End leave the two ends of a selection — the engines' own rule (UI Toolkit's
+        /// selecting utilities and IMGUI's TextEditor share it): Move collapses at the edge of the
+        /// selection's first (Home) or last (End) caret; Select moves the caret; Expand moves the
+        /// end lying that way, the other becoming the anchor. Only <paramref name="edge"/> is ours.
+        /// </summary>
+        private static void LineEdgeMove(LineEdgeOp op, bool end, Func<int, int> edge, ref int cursor, ref int select)
+        {
+            switch (op)
+            {
+                case LineEdgeOp.Move:
+                    cursor = select = edge(end ? Math.Max(cursor, select) : Math.Min(cursor, select));
+                    break;
+                case LineEdgeOp.Select:
+                    cursor = edge(cursor);
+                    break;
+                default:
+                    if (end ? cursor > select : cursor < select) cursor = edge(cursor);
+                    else
+                    {
+                        int was = cursor;
+                        cursor = edge(select);
+                        select = was;
+                    }
+                    break;
+            }
+        }
+
+        /// <summary>
         /// TextSelectingUtilities.{Move,Select,ExpandSelect}GraphicalLine{Start,End} (Home / End, with
         /// Shift, on Windows and Linux) on a presented field: the start or end of the line IN READING
         /// ORDER — typed, as every editor (user's decision, 2026-10-04: the standard). The engine asked
@@ -617,27 +645,14 @@ namespace UnityGameTranslator.Core.TextShaping
                     };
                 }
                 ForgetVerticalGoal(handle);   // as the engine's ClearCursorPos: a new column
-                int cursor = Uitk.CursorIndex(utilities), select = Uitk.SelectIndex(utilities);
-                switch (op)
+                int cursor = Uitk.CursorIndex(utilities), select = Uitk.SelectIndex(utilities), select0 = select;
+                LineEdgeMove(op, end, Edge, ref cursor, ref select);
+                // In the order the engine writes them: the anchor first when both move, else the caret first.
+                if (op == LineEdgeOp.Move) { Uitk.SetSelectIndex(utilities, select); Uitk.SetCursorIndex(utilities, cursor); }
+                else
                 {
-                    case LineEdgeOp.Move:
-                    {
-                        int to = Edge(end ? Math.Max(cursor, select) : Math.Min(cursor, select));
-                        Uitk.SetSelectIndex(utilities, to);
-                        Uitk.SetCursorIndex(utilities, to);
-                        break;
-                    }
-                    case LineEdgeOp.Select:
-                        Uitk.SetCursorIndex(utilities, Edge(cursor));
-                        break;
-                    default:
-                        if (end ? cursor > select : cursor < select) Uitk.SetCursorIndex(utilities, Edge(cursor));
-                        else
-                        {
-                            Uitk.SetCursorIndex(utilities, Edge(select));
-                            Uitk.SetSelectIndex(utilities, cursor);
-                        }
-                        break;
+                    Uitk.SetCursorIndex(utilities, cursor);
+                    if (select != select0) Uitk.SetSelectIndex(utilities, select);
                 }
                 return true;
             }

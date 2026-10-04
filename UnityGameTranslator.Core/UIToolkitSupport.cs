@@ -2944,6 +2944,7 @@ namespace UnityGameTranslator.Core
         // exotic runtime and every caller must survive that.
         private static bool _rtlPlumbingResolved;
         private static MethodInfo _measureTextSize;          // TextElement.MeasureTextSize(string, float, MeasureMode, float, MeasureMode)
+        private static MethodInfo _measureElementText;       // 2021: TextUtilities.MeasureVisualElementTextSize(VisualElement, string, …, ITextHandle)
         private static object _measureUndefined;             // MeasureMode.Undefined, boxed once
         private static PropertyInfo _contentRectProp;        // VisualElement.contentRect -> Rect
         private static ResolvedRead _resolvedWhiteSpace;     // resolvedStyle.whiteSpace (computed)
@@ -3000,6 +3001,18 @@ namespace UnityGameTranslator.Core
                 // as the ATG probe's StyleEnum<T> trick).
                 _measureTextSize = m;
                 _measureUndefined = Enum.ToObject(ps[2].ParameterType, 0);
+                break;
+            }
+            // The same measure for an element that is no TextElement but draws text with a handle of
+            // its own — 2021's text field input (RtlInputFields.UIToolkit2021): what MeasureTextSize
+            // itself calls there. Absent from 2022.3 on (that input holds a TextElement).
+            foreach (var m in AssemblyTypes.Find("UnityEngine.UIElements.TextUtilities")?.GetMethods(BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic) ?? new MethodInfo[0])
+            {
+                if (m.Name != "MeasureVisualElementTextSize") continue;
+                var ps = m.GetParameters();
+                if (ps.Length != 7 || ps[1].ParameterType != typeof(string) || !ps[3].ParameterType.IsEnum) continue;
+                _measureElementText = m;
+                if (_measureUndefined == null) _measureUndefined = Enum.ToObject(ps[3].ParameterType, 0);
                 break;
             }
             _contentRectProp = Members.Property(VisualElementType, "contentRect", pubInst);
@@ -3319,12 +3332,14 @@ namespace UnityGameTranslator.Core
             catch (Exception ex) { Faults.Say("UIToolkit.ContentWidth", ex); return float.NaN; }
         }
 
-        internal static List<string> TryBreakLines(object element, string assigned, out string whyNot)
+        /// <param name="textHandle">The element's own text handle when it is no TextElement (2021's text
+        /// field input): measured as MeasureTextSize measures there. Null for a TextElement.</param>
+        internal static List<string> TryBreakLines(object element, string assigned, out string whyNot, object textHandle = null)
         {
             whyNot = null;
             EnsureRtlPlumbing();
-            if (_measureTextSize == null || _contentRectProp == null)
-            { whyNot = "MeasureTextSize not available on this runtime"; return null; }
+            if ((textHandle == null ? _measureTextSize : _measureElementText) == null || _contentRectProp == null)
+            { whyNot = textHandle == null ? "MeasureTextSize not available on this runtime" : "MeasureVisualElementTextSize not available on this runtime"; return null; }
 
             // No soft wrap on this element → every break is an explicit '\n' already. ⚠ Unless
             // that NoWrap is OURS, just put back for this very measurement and not yet
@@ -3371,12 +3386,12 @@ namespace UnityGameTranslator.Core
                     // never true of it and its last word went to a second row (bench: a
                     // two-word link, a two-word title). What a line exactly as wide as its box
                     // needs is not room but NO RE-WRAP — DisableWrap, once the lines are written.
-                    if (MeasureWidth(element, paragraph) <= width + 0.5f) { lines.Add(paragraph); continue; }
+                    if (MeasureWidth(element, paragraph, textHandle) <= width + 0.5f) { lines.Add(paragraph); continue; }
                     string current = "";
                     foreach (string word in paragraph.Split(' '))
                     {
                         string candidate = current.Length == 0 ? word : current + " " + word;
-                        if (current.Length == 0 || MeasureWidth(element, candidate) <= width + 0.5f)
+                        if (current.Length == 0 || MeasureWidth(element, candidate, textHandle) <= width + 0.5f)
                         {
                             current = candidate;
                             continue;
@@ -3390,15 +3405,16 @@ namespace UnityGameTranslator.Core
             }
             catch (Exception ex)
             {
-                whyNot = $"measure failed: {ex.Message}";
+                whyNot = $"measure failed: {(ex.InnerException ?? ex).GetType().Name}: {(ex.InnerException ?? ex).Message}";
                 return null;
             }
         }
 
-        private static float MeasureWidth(object element, string s)
+        private static float MeasureWidth(object element, string s, object textHandle)
         {
-            object r = _measureTextSize.Invoke(element,
-                new object[] { s, 0f, _measureUndefined, 0f, _measureUndefined });
+            object r = textHandle == null
+                ? _measureTextSize.Invoke(element, new object[] { s, 0f, _measureUndefined, 0f, _measureUndefined })
+                : _measureElementText.Invoke(null, new object[] { element, s, 0f, _measureUndefined, 0f, _measureUndefined, textHandle });
             if (r is Vector2 v) return v.x;
             var xf = r?.GetType().GetField("x");
             return xf != null ? Convert.ToSingle(xf.GetValue(r)) : float.NaN;

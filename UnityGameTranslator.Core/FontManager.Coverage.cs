@@ -150,7 +150,7 @@ namespace UnityGameTranslator.Core
             public bool HasFallback;  // a fallback is set and in use: the translator chose it (see InCorner)
             public int MissingLines;  // lines of the translation that bring one of the missing characters
             public long? LastLineIndex; // the latest such line: its entry's "i", when it has one
-            public string LastLineText; // and its text as drawn
+            public string LastLineText; // and its text around the missing characters (FontCoverage.Excerpt)
 
             /// <summary>
             /// Whether the corner says it. 🔴 Setting a fallback validates the characters (user,
@@ -182,11 +182,12 @@ namespace UnityGameTranslator.Core
                     && TranslatorCore.FontSettingsMap.TryGetValue(font, out var settings) && !string.IsNullOrEmpty(settings?.fallback);
                 if (count > 0)
                 {
-                    var lines = Coverage.LinesBringing(font, new HashSet<int>(missing));
+                    var missingSet = new HashSet<int>(missing);
+                    var lines = Coverage.LinesBringing(font, missingSet);
                     problem.MissingLines = lines.Count;
                     if (lines.Count > 0)
                     {
-                        problem.LastLineText = lines[0].Text;
+                        problem.LastLineText = FontCoverage.Excerpt(UnityGameTranslator.Common.Markup.Strip(lines[0].Text), missingSet);
                         if (lines[0].Source != null && TranslatorCore.TranslationCache.TryGetValue(lines[0].Source, out var entry))
                             problem.LastLineIndex = entry?.Index;
                     }

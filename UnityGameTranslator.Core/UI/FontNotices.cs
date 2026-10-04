@@ -45,7 +45,7 @@ namespace UnityGameTranslator.Core.UI
             if (problem.MissingLines == 0)
                 return "This fallback font is missing characters of this translation.";
             string last = (problem.LastLineIndex.HasValue ? "#" + problem.LastLineIndex.Value + " " : "")
-                + "\"" + UnityGameTranslator.Common.Markup.Strip(problem.LastLineText ?? "") + "\"";
+                + "\"" + (problem.LastLineText ?? "") + "\"";
             return problem.MissingLines == 1
                 ? $"1 line of the translation uses characters this font does not have: {last}"
                 : $"{problem.MissingLines} lines of the translation use characters this font does not have. Last one: {last}";

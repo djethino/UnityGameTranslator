@@ -91,6 +91,25 @@ namespace UnityGameTranslator.Core.Checks
             check(l.Missing("Dlg", latinOnly).TrueForAll(cp => cp >= 0x600 && cp <= 0x6FF) && l.LinesBringing("Dlg", new HashSet<int> { 'ギ' }).Count == 0,
                 "every line corrected: no foreign character left", "");
 
+            // The row shows the line around its broken characters, on a budget the broken ones come
+            // first in (user, 2026-10-04).
+            var bad = new HashSet<int> { 'X', 'Y' };
+            string longLine = new string('a', 30) + " bbbb XY cccc " + new string('d', 30);
+            string around = FontCoverage.Excerpt(longLine, bad, 20);
+            check(around.StartsWith("...") && around.EndsWith("...") && around.Contains("XY") && around.Length <= 26,
+                "a long line is cut around its broken characters", around);
+            check(FontCoverage.Excerpt("short XY line", bad, 20) == "short XY line", "a short line is shown whole", "");
+            string allBad = FontCoverage.Excerpt("ok " + new string('X', 30) + " ok", bad, 10);
+            check(allBad == "..." + new string('X', 10) + "...", "broken characters past the budget leave no room for others", allBad);
+            check(FontCoverage.Excerpt(new string('a', 30) + "XY", bad, 10) == "...aaaaaaaaXY", "the room unused on one side goes to the other",
+                FontCoverage.Excerpt(new string('a', 30) + "XY", bad, 10));
+            string markedBefore = FontCoverage.Excerpt("aaaaبّXYaaaa", bad, 4);   // the cut falls on the shadda
+            string markedAfter = FontCoverage.Excerpt("aaaaXYبّaaaa", bad, 3);
+            check(markedBefore == "...بّXYa..." && markedAfter == "...XYبّ...", "never cut between a letter and its mark",
+                markedBefore + " | " + markedAfter);
+            check(FontCoverage.Excerpt("a\U0001F600" + new string('b', 20), new HashSet<int> { 0x1F600 }, 4).Contains("\U0001F600"),
+                "a character above U+FFFF is kept whole", "");
+
             int before = c.Version;
             c.Record("Title", "H");
             check(c.Version == before, "a text with nothing new asks nothing again", "");

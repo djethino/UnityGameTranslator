@@ -151,6 +151,70 @@ namespace UnityGameTranslator.Core
             return found;
         }
 
+        /// <summary>
+        /// How many characters of a line a font's row shows (user, 2026-10-04: "on limite à un nombre
+        /// de caractères") — enough to recognise the line in the editor, short enough for one row.
+        /// </summary>
+        internal const int ExcerptLength = 40;
+
+        /// <summary>
+        /// The part of a line around the characters <paramref name="missing"/> holds (user,
+        /// 2026-10-04): "...some normal text, the broken characters, some normal text...". The broken
+        /// characters come first: the text around them gets only what they leave of
+        /// <paramref name="length"/>, shared between both sides — a line made of broken characters
+        /// shows only those. Cut on whole characters, never between a letter and its marks.
+        /// </summary>
+        internal static string Excerpt(string text, ICollection<int> missing, int length = ExcerptLength)
+        {
+            if (string.IsNullOrEmpty(text) || length <= 0) return text ?? "";
+            var cps = new List<int>(text.Length);
+            for (int i = 0; i < text.Length; i++)
+            {
+                if (char.IsHighSurrogate(text[i]) && i + 1 < text.Length && char.IsLowSurrogate(text[i + 1]))
+                {
+                    cps.Add(char.ConvertToUtf32(text[i], text[i + 1]));
+                    i++;
+                }
+                else cps.Add(text[i]);
+            }
+            int n = cps.Count, first = -1, last = -1;
+            if (missing != null)
+                for (int i = 0; i < n; i++)
+                    if (missing.Contains(cps[i])) { if (first < 0) first = i; last = i; }
+
+            int start, end;
+            if (first < 0) { start = 0; end = Math.Min(n, length); }
+            else if (last - first + 1 >= length) { start = first; end = first + length; }
+            else
+            {
+                int room = length - (last - first + 1);
+                start = first - room / 2;
+                end = last + 1 + (room - room / 2);
+                if (start < 0) { end -= start; start = 0; }
+                if (end > n) { start = Math.Max(0, start - (end - n)); end = n; }
+            }
+            while (start > 0 && IsMark(cps[start])) start--;
+            while (end < n && IsMark(cps[end])) end++;
+
+            var excerpt = new System.Text.StringBuilder();
+            for (int i = start; i < end; i++)
+            {
+                if (cps[i] > 0xFFFF) excerpt.Append(char.ConvertFromUtf32(cps[i]));
+                else excerpt.Append((char)cps[i]);   // a lone surrogate stays as written
+            }
+            string middle = excerpt.ToString();
+            if (start > 0) middle = "..." + middle.TrimStart();
+            if (end < n) middle = middle.TrimEnd() + "...";
+            return middle;
+        }
+
+        private static bool IsMark(int cp)
+        {
+            var category = TextShaping.UnicodeInfo.CategoryOf(cp);
+            return category == UnicodeCategory.NonSpacingMark || category == UnicodeCategory.SpacingCombiningMark
+                || category == UnicodeCategory.EnclosingMark;
+        }
+
         /// <summary>Whether the source line holds this codepoint (a surrogate pair read as one).</summary>
         private static bool SourceHas(string source, int cp)
         {

@@ -36,6 +36,8 @@ namespace UnityGameTranslator.Core.TextShaping
             public string Logical;
             public string Shown;
             public string Suffix;   // what the element keeps after the text it draws (a zero-width space in 2022.3)
+            public float LaidWidth; // the box it was cut for
+            public bool? LaidWraps;
             public string Rendered => Shown + Suffix;
         }
 
@@ -72,8 +74,10 @@ namespace UnityGameTranslator.Core.TextShaping
             MethodInfo Hook(string name) => fields.GetMethod(name, BindingFlags.Static | BindingFlags.Public);
             int count = 0;
             patcher(Uitk.SetValueWithoutNotify, null, Hook(nameof(Uitk_SetValueWithoutNotify_Postfix))); count++;
-            if (Uitk.PositionByLine != null) { patcher(Uitk.PositionByLine, Hook(nameof(Uitk_CursorPosition_Prefix)), null); count++; }
-            if (Uitk.PositionByCharacter != null) { patcher(Uitk.PositionByCharacter, Hook(nameof(Uitk_CursorPosition_Prefix)), null); count++; }
+            // The postfix only where the ATG exists (its character boxes): the ends of its fields' text.
+            var edges = Uitk.KnowsCharacterBoxes ? Hook(nameof(Uitk_CursorPosition_Postfix)) : null;
+            if (Uitk.PositionByLine != null) { patcher(Uitk.PositionByLine, Hook(nameof(Uitk_CursorPosition_Prefix)), edges); count++; }
+            if (Uitk.PositionByCharacter != null) { patcher(Uitk.PositionByCharacter, Hook(nameof(Uitk_CursorPosition_Prefix)), edges); count++; }
             if (Uitk.IndexFromPosition != null) { patcher(Uitk.IndexFromPosition, null, Hook(nameof(Uitk_CursorIndexFromPosition_Postfix))); count++; }
             foreach (var move in Uitk.Moves)
             {
@@ -81,9 +85,13 @@ namespace UnityGameTranslator.Core.TextShaping
                 count++;
             }
             if (Uitk.DrawHighlighting != null) { patcher(Uitk.DrawHighlighting, Hook(nameof(Uitk_DrawHighlighting_Prefix)), null); count++; }
-            if (Uitk.WordEdges != null) { patcher(Uitk.WordEdges, Hook(nameof(Uitk_FindEndOfClassification_Prefix)), null); count++; }
-            if (Uitk.PositionByLine == null || Uitk.IndexFromPosition == null || Uitk.Moves.Count < 6 || Uitk.DrawHighlighting == null || Uitk.WordEdges == null)
-                TranslatorCore.LogWarning($"[Patches] UI Toolkit field right-to-left editing incomplete: caret={(Uitk.PositionByLine != null)} click={(Uitk.IndexFromPosition != null)} arrows={Uitk.Moves.Count}/6 selection={(Uitk.DrawHighlighting != null)} words={(Uitk.WordEdges != null)}");
+            if (Uitk.UpdateVisibleText != null) { patcher(Uitk.UpdateVisibleText, null, Hook(nameof(Uitk_UpdateVisibleText_Postfix))); count++; }
+            else TranslatorCore.LogWarning("[Patches] UI Toolkit fields: a multi-line field resized after it was filled keeps the lines it was first cut into (no TextElement.UpdateVisibleText or IncrementVersion)");
+            if (Uitk.SelectCurrentWord != null) { patcher(Uitk.SelectCurrentWord, Hook(nameof(Uitk_SelectCurrentWord_Prefix)), null); count++; }
+            if (Uitk.SelectToPosition != null && Uitk.IndexFromPosition != null) { patcher(Uitk.SelectToPosition, Hook(nameof(Uitk_SelectToPosition_Prefix)), null); count++; }
+            if (Uitk.PositionByLine == null || Uitk.IndexFromPosition == null || Uitk.Moves.Count < 6 || Uitk.DrawHighlighting == null
+                || Uitk.SelectCurrentWord == null || Uitk.SelectToPosition == null)
+                TranslatorCore.LogWarning($"[Patches] UI Toolkit field right-to-left editing incomplete: caret={(Uitk.PositionByLine != null)} click={(Uitk.IndexFromPosition != null)} arrows={Uitk.Moves.Count}/6 selection={(Uitk.DrawHighlighting != null)} double-click={(Uitk.SelectCurrentWord != null)} drag-words={(Uitk.SelectToPosition != null)}");
             return count;
         }
 
@@ -124,19 +132,94 @@ namespace UnityGameTranslator.Core.TextShaping
                 string rendered = Uitk.RenderedText(__instance);
                 if (_uitk.TryGetValue(id, out var held) && held.Rendered == rendered) return;
                 string suffix = rendered != null && rendered.EndsWith(RenderedSuffix, StringComparison.Ordinal) ? RenderedSuffix : "";
-                string typed = rendered?.Substring(0, rendered.Length - suffix.Length);
-                var prep = string.IsNullOrEmpty(typed) ? null : RtlFieldLayout.Prepare(typed);
-                if (prep == null) { _uitk.Remove(id); return; }
-
-                var s = new UitkState { Logical = typed, Suffix = suffix };
-                s.Layout = prep.Lay(null);
-                s.Shown = s.Layout.Display;
-                _uitk[id] = s;
-                TranslatorCore.RegisterPresentedText(s.Shown, typed);
-                Describe("UI Toolkit", __instance, typed, s.Shown);
-                Uitk.SetRenderedTextField(__instance, s.Rendered);
+                PresentUitkField(__instance, id, rendered?.Substring(0, rendered.Length - suffix.Length), suffix);
             }
             catch (Exception ex) { Note("UI Toolkit field presentation failed, drawn as typed: " + ex.Message); }
+        }
+
+        /// <summary>
+        /// The typed text of a field laid out and written as what it draws — at each write of its
+        /// value, and again when the box it is cut for changed (Uitk_UpdateVisibleText_Postfix).
+        /// </summary>
+        private static UitkState PresentUitkField(object element, long id, string typed, string suffix)
+        {
+            var prep = string.IsNullOrEmpty(typed) ? null : RtlFieldLayout.Prepare(typed);
+            if (prep == null)
+            {
+                // Left to right again: the field's own wrapping back, if it was ours.
+                if (_uitk.Remove(id)) UIToolkitSupport.RestoreRtlAdjustments(element);
+                return null;
+            }
+
+            // 🔴 A multi-line field: its lines are cut where THIS element wraps the shaped text
+            // (UIToolkitSupport.TryBreakLines, the labels' measure), each laid out right to left, and
+            // the engine is kept from wrapping the presented form again — it would cut the visual order
+            // and read the lines out of order. Measured under the field's own wrap mode (ours put back
+            // first); a single-line field is NoWrap and gets its hard breaks.
+            UIToolkitSupport.RestoreWrap(element);
+            var lines = UIToolkitSupport.TryBreakLines(element, prep.MeasureText, out string whyNot);
+            var wraps = lines == null ? null : SoftWrapStarts(prep.MeasureText, lines);
+            if (lines == null && whyNot != null && DiagnosticOnce.First("RtlInputFields.uitk.wrap", whyNot))
+                TranslatorCore.LogDebug("[RtlInputFields] UI Toolkit field laid out on its hard breaks only: " + whyNot);
+
+            var s = new UitkState { Logical = typed, Suffix = suffix };
+            s.Layout = prep.Lay(wraps);
+            s.Shown = s.Layout.Display;
+            // What it was cut for: a change of either cuts it again (the box drawn next, not a timer).
+            s.LaidWidth = UIToolkitSupport.ContentWidth(element);
+            s.LaidWraps = UIToolkitSupport.WrapsOwnLines(element);
+            if (wraps != null && wraps.Count > 0) UIToolkitSupport.DisableWrap(element);
+            _uitk[id] = s;
+            TranslatorCore.RegisterPresentedText(s.Shown, typed);
+            Describe("UI Toolkit", element, typed, s.Shown);
+            Uitk.SetRenderedTextField(element, s.Rendered);
+            return s;
+        }
+
+        /// <summary>
+        /// TextElement.UpdateVisibleText() — run by the engine when the element's geometry changed and
+        /// before each drawing of it. A field laid out for another width or another wrap mode than it
+        /// has now (filled before its first layout, made multi-line, resized) is cut again and laid out
+        /// anew: its lines would otherwise be the ones of a box it no longer is.
+        /// </summary>
+        public static void Uitk_UpdateVisibleText_Postfix(object __instance)
+        {
+            try
+            {
+                if (_uitk.Count == 0 || __instance == null || !TranslatorCore.IsMainThread) return;
+                long id = ObjectKey(__instance);
+                if (!_uitk.TryGetValue(id, out var s) || Uitk.RenderedText(__instance) != s.Rendered) return;
+                float width = UIToolkitSupport.ContentWidth(__instance);
+                bool? wraps = UIToolkitSupport.WrapsOwnLines(__instance);
+                bool widthMoved = !float.IsNaN(width) && (float.IsNaN(s.LaidWidth) || Math.Abs(width - s.LaidWidth) > 0.5f);
+                if (!widthMoved && wraps == s.LaidWraps) return;
+                if (PresentUitkField(__instance, id, s.Logical, s.Suffix) != null) Uitk.Relayout(__instance);
+            }
+            catch (Exception ex) { Note("UI Toolkit field re-layout failed: " + ex.Message); }
+        }
+
+        /// <summary>
+        /// Where the soft lines start in the measured text, from the lines the element cut it into
+        /// (TryBreakLines: a space between two lines of one paragraph, a '\n' between paragraphs).
+        /// Null when the lines do not lie end to end in it — then nothing is cut but the hard breaks.
+        /// </summary>
+        private static List<int> SoftWrapStarts(string measure, List<string> lines)
+        {
+            var starts = new List<int>();
+            int at = 0;
+            for (int k = 0; k < lines.Count; k++)
+            {
+                string line = lines[k];
+                if (at + line.Length > measure.Length || string.CompareOrdinal(measure, at, line, 0, line.Length) != 0) return null;
+                at += line.Length;
+                if (k == lines.Count - 1) break;
+                if (at >= measure.Length) return null;
+                char between = measure[at];
+                at++;
+                if (between == ' ') starts.Add(at);
+                else if (between != '\n') return null;
+            }
+            return starts;
         }
 
         /// <summary>The presented state of the element a text handle draws for, while it draws what was laid out.</summary>
@@ -162,6 +245,46 @@ namespace UnityGameTranslator.Core.TextShaping
                 if (s != null) __0 = s.Layout.BoundaryOf(__0);
             }
             catch (Exception ex) { Note("UI Toolkit caret mapping failed: " + ex.Message); }
+        }
+
+        [ThreadStatic] private static bool _atgEdgeAsking;
+
+        /// <summary>
+        /// The same two methods on an ATG field: the caret at either END of the text, where the ATG
+        /// draws it on the wrong line. 🔴 A multi-line field with a right-to-left paragraph had its
+        /// caret before the first character on the LAST line and its caret after the last one on
+        /// the FIRST — every caret in between in order; the same field left to right had none
+        /// (bench witness, 6000.6.3). Put back on its character's line, from what the ATG itself
+        /// measures: the neighbouring caret (the other side of that character, on the right line)
+        /// and the character's box — the end caret is that box's other edge.
+        /// </summary>
+        public static void Uitk_CursorPosition_Postfix(object __instance, int __0, ref Vector2 __result)
+        {
+            if (_atgEdgeAsking || _uitkRawIndices || !Uitk.KnowsCharacterBoxes) return;
+            try
+            {
+                var atg = UitkAtgStateOf(__instance);
+                if (atg == null) return;
+                string text = atg.Logical;
+                int n = text.Length;
+                if (__0 != 0 && __0 != n) return;
+                // The character between the end caret and its neighbour (a surrogate pair is one).
+                int from, to;
+                if (__0 == 0) { from = 0; to = n > 1 && char.IsHighSurrogate(text[0]) ? 2 : 1; }
+                else { to = n; from = n > 1 && char.IsLowSurrogate(text[n - 1]) ? n - 2 : n - 1; }
+                if (from >= to || text[from] == '\n') return;   // beside a line break the end caret has a line of its own
+                int neighbour = __0 == 0 ? to : from;
+                Vector2 near;
+                Rect? box;
+                _atgEdgeAsking = true;
+                try { near = Uitk.PositionOf(__instance, neighbour); box = Uitk.BoxOf(__instance, from, to); }
+                finally { _atgEdgeAsking = false; }
+                if (Mathf.Abs(near.y - __result.y) < 1f || box == null) return;   // drawn on its line: the ATG's answer stands
+                var r = box.Value;
+                float x = Mathf.Abs(near.x - r.xMin) < Mathf.Abs(near.x - r.xMax) ? r.xMax : r.xMin;
+                __result = new Vector2(x, near.y);
+            }
+            catch (Exception ex) { Note("UI Toolkit end caret placement failed: " + ex.Message); }
         }
 
         /// <summary>TextHandle.GetCursorIndexFromPosition: the display gap under the pointer, made the caret standing there.</summary>
@@ -214,21 +337,37 @@ namespace UnityGameTranslator.Core.TextShaping
         /// ATG (ICU) does not always take the one our layout takes — stepped by our layout, the drawn
         /// caret went back now and then (bench, 6000.6.3). Ctrl: on to the start of a word.
         /// </summary>
-        private static int UitkAtgStep(object handle, string logical, int caret, bool toRight, bool word)
+        private static int UitkAtgStep(object handle, UitkState atg, int caret, bool toRight, bool word)
         {
+            string logical = atg.Logical;
             int n = logical.Length;
             var x = new float[n + 1];
-            for (int i = 0; i <= n; i++) x[i] = Uitk.PositionOf(handle, i).x;
+            var y = new float[n + 1];
+            for (int i = 0; i <= n; i++) { var p = Uitk.PositionOf(handle, i); x[i] = p.x; y[i] = p.y; }
+            // The lines are the ATG's own (it wraps the field): a caret's line is where it is drawn.
+            bool SameLine(int a, int b) => Math.Abs(y[a] - y[b]) < 1f;
             int current = caret;
             for (int guard = 0; guard <= n; guard++)
             {
                 int next = -1;
                 for (int i = 0; i <= n; i++)
                 {
+                    if (!SameLine(i, current)) continue;
                     bool ahead = toRight ? x[i] > x[current] + 0.01f : x[i] < x[current] - 0.01f;
                     if (ahead && (next < 0 || (toRight ? x[i] < x[next] : x[i] > x[next]))) next = i;
                 }
-                if (next < 0) return current;   // at the edge of the screen, the caret stays
+                if (next < 0)
+                {
+                    // Off the edge of the line: onward in reading order, as RtlFieldLayout.VisualStep
+                    // does — toward the side a line ENDS on goes to the start of the next line, the
+                    // other way to the end of the one before. A paragraph keeps its direction over
+                    // the lines the ATG wraps it into.
+                    bool forward = toRight != atg.Layout.LineIsRtl(atg.Layout.LineOfCaret(current));
+                    int step = forward ? 1 : -1;
+                    for (int i = current + step; i >= 0 && i <= n; i += step)
+                        if (!SameLine(i, current)) { next = i; break; }
+                    if (next < 0) return current;   // first or last line: the caret stays
+                }
                 current = next;
                 if (!word) return current;
                 bool atWordStart = current < n && !UnicodeInfo.IsWhiteSpace(logical[current])
@@ -256,7 +395,7 @@ namespace UnityGameTranslator.Core.TextShaping
                         float xa = Uitk.PositionOf(handle, anchor0).x, xf = Uitk.PositionOf(handle, focus0).x;
                         target = (toRight ? xa > xf : xa < xf) ? anchor0 : focus0;
                     }
-                    else target = UitkAtgStep(handle, atg.Logical, focus0, toRight, word);
+                    else target = UitkAtgStep(handle, atg, focus0, toRight, word);
                     Uitk.SetCursorIndex(utilities, target);
                     if (!shift) Uitk.SetSelectIndex(utilities, target);
                     return true;
@@ -289,24 +428,68 @@ namespace UnityGameTranslator.Core.TextShaping
 
         // ══ Words ════════════════════════════════════════════════════════════════════════════
 
-        /// <summary>
-        /// TextSelectingUtilities.FindEndOfClassification(position, direction) — the edges of the word
-        /// a double-click selects, and of each word a drag by words takes. It reads the characters of
-        /// the drawn text at typed positions: on a presented field, its presented form — measured on
-        /// the typed text instead (<see cref="RtlFieldLayout.WordEdge"/>).
-        /// </summary>
-        public static bool Uitk_FindEndOfClassification_Prefix(object __instance, int __0, object __1, ref int __result)
+        // The edges of a word are found by FindEndOfClassification, which reads the characters of the
+        // DRAWN text at typed positions — on a presented field, its presented form: a double-click
+        // selected other letters than the word clicked. Its two callers are replaced, not it: on IL2CPP
+        // it is compiled into them and a hook on it never ran (bench, 2021.3 / 2022.3 IL2CPP).
+
+        /// <summary>TextSelectingUtilities.SelectCurrentWord() — the double-click: the word around the caret, on the typed text.</summary>
+        public static bool Uitk_SelectCurrentWord_Prefix(object __instance)
         {
             try
             {
                 var s = UitkStateOfHandle(Uitk.HandleOf(__instance));
                 if (s == null) return true;
-                __result = RtlFieldLayout.WordEdge(s.Logical, Math.Max(0, Math.Min(__0, s.Logical.Length)), __1 != null && __1.ToString() == "Forward");
+                int caret = Math.Max(0, Math.Min(Uitk.CursorIndex(__instance), s.Logical.Length));
+                int back = RtlFieldLayout.WordEdge(s.Logical, caret, false), forward = RtlFieldLayout.WordEdge(s.Logical, caret, true);
+                bool before = Uitk.CursorIndex(__instance) < Uitk.SelectIndex(__instance);
+                Uitk.SetCursorIndex(__instance, before ? back : forward);
+                Uitk.SetSelectIndex(__instance, before ? forward : back);
+                Uitk.WordSelected(__instance);
                 return false;
             }
             catch (Exception ex)
             {
                 Note("UI Toolkit word selection failed, the field's own used: " + (ex.InnerException ?? ex).Message);
+                return true;
+            }
+        }
+
+        /// <summary>
+        /// TextSelectingUtilities.SelectToPosition(point) — a drag. Only a drag that snaps to words
+        /// (after a double-click) is taken here; the others are the field's, through the click mapping.
+        /// </summary>
+        public static bool Uitk_SelectToPosition_Prefix(object __instance, Vector2 __0)
+        {
+            try
+            {
+                if (!Uitk.DragSnapsToWords(__instance)) return true;
+                var handle = Uitk.HandleOf(__instance);
+                var s = UitkStateOfHandle(handle);
+                if (s == null) return true;
+                string typed = s.Logical;
+                int under = Uitk.IndexAt(handle, __0);          // the click mapping makes it a typed caret
+                Uitk.DoubleClickRange(__instance, out int start, out int end);
+                if (under <= start)
+                {
+                    Uitk.SetCursorIndex(__instance, RtlFieldLayout.WordEdge(typed, under, false));
+                    Uitk.SetSelectIndex(__instance, RtlFieldLayout.WordEdge(typed, Math.Max(0, end - 1), true));
+                }
+                else if (under >= end)
+                {
+                    Uitk.SetCursorIndex(__instance, RtlFieldLayout.WordEdge(typed, Math.Max(0, under - 1), true));
+                    Uitk.SetSelectIndex(__instance, RtlFieldLayout.WordEdge(typed, Math.Min(typed.Length, start + 1), false));
+                }
+                else
+                {
+                    Uitk.SetCursorIndex(__instance, start);
+                    Uitk.SetSelectIndex(__instance, end);
+                }
+                return false;
+            }
+            catch (Exception ex)
+            {
+                Note("UI Toolkit drag by words failed, the field's own used: " + (ex.InnerException ?? ex).Message);
                 return true;
             }
         }
@@ -356,12 +539,46 @@ namespace UnityGameTranslator.Core.TextShaping
         {
             private const BindingFlags Inst = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
             private static bool _resolved, _ok;
-            internal static MethodInfo SetValueWithoutNotify, PositionByLine, PositionByCharacter, IndexFromPosition, DrawHighlighting, WordEdges;
+            internal static MethodInfo SetValueWithoutNotify, PositionByLine, PositionByCharacter, IndexFromPosition, DrawHighlighting, SelectCurrentWord, SelectToPosition;
+            private static MethodInfo _clearCursorPos;
+            private static MemberInfo _justSelected, _dragWords, _snap, _dblStart, _dblEnd;
+
+            internal static MethodInfo UpdateVisibleText;
+            private static MethodInfo _incrementVersion;
+            private static object _layoutAndRepaint;
+
+            /// <summary>The element laid out and drawn again — what it does itself when its text changes.</summary>
+            internal static void Relayout(object element)
+            {
+                if (_incrementVersion == null) return;
+                _incrementVersion.Invoke(element, new[] { _layoutAndRepaint });
+            }
+
+            /// <summary>What SelectCurrentWord does once the word is chosen.</summary>
+            internal static void WordSelected(object utilities)
+            {
+                _clearCursorPos.Invoke(utilities, null);
+                Members.Set(_justSelected, utilities, true);
+            }
+
+            /// <summary>A drag after a double-click, snapping to words (not paragraphs).</summary>
+            internal static bool DragSnapsToWords(object utilities) =>
+                Members.Get(_dragWords, utilities) is bool words && words && Members.Get(_snap, utilities)?.ToString() == "WORDS";
+
+            internal static void DoubleClickRange(object utilities, out int start, out int end)
+            {
+                start = Convert.ToInt32(Members.Get(_dblStart, utilities));
+                end = Convert.ToInt32(Members.Get(_dblEnd, utilities));
+            }
+
+            /// <summary>The typed caret under a point — the field's own question, answered through the click mapping.</summary>
+            internal static int IndexAt(object handle, Vector2 point) =>
+                Convert.ToInt32(IndexFromPosition.Invoke(handle, new object[] { point, true }));
             internal static readonly List<KeyValuePair<string, MethodInfo>> Moves = new List<KeyValuePair<string, MethodInfo>>();
             private static MemberInfo _isInputField, _isPassword, _renderedText, _handleElement, _utilitiesHandle;
             private static MemberInfo _selectingManipulator, _manipulatorUtilities, _uitkTextHandle, _selectionColor;
             private static PropertyInfo _cursorIndex, _selectIndex, _contentRect;
-            private static MethodInfo _isAdvanced, _lineNumber, _lineHeight, _meshGenerator, _rectangleExtension, _classListContains;
+            private static MethodInfo _isAdvanced, _lineNumber, _lineHeight, _meshGenerator, _rectangleExtension, _classListContains, _highlightRectangles;
             private static string _innerFieldClass;
             private static Type _uitkHandleType;
 
@@ -427,6 +644,7 @@ namespace UnityGameTranslator.Core.TextShaping
                     PositionByLine = handle.GetMethod("GetCursorPositionFromStringIndexUsingLineHeight", Inst, null, new[] { typeof(int), typeof(bool), typeof(bool) }, null);
                     PositionByCharacter = handle.GetMethod("GetCursorPositionFromStringIndexUsingCharacterHeight", Inst, null, new[] { typeof(int), typeof(bool) }, null);
                     IndexFromPosition = handle.GetMethod("GetCursorIndexFromPosition", Inst, null, new[] { typeof(Vector2), typeof(bool) }, null);
+                    _highlightRectangles = handle.GetMethod("GetHighlightRectangles", Inst, null, new[] { typeof(int), typeof(int) }, null);
                     _lineNumber = handle.GetMethod("GetLineNumber", Inst, null, new[] { typeof(int) }, null);
                     _lineHeight = handle.GetMethod("GetLineHeight", Inst, null, new[] { typeof(int) }, null);
                     foreach (var move in new[] { "MoveLeft", "MoveRight", "SelectLeft", "SelectRight", "MoveWordLeft", "MoveWordRight" })
@@ -434,11 +652,28 @@ namespace UnityGameTranslator.Core.TextShaping
                         var m = utilities.GetMethod(move, Inst, null, Type.EmptyTypes, null);
                         if (m != null) Moves.Add(new KeyValuePair<string, MethodInfo>("Uitk_" + move + "_Prefix", m));
                     }
-                    // A word's edges (double-click, drag by words): private, (int position, Direction).
-                    foreach (var m in utilities.GetMethods(Inst))
-                        if (m.Name == "FindEndOfClassification" && m.ReturnType == typeof(int) && m.GetParameters().Length == 2
-                            && m.GetParameters()[0].ParameterType == typeof(int) && m.GetParameters()[1].ParameterType.IsEnum)
-                            WordEdges = m;
+                    // Where a field's box is known again (geometry changed, before each drawing), and
+                    // how it is asked to lay out anew.
+                    UpdateVisibleText = element.GetMethod("UpdateVisibleText", Inst, null, Type.EmptyTypes, null);
+                    var visualElement = AssemblyTypes.Find("UnityEngine.UIElements.VisualElement");
+                    var versionType = AssemblyTypes.Find("UnityEngine.UIElements.VersionChangeType");
+                    if (visualElement != null && versionType != null && versionType.IsEnum)
+                    {
+                        _incrementVersion = visualElement.GetMethod("IncrementVersion", Inst, null, new[] { versionType }, null);
+                        _layoutAndRepaint = Enum.Parse(versionType, "Layout, Repaint");
+                    }
+                    if (_incrementVersion == null) UpdateVisibleText = null;
+                    // The two that find a word's edges (FindEndOfClassification's callers): double-click, drag by words.
+                    SelectCurrentWord = utilities.GetMethod("SelectCurrentWord", Inst, null, Type.EmptyTypes, null);
+                    SelectToPosition = utilities.GetMethod("SelectToPosition", Inst, null, new[] { typeof(Vector2) }, null);
+                    _clearCursorPos = utilities.GetMethod("ClearCursorPos", Inst, null, Type.EmptyTypes, null);
+                    _justSelected = Members.FieldOrProperty(utilities, "m_bJustSelected", Inst);
+                    _dragWords = Members.FieldOrProperty(utilities, "m_MouseDragSelectsWholeWords", Inst);
+                    _snap = Members.FieldOrProperty(utilities, "dblClickSnap", Inst);
+                    _dblStart = Members.FieldOrProperty(utilities, "m_DblClickInitPosStart", Inst);
+                    _dblEnd = Members.FieldOrProperty(utilities, "m_DblClickInitPosEnd", Inst);
+                    if (_clearCursorPos == null || _justSelected == null) SelectCurrentWord = null;
+                    if (_dragWords == null || _snap == null || _dblStart == null || _dblEnd == null) SelectToPosition = null;
                     var mgc = AssemblyTypes.Find("UnityEngine.UIElements.MeshGenerationContext");
                     // A rectangle: through the context's mesh generator in Unity 6, through the
                     // MeshGenerationContextUtils.Rectangle extension in 2022.3.
@@ -533,6 +768,19 @@ namespace UnityGameTranslator.Core.TextShaping
 
             internal static Vector2 PositionOf(object handle, int displayIndex) =>
                 (Vector2)PositionByLine.Invoke(handle, new object[] { displayIndex, false, true });
+
+            internal static bool KnowsCharacterBoxes => _highlightRectangles != null;
+
+            /// <summary>
+            /// The box the Advanced Text Generator draws one typed range in, in points — its first
+            /// rectangle (the range's line), or null. Rect[] on Mono, the interop's struct array on IL2CPP.
+            /// </summary>
+            internal static Rect? BoxOf(object handle, int from, int to)
+            {
+                if (!(_highlightRectangles.Invoke(handle, new object[] { from, to }) is System.Collections.IEnumerable boxes)) return null;
+                foreach (var box in boxes) return (Rect)box;
+                return null;
+            }
 
             internal static float LineHeightAt(object handle, int displayIndex)
             {

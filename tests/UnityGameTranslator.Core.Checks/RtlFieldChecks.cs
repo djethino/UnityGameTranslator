@@ -295,6 +295,17 @@ namespace UnityGameTranslator.Core.Checks
             check(soft.VisualStep(endOfFirst, toRight: false) == 6,
                 "← at the left end of an Arabic line goes to the next line",
                 "off the edge of a line, onward in reading order");
+
+            // Up / Down keep the column ON SCREEN. Each glyph one unit wide here: x = the caret's gap
+            // from the left of its line. "مرحبا" over "عالم": after "مر" is 3 from the left of the
+            // top line; below, 3 from the left is after "ع" — typed position 7.
+            Func<int, float> x = c => hard.BoundaryOf(c) - hard.LineDisplayStart(hard.LineOfCaret(c));
+            int down = hard.VerticalStep(2, down: true, goalX: x(2), xOf: x);
+            check(down == 7 && hard.LineOfCaret(down) == 1, "↓ goes to the line below, in the same column on screen",
+                  $"typed {down}, the column of the caret above");
+            check(hard.VerticalStep(down, down: false, goalX: x(2), xOf: x) == 2, "↑ brings it back to where it was", "the column is kept between presses");
+            check(hard.VerticalStep(2, down: false, goalX: x(2), xOf: x) == -1 && hard.VerticalStep(down, down: true, goalX: x(2), xOf: x) == -1,
+                  "no line above the first or below the last: the field decides", "");
         }
     }
 }

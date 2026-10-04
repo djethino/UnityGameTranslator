@@ -2914,6 +2914,83 @@ namespace UnityGameTranslator.Core
         /// width yet (a hidden pane, a first frame), or not at all (no measure API, wall of text,
         /// measure failure); whyNot says which.
         /// </summary>
+        // ── An inline style property, read and written where it can be ───────────────────────────
+        // 🔴 Declared on the IStyle interface. On IL2CPP 2022.3 the interop's IStyle.whiteSpace had no
+        // getter ("Property Get method was not found", bench 2022.3.62 IL2CPP): DisableWrap failed
+        // there for every right-to-left text — label or field — and the engine wrapped the presented
+        // form again. The style object is the engine's InlineStyleAccess: its own member answers.
+        private static readonly Dictionary<string, PropertyInfo> _styleAccessors = new Dictionary<string, PropertyInfo>();
+        private static Type _inlineStyleType;
+        private static bool _inlineStyleTypeSought;
+
+        private static PropertyInfo StyleAccessor(PropertyInfo declared, ref object style, bool write)
+        {
+            if (declared == null || style == null) return null;
+            var accessor = write ? declared.GetSetMethod(true) : declared.GetGetMethod(true);
+            if (accessor != null) return declared;
+            if (!_inlineStyleTypeSought)
+            {
+                _inlineStyleTypeSought = true;
+                _inlineStyleType = AssemblyTypes.Find("UnityEngine.UIElements.InlineStyleAccess");
+            }
+            if (_inlineStyleType != null) style = TypeHelper.Il2CppCast(style, _inlineStyleType);
+            var type = style.GetType();
+            string key = type.FullName + "|" + declared.Name + "|" + write;
+            if (_styleAccessors.TryGetValue(key, out var found)) return found;
+            foreach (var p in type.GetProperties(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
+            {
+                if (p.GetIndexParameters().Length != 0) continue;
+                if (p.Name != declared.Name && !p.Name.EndsWith("." + declared.Name, StringComparison.Ordinal)
+                    && !p.Name.EndsWith("_" + declared.Name, StringComparison.Ordinal)) continue;
+                if ((write ? p.GetSetMethod(true) : p.GetGetMethod(true)) == null) continue;
+                found = p;
+                break;
+            }
+            _styleAccessors[key] = found;
+            return found;
+        }
+
+        private static object StyleGet(PropertyInfo declared, object style)
+        {
+            var p = StyleAccessor(declared, ref style, write: false)
+                    ?? throw new MissingMemberException(style.GetType().Name, declared.Name + " (getter)");
+            return p.GetValue(style, null);
+        }
+
+        private static void StyleSet(PropertyInfo declared, object style, object value)
+        {
+            var p = StyleAccessor(declared, ref style, write: true)
+                    ?? throw new MissingMemberException(style.GetType().Name, declared.Name + " (setter)");
+            p.SetValue(style, value, null);
+        }
+
+        /// <summary>
+        /// Whether this element wraps its lines, our own NoWrap set aside (DisableWrap): the
+        /// stylesheet's or the game's answer. Null when it cannot be read.
+        /// </summary>
+        internal static bool? WrapsOwnLines(object element)
+        {
+            EnsureRtlPlumbing();
+            if (_rtlWrapOriginal.TryGetValue(element, out _) || _rtlWrapRestoring.TryGetValue(element, out _)) return true;
+            try
+            {
+                var resolved = _resolvedStyleProp?.GetValue(element, null);
+                object ws = resolved == null || _resolvedWhiteSpaceProp == null ? null : _resolvedWhiteSpaceProp.GetValue(resolved, null);
+                if (ws == null) return null;
+                string name = Enum.GetName(ws.GetType(), ws);
+                return name != "NoWrap" && name != "Pre";
+            }
+            catch (Exception ex) { Faults.Say("UIToolkit.WrapsOwnLines", ex); return null; }
+        }
+
+        /// <summary>The width this element lays its text out in (contentRect), NaN before its first layout.</summary>
+        internal static float ContentWidth(object element)
+        {
+            EnsureRtlPlumbing();
+            try { return _contentRectProp?.GetValue(element, null) is Rect r ? r.width : float.NaN; }
+            catch (Exception ex) { Faults.Say("UIToolkit.ContentWidth", ex); return float.NaN; }
+        }
+
         internal static List<string> TryBreakLines(object element, string assigned, out string whyNot)
         {
             whyNot = null;
@@ -3022,7 +3099,7 @@ namespace UnityGameTranslator.Core
                     {
                         _rtlAlignOriginal.Remove(element);
                         var styleBack = _styleProp.GetValue(element, null);
-                        if (styleBack != null && align[0] != null) _styleTextAlignProp.SetValue(styleBack, align[0], null);
+                        if (styleBack != null && align[0] != null) StyleSet(_styleTextAlignProp, styleBack, align[0]);
                     }
                 }
                 catch (Exception ex) { Faults.Say("UIToolkit.MirrorAlign restore", ex); }
@@ -3038,7 +3115,7 @@ namespace UnityGameTranslator.Core
                     if (style == null || resolved == null) return;
                     stored = new object[]
                     {
-                        _styleTextAlignProp.GetValue(style, null),
+                        StyleGet(_styleTextAlignProp, style),
                         _resolvedTextAlignProp.GetValue(resolved, null),
                     };
                     _rtlAlignOriginal.Add(element, stored);
@@ -3056,8 +3133,8 @@ namespace UnityGameTranslator.Core
                 // element's layout, and this runs on every set_text: re-asserting the same value
                 // made UI Toolkit re-lay-out for ever, which is heard as a fan rather than seen
                 // as a bug (user report, right after the single-pass path shipped).
-                if (Equals(_styleTextAlignProp.GetValue(styleNow, null), styleValue)) return;
-                _styleTextAlignProp.SetValue(styleNow, styleValue, null);
+                if (Equals(StyleGet(_styleTextAlignProp, styleNow), styleValue)) return;
+                StyleSet(_styleTextAlignProp, styleNow, styleValue);
             }
             catch (Exception ex) { Faults.Say("UIToolkit.MirrorAlign", ex); }
         }
@@ -3101,12 +3178,12 @@ namespace UnityGameTranslator.Core
                         ? null : _resolvedWhiteSpaceProp.GetValue(resolved, null);
                     string wsName = ws == null ? null : Enum.GetName(ws.GetType(), ws);
                     if (wsName == "NoWrap" || wsName == "Pre") return;
-                    _rtlWrapOriginal.Add(element, new object[] { _styleWhiteSpaceProp.GetValue(style, null) });
+                    _rtlWrapOriginal.Add(element, new object[] { StyleGet(_styleWhiteSpaceProp, style) });
                 }
                 // Same rule as MirrorAlign: writing an unchanged inline style still invalidates
                 // the layout, every single set_text.
-                if (Equals(_styleWhiteSpaceProp.GetValue(style, null), noWrap)) return;
-                _styleWhiteSpaceProp.SetValue(style, noWrap, null);
+                if (Equals(StyleGet(_styleWhiteSpaceProp, style), noWrap)) return;
+                StyleSet(_styleWhiteSpaceProp, style, noWrap);
             }
             catch (Exception ex) { Faults.Say("UIToolkit.DisableWrap", ex); }
         }
@@ -3125,7 +3202,7 @@ namespace UnityGameTranslator.Core
             try
             {
                 var style = _styleProp?.GetValue(element, null);
-                if (style != null && wrap[0] != null) _styleWhiteSpaceProp?.SetValue(style, wrap[0], null);
+                if (style != null && wrap[0] != null && _styleWhiteSpaceProp != null) StyleSet(_styleWhiteSpaceProp, style, wrap[0]);
             }
             catch (Exception ex) { Faults.Say("UIToolkit.RestoreWrap", ex); }
             _rtlWrapRestoring.Remove(element);
@@ -3177,12 +3254,12 @@ namespace UnityGameTranslator.Core
                 if (_rtlAlignOriginal.TryGetValue(element, out var align))
                 {
                     _rtlAlignOriginal.Remove(element);
-                    if (align[0] != null) _styleTextAlignProp?.SetValue(style, align[0], null);
+                    if (align[0] != null && _styleTextAlignProp != null) StyleSet(_styleTextAlignProp, style, align[0]);
                 }
                 if (_rtlWrapOriginal.TryGetValue(element, out var wrap))
                 {
                     _rtlWrapOriginal.Remove(element);
-                    if (wrap[0] != null) _styleWhiteSpaceProp?.SetValue(style, wrap[0], null);
+                    if (wrap[0] != null && _styleWhiteSpaceProp != null) StyleSet(_styleWhiteSpaceProp, style, wrap[0]);
                 }
                 _rtlWrapRestoring.Remove(element);
             }

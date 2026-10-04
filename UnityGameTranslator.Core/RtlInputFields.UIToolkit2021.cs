@@ -58,7 +58,7 @@ namespace UnityGameTranslator.Core.TextShaping
             if (Uitk21.Drag != null) { patcher(Uitk21.Drag, Hook(nameof(Uitk21_SelectToPosition_Prefix)), null); count++; }
             if (Uitk21.Scrolling != null) { patcher(Uitk21.Scrolling, Hook(nameof(Uitk21_UpdateScrollOffset_Prefix)), Hook(nameof(Uitk21_UpdateScrollOffset_Postfix))); count++; }
             if (Uitk21.PreDrawCursor != null) { patcher(Uitk21.PreDrawCursor, null, Hook(nameof(Uitk21_PreDrawCursor_Postfix))); count++; }
-            if (Uitk21.WordEdges != null) { patcher(Uitk21.WordEdges, Hook(nameof(Uitk21_FindEndOfClassification_Prefix)), null); count++; }
+            if (Uitk21.SelectCurrentWord != null) { patcher(Uitk21.SelectCurrentWord, Hook(nameof(Uitk21_SelectCurrentWord_Prefix)), null); count++; }
             foreach (var move in Uitk21.Moves)
             {
                 patcher(move.Value, Hook(move.Key), null);
@@ -304,16 +304,34 @@ namespace UnityGameTranslator.Core.TextShaping
         }
 
         /// <summary>
-        /// TextEditor.SelectToPosition(point) — a drag. A drag that snaps to words (after a
-        /// double-click) stays the editor's: its words are the typed text's.
+        /// TextEditor.SelectToPosition(point) — a drag, by the point measured on the presented form;
+        /// after a double-click it snaps to the typed text's words, as the editor does
+        /// (<see cref="RtlFieldLayout.WordEdge"/>). A drag snapping to paragraphs stays the editor's.
         /// </summary>
         public static bool Uitk21_SelectToPosition_Prefix(TextEditor __instance, Vector2 __0)
         {
             try
             {
                 var s = Uitk21StateOfEditor(__instance);
-                if (s == null || Uitk21.DragSelectsWords(__instance)) return true;
-                __instance.cursorIndex = Uitk21CaretAt(__instance, s, __0);
+                if (s == null) return true;
+                int under = Uitk21CaretAt(__instance, s, __0);
+                if (!Uitk21.DragSelectsWords(__instance))
+                {
+                    __instance.cursorIndex = under;
+                    return false;
+                }
+                if (!Uitk21.SnapsToWords(__instance)) return true;
+                int start = Math.Max(0, Math.Min(Uitk21.DoubleClickAt(__instance), s.Logical.Length));
+                if (under < start)
+                {
+                    __instance.cursorIndex = RtlFieldLayout.WordEdge(s.Logical, under, false);
+                    __instance.selectIndex = RtlFieldLayout.WordEdge(s.Logical, start, true);
+                }
+                else
+                {
+                    __instance.cursorIndex = RtlFieldLayout.WordEdge(s.Logical, under, true);
+                    __instance.selectIndex = RtlFieldLayout.WordEdge(s.Logical, start, false);
+                }
                 return false;
             }
             catch (Exception ex)
@@ -376,19 +394,24 @@ namespace UnityGameTranslator.Core.TextShaping
 
         // ══ Words ════════════════════════════════════════════════════════════════════════════
 
-        /// <summary>
-        /// TextEditor.FindEndOfClassification(position, direction) — the word a double-click selects
-        /// and the words a drag takes. IMGUI reads the typed text, rightly, but classes a vowel sign
-        /// or a joiner apart (char.IsLetterOrDigit) and stops the word at it: the rule every other
-        /// field of the mod keeps (<see cref="RtlFieldLayout.WordEdge"/>).
-        /// </summary>
-        public static bool Uitk21_FindEndOfClassification_Prefix(TextEditor __instance, int __0, object __1, ref int __result)
+        // IMGUI finds a word's edges on the typed text, rightly, but classes a vowel sign or a joiner
+        // apart (char.IsLetterOrDigit) and stops the word at it — « كَتَبَ » selected as « ت ». The
+        // rule every other field of the mod keeps (RtlFieldLayout.WordEdge), through the two callers of
+        // FindEndOfClassification: on IL2CPP it is compiled into them, a hook on it never ran.
+
+        /// <summary>TextEditor.SelectCurrentWord() — the double-click.</summary>
+        public static bool Uitk21_SelectCurrentWord_Prefix(TextEditor __instance)
         {
             try
             {
                 var s = Uitk21StateOfEditor(__instance);
                 if (s == null) return true;
-                __result = RtlFieldLayout.WordEdge(s.Logical, Math.Max(0, Math.Min(__0, s.Logical.Length)), __1 != null && __1.ToString() == "Forward");
+                int caret = Math.Max(0, Math.Min(__instance.cursorIndex, s.Logical.Length));
+                int back = RtlFieldLayout.WordEdge(s.Logical, caret, false), forward = RtlFieldLayout.WordEdge(s.Logical, caret, true);
+                bool before = __instance.cursorIndex < __instance.selectIndex;
+                __instance.cursorIndex = before ? back : forward;
+                __instance.selectIndex = before ? forward : back;
+                Uitk21.WordSelected(__instance);
                 return false;
             }
             catch (Exception ex)
@@ -447,7 +470,9 @@ namespace UnityGameTranslator.Core.TextShaping
             // The class every single-line field gives its input element (TextInputBaseField.singleLineInputUssClassName).
             private const string SingleLineInput = "unity-base-text-field__input--single-line";
             private static bool _resolved, _ok;
-            internal static MethodInfo Text, CursorPosition, Rectangle, Click, Drag, Scrolling, PreDrawCursor, WordEdges;
+            internal static MethodInfo Text, CursorPosition, Rectangle, Click, Drag, Scrolling, PreDrawCursor, SelectCurrentWord;
+            private static MethodInfo _clearCursorPos;
+            private static MemberInfo _justSelected, _snap, _dblClickAt;
             private static PropertyInfo _handlerEditor, _localPosition;
             private static MemberInfo _revealCursor, _dragWords, _graphicalCursor;
             internal static readonly List<KeyValuePair<string, MethodInfo>> Moves = new List<KeyValuePair<string, MethodInfo>>();
@@ -496,10 +521,12 @@ namespace UnityGameTranslator.Core.TextShaping
                     Scrolling = typeof(TextEditor).GetMethod("UpdateScrollOffset", Inst, null, Type.EmptyTypes, null);
                     PreDrawCursor = AssemblyTypes.Find("UnityEngine.UIElements.KeyboardTextEditorEventHandler")
                         ?.GetMethod("PreDrawCursor", Inst, null, new[] { typeof(string) }, null);
-                    foreach (var m in typeof(TextEditor).GetMethods(Inst))
-                        if (m.Name == "FindEndOfClassification" && m.ReturnType == typeof(int) && m.GetParameters().Length == 2
-                            && m.GetParameters()[0].ParameterType == typeof(int) && m.GetParameters()[1].ParameterType.IsEnum)
-                            WordEdges = m;
+                    SelectCurrentWord = typeof(TextEditor).GetMethod("SelectCurrentWord", Inst, null, Type.EmptyTypes, null);
+                    _clearCursorPos = typeof(TextEditor).GetMethod("ClearCursorPos", Inst, null, Type.EmptyTypes, null);
+                    _justSelected = Members.FieldOrProperty(typeof(TextEditor), "m_bJustSelected", Inst);
+                    _snap = Members.FieldOrProperty(typeof(TextEditor), "m_DblClickSnap", Inst);
+                    _dblClickAt = Members.FieldOrProperty(typeof(TextEditor), "m_DblClickInitPos", Inst);
+                    if (_clearCursorPos == null || _justSelected == null) SelectCurrentWord = null;
                     _handlerEditor = Members.Property(AssemblyTypes.Find("UnityEngine.UIElements.TextEditorEventHandler"), "editorEngine", Inst);
                     _localPosition = Members.Property(typeof(TextEditor), "localPosition", Inst);
                     _revealCursor = Members.FieldOrProperty(typeof(TextEditor), "m_RevealCursor", Inst);
@@ -507,7 +534,7 @@ namespace UnityGameTranslator.Core.TextShaping
                     _graphicalCursor = Members.FieldOrProperty(typeof(TextEditor), "graphicalCursorPos", BindingFlags.Instance | BindingFlags.Public);
                     if (_localPosition == null) { Click = null; Drag = null; Scrolling = null; PreDrawCursor = null; }
                     if (_revealCursor == null || _graphicalCursor == null) Scrolling = null;
-                    if (_dragWords == null) Drag = null;
+                    if (_dragWords == null || _snap == null || _dblClickAt == null) Drag = null;
                     if (_handlerEditor == null || _graphicalCursor == null) PreDrawCursor = null;
                     foreach (var move in new[] { "MoveLeft", "MoveRight", "SelectLeft", "SelectRight", "MoveWordLeft", "MoveWordRight" })
                     {
@@ -603,6 +630,15 @@ namespace UnityGameTranslator.Core.TextShaping
             internal static Rect LocalPosition(object editor) => (Rect)_localPosition.GetValue(editor, null);
             internal static bool RevealCursor(object editor) => Members.Get(_revealCursor, editor) is bool reveal && reveal;
             internal static bool DragSelectsWords(object editor) => Members.Get(_dragWords, editor) is bool words && words;
+            internal static bool SnapsToWords(object editor) => Members.Get(_snap, editor)?.ToString() == "WORDS";
+            internal static int DoubleClickAt(object editor) => Convert.ToInt32(Members.Get(_dblClickAt, editor));
+
+            /// <summary>What SelectCurrentWord does once the word is chosen.</summary>
+            internal static void WordSelected(object editor)
+            {
+                _clearCursorPos.Invoke(editor, null);
+                Members.Set(_justSelected, editor, true);
+            }
             internal static object EditorOfHandler(object handler) => _handlerEditor.GetValue(handler, null);
 
             /// <summary>

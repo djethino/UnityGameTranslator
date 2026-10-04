@@ -738,6 +738,27 @@ namespace UnityGameTranslator.Core.TextShaping
         private int LineStartCaret(int line) => _lineLogStart[line];
 
         /// <summary>The caret positions that sit on a line, its end included only for a hard end.</summary>
+        /// <summary>
+        /// Up or Down: the caret of the line above (or below) standing nearest, ON SCREEN, to
+        /// <paramref name="goalX"/> — the column the caret was in when the vertical moves began,
+        /// kept from one press to the next as every editor keeps it. <paramref name="xOf"/> gives
+        /// where the engine draws a typed caret (its own measure: glyph widths are the engine's).
+        /// -1 when there is no line there: the field does what it does on its first or last line.
+        /// </summary>
+        internal int VerticalStep(int caret, bool down, float goalX, Func<int, float> xOf)
+        {
+            int target = LineOfCaret(caret) + (down ? 1 : -1);
+            if (target < 0 || target >= LineCount) return -1;
+            int best = -1;
+            float bestDistance = float.MaxValue;
+            foreach (int c in CaretsOf(target))
+            {
+                float distance = Math.Abs(xOf(c) - goalX);
+                if (distance < bestDistance) { best = c; bestDistance = distance; }
+            }
+            return best < 0 ? _lineLogStart[target] : best;
+        }
+
         private IEnumerable<int> CaretsOf(int line)
         {
             int from = _lineLogStart[line];

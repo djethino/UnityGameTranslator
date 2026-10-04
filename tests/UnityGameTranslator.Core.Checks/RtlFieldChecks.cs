@@ -291,6 +291,24 @@ namespace UnityGameTranslator.Core.Checks
                 "the space a soft wrap broke at is drawn on neither line",
                 "kept, it went to the visual start of the right-to-left line and pushed it one space past its box");
 
+            // A tag wider than the line: the engine cuts INSIDE it, as any word too long for its box.
+            // Kept whole, the tag stayed on one line and pushed the rest out of the field.
+            const string tagged = "أضف <color=#ADD8E6>0.2%</color> من";
+            var tagPrep = RtlFieldLayout.Prepare(tagged);
+            int tagAt = tagPrep.MeasureText.IndexOf("<color", StringComparison.Ordinal);
+            int insideTag = tagAt + 8;                       // "<color=#" | "ADD8E6>"
+            var splits = tagPrep.TokenSplitsAt(new[] { insideTag });
+            int typedCut = tagged.IndexOf("<color", StringComparison.Ordinal) + 8;
+            check(splits.Count == 1 && splits[0] == typedCut, "a wrap inside a tag is found where it was typed",
+                  $"typed {(splits.Count > 0 ? splits[0] : -1)}, wanted {typedCut}");
+            var whole = tagPrep.Lay(new[] { insideTag });
+            var cut = tagPrep.SplitTokensAt(splits).Lay(new[] { insideTag });
+            check(cut.LineCount == 2 && cut.LineOfCaret(typedCut) == 1 && cut.LineOfCaret(typedCut - 1) == 0,
+                  "a tag cut by the engine is cut there too",
+                  $"the cut falls between \"<color=#\" and \"ADD8E6>\" (kept whole: lines {whole.LineOfCaret(typedCut - 1)} and {whole.LineOfCaret(typedCut)} — one line, wider than the box)");
+            check(cut.Display.Replace("\n", "").Contains("ADD8E6>") && cut.Display.Contains("<color=#"),
+                  "both pieces of the cut tag are drawn as typed", "\"<color=#\" and \"ADD8E6>\" on the screen");
+
             int endOfFirst = 5;
             check(soft.VisualStep(endOfFirst, toRight: false) == 6,
                 "← at the left end of an Arabic line goes to the next line",

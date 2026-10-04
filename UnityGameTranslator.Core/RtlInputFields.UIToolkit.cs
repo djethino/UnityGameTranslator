@@ -177,6 +177,7 @@ namespace UnityGameTranslator.Core.TextShaping
             if (lines == null && whyNot != null && DiagnosticOnce.First("RtlInputFields.uitk.wrap", whyNot))
                 TranslatorCore.LogDebug("[RtlInputFields] UI Toolkit field laid out on its hard breaks only: " + whyNot);
 
+            prep = prep.SplitTokensAt(prep.TokenSplitsAt(wraps));   // a tag wider than the line, cut by the element: cut there too
             var s = new UitkState { Logical = typed, Suffix = suffix };
             s.Layout = prep.Lay(wraps);
             s.Shown = s.Layout.Display;

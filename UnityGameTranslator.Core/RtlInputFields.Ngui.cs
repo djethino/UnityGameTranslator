@@ -66,7 +66,9 @@ namespace UnityGameTranslator.Core.TextShaping
             // The label written again with the same text (every caret move goes through UpdateLabel):
             // the column Up/Down aim at stays.
             if (_ngui.TryGetValue(id, out var before) && before.Logical == value) { s.GoalLanded = before.GoalLanded; s.GoalX = before.GoalX; }
-            s.Layout = prep.Lay(NguiWraps(label, prep.MeasureText));
+            var wraps = NguiWraps(label, prep.MeasureText);
+            prep = prep.SplitTokensAt(prep.TokenSplitsAt(wraps));   // a tag wider than the line, cut by the label: cut there too
+            s.Layout = prep.Lay(wraps);
             s.Shown = s.Layout.Display;
             _ngui[id] = s;
 

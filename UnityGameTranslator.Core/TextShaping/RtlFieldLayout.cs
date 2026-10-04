@@ -87,6 +87,60 @@ namespace UnityGameTranslator.Core.TextShaping
                 : measureIndex >= CpOfMeasure.Length ? Cps.Length
                 : CpOfMeasure[measureIndex];
 
+            internal Func<string, List<OpenTypeText.ShapedUnit>> Units;   // as given to Prepare
+            internal List<int> TokenBreaks;                               // as given to Prepare
+
+            /// <summary>
+            /// The typed positions where an engine's soft wrap (MeasureText indices) falls INSIDE a
+            /// written-out token — a tag or a placeholder wider than the line, which the engine cuts as
+            /// it cuts any word too long for its box (uGUI, bench 2026-10-04). Kept whole, the token
+            /// stayed on one line and pushed the rest of it out of the field.
+            /// </summary>
+            internal List<int> TokenSplitsAt(IList<int> wrapsInMeasure)
+            {
+                var splits = new List<int>();
+                if (wrapsInMeasure == null) return splits;
+                foreach (int m in wrapsInMeasure)
+                {
+                    int cp = CpAtMeasure(m);
+                    if (cp >= Cps.Length || !IsWrittenToken(cp) || m <= MeasureStartOfCp[cp]) continue;
+                    int start = Array.IndexOf(CpOfLogical, cp);
+                    if (start >= 0) splits.Add(start + (m - MeasureStartOfCp[cp]));
+                }
+                return splits;
+            }
+
+            /// <summary>The same, the wraps given as typed positions (TMP's own lines).</summary>
+            internal List<int> TokenSplitsAtLogical(IList<int> wrapsInLogical)
+            {
+                var splits = new List<int>();
+                if (wrapsInLogical == null) return splits;
+                foreach (int i in wrapsInLogical)
+                    if (i > 0 && i < Logical.Length && CpOfLogical[i] == CpOfLogical[i - 1] && IsWrittenToken(CpOfLogical[i]))
+                        splits.Add(i);
+                return splits;
+            }
+
+            /// <summary>
+            /// The text prepared again with its tokens also ended at <paramref name="splits"/>: each
+            /// piece stays protected (one block for the bidi), and the measure text is unchanged, so
+            /// the engine's wraps still stand. Itself when there is nothing to split.
+            /// </summary>
+            internal Prepared SplitTokensAt(List<int> splits)
+            {
+                if (splits == null || splits.Count == 0) return this;
+                var all = TokenBreaks == null ? new List<int>() : new List<int>(TokenBreaks);
+                foreach (int s in splits) if (!all.Contains(s)) all.Add(s);
+                return Prepare(Logical, Units, all) ?? this;
+            }
+
+            // A token written out as typed (a tag, a placeholder) — not a shaped unit's glyphs.
+            private bool IsWrittenToken(int cp)
+            {
+                int t = Cps[cp] - SentinelBase;
+                return t >= 0 && t < Tokens.Count && !UnitTokens.Contains(t);
+            }
+
             /// <summary>
             /// Lay the text out, cutting soft-wrapped lines at the given MeasureText indices (the
             /// engine's own break points; empty or null for a field on one line).
@@ -203,7 +257,10 @@ namespace UnityGameTranslator.Core.TextShaping
         /// be trusted. <paramref name="units"/> cuts the text's shaped runs into units (the font's
         /// own shaping, OpenTypeText.ShapeUnits); null when the field's font cannot shape.
         /// </summary>
-        internal static Prepared Prepare(string logical, Func<string, List<OpenTypeText.ShapedUnit>> units = null)
+        /// <param name="tokenBreaks">typed positions where a written-out token must end — an engine's
+        /// line break inside it (<see cref="Prepared.SplitTokensAt"/>)</param>
+        internal static Prepared Prepare(string logical, Func<string, List<OpenTypeText.ShapedUnit>> units = null,
+                                         ICollection<int> tokenBreaks = null)
         {
             if (string.IsNullOrEmpty(logical)) return null;
             var shapedUnits = units != null && OpenTypeText.NeedsShaping(logical) ? units(logical) : null;
@@ -235,6 +292,9 @@ namespace UnityGameTranslator.Core.TextShaping
                     continue;
                 }
                 int end = TokenEnd(logical, i);
+                if (end > i && tokenBreaks != null)
+                    foreach (int cut in tokenBreaks)
+                        if (cut > i && cut < end) end = cut;   // the nearest wins: each cut lowers it
                 if (end > i && tokens.Count < SentinelMax)
                 {
                     for (int k = i; k < end; k++) { sentinelizedOfLogical[k] = sb.Length; offsetInToken[k] = k - i; }
@@ -268,6 +328,8 @@ namespace UnityGameTranslator.Core.TextShaping
             var prep = new Prepared
             {
                 Logical = logical,
+                Units = units,
+                TokenBreaks = tokenBreaks == null ? new List<int>() : new List<int>(tokenBreaks),
                 Cps = cps.ToArray(),
                 Tokens = tokens,
                 UnitTokens = unitTokens,

@@ -160,7 +160,12 @@ namespace UnityGameTranslator.Core.TextShaping
                 // (the right end of its visual line) landed alone on the next row — read out of
                 // order (bench: a three-line Hebrew field drawn in four pieces). Same hold as a
                 // reflowed text (RtlPresenter.DisableRewrap), put back when the field is released.
-                else RtlPresenter.DisableRewrap(label, labelId);
+                else
+                {
+                    RtlPresenter.DisableRewrap(label, labelId);
+                    // A tag wider than the line, cut by the engine: cut there too.
+                    prep = prep.SplitTokensAt(prep.TokenSplitsAt(wraps));
+                }
             }
 
             var s = StateFor(id, field, Engine.UGui);
@@ -558,8 +563,16 @@ namespace UnityGameTranslator.Core.TextShaping
                 var c = EngineCollections.Item(chars, k);
                 int at = Convert.ToInt32(TmpLayout.Get(TmpLayout.CiIndex, c));
                 if (at < 0 || at >= s.LabelIndex.Length) continue;
-                TmpLayout.Set(TmpLayout.CiIndex, c, s.LabelIndex[at]);
-                TmpLayout.Set(TmpLayout.CiStringLength, c, s.LabelLength[at]);
+                // The label characters this one stands for: one, or a whole tag TMP draws as one
+                // character (a <sprite=…>) — the typed span from the first's start to the last's end.
+                // Told one character long, Backspace took the tag's "<" alone and left "sprite=2>",
+                // where TMP's own field removes the sprite whole (bench 2026-10-04, Latin witness).
+                int span = Math.Max(1, Convert.ToInt32(TmpLayout.Get(TmpLayout.CiStringLength, c)));
+                int last = Math.Min(s.LabelIndex.Length - 1, at + span - 1);
+                int typedStart = s.LabelIndex[at];
+                int typedEnd = Math.Max(typedStart + s.LabelLength[at], s.LabelIndex[last] + s.LabelLength[last]);
+                TmpLayout.Set(TmpLayout.CiIndex, c, typedStart);
+                TmpLayout.Set(TmpLayout.CiStringLength, c, typedEnd - typedStart);
                 EngineCollections.SetItem(chars, k, c);
             }
         }
@@ -614,6 +627,9 @@ namespace UnityGameTranslator.Core.TextShaping
                 int idx = indexOf[first];
                 if (idx > 0 && idx < n && s.Logical[idx - 1] != '\n') wraps.Add(idx);
             }
+            // A tag wider than the line, cut by TMP: cut there too (the label is unchanged — each
+            // character of a written-out token stands for itself).
+            s.Prep = s.Prep.SplitTokensAt(s.Prep.TokenSplitsAtLogical(wraps));
             s.Layout = s.Prep.LayAtLogical(wraps);
 
             if (s.BoxL.Length != n)

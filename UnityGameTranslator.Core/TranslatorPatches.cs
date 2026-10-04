@@ -378,7 +378,11 @@ namespace UnityGameTranslator.Core
                     var click = t.GetMethod("GetCharacterIndexFromPosition", any, null, new[] { typeof(Vector2) }, null);
                     var left = t.GetMethod("MoveLeft", any, null, new[] { typeof(bool), typeof(bool) }, null);
                     var right = t.GetMethod("MoveRight", any, null, new[] { typeof(bool), typeof(bool) }, null);
+                    var up = t.GetMethod("MoveUp", any, null, new[] { typeof(bool), typeof(bool) }, null);
+                    var downKey = t.GetMethod("MoveDown", any, null, new[] { typeof(bool), typeof(bool) }, null);
 
+                    if (up != null) { patcher(up, fields.GetMethod(nameof(TextShaping.RtlInputFields.UGui_MoveUp_Prefix), BindingFlags.Static | BindingFlags.Public), null); patchCount++; }
+                    if (downKey != null) { patcher(downKey, fields.GetMethod(nameof(TextShaping.RtlInputFields.UGui_MoveDown_Prefix), BindingFlags.Static | BindingFlags.Public), null); patchCount++; }
                     if (click != null)
                     {
                         patcher(click, null, fields.GetMethod(nameof(TextShaping.RtlInputFields.UGui_GetCharacterIndexFromPosition_Postfix), BindingFlags.Static | BindingFlags.Public));
@@ -394,8 +398,8 @@ namespace UnityGameTranslator.Core
                         patcher(right, fields.GetMethod(nameof(TextShaping.RtlInputFields.UGui_MoveRight_Prefix), BindingFlags.Static | BindingFlags.Public), null);
                         patchCount++;
                     }
-                    if (click == null || left == null || right == null)
-                        TranslatorCore.LogWarning($"[Patches] InputField right-to-left editing incomplete: click={(click != null)} left={(left != null)} right={(right != null)}");
+                    if (click == null || left == null || right == null || up == null || downKey == null)
+                        TranslatorCore.LogWarning($"[Patches] InputField right-to-left editing incomplete: click={(click != null)} left={(left != null)} right={(right != null)} up={(up != null)} down={(downKey != null)}");
                 }
             });
 
@@ -440,10 +444,14 @@ namespace UnityGameTranslator.Core
                     if (drag != null) { patcher(drag, null, Hook(nameof(TextShaping.RtlInputFields.Tmp_OnDrag_Postfix))); patchCount++; }
                     if (left != null) { patcher(left, Hook(nameof(TextShaping.RtlInputFields.Tmp_MoveLeft_Prefix)), null); patchCount++; }
                     if (right != null) { patcher(right, Hook(nameof(TextShaping.RtlInputFields.Tmp_MoveRight_Prefix)), null); patchCount++; }
+                    var up = t.GetMethod("MoveUp", any, null, new[] { typeof(bool), typeof(bool) }, null);
+                    var downKey = t.GetMethod("MoveDown", any, null, new[] { typeof(bool), typeof(bool) }, null);
+                    if (up != null) { patcher(up, Hook(nameof(TextShaping.RtlInputFields.Tmp_MoveUp_Prefix)), null); patchCount++; }
+                    if (downKey != null) { patcher(downKey, Hook(nameof(TextShaping.RtlInputFields.Tmp_MoveDown_Prefix)), null); patchCount++; }
 
                     // Its layout half is the "TMP mesh built" hook, said there when it is missing.
-                    if (down == null || drag == null || left == null || right == null)
-                        TranslatorCore.LogWarning($"[Patches] TMP_InputField right-to-left editing incomplete: click={(down != null)} drag={(drag != null)} left={(left != null)} right={(right != null)}");
+                    if (down == null || drag == null || left == null || right == null || up == null || downKey == null)
+                        TranslatorCore.LogWarning($"[Patches] TMP_InputField right-to-left editing incomplete: click={(down != null)} drag={(drag != null)} left={(left != null)} right={(right != null)} up={(up != null)} down={(downKey != null)}");
                 }
             });
 

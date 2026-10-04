@@ -84,14 +84,25 @@ namespace UnityGameTranslator.Core.TextShaping
                 patcher(move.Value, Hook(move.Key), null);
                 count++;
             }
+            foreach (var move in Uitk.Verticals)
+            {
+                patcher(move.Value, Hook(move.Key), null);
+                count++;
+            }
             if (Uitk.DrawHighlighting != null) { patcher(Uitk.DrawHighlighting, Hook(nameof(Uitk_DrawHighlighting_Prefix)), null); count++; }
             if (Uitk.UpdateVisibleText != null) { patcher(Uitk.UpdateVisibleText, null, Hook(nameof(Uitk_UpdateVisibleText_Postfix))); count++; }
             else TranslatorCore.LogWarning("[Patches] UI Toolkit fields: a multi-line field resized after it was filled keeps the lines it was first cut into (no TextElement.UpdateVisibleText or IncrementVersion)");
             if (Uitk.SelectCurrentWord != null) { patcher(Uitk.SelectCurrentWord, Hook(nameof(Uitk_SelectCurrentWord_Prefix)), null); count++; }
             if (Uitk.SelectToPosition != null && Uitk.IndexFromPosition != null) { patcher(Uitk.SelectToPosition, Hook(nameof(Uitk_SelectToPosition_Prefix)), null); count++; }
+            if (Uitk.LineUp != null && Uitk.LineDown != null && Uitk.PositionByLine != null)
+            {
+                patcher(Uitk.LineUp, Hook(nameof(Uitk_LineUp_Prefix)), null);
+                patcher(Uitk.LineDown, Hook(nameof(Uitk_LineDown_Prefix)), null);
+                count += 2;
+            }
             if (Uitk.PositionByLine == null || Uitk.IndexFromPosition == null || Uitk.Moves.Count < 6 || Uitk.DrawHighlighting == null
-                || Uitk.SelectCurrentWord == null || Uitk.SelectToPosition == null)
-                TranslatorCore.LogWarning($"[Patches] UI Toolkit field right-to-left editing incomplete: caret={(Uitk.PositionByLine != null)} click={(Uitk.IndexFromPosition != null)} arrows={Uitk.Moves.Count}/6 selection={(Uitk.DrawHighlighting != null)} double-click={(Uitk.SelectCurrentWord != null)} drag-words={(Uitk.SelectToPosition != null)}");
+                || Uitk.SelectCurrentWord == null || Uitk.SelectToPosition == null || Uitk.LineUp == null || Uitk.LineDown == null)
+                TranslatorCore.LogWarning($"[Patches] UI Toolkit field right-to-left editing incomplete: caret={(Uitk.PositionByLine != null)} click={(Uitk.IndexFromPosition != null)} arrows={Uitk.Moves.Count}/6 selection={(Uitk.DrawHighlighting != null)} double-click={(Uitk.SelectCurrentWord != null)} drag-words={(Uitk.SelectToPosition != null)} up-down={(Uitk.LineUp != null && Uitk.LineDown != null)}");
             return count;
         }
 
@@ -123,6 +134,7 @@ namespace UnityGameTranslator.Core.TextShaping
                     // answer the mod gives an ATG label (RtlPresenter): the direction of the typed
                     // text's paragraph (UAX #9 P2, a field draws its markup as text), put back when
                     // it reads left to right again.
+                    _uitkGoal.Remove(id);   // new text: the column Up/Down aimed at no longer stands
                     string value = UIToolkitSupport.GetElementText(__instance);
                     if (RtlText.ParagraphDirection(value) < 0) UIToolkitSupport.SetRtlDirection(__instance);
                     else UIToolkitSupport.RestoreRtlAdjustments(__instance);
@@ -143,6 +155,7 @@ namespace UnityGameTranslator.Core.TextShaping
         /// </summary>
         private static UitkState PresentUitkField(object element, long id, string typed, string suffix)
         {
+            _uitkGoal.Remove(id);   // new text or new lines: the column Up/Down aimed at no longer stands
             var prep = string.IsNullOrEmpty(typed) ? null : RtlFieldLayout.Prepare(typed);
             if (prep == null)
             {
@@ -292,6 +305,7 @@ namespace UnityGameTranslator.Core.TextShaping
         {
             try
             {
+                ForgetVerticalGoal(__instance);   // a click starts a new column (an ATG field's too)
                 var s = UitkStateOfHandle(__instance);
                 if (s != null) __result = s.Layout.CaretAtBoundary(__result);
             }
@@ -383,6 +397,7 @@ namespace UnityGameTranslator.Core.TextShaping
             try
             {
                 var handle = Uitk.HandleOf(utilities);
+                ForgetVerticalGoal(handle);   // a move along the line starts a new column
                 var presented = UitkStateOfHandle(handle);
                 if (presented == null)
                 {
@@ -423,6 +438,127 @@ namespace UnityGameTranslator.Core.TextShaping
             {
                 Note("UI Toolkit arrow move failed, the field's own used: " + (ex.InnerException ?? ex).Message);
                 return false;
+            }
+        }
+
+        // ══ Up / Down ════════════════════════════════════════════════════════════════════════
+
+        // The column Up/Down aim at, kept from one vertical press to the next as every editor keeps it:
+        // by field, with the caret the last press landed on — any other move or click lands elsewhere,
+        // and the next press starts a new column from where the caret is drawn.
+        private sealed class VerticalGoal { public int Landed; public float X; }
+        private static readonly Dictionary<long, VerticalGoal> _uitkGoal = new Dictionary<long, VerticalGoal>();
+
+        private static void ForgetVerticalGoal(object handle)
+        {
+            if (_uitkGoal.Count == 0) return;
+            var element = Uitk.ElementOf(handle);
+            if (element != null) _uitkGoal.Remove(ObjectKey(element));
+        }
+
+        public static bool Uitk_LineUp_Prefix(object __instance, int __0, ref int __result) => !UitkVertical(__instance, __0, false, ref __result);
+        public static bool Uitk_LineDown_Prefix(object __instance, int __0, ref int __result) => !UitkVertical(__instance, __0, true, ref __result);
+
+        /// <summary>
+        /// TextHandle.Line{Up,Down}CharacterPosition on a presented field: the engine looked for the
+        /// line above or below in the DRAWN text with a TYPED index — 34 presses in 39 landed on another
+        /// line or far from the caret (bench, 2022.3 / 6000.3). The neighbouring line drawn, at the caret
+        /// nearest on screen to the column (RtlFieldLayout.VerticalStep, x as the engine draws it).
+        /// Past the first or last line, what the engine does in any field: the start or end of the text.
+        /// </summary>
+        private static bool UitkVertical(object handle, int caret, bool down, ref int result)
+        {
+            try
+            {
+                var s = UitkStateOfHandle(handle);
+                if (s == null) return false;
+                long id = ObjectKey(Uitk.ElementOf(handle));
+                // Typed carets, mapped to where they are drawn by the caret hook (Uitk_CursorPosition_Prefix).
+                Func<int, float> xOf = c => Uitk.PositionOf(handle, c).x;
+                float goal = _uitkGoal.TryGetValue(id, out var held) && held.Landed == caret ? held.X : xOf(caret);
+                int next = s.Layout.VerticalStep(caret, down, goal, xOf);
+                if (next < 0) next = down ? s.Logical.Length : 0;
+                _uitkGoal[id] = new VerticalGoal { Landed = next, X = goal };
+                result = next;
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Note("UI Toolkit Up/Down failed, the field's own used: " + (ex.InnerException ?? ex).Message);
+                return false;
+            }
+        }
+
+        public static bool Uitk_MoveUp_Prefix(object __instance) => !UitkAtgVertical(__instance, false, false);
+        public static bool Uitk_MoveDown_Prefix(object __instance) => !UitkAtgVertical(__instance, true, false);
+        public static bool Uitk_SelectUp_Prefix(object __instance) => !UitkAtgVertical(__instance, false, true);
+        public static bool Uitk_SelectDown_Prefix(object __instance) => !UitkAtgVertical(__instance, true, true);
+
+        /// <summary>
+        /// TextSelectingUtilities.{Move,Select}{Up,Down} on an ATG field holding right-to-left text: by
+        /// the positions the ATG draws, as its arrows (UitkAtgStep) — the line drawn above or below, at
+        /// the caret nearest to the kept column. 🔴 Never the ATG's own: in a right-to-left paragraph its
+        /// native MoveUp CRASHED the player when the column lay past the end of a shorter line (bench,
+        /// 6000.6.3, ICU data given; the same presses left to right did not). Any other field: the
+        /// engine's own (a presented one goes through Line{Up,Down}CharacterPosition, above).
+        /// Without Shift a selection collapses as the standard path collapses it: Up from its later
+        /// end, Down from its earlier one. Past the first or last line: the start or end of the text.
+        /// </summary>
+        private static bool UitkAtgVertical(object utilities, bool down, bool shift)
+        {
+            object handle;
+            UitkState atg;
+            try
+            {
+                handle = Uitk.HandleOf(utilities);
+                if (UitkStateOfHandle(handle) != null) return false;
+                atg = UitkAtgStateOf(handle);
+                if (atg == null) return false;
+            }
+            catch (Exception ex)
+            {
+                Note("UI Toolkit Up/Down: the field could not be read, the engine's own used: " + (ex.InnerException ?? ex).Message);
+                return false;
+            }
+            try
+            {
+                int anchor = Uitk.SelectIndex(utilities), focus = Uitk.CursorIndex(utilities);
+                int from = shift ? focus : down ? Math.Min(anchor, focus) : Math.Max(anchor, focus);
+                int n = atg.Logical.Length;
+                var x = new float[n + 1];
+                var y = new float[n + 1];
+                for (int i = 0; i <= n; i++) { var p = Uitk.PositionOf(handle, i); x[i] = p.x; y[i] = p.y; }
+                long id = ObjectKey(Uitk.ElementOf(handle));
+                float goal = _uitkGoal.TryGetValue(id, out var held) && held.Landed == from ? held.X : x[from];
+
+                // The line drawn next below (or above): the nearest drawn y past this one.
+                float? lineY = null;
+                for (int i = 0; i <= n; i++)
+                {
+                    bool beyond = down ? y[i] > y[from] + 1f : y[i] < y[from] - 1f;
+                    if (beyond && (lineY == null || (down ? y[i] < lineY.Value : y[i] > lineY.Value))) lineY = y[i];
+                }
+                int next = down ? n : 0;
+                if (lineY != null)
+                {
+                    float bestDistance = float.MaxValue;
+                    for (int i = 0; i <= n; i++)
+                    {
+                        if (Math.Abs(y[i] - lineY.Value) >= 1f) continue;
+                        float distance = Math.Abs(x[i] - goal);
+                        if (distance < bestDistance) { next = i; bestDistance = distance; }
+                    }
+                }
+                _uitkGoal[id] = new VerticalGoal { Landed = next, X = goal };
+                Uitk.SetCursorIndex(utilities, next);
+                if (!shift) Uitk.SetSelectIndex(utilities, next);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                // An ATG field with right-to-left text: its own Up/Down would be the crash above — the caret stays.
+                Note("UI Toolkit Up/Down failed on an Advanced Text Generator field, the caret stays: " + (ex.InnerException ?? ex).Message);
+                return true;
             }
         }
 
@@ -539,7 +675,7 @@ namespace UnityGameTranslator.Core.TextShaping
         {
             private const BindingFlags Inst = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
             private static bool _resolved, _ok;
-            internal static MethodInfo SetValueWithoutNotify, PositionByLine, PositionByCharacter, IndexFromPosition, DrawHighlighting, SelectCurrentWord, SelectToPosition;
+            internal static MethodInfo SetValueWithoutNotify, PositionByLine, PositionByCharacter, IndexFromPosition, DrawHighlighting, SelectCurrentWord, SelectToPosition, LineUp, LineDown;
             private static MethodInfo _clearCursorPos;
             private static MemberInfo _justSelected, _dragWords, _snap, _dblStart, _dblEnd;
 
@@ -575,6 +711,7 @@ namespace UnityGameTranslator.Core.TextShaping
             internal static int IndexAt(object handle, Vector2 point) =>
                 Convert.ToInt32(IndexFromPosition.Invoke(handle, new object[] { point, true }));
             internal static readonly List<KeyValuePair<string, MethodInfo>> Moves = new List<KeyValuePair<string, MethodInfo>>();
+            internal static readonly List<KeyValuePair<string, MethodInfo>> Verticals = new List<KeyValuePair<string, MethodInfo>>();
             private static MemberInfo _isInputField, _isPassword, _renderedText, _handleElement, _utilitiesHandle;
             private static MemberInfo _selectingManipulator, _manipulatorUtilities, _uitkTextHandle, _selectionColor;
             private static PropertyInfo _cursorIndex, _selectIndex, _contentRect;
@@ -645,6 +782,9 @@ namespace UnityGameTranslator.Core.TextShaping
                     PositionByCharacter = handle.GetMethod("GetCursorPositionFromStringIndexUsingCharacterHeight", Inst, null, new[] { typeof(int), typeof(bool) }, null);
                     IndexFromPosition = handle.GetMethod("GetCursorIndexFromPosition", Inst, null, new[] { typeof(Vector2), typeof(bool) }, null);
                     _highlightRectangles = handle.GetMethod("GetHighlightRectangles", Inst, null, new[] { typeof(int), typeof(int) }, null);
+                    // Up / Down on the standard generator (MoveUp, MoveDown, SelectUp, SelectDown all ask these).
+                    LineUp = handle.GetMethod("LineUpCharacterPosition", Inst, null, new[] { typeof(int) }, null);
+                    LineDown = handle.GetMethod("LineDownCharacterPosition", Inst, null, new[] { typeof(int) }, null);
                     _lineNumber = handle.GetMethod("GetLineNumber", Inst, null, new[] { typeof(int) }, null);
                     _lineHeight = handle.GetMethod("GetLineHeight", Inst, null, new[] { typeof(int) }, null);
                     foreach (var move in new[] { "MoveLeft", "MoveRight", "SelectLeft", "SelectRight", "MoveWordLeft", "MoveWordRight" })
@@ -652,6 +792,14 @@ namespace UnityGameTranslator.Core.TextShaping
                         var m = utilities.GetMethod(move, Inst, null, Type.EmptyTypes, null);
                         if (m != null) Moves.Add(new KeyValuePair<string, MethodInfo>("Uitk_" + move + "_Prefix", m));
                     }
+                    // Up / Down on an ATG field: the selecting utilities' own (the standard generator's
+                    // go through LineUp / LineDown) — only where the ATG exists.
+                    if (_isAdvanced != null)
+                        foreach (var move in new[] { "MoveUp", "MoveDown", "SelectUp", "SelectDown" })
+                        {
+                            var m = utilities.GetMethod(move, Inst, null, Type.EmptyTypes, null);
+                            if (m != null) Verticals.Add(new KeyValuePair<string, MethodInfo>("Uitk_" + move + "_Prefix", m));
+                        }
                     // Where a field's box is known again (geometry changed, before each drawing), and
                     // how it is asked to lay out anew.
                     UpdateVisibleText = element.GetMethod("UpdateVisibleText", Inst, null, Type.EmptyTypes, null);

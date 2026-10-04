@@ -20,7 +20,9 @@ namespace UnityGameTranslator.Core.TextShaping
     /// - the arrows: <c>UIInput.ProcessEvent</c> moves ←/→ by one typed character; they follow the
     ///   screen instead (user's decision, 2026-09-25), Ctrl by word.
     ///
-    /// Up/Down and Home/End stay NGUI's (typed order). NGUI draws everything itself: nothing is
+    /// - Up/Down: to the line drawn above or below, nearest on screen to the kept column.
+    ///
+    /// Home/End stay NGUI's (typed order). NGUI draws everything itself: nothing is
     /// hidden or drawn here. Every member is found by name — the Core names no NGUI type — and a
     /// missing one is said and leaves that gesture to NGUI.
     /// </summary>
@@ -33,6 +35,10 @@ namespace UnityGameTranslator.Core.TextShaping
             public RtlFieldLayout Layout;
             public string Logical;
             public string Shown;
+
+            // The column Up/Down aim at (as RtlInputFields.FieldState keeps it): a new state is a new text.
+            public int GoalLanded = -1;
+            public float GoalX;
         }
 
         // By the label's instance id: the overlay and the click are asked of the label.
@@ -55,6 +61,9 @@ namespace UnityGameTranslator.Core.TextShaping
             if (prep == null) { _ngui.Remove(id); return; }
 
             var s = new NguiState { FieldRef = new WeakReference(field), Label = label, Logical = value };
+            // The label written again with the same text (every caret move goes through UpdateLabel):
+            // the column Up/Down aim at stays.
+            if (_ngui.TryGetValue(id, out var before) && before.Logical == value) { s.GoalLanded = before.GoalLanded; s.GoalX = before.GoalX; }
             s.Layout = prep.Lay(NguiWraps(label, prep.MeasureText));
             s.Shown = s.Layout.Display;
             _ngui[id] = s;
@@ -235,27 +244,60 @@ namespace UnityGameTranslator.Core.TextShaping
             try
             {
                 var s = NguiStateOf(__instance);
-                if (s != null) __result = s.Layout.CaretAtBoundary(__result);
+                if (s == null) return;
+                __result = s.Layout.CaretAtBoundary(__result);
+                s.GoalLanded = -1;   // a click starts a new column
             }
             catch (Exception ex) { Note("NGUI click mapping failed: " + ex.Message); }
         }
 
         // ══ Arrow keys ═══════════════════════════════════════════════════════════════════════
 
-        /// <summary>UIInput.ProcessEvent(Event): ← and → on a presented field, by screen position.</summary>
+        /// <summary>
+        /// UIInput.ProcessEvent(Event): ← and → on a presented field, by screen position; ↑ and ↓ to
+        /// the line drawn above or below, at the caret nearest on screen to the kept column — the
+        /// standard of every editor (user's decision, 2026-10-04). NGUI's own Up/Down asked the label
+        /// (GetCharacterIndex) with the TYPED index, in the presented text. Past the first or last
+        /// line: the start or end of the text.
+        /// </summary>
         public static bool Ngui_ProcessEvent_Prefix(object __instance, object __0, ref bool __result)
         {
             try
             {
                 if (__0 == null || !Ngui.ResolveField()) return true;
                 var key = (KeyCode)Ngui.EventKeyCode.GetValue(__0, null);
-                if (key != KeyCode.LeftArrow && key != KeyCode.RightArrow) return true;
+                bool vertical = key == KeyCode.UpArrow || key == KeyCode.DownArrow;
+                if (key != KeyCode.LeftArrow && key != KeyCode.RightArrow && !vertical) return true;
                 var label = TypeHelper.NguiInputLabel(__instance);
                 var s = NguiStateOf(label);
                 if (s == null) return true;
 
                 var modifiers = (EventModifiers)Ngui.EventModifiers.GetValue(__0, null);
                 bool shift = (modifiers & EventModifiers.Shift) != 0;
+                if (vertical)
+                {
+                    if (Ngui.PrintOverlay == null) return true;   // no way to measure where a caret is drawn
+                    // The game's own use of the key (onUpArrow / onDownArrow — a chat's history, say):
+                    // NGUI calls it instead of moving the caret, and so does this.
+                    if (Ngui.HasArrowCallback(__instance, key == KeyCode.UpArrow)) return true;
+                    int start = Ngui.DrawStart(__instance);
+                    int from = Ngui.SelectionEnd(__instance) - start;
+                    Func<int, float> xOf = c => Ngui.CaretX(label, c);
+                    float goal = s.GoalLanded == from ? s.GoalX : xOf(from);
+                    if (float.IsNaN(goal)) return true;
+                    bool down = key == KeyCode.DownArrow;
+                    int target = s.Layout.VerticalStep(from, down, goal, xOf);
+                    if (target < 0) target = down ? s.Logical.Length : 0;
+                    s.GoalLanded = target;
+                    s.GoalX = goal;
+                    Ngui.SetSelectionEnd(__instance, target + start);
+                    if (!shift) Ngui.SetSelectionStart(__instance, target + start);
+                    Ngui.UpdateLabel.Invoke(__instance, null);
+                    Ngui.EventUse.Invoke(__0, null);
+                    __result = true;
+                    return false;
+                }
+                s.GoalLanded = -1;   // a move along the line starts a new column
                 bool mac = Application.platform == RuntimePlatform.OSXPlayer || Application.platform == RuntimePlatform.OSXEditor;
                 // NGUI's own reading: Command on a Mac, Control elsewhere, never with Alt.
                 bool ctrl = (modifiers & EventModifiers.Alt) == 0
@@ -407,6 +449,27 @@ namespace UnityGameTranslator.Core.TextShaping
                 return null;
             }
 
+            private static bool _arrowCallbacksResolved;
+            private static MemberInfo _onUpArrow, _onDownArrow;
+
+            /// <summary>
+            /// The game gave the field its own use of ↑ (or ↓) — UIInput.onUpArrow / onDownArrow, absent
+            /// from older NGUI (then never). A member that cannot be read counts as set: the key stays NGUI's.
+            /// </summary>
+            internal static bool HasArrowCallback(object field, bool up)
+            {
+                if (!_arrowCallbacksResolved)
+                {
+                    _arrowCallbacksResolved = true;
+                    _onUpArrow = Members.FieldOrProperty(TypeHelper.NGUI_InputType, "onUpArrow", Inst);
+                    _onDownArrow = Members.FieldOrProperty(TypeHelper.NGUI_InputType, "onDownArrow", Inst);
+                }
+                var member = up ? _onUpArrow : _onDownArrow;
+                if (member == null) return false;
+                try { return Members.Get(member, field) != null; }
+                catch (Exception ex) { Faults.Say("RtlInputFields.Ngui.HasArrowCallback", ex); return true; }
+            }
+
             internal static int SelectionStart(object field) => Convert.ToInt32(Members.Get(_selStart, field));
             internal static int SelectionEnd(object field) => Convert.ToInt32(Members.Get(_selEnd, field));
             internal static void SetSelectionStart(object field, int value) => Members.Set(_selStart, field, value);
@@ -490,6 +553,23 @@ namespace UnityGameTranslator.Core.TextShaping
             }
 
             internal static object NewGeometry() => Activator.CreateInstance(_geometryType);
+
+            /// <summary>
+            /// Where NGUI draws the caret before typed character <paramref name="caret"/> (relative to the
+            /// label's slice): its own PrintOverlay into a scratch geometry — through the caret hook,
+            /// which takes it to its display gap — the middle of the quad. NaN when nothing is drawn.
+            /// </summary>
+            internal static float CaretX(object label, int caret)
+            {
+                var geometry = NewGeometry();
+                PrintOverlay.Invoke(label, new object[] { caret, caret, geometry, null, Color.white, Color.white });
+                var verts = Members.Get(_geoVerts, geometry);
+                int n = EngineCollections.Length(verts);
+                if (n == 0) return float.NaN;
+                float x = 0f;
+                for (int i = 0; i < n; i++) x += ((Vector3)EngineCollections.Item(verts, i)).x;
+                return x / n;
+            }
             internal static void Clear(object geometry) => _geoClear.Invoke(geometry, null);
 
             /// <summary>Every vertex of <paramref name="from"/> added to <paramref name="to"/>, with its uv and colour.</summary>

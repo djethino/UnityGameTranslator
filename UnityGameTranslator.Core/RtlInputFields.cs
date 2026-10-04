@@ -69,6 +69,12 @@ namespace UnityGameTranslator.Core.TextShaping
             public int LastAnchor = -1, LastFocus = -1;
             public float BlinkStart;
 
+            // The column Up/Down aim at, kept while the caret stays where the last vertical press put
+            // it in the same text — any other move, a click or new text starts a new one.
+            public int GoalLanded = -1;
+            public float GoalX;
+            public string GoalShown;
+
             // Where each typed character is drawn, in the label's local space, and the engine's lines.
             public float[] BoxL = new float[0], BoxR = new float[0];
             public int[] BoxLine = new int[0];
@@ -224,6 +230,19 @@ namespace UnityGameTranslator.Core.TextShaping
             var label = TypeHelper.Il2CppCast(labelObj, typeof(Graphic)) as Graphic;
             if (label == null) { Note("TMP label is not a Graphic on this runtime"); return; }
 
+            // 🔴 The same text written again (TMP does it when the field takes the focus): TMP lays out
+            // nothing for an unchanged text, so the glyph move — TMP's lines, the boxes the caret is
+            // drawn from — would never come back. Kept as it stands: reset, the field had no caret
+            // at all (its own is hidden), bench 2026-10-04.
+            if (_states.TryGetValue(id, out var held) && held.Kind == Engine.Tmp && held.Label == label
+                && held.Logical == logical && !string.IsNullOrEmpty(held.Shown)
+                && (held.Shown[held.Shown.Length - 1] == RtlFieldLayout.ZeroWidthSpace) == tracked
+                && LabelText(held) == held.Shown)
+            {
+                value = held.Shown;
+                return;
+            }
+
             var s = StateFor(id, fieldObj, Engine.Tmp);
             s.Label = label;
             s.LabelObj = labelObj;
@@ -316,7 +335,15 @@ namespace UnityGameTranslator.Core.TextShaping
                 if (LabelText(s) != s.Shown) { Release(id); continue; }
 
                 if (!IsFocused(s)) { ShowQuads(s, 0); continue; }
-                if (!ReadBoxes(s)) { ShowQuads(s, 0); continue; }
+                if (!ReadBoxes(s))
+                {
+                    // Focused and presented, yet nowhere to draw the caret: said once per field and cause.
+                    if (TranslatorCore.DebugMode && DiagnosticOnce.First("RtlInputFields.noboxes", s.Kind + "\u0001" + id))
+                        TranslatorCore.LogInfo($"[RtlInputFields] focused {s.Kind} field has no glyph boxes — "
+                            + (s.Kind == Engine.Tmp ? "no glyph move since its text was presented (GenerateTextMesh not seen for its label)" : "its generator gave no glyphs"));
+                    ShowQuads(s, 0);
+                    continue;
+                }
 
                 EnsureOverlay(s);
                 int anchor = Anchor(s), focus = Focus(s);
@@ -345,10 +372,23 @@ namespace UnityGameTranslator.Core.TextShaping
             bool on = rate <= 0f || ((Time.unscaledTime - s.BlinkStart) * rate) % 1f < 0.5f;
             if (!on) { ShowQuads(s, 0); return; }
 
-            s.Layout.CaretAnchor(caret, out int d, out bool rightEdge, out int line);
             float width = CaretWidth(s);
-            int g;
-            float x;
+            if (!CaretPlace(s, caret, width, out float x, out int g)) { ShowQuads(s, 0); return; }
+
+            float top = s.LineTop[g], bottom = s.LineBottom[g];
+            // The colour the field would have drawn: caretColor answers the text's own colour when
+            // no custom one is set, and that is what was read before hiding it.
+            Place(s, 0, x, bottom, width, top - bottom, s.OriginalCaret);
+            ShowQuads(s, 1);
+        }
+
+        /// <summary>
+        /// Where the caret before typed character <paramref name="caret"/> is drawn: its x in the
+        /// label's local space and the engine line it stands on. False when it stands on no line drawn.
+        /// </summary>
+        private static bool CaretPlace(FieldState s, int caret, float width, out float x, out int g)
+        {
+            s.Layout.CaretAnchor(caret, out int d, out bool rightEdge, out int line);
             int i = d < 0 ? -1 : BoxedNear(s, s.Layout.LogicalAtDisplay(d));
             if (i < 0)
             {
@@ -362,13 +402,7 @@ namespace UnityGameTranslator.Core.TextShaping
                 g = s.BoxLine[i];
                 x = rightEdge ? s.BoxR[i] : s.BoxL[i];
             }
-            if (g < 0 || g >= s.LineTop.Count) { ShowQuads(s, 0); return; }
-
-            float top = s.LineTop[g], bottom = s.LineBottom[g];
-            // The colour the field would have drawn: caretColor answers the text's own colour when
-            // no custom one is set, and that is what was read before hiding it.
-            Place(s, 0, x, bottom, width, top - bottom, s.OriginalCaret);
-            ShowQuads(s, 1);
+            return g >= 0 && g < s.LineTop.Count;
         }
 
         private static void DrawSelection(FieldState s, int from, int to)
@@ -487,9 +521,17 @@ namespace UnityGameTranslator.Core.TextShaping
             {
                 int labelId = TypeHelper.GetInstanceID(__instance);
                 if (!_byTmpLabel.TryGetValue(labelId, out var s)) return null;
-                if (LabelText(s) != s.Shown) return null;
+                if (LabelText(s) != s.Shown)
+                {
+                    if (TranslatorCore.DebugMode && DiagnosticOnce.First("RtlInputFields.tmpother", labelId + "\u0001" + LabelText(s)))
+                        TranslatorCore.LogInfo($"[RtlInputFields] TMP field label laid out with another text than presented: {RtlPresenter.Escape(LabelText(s) ?? "null")} (presented {RtlPresenter.Escape(s.Shown)})");
+                    return null;
+                }
                 TellTypedPositions(s, __instance);
-                return MoveTmpGlyphs(s, __instance);
+                var moved = MoveTmpGlyphs(s, __instance);
+                if (TranslatorCore.DebugMode && DiagnosticOnce.First("RtlInputFields.tmpmoved", labelId + "\u0001" + s.Shown))
+                    TranslatorCore.LogInfo($"[RtlInputFields] TMP field label laid out: boxes {(s.BoxesFromReorder ? "read" : "NOT read")}, {s.Layout.LineCount} line(s)");
+                return moved;
             }
             catch (Exception ex) { Note("TMP glyph move failed: " + ex.Message); return null; }
         }
@@ -669,6 +711,7 @@ namespace UnityGameTranslator.Core.TextShaping
             {
                 var s = StateOf(__instance);
                 if (s == null || !ReadBoxes(s)) return;
+                s.GoalLanded = -1;   // a click starts a new column
                 __result = CaretAt(s, __0);
             }
             catch (Exception ex) { Note("click mapping failed: " + ex.Message); }
@@ -694,6 +737,7 @@ namespace UnityGameTranslator.Core.TextShaping
             {
                 var s = StateOf(__instance);
                 if (s == null || __0 == null || !ReadBoxes(s)) return;
+                s.GoalLanded = -1;   // a click starts a new column
                 int anchor = Anchor(s), focus = Focus(s);
                 bool wordSelected = anchor != focus && anchor != _tmpAnchorBefore;
                 if (wordSelected) return;
@@ -787,6 +831,7 @@ namespace UnityGameTranslator.Core.TextShaping
             {
                 var s = StateOf(instance);
                 if (s == null) return false;
+                s.GoalLanded = -1;   // a move along the line starts a new column
                 int anchor = Anchor(s), focus = Focus(s);
                 var layout = s.Layout;
 
@@ -822,6 +867,62 @@ namespace UnityGameTranslator.Core.TextShaping
             catch (Exception ex)
             {
                 Note("arrow move failed, Unity's own used: " + ex.Message);
+                return false;
+            }
+        }
+
+        // ══ Up / Down ════════════════════════════════════════════════════════════════════════
+
+        public static bool UGui_MoveUp_Prefix(object __instance, bool __0, bool __1) => !Vertical(__instance, false, __0, __1);
+        public static bool UGui_MoveDown_Prefix(object __instance, bool __0, bool __1) => !Vertical(__instance, true, __0, __1);
+        public static bool Tmp_MoveUp_Prefix(object __instance, bool __0, bool __1) => !Vertical(__instance, false, __0, __1);
+        public static bool Tmp_MoveDown_Prefix(object __instance, bool __0, bool __1) => !Vertical(__instance, true, __0, __1);
+
+        /// <summary>
+        /// MoveUp / MoveDown(shift, goToFirstChar / goToLastChar) on a presented field: the line drawn
+        /// above or below, at the caret nearest on screen to the kept column — the standard of every
+        /// editor (user's decision, 2026-10-04). Unity looks for that line in the label's characters
+        /// with the TYPED index (uGUI's generator holds the presented form, TMP's characterInfo stays
+        /// in typed order while its glyphs are moved). Without Shift a selection collapses as Unity
+        /// collapses it — Up from its earlier end, Down from its later one; past the first or last line
+        /// drawn, what Unity does: the start or end of the text when asked to, else nowhere. True when handled.
+        /// </summary>
+        private static bool Vertical(object instance, bool down, bool shift, bool toTextEdge)
+        {
+            try
+            {
+                var s = StateOf(instance);
+                // A single-line field: Unity goes to the start or end of the text, reading no label.
+                if (s == null || !IsMultiLine(s) || !ReadBoxes(s)) return false;
+                int anchor = Anchor(s), focus = Focus(s);
+                int from = shift || anchor == focus ? focus : down ? Math.Max(anchor, focus) : Math.Min(anchor, focus);
+                float width = CaretWidth(s);
+                Func<int, float> xOf = c => CaretPlace(s, c, width, out float x, out _) ? x : float.NaN;
+                float goal = s.GoalLanded == from && ReferenceEquals(s.GoalShown, s.Shown) ? s.GoalX : xOf(from);
+                if (float.IsNaN(goal)) return false;
+
+                int next = s.Layout.VerticalStep(from, down, goal, xOf);
+                if (next < 0)
+                {
+                    bool sliceGoesOn = down ? s.DrawStart + s.Logical.Length < FieldText(s).Length : s.DrawStart > 0;
+                    if (sliceGoesOn)
+                    {
+                        // uGUI shows a slice of a long text: the next line is out of view. Onto the
+                        // first character past the slice's edge — the field brings it into view itself.
+                        next = down ? s.Logical.Length + 1 : -1;
+                    }
+                    else next = toTextEdge ? (down ? s.Logical.Length : 0) : from;
+                }
+                s.GoalLanded = next;
+                s.GoalX = goal;
+                s.GoalShown = s.Shown;
+                if (shift) SetFocus(s, next);
+                else SetCaret(s, next);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Note("Up/Down failed, Unity's own used: " + ex.Message);
                 return false;
             }
         }
@@ -930,6 +1031,9 @@ namespace UnityGameTranslator.Core.TextShaping
             s.Label.gameObject.activeInHierarchy
             && (s.Kind == Engine.UGui ? s.UField.isFocused : (bool)Tmp.FieldIsFocused.GetValue(s.Field, null));
 
+        private static bool IsMultiLine(FieldState s) =>
+            s.Kind == Engine.UGui ? s.UField.multiLine : Tmp.FieldMultiLine != null && (bool)Tmp.FieldMultiLine.GetValue(s.Field, null);
+
         private static float BlinkRate(FieldState s) =>
             s.Kind == Engine.UGui ? s.UField.caretBlinkRate : Convert.ToSingle(Tmp.FieldBlinkRate.GetValue(s.Field, null));
 
@@ -1021,7 +1125,7 @@ namespace UnityGameTranslator.Core.TextShaping
         private static class Tmp
         {
             private static bool _resolved, _ok;
-            internal static PropertyInfo FieldText, FieldIsFocused, FieldBlinkRate, FieldCaretWidth;
+            internal static PropertyInfo FieldText, FieldIsFocused, FieldBlinkRate, FieldCaretWidth, FieldMultiLine;
             internal static PropertyInfo FieldStringPosition, FieldStringAnchor, FieldStringFocus;
             internal static PropertyInfo LabelText;
             private static readonly Dictionary<string, PropertyInfo> _fieldProps = new Dictionary<string, PropertyInfo>();
@@ -1041,6 +1145,7 @@ namespace UnityGameTranslator.Core.TextShaping
                     FieldIsFocused = field.GetProperty("isFocused", pub);
                     FieldBlinkRate = field.GetProperty("caretBlinkRate", pub);
                     FieldCaretWidth = field.GetProperty("caretWidth", pub);
+                    FieldMultiLine = field.GetProperty("multiLine", pub);   // Up / Down only: absent, Unity's own
                     FieldStringPosition = field.GetProperty("stringPosition", pub);
                     FieldStringAnchor = field.GetProperty("selectionStringAnchorPosition", pub);
                     FieldStringFocus = field.GetProperty("selectionStringFocusPosition", pub);

@@ -44,6 +44,11 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         // Language section containers for conditional display
         private Host _languagesEditableSection;
+        private Host _sourceEditable;
+        private Host _targetEditable;
+        private LabelHandle _sourceSettles;
+        private Host _lockedSourceRow;
+        private Host _lockedTargetRow;
         private Host _languagesLockedSection;
         private LabelHandle _lockedHeader;
         private LabelHandle _lockedSourceLangValue;
@@ -417,7 +422,12 @@ namespace UnityGameTranslator.Core.UI.Panels
             _languagesEditableSection = _screen.Host("LanguagesEditableSection");
             _sourceLanguageDropdown = _screen.Dropdown("SourceLang");
             _targetLanguageDropdown = _screen.Dropdown("TargetLang");
+            _sourceEditable = _screen.Host("SourceEditable");
+            _targetEditable = _screen.Host("TargetEditable");
+            _sourceSettles = _screen.Label("SourceSettles");
             _languagesLockedSection = _screen.Host("LanguagesLockedSection");
+            _lockedSourceRow = _screen.Host("SourceRow");
+            _lockedTargetRow = _screen.Host("TargetRow");
             _lockedHeader = _screen.Label("LockedHeader");
             _lockedSourceMark = _screen.Host("SourceMark");
             _lockedSourceLangValue = _screen.Label("SourceValue");
@@ -824,6 +834,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         private void OnSourceLanguageChanged()
         {
             RefreshStrictSourceState();
+            RefreshSourceSettles();
             UpdateApplyButtonText();
         }
 
@@ -1060,47 +1071,81 @@ namespace UnityGameTranslator.Core.UI.Panels
             UpdateApplyButtonText();
         }
 
+        /// <summary>
+        /// Which language may still be chosen (TranslationLanguages.TargetLocked / SourceLocked —
+        /// the socle's rule, the Manager's card asks the same). Each side on its own: a source still
+        /// on "auto" stays a list beside a settled target, so it can be named — and strict source
+        /// detection turned on — before publishing (user, 2026-10-04).
+        /// </summary>
         private void UpdateLanguagesLocked()
         {
-            bool locked = TranslatorCore.AreLanguagesLocked;
+            bool targetLocked = TranslatorCore.TargetLanguageLocked;
+            bool sourceLocked = TranslatorCore.SourceLanguageLocked;
 
-            if (_languagesEditableSection != null)
-            {
-                _languagesEditableSection.Visible = !locked;
-            }
+            if (_languagesEditableSection != null) _languagesEditableSection.Visible = !targetLocked || !sourceLocked;
+            if (_sourceEditable != null) _sourceEditable.Visible = !sourceLocked;
+            if (_targetEditable != null) _targetEditable.Visible = !targetLocked;
+            RefreshSourceSettles();
 
             if (_languagesLockedSection != null)
             {
-                _languagesLockedSection.Visible = locked;
+                _languagesLockedSection.Visible = targetLocked || sourceLocked;
+                if (_lockedSourceRow != null) _lockedSourceRow.Visible = sourceLocked;
+                if (_lockedTargetRow != null) _lockedTargetRow.Visible = targetLocked;
 
                 // ⚠ The reason, and it is not always the same one. A file being written here can
                 // still be re-targeted — by clearing it — where a published one never can.
-                if (locked && _lockedHeader != null)
+                if ((targetLocked || sourceLocked) && _lockedHeader != null)
                 {
                     _lockedHeader.Say(TranslatorCore.LanguagesLockedByPublishing
                         ? "Languages are settled: this translation is published."
-                        : "Languages are settled: this file already holds lines. Clear the "
-                          + "translation to change them.");
+                        : sourceLocked
+                            ? "Languages are settled: this file already holds lines. Clear the "
+                              + "translation to change them."
+                            : "Target language is settled: this file already holds lines. Clear the "
+                              + "translation to change it.");
                 }
 
-                if (locked && _lockedSourceLangValue != null && _lockedTargetLangValue != null)
+                // The values in force — the file's when it states them (EffectiveSource/Target),
+                // which is what settled them.
+                if (sourceLocked && _lockedSourceLangValue != null)
                 {
-                    string sourceLang = TranslatorCore.Config.source_language;
-                    string targetLang = TranslatorCore.Config.target_language;
-
-                    bool sourceIsAuto = string.IsNullOrEmpty(sourceLang) || sourceLang == "auto";
-                    bool targetIsAuto = string.IsNullOrEmpty(targetLang) || targetLang == "auto";
-
+                    string sourceLang = TranslatorCore.EffectiveSourceLanguage;
+                    bool sourceIsAuto = !Languages.IsSettled(sourceLang);
                     _lockedSourceLangValue.Show(sourceIsAuto ? "Auto (Detect)" : sourceLang);
-                    _lockedTargetLangValue.Show(targetIsAuto ? "Auto (System)" : targetLang);
-
                     // ⚠ Rebuilt rather than tinted: a mark is a flag image, and the flag is not the
                     // same one. An "auto" row stands for no language yet and gets none — which is
                     // what LanguageMark answers on a name the catalogue does not know.
                     ShowMark(_lockedSourceMark, sourceIsAuto ? null : sourceLang);
+                }
+                if (targetLocked && _lockedTargetLangValue != null)
+                {
+                    string targetLang = TranslatorCore.EffectiveTargetLanguage;
+                    bool targetIsAuto = !Languages.IsSettled(targetLang);
+                    _lockedTargetLangValue.Show(targetIsAuto ? "Auto (System)" : targetLang);
                     ShowMark(_lockedTargetMark, targetIsAuto ? null : targetLang);
                 }
             }
+        }
+
+        /// <summary>The source chosen in the list, as stored ("auto" for the detect entry).</summary>
+        private string ChosenSourceLanguage()
+        {
+            string selected = _sourceLanguageDropdown?.SelectedValue;
+            return selected == "auto (Detect)" ? "auto" : selected;
+        }
+
+        /// <summary>
+        /// Said under the list as soon as the choice would settle the source, before Apply —
+        /// and asked again at Apply (OnApplyClicked): the eye is on the list when choosing.
+        /// </summary>
+        private void RefreshSourceSettles()
+        {
+            if (_sourceSettles == null) return;
+            bool settles = !TranslatorCore.SourceLanguageLocked
+                && TranslatorCore.SettlesSourceLanguage(ChosenSourceLanguage());
+            if (settles) _sourceSettles.Say(TranslationLanguages.SettlesSourceNotice);
+            _sourceSettles.Visible = settles;
         }
 
         /// <summary>
@@ -1843,6 +1888,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // Update snapshots after apply (no pending changes now)
                 _initialSnapshot = ConfigSnapshot.FromConfig();
 
+                // A source just named on a file with lines is now settled: shown as such at once.
+                UpdateLanguagesLocked();
                 UpdateApplyButtonText();
             }
             catch (Exception e)
@@ -1862,6 +1909,16 @@ namespace UnityGameTranslator.Core.UI.Panels
             int changes = CountPendingChanges();
             if (changes > 0)
             {
+                // Naming the source of a file that already holds lines settles it for good
+                // (TranslationLanguages.SettlesSource): asked here, at the act — the note under the
+                // list already said it while choosing.
+                if (!TranslatorCore.SourceLanguageLocked && TranslatorCore.SettlesSourceLanguage(ChosenSourceLanguage())
+                    && Intents.CanConfirm())
+                {
+                    Intents.Confirm("Source language", TranslationLanguages.SettlesSourceNotice, "Apply",
+                                    ApplySettings, isDanger: false);
+                    return;
+                }
                 ApplySettings();
             }
             else

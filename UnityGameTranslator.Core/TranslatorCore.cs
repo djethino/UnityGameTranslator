@@ -621,9 +621,17 @@ namespace UnityGameTranslator.Core
         private static string _rtlTargetOf;
         private static bool _rtlTarget;
 
-        /// <inheritdoc cref="LanguageState.Locked"/>
-        public static bool AreLanguagesLocked =>
-            LanguageState.Locked(ServerState != null && ServerState.Exists, TranslationCache.Count);
+        /// <inheritdoc cref="TranslationLanguages.TargetLocked"/>
+        public static bool TargetLanguageLocked =>
+            TranslationLanguages.TargetLocked(LanguagesLockedByPublishing, TranslationCache.Count);
+
+        /// <inheritdoc cref="TranslationLanguages.SourceLocked"/>
+        public static bool SourceLanguageLocked =>
+            TranslationLanguages.SourceLocked(LanguagesLockedByPublishing, TranslationCache.Count, EffectiveSourceLanguage);
+
+        /// <inheritdoc cref="TranslationLanguages.SettlesSource"/>
+        public static bool SettlesSourceLanguage(string chosen) =>
+            TranslationLanguages.SettlesSource(LanguagesLockedByPublishing, TranslationCache.Count, EffectiveSourceLanguage, chosen);
 
         /// <summary>Which of the two reasons applies, so the panel can say the right one.</summary>
         public static bool LanguagesLockedByPublishing => ServerState != null && ServerState.Exists;

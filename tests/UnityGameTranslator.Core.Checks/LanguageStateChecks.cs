@@ -30,7 +30,8 @@ namespace UnityGameTranslator.Core.Checks
             WhenTheConfigurationAlreadyNamesThem(check);
             WhenTheServerAnswers(check);
             WhenTheyCannotBeReconciled(check);
-            WhenTheyAreLocked(check);
+            // When they may still change: the socle's rule (TranslationLanguages.TargetLocked /
+            // SourceLocked), checked in Common.Checks with the Manager's side of it.
         }
 
         private static LanguageState Fresh(List<string> said = null)
@@ -326,21 +327,6 @@ namespace UnityGameTranslator.Core.Checks
             check(silent.Conflict == null,
                 "and a file that states nothing cannot contradict anything",
                 "most files predate the stamp; treating 'does not say' as 'says otherwise' would stop them all");
-        }
-
-        private static void WhenTheyAreLocked(Action<bool, string, string> check)
-        {
-            check(!LanguageState.Locked(published: false, lineCount: 0),
-                "an empty unpublished translation may still choose",
-                "nothing has been written in any language yet, so nothing would be orphaned");
-
-            check(LanguageState.Locked(published: true, lineCount: 0),
-                "a published one may not",
-                "the server keeps the languages a lineage was published with and ignores any sent with an update");
-
-            check(LanguageState.Locked(published: false, lineCount: 1),
-                "and neither may one that already holds a line",
-                "retargeting leaves every existing line in a language the game no longer asks for, with the next captures in the new one");
         }
     }
 }

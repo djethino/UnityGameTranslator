@@ -122,12 +122,14 @@ namespace UnityGameTranslator.Core.UI.Panels
             // this screen went on asking. Same reading as the target below: from the FILE.
             //
             // Otherwise — "auto" means "detect", a working mode — the source only becomes a value
-            // when somebody declares it, which is now; the config is offered when it says one.
-            bool sourceSettled = Languages.IsSettled(TranslatorCore.FileSourceLanguage);
+            // when somebody declares it, which is now. And one named in Options while the file
+            // held lines is settled already (TranslationLanguages.SourceLocked, 2026-10-04): the
+            // file's or, before it is written back, the configuration's — EffectiveSourceLanguage.
+            bool sourceSettled = TranslatorCore.SourceLanguageLocked;
 
             if (sourceSettled)
             {
-                SourceDropdown.SelectedValue = TranslatorCore.FileSourceLanguage;
+                SourceDropdown.SelectedValue = TranslatorCore.EffectiveSourceLanguage;
             }
             else if (!string.IsNullOrEmpty(configSource) && configSource.ToLower() != "auto")
             {
@@ -143,7 +145,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             // This dropdown used to be prefilled AND open: pick another target here and the site
             // stored it while the file went on stating its own, so the next launch raised a
             // language conflict on a translation the person had just published. Same rule as
-            // Options (AreLanguagesLocked): shown, and settled.
+            // Options (TranslatorCore.TargetLanguageLocked): shown, and settled.
             //
             // ⚠ Read from the FILE, not the config: the config follows the file, never the other
             // way round ("the file wins", SettleLanguagesFromFile).

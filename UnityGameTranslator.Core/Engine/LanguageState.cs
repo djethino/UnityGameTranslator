@@ -137,24 +137,6 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// Whether the languages may still be changed, and why not when they may not.
-        ///
-        /// Two reasons, and the second was missing for a long time:
-        ///
-        /// · **published** — the server keeps the languages a translation was published with and
-        ///   ignores any sent with an update, so nothing local could move them anyway;
-        ///
-        /// · 🔴 **this file already holds lines.** A target language is not a preference, it is
-        ///   what the file IS: retargeting a file that already carries lines leaves every one of
-        ///   them written in a language the game is no longer asking for, and the next captures
-        ///   arrive in the new one. One file, two languages, and nothing said so.
-        /// </summary>
-        public static bool Locked(bool published, int lineCount)
-        {
-            return published || lineCount > 0;
-        }
-
-        /// <summary>
         /// Reconcile what the file states with what the machine is set to, at load, with no network.
         ///
         /// 🔴 **The file wins, and it settles this before a single line is translated.** That is

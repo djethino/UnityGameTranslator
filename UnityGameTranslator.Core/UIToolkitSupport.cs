@@ -66,7 +66,72 @@ namespace UnityGameTranslator.Core
         private static PropertyInfo _styleFontProp;   // IStyle.unityFontDefinition
         private static MethodInfo _fromFontMethod;    // FontDefinition.FromFont(Font)
         private static PropertyInfo _resolvedStyleProp; // VisualElement.resolvedStyle
-        private static PropertyInfo _resolvedFontProp;  // IResolvedStyle.unityFont -> Font
+        private static ResolvedRead _resolvedFont;      // IResolvedStyle.unityFont -> Font
+
+        /// <summary>
+        /// One value of an element's resolved style. 🔴 On IL2CPP 2022.3 the interop's IResolvedStyle
+        /// lost unityTextAlign, whiteSpace, fontSize, unityFont and backgroundImage (stripped), and
+        /// VisualElement's explicit implementation the interop generates is not usable (read on the
+        /// element it threw "Object was garbage collected in IL2CPP domain" and left the element's
+        /// style unwritable, bench 2026-10-04). The engine answers each of them from the element's
+        /// ComputedStyle — VisualElement's IResolvedStyle.X is computedStyle.X, its .value for a
+        /// length — kept in its m_Style field (a boxed copy, native getters): read there when the
+        /// interface lacks the member. Unread, UI Toolkit pictures were never replaced and a font set
+        /// by -unity-font was never found on that runtime.
+        /// </summary>
+        private sealed class ResolvedRead
+        {
+            private readonly PropertyInfo _viaInterface, _viaComputed, _lengthValue;
+
+            internal ResolvedRead(PropertyInfo viaInterface, PropertyInfo viaComputed, PropertyInfo lengthValue)
+            {
+                _viaInterface = viaInterface;
+                _viaComputed = viaComputed;
+                _lengthValue = lengthValue;
+            }
+
+            internal bool CanRead => _viaInterface != null || _viaComputed != null;
+
+            /// <param name="resolved">The element's resolvedStyle, already read by the caller.</param>
+            internal object Get(object element, object resolved)
+            {
+                if (_viaInterface != null) return resolved == null ? null : _viaInterface.GetValue(resolved, null);
+                if (_viaComputed == null || element == null) return null;
+                var computed = Members.Get(_computedStyle, element);
+                if (computed == null) return null;
+                var value = _viaComputed.GetValue(computed, null);
+                return value == null || _lengthValue == null ? value : _lengthValue.GetValue(value, null);
+            }
+        }
+
+        // Where a resolved value is read when IResolvedStyle lost it: VisualElement's ComputedStyle.
+        private static MemberInfo _computedStyle;
+        private static bool _computedStyleResolved;
+
+        /// <summary>The resolved style member of that name, read where this runtime keeps it (<see cref="ResolvedRead"/>).</summary>
+        private static ResolvedRead ResolvedMember(string name)
+        {
+            var pubInst = BindingFlags.Instance | BindingFlags.Public;
+            var viaInterface = Members.Property(_resolvedStyleProp?.PropertyType, name, pubInst);
+            if (viaInterface != null || _resolvedStyleProp == null) return new ResolvedRead(viaInterface, null, null);
+
+            if (!_computedStyleResolved)
+            {
+                _computedStyleResolved = true;
+                _computedStyle = Members.FieldOrProperty(VisualElementType, "m_Style", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            }
+            var viaComputed = Members.Property(Members.TypeOf(_computedStyle), name, pubInst);
+            PropertyInfo lengthValue = null;
+            if (viaComputed != null && viaComputed.PropertyType.Name == "Length")
+            {
+                lengthValue = Members.Property(viaComputed.PropertyType, "value", pubInst);
+                if (lengthValue == null) viaComputed = null;   // a length whose value cannot be read answers nothing
+            }
+            TranslatorCore.LogInfo(viaComputed != null
+                ? $"[UIToolkit] resolvedStyle.{name} is absent on this runtime: read from the element's computed style"
+                : $"[UIToolkit] resolvedStyle.{name} is absent on this runtime, and so is the computed style's");
+            return new ResolvedRead(null, viaComputed, lengthValue);
+        }
 
         // The SDF side. Modern UI Toolkit states its font as a TextCore FontAsset, and then
         // `unityFont` is null — reading only that one finds nothing and says nothing.
@@ -85,7 +150,13 @@ namespace UnityGameTranslator.Core
         private static Type _backgroundType;              // UnityEngine.UIElements.Background
         private static Type _styleBackgroundType;         // UnityEngine.UIElements.StyleBackground
         private static PropertyInfo _styleBackgroundProp; // IStyle.backgroundImage
-        private static PropertyInfo _resolvedBackgroundProp; // IResolvedStyle.backgroundImage
+        private static ResolvedRead _resolvedBackground;  // IResolvedStyle.backgroundImage
+        private static PropertyInfo _styleBackgroundValueProp; // StyleBackground.value -> Background
+        // StyleBackground(Background), or the (Background, StyleKeyword.Undefined) it calls: IL2CPP
+        // 2022.3 compiled the first into its callers and only the second is left (bench 2026-10-04).
+        private static ConstructorInfo _styleBackgroundCtor;
+        private static int _styleBackgroundArgs;
+        private static object _styleKeywordUndefined;
         private static MethodInfo _backgroundFromSprite;  // Background.FromSprite(Sprite)
         private static MethodInfo _backgroundFromTexture; // Background.FromTexture2D(Texture2D)
         private static PropertyInfo _backgroundSpriteProp;  // Background.sprite
@@ -95,7 +166,7 @@ namespace UnityGameTranslator.Core
         public static bool CanSetImage { get; private set; }
 
         private static PropertyInfo _styleFontSizeProp;   // IStyle.fontSize         -> StyleLength
-        private static PropertyInfo _resolvedFontSizeProp;// IResolvedStyle.fontSize -> float
+        private static ResolvedRead _resolvedFontSize;    // IResolvedStyle.fontSize -> float
         private static Type _styleLengthType;             // UnityEngine.UIElements.StyleLength
 
         /// <summary>True when this game has UI Toolkit and we can read its text.</summary>
@@ -224,7 +295,7 @@ namespace UnityGameTranslator.Core
                 if (_resolvedStyleProp != null)
                 {
                     var resolvedType = _resolvedStyleProp.PropertyType;
-                    _resolvedFontProp = resolvedType.GetProperty("unityFont", pubInst);
+                    _resolvedFont = ResolvedMember("unityFont");
                     _resolvedFontDefProp = resolvedType.GetProperty("unityFontDefinition", pubInst);
                 }
 
@@ -238,7 +309,7 @@ namespace UnityGameTranslator.Core
                 // Size, same two-sided shape again.
                 _styleFontSizeProp = _styleProp.PropertyType.GetProperty("fontSize", pubInst);
                 if (_resolvedStyleProp != null)
-                    _resolvedFontSizeProp = _resolvedStyleProp.PropertyType.GetProperty("fontSize", pubInst);
+                    _resolvedFontSize = ResolvedMember("fontSize");
                 _styleLengthType = FindTypeAnywhere("UnityEngine.UIElements.StyleLength");
 
                 _fontDefFontProp = _fontDefinitionType.GetProperty("font", pubInst);
@@ -252,7 +323,7 @@ namespace UnityGameTranslator.Core
 
                 // Reading the font must work one way or the other; writing it must work one way or
                 // the other. Neither branch alone is enough to call this available.
-                bool canRead = _resolvedFontProp != null || _resolvedFontDefProp != null;
+                bool canRead = (_resolvedFont != null && _resolvedFont.CanRead) || _resolvedFontDefProp != null;
                 bool canWrite = _styleFontProp != null && _styleFontDefinitionType != null
                                 && (_fromFontMethod != null || _fromSdfFontMethod != null);
 
@@ -676,7 +747,7 @@ namespace UnityGameTranslator.Core
                 // Catch-up (user-required): font override rules match this framework too now —
                 // their RTL alignment applies; fonts and sizes stay with this file's own
                 // mechanisms.
-                _originalFontName.TryGetValue(__instance, out string uitkFont);
+                _originalFontName.TryGet(__instance, out string uitkFont);
                 FontOverrideRule uitkOverride = null;
                 if (TranslatorCore.FontOverrides.Count > 0)
                     // `before`, not `value`: routing has turned value into our translation, and a
@@ -693,7 +764,7 @@ namespace UnityGameTranslator.Core
                     // when stage D started finishing the text here (single pass) instead of
                     // through SetElementTextSilently, which had always filled this in.
                     _written.Remove(__instance);
-                    _written.Add(__instance, value);
+                    _written.Set(__instance, value);
                 }
             }
             catch (Exception ex) { Faults.Say("UIToolkit.TextElement_SetText_Prefix", ex); }
@@ -708,12 +779,11 @@ namespace UnityGameTranslator.Core
         /// <summary>
         /// What we last wrote into an element, so a pass can tell its own work from the game's.
         ///
-        /// ⚠ A ConditionalWeakTable rather than a dictionary: UI Toolkit creates and drops elements
-        /// constantly — list virtualisation recycles them by the hundred — and a strong reference
-        /// per element would keep every one of them alive for the life of the process.
+        /// ⚠ Weak (an ElementStore) rather than a dictionary of elements: UI Toolkit creates and drops
+        /// elements constantly — list virtualisation recycles them by the hundred — and a strong
+        /// reference per element would keep every one of them alive for the life of the process.
         /// </summary>
-        private static readonly ConditionalWeakTable<object, string> _written =
-            new ConditionalWeakTable<object, string>();
+        private static readonly ElementStore<string> _written = new ElementStore<string>();
 
         /// <summary>
         /// What the GAME had in an element before we wrote over it.
@@ -723,20 +793,28 @@ namespace UnityGameTranslator.Core
         /// a VisualElement has none, so it was stored nowhere and put back nowhere. Weak for the
         /// same reason as everything else here: elements are recycled by the hundred.
         /// </summary>
-        private static readonly ConditionalWeakTable<object, string> _originalText =
-            new ConditionalWeakTable<object, string>();
+        private static readonly ElementStore<string> _originalText = new ElementStore<string>();
 
         /// <summary>Remember what was there, the first time we replace it.</summary>
         private static void RememberOriginal(object element, string original)
         {
             if (element == null || string.IsNullOrEmpty(original)) return;
-            if (_originalText.TryGetValue(element, out _)) return;
-            _originalText.Add(element, original);
+            if (_originalText.TryGet(element, out _)) return;
+            _originalText.Set(element, original);
         }
 
         #region Identity
 
         private sealed class IdBox { public long Value; }
+
+        /// <summary>What an id stands for: the element, weakly — and on IL2CPP the native object behind it.</summary>
+        private sealed class Identity
+        {
+            public WeakReference Wrapper;   // the last wrapper met, weakly
+            public long Native;             // IL2CPP: the native object's address, 0 on Mono
+            public IntPtr Handle;           // IL2CPP: a weak handle on it (WeakNativeHandle), Zero otherwise
+            public Type Type;               // IL2CPP: the wrapper's type, to wrap the object again
+        }
 
         /// <summary>
         /// A stable number for an element, so it can be followed by the same routing every other
@@ -747,12 +825,63 @@ namespace UnityGameTranslator.Core
         /// virtualisation — so anything holding them strongly keeps every element ever scrolled
         /// past alive for the life of the process. The number is attached to the element here and
         /// dies with it; <see cref="Sweep"/> then drops the state it pointed at.
+        ///
+        /// 🔴 **On IL2CPP the element is not its wrapper.** A hook's instance is a NEW wrapper of the
+        /// same element at each call (the tree walk's are cached, which is why the check in
+        /// ReportProxyIdentityOnce saw nothing): numbered by the wrapper, one element had as many
+        /// ids, and every table keyed on it — its original font, its original size, what was
+        /// written into it — answered for a stranger (bench 2026-10-04, 2022.3 IL2CPP: the size
+        /// scaled, then put back by the replacement font taken for the game's). There the number
+        /// follows the native object, and a weak handle on it tells it from the next object made
+        /// at the same address once it is collected.
         /// </summary>
         private static readonly ConditionalWeakTable<object, IdBox> _ids =
             new ConditionalWeakTable<object, IdBox>();
 
         /// <summary>The other direction, weakly, so an id can be resolved and swept.</summary>
-        private static readonly Dictionary<long, WeakReference> _byId = new Dictionary<long, WeakReference>();
+        private static readonly Dictionary<long, Identity> _byId = new Dictionary<long, Identity>();
+
+        /// <summary>IL2CPP: native address → id.</summary>
+        private static readonly Dictionary<long, long> _idByNative = new Dictionary<long, long>();
+
+        private interface IForgetsIds { void Forget(long id); }
+        private static List<IForgetsIds> _elementStores;
+        // Lazily: the stores are static fields, made in the order they are written.
+        private static List<IForgetsIds> ElementStores => _elementStores ?? (_elementStores = new List<IForgetsIds>());
+
+        /// <summary>
+        /// Something the mod keeps per element — what it wore before us, what we wrote into it. On
+        /// Mono by the element itself, forgotten with it; on IL2CPP by its <see cref="IdFor"/> (the
+        /// native object, never the wrapper a hook happens to receive), forgotten when the id is
+        /// (<see cref="Forget"/>: swept once its object is collected).
+        /// </summary>
+        private sealed class ElementStore<T> : IForgetsIds where T : class
+        {
+            private readonly ConditionalWeakTable<object, T> _byObject = new ConditionalWeakTable<object, T>();
+            private readonly Dictionary<long, T> _byNumber = new Dictionary<long, T>();
+
+            internal ElementStore() { ElementStores.Add(this); }
+
+            internal bool TryGet(object element, out T value) =>
+                IsInteropWrapper(element) ? _byNumber.TryGetValue(IdFor(element), out value) : _byObject.TryGetValue(element, out value);
+
+            internal bool Has(object element) => TryGet(element, out _);
+
+            internal void Set(object element, T value)
+            {
+                if (IsInteropWrapper(element)) { _byNumber[IdFor(element)] = value; return; }
+                _byObject.Remove(element);
+                _byObject.Add(element, value);
+            }
+
+            internal void Remove(object element)
+            {
+                if (IsInteropWrapper(element)) _byNumber.Remove(IdFor(element));
+                else _byObject.Remove(element);
+            }
+
+            void IForgetsIds.Forget(long id) => _byNumber.Remove(id);
+        }
 
         /// <summary>
         /// 🔴 **Beyond every int, so a collision with a Unity instance id is impossible rather
@@ -768,27 +897,116 @@ namespace UnityGameTranslator.Core
         {
             if (element == null) return 0;
 
+            if (IsInteropWrapper(element))
+            {
+                long native = NativeAddress(element);
+                if (_idByNative.TryGetValue(native, out long known) && _byId.TryGetValue(known, out var who))
+                {
+                    if (StillAt(who.Handle, native))
+                    {
+                        if (who.Wrapper.Target == null) who.Wrapper = new WeakReference(element);
+                        return known;
+                    }
+                    Forget(known);   // collected, and another object made at its address
+                }
+                long id = _nextId++;
+                _idByNative[native] = id;
+                _byId[id] = new Identity { Wrapper = new WeakReference(element), Native = native, Handle = WeakNativeHandle(element), Type = element.GetType() };
+                return id;
+            }
+
             if (_ids.TryGetValue(element, out var box)) return box.Value;
 
             box = new IdBox { Value = _nextId++ };
             _ids.Add(element, box);
-            _byId[box.Value] = new WeakReference(element);
+            _byId[box.Value] = new Identity { Wrapper = new WeakReference(element) };
             return box.Value;
+        }
+
+        private static readonly Type _il2cppObject = Type.GetType("Il2CppInterop.Runtime.InteropTypes.Il2CppObjectBase, Il2CppInterop.Runtime");
+        private static readonly PropertyInfo _il2cppPointer = _il2cppObject?.GetProperty("Pointer", BindingFlags.Instance | BindingFlags.Public);
+
+        /// <summary>An IL2CPP interop wrapper — whose identity is the native object's, never its own (<see cref="IdFor"/>).</summary>
+        internal static bool IsInteropWrapper(object o) => o != null && _il2cppPointer != null && _il2cppObject.IsInstanceOfType(o);
+
+        private static long NativeAddress(object wrapper) => ((IntPtr)_il2cppPointer.GetValue(wrapper, null)).ToInt64();
+
+        private static bool _gcHandlesSought;
+        // IL2CPP.il2cpp_gchandle_new_weakref / _get_target / _free, bound once: the sweep asks every
+        // id at every pass, a reflective call each would be the cost of the pass.
+        private static Func<IntPtr, bool, IntPtr> _gcNewWeak;
+        private static Func<IntPtr, IntPtr> _gcTarget;
+        private static Action<IntPtr> _gcFree;
+
+        /// <summary>
+        /// A weak handle on the native object behind a wrapper, Zero when the runtime offers none. 🔴 A
+        /// native address is the object only while it lives: once collected, the next object of its
+        /// size may be made at the same place, and a table keyed by the address would hand it what the
+        /// dead one wore. The handle tells the two apart (<see cref="StillAt"/>).
+        /// </summary>
+        private static IntPtr WeakNativeHandle(object wrapper)
+        {
+            if (!_gcHandlesSought)
+            {
+                _gcHandlesSought = true;
+                var il2cpp = AssemblyTypes.Find("Il2CppInterop.Runtime.IL2CPP");
+                var statics = BindingFlags.Public | BindingFlags.Static;
+                var newWeak = il2cpp?.GetMethod("il2cpp_gchandle_new_weakref", statics, null, new[] { typeof(IntPtr), typeof(bool) }, null);
+                var target = il2cpp?.GetMethod("il2cpp_gchandle_get_target", statics, null, new[] { typeof(IntPtr) }, null);
+                var free = il2cpp?.GetMethod("il2cpp_gchandle_free", statics, null, new[] { typeof(IntPtr) }, null);
+                if (newWeak != null && target != null && free != null
+                    && newWeak.ReturnType == typeof(IntPtr) && target.ReturnType == typeof(IntPtr))
+                {
+                    _gcNewWeak = (Func<IntPtr, bool, IntPtr>)Delegate.CreateDelegate(typeof(Func<IntPtr, bool, IntPtr>), newWeak);
+                    _gcTarget = (Func<IntPtr, IntPtr>)Delegate.CreateDelegate(typeof(Func<IntPtr, IntPtr>), target);
+                    _gcFree = (Action<IntPtr>)Delegate.CreateDelegate(typeof(Action<IntPtr>), free);
+                }
+                else if (il2cpp != null)
+                    TranslatorCore.LogWarning("[UIToolkit] no IL2CPP weak handles on this runtime: an element is known by its address alone, and forgotten with its last wrapper");
+            }
+            return _gcNewWeak == null ? IntPtr.Zero : _gcNewWeak(new IntPtr(NativeAddress(wrapper)), false);
+        }
+
+        /// <summary>Whether the object a weak handle was taken on still lives at that address (Zero: no handle to ask, taken as yes).</summary>
+        private static bool StillAt(IntPtr handle, long address) =>
+            handle == IntPtr.Zero || _gcTarget(handle).ToInt64() == address;
+
+        private static void FreeWeakHandle(IntPtr handle)
+        {
+            if (handle != IntPtr.Zero) _gcFree(handle);
         }
 
         /// <summary>The element behind a number, or null once it has been collected.</summary>
         public static object ElementFor(long id)
         {
-            if (!_byId.TryGetValue(id, out var weak)) return null;
+            if (!_byId.TryGetValue(id, out var who)) return null;
 
-            var target = weak.Target;
-            if (target == null) Forget(id);
-            return target;
+            var target = who.Wrapper.Target;
+            if (target != null) return target;
+            // IL2CPP: the wrapper went, the element may not have — wrapped again while it lives.
+            if (NativeAlive(who))
+            {
+                target = Activator.CreateInstance(who.Type, new object[] { new IntPtr(who.Native) });
+                who.Wrapper = new WeakReference(target);
+                return target;
+            }
+            Forget(id);
+            return null;
         }
+
+        /// <summary>IL2CPP: the native object an id stands for still lives (known only through a weak handle).</summary>
+        private static bool NativeAlive(Identity who) =>
+            who.Native != 0 && who.Handle != IntPtr.Zero && StillAt(who.Handle, who.Native);
 
         private static void Forget(long id)
         {
+            if (_byId.TryGetValue(id, out var who) && who.Native != 0)
+            {
+                FreeWeakHandle(who.Handle);
+                if (_idByNative.TryGetValue(who.Native, out long current) && current == id) _idByNative.Remove(who.Native);
+            }
             _byId.Remove(id);
+            foreach (var store in ElementStores) store.Forget(id);
             TranslatorCore.Router.Forget(id);
 
             // ⚠ The exclusion and font-rule caches too: both are strong and keyed by id, so an
@@ -809,7 +1027,7 @@ namespace UnityGameTranslator.Core
             List<long> dead = null;
             foreach (var pair in _byId)
             {
-                if (pair.Value.Target != null) continue;
+                if (pair.Value.Wrapper.Target != null || NativeAlive(pair.Value)) continue;
                 (dead ?? (dead = new List<long>())).Add(pair.Key);
             }
 
@@ -835,9 +1053,19 @@ namespace UnityGameTranslator.Core
                 if (_backgroundType == null || _styleBackgroundType == null) return;
 
                 _styleBackgroundProp = _styleProp?.PropertyType.GetProperty("backgroundImage", pubInst);
-                _resolvedBackgroundProp = _resolvedStyleProp?.PropertyType
-                    .GetProperty("backgroundImage", pubInst);
+                _resolvedBackground = ResolvedMember("backgroundImage");
 
+                _styleBackgroundValueProp = Members.Property(_styleBackgroundType, "value", pubInst);
+                var anyCtor = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+                _styleBackgroundCtor = _styleBackgroundType.GetConstructor(anyCtor, null, new[] { _backgroundType }, null);
+                _styleBackgroundArgs = 1;
+                var keywordType = FindType("UnityEngine.UIElements.StyleKeyword");
+                if (_styleBackgroundCtor == null && keywordType != null)
+                {
+                    _styleBackgroundCtor = _styleBackgroundType.GetConstructor(anyCtor, null, new[] { _backgroundType, keywordType }, null);
+                    _styleBackgroundArgs = 2;
+                    _styleKeywordUndefined = Enum.Parse(keywordType, "Undefined");
+                }
                 _backgroundSpriteProp = _backgroundType.GetProperty("sprite", pubInst);
                 _backgroundTextureProp = _backgroundType.GetProperty("texture", pubInst);
 
@@ -846,15 +1074,16 @@ namespace UnityGameTranslator.Core
                 _backgroundFromTexture = _backgroundType.GetMethod("FromTexture2D", statics);
 
                 CanSetImage = _styleBackgroundProp != null
-                              && _resolvedBackgroundProp != null
+                              && _resolvedBackground.CanRead
+                              && _styleBackgroundCtor != null
                               && (_backgroundFromSprite != null || _backgroundFromTexture != null);
             }
             catch (Exception ex) { Faults.Say("UIToolkit.ResolveImageMembers", ex); CanSetImage = false; }
         }
 
-        /// <summary>What the game had as this element's picture, so it can be put back.</summary>
-        private static readonly ConditionalWeakTable<object, object> _originalBackground =
-            new ConditionalWeakTable<object, object>();
+        /// <summary>What the game had as this element's picture, so it can be put back. [0] = the
+        /// Background, kept when a replacement is first written (ElementStore: IL2CPP wrappers).</summary>
+        private static readonly ElementStore<object[]> _originalBackground = new ElementStore<object[]>();
 
         /// <summary>
         /// Swap an element's picture for the one the player provided, by NAME.
@@ -877,24 +1106,56 @@ namespace UnityGameTranslator.Core
                 var resolved = _resolvedStyleProp?.GetValue(element, null);
                 if (resolved == null) return;
 
-                object current = _resolvedBackgroundProp.GetValue(resolved, null);
+                object current = _resolvedBackground.Get(element, resolved);
                 string name = NameOfBackground(current);
-                if (string.IsNullOrEmpty(name)) return;
-
-                if (!_originalBackground.TryGetValue(element, out _))
-                    _originalBackground.Add(element, current);
+                if (string.IsNullOrEmpty(name))
+                {
+                    // Nothing resolved — unless the element's own inline style names a picture: then
+                    // it is the reading that fails, and that is said (once per picture).
+                    if (TranslatorCore.DebugMode && _styleBackgroundValueProp != null)
+                    {
+                        var inline = StyleGet(_styleBackgroundProp, _styleProp.GetValue(element, null));
+                        string inlineName = inline == null ? null : NameOfBackground(_styleBackgroundValueProp.GetValue(inline, null));
+                        if (!string.IsNullOrEmpty(inlineName) && DiagnosticOnce.First("UITK.image.unread", inlineName))
+                            TranslatorCore.LogDebug($"[UIToolkit] picture '{inlineName}' is set inline, but its resolved style reads {(current == null ? "nothing" : $"sprite {DescribeMember(_backgroundSpriteProp, current)}, texture {DescribeMember(_backgroundTextureProp, current)}")}");
+                    }
+                    return;
+                }
 
                 var replacement = ImageReplacer.GetReplacement(name);
+                if (TranslatorCore.DebugMode && DiagnosticOnce.First("UITK.image.seen", name))
+                    TranslatorCore.LogDebug($"[UIToolkit] picture '{name}' on {PathOf(element)}: {(replacement == null ? "no replacement" : "a replacement")}, wears {DescribeMember(_backgroundSpriteProp, current)}");
                 if (replacement == null) return;
 
                 // Already wearing it: writing every pass would be a style assignment per element
-                // per scan, for nothing.
-                if (string.Equals(NameOfBackground(current), replacement.name, StringComparison.Ordinal))
+                // per scan, for nothing. ⚠ The very object, never its name: a replacement is named
+                // as the picture it replaces (ImageReplacer.ImportReplacement), and compared by name
+                // every element counted as already wearing it — nothing was ever replaced.
+                if (_backgroundSpriteProp?.GetValue(current, null) is Sprite worn && worn == replacement)
                     return;
 
+                if (!_originalBackground.Has(element))
+                    _originalBackground.Set(element, new[] { current });
                 WriteBackground(element, BuildBackground(replacement));
             }
             catch (Exception ex) { Faults.Say("UIToolkit.HandleImage", ex); }
+        }
+
+        /// <summary>What a member gives back, for a line saying why something was found empty.</summary>
+        private static string DescribeMember(PropertyInfo p, object on) =>
+            p == null ? "member absent" : DescribeRead(() => p.GetValue(on, null));
+
+        /// <inheritdoc cref="DescribeMember"/>
+        private static string DescribeRead(Func<object> read)
+        {
+            try
+            {
+                object v = read();
+                if (v == null) return "null";
+                if (v is UnityEngine.Object o) return o == null ? "destroyed" : $"{v.GetType().Name} '{o.name}'";
+                return v.GetType().Name;
+            }
+            catch (Exception ex) { return "threw " + (ex.InnerException ?? ex).GetType().Name; }
         }
 
         /// <summary>The name of whatever a background is made of, or null.</summary>
@@ -945,7 +1206,9 @@ namespace UnityGameTranslator.Core
 
             try
             {
-                var styleValue = Activator.CreateInstance(_styleBackgroundType, background);
+                var styleValue = _styleBackgroundArgs == 1
+                    ? _styleBackgroundCtor.Invoke(new[] { background })
+                    : _styleBackgroundCtor.Invoke(new[] { background, _styleKeywordUndefined });
                 var style = _styleProp.GetValue(element, null);
                 if (style != null) _styleBackgroundProp.SetValue(style, styleValue, null);
             }
@@ -968,7 +1231,7 @@ namespace UnityGameTranslator.Core
                 var resolved = _resolvedStyleProp?.GetValue(element, null);
                 if (resolved == null) return null;
 
-                object background = _resolvedBackgroundProp.GetValue(resolved, null);
+                object background = _resolvedBackground.Get(element, resolved);
                 return _backgroundSpriteProp?.GetValue(background, null) as Sprite;
             }
             catch (Exception ex) { Faults.Say("UIToolkit.SpriteOf", ex); return null; }
@@ -978,9 +1241,9 @@ namespace UnityGameTranslator.Core
         private static void RestoreImageOf(object element)
         {
             if (!CanSetImage) return;
-            if (!_originalBackground.TryGetValue(element, out var original) || original == null) return;
+            if (!_originalBackground.TryGet(element, out var original) || original[0] == null) return;
 
-            WriteBackground(element, original);
+            WriteBackground(element, original[0]);
             _originalBackground.Remove(element);
         }
 
@@ -1207,14 +1470,14 @@ namespace UnityGameTranslator.Core
             if (!Available || _textProp == null) return;
 
             int restored = 0;
-            foreach (var pair in new List<KeyValuePair<long, WeakReference>>(_byId))
+            foreach (long id in new List<long>(_byId.Keys))
             {
-                var element = pair.Value.Target;
+                var element = ElementFor(id);
                 if (element == null) continue;
 
                 try
                 {
-                    if (_originalText.TryGetValue(element, out var original)
+                    if (_originalText.TryGet(element, out var original)
                         && !string.IsNullOrEmpty(original))
                     {
                         _writingBack = true;
@@ -1246,7 +1509,7 @@ namespace UnityGameTranslator.Core
         private static void RestoreFontOf(object element)
         {
             if (!CanSetFont) return;
-            if (!_originalFontName.TryGetValue(element, out var settingsName)) return;
+            if (!_originalFontName.TryGet(element, out var settingsName)) return;
 
             var resolved = _resolvedStyleProp?.GetValue(element, null);
             if (resolved == null) return;
@@ -1279,7 +1542,7 @@ namespace UnityGameTranslator.Core
             {
                 TranslatorPatches.RouteText(element, element, IdFor(element),
                                             isOwnUI: false, componentType: "UIToolkit", textValue: ref value);
-                _originalFontName.TryGetValue(element, out string font);
+                _originalFontName.TryGet(element, out string font);
                 FontOverrideRule rule = null;
                 if (TranslatorCore.FontOverrides.Count > 0)
                     rule = TranslatorCore.FindFontOverride(IdFor(element), PathOf(element), font, text);  // the text as written, before routing
@@ -1308,7 +1571,7 @@ namespace UnityGameTranslator.Core
                 finally { _writingBack = false; }
 
                 _written.Remove(element);
-                _written.Add(element, text);
+                _written.Set(element, text);
             }
             catch (Exception ex) { Faults.Say("UIToolkit.WriteBack", ex); }
         }
@@ -1376,6 +1639,13 @@ namespace UnityGameTranslator.Core
                     if (element == null) continue;
 
                     ReportProxyIdentityOnce(element);
+
+                    // Pictures are not text and do not depend on the font gate: ANY element can
+                    // carry one, and most that do carry no text. Asked of the text elements only,
+                    // a picture on a plain VisualElement was never replaced (bench 2026-10-04).
+                    long tImage = Perf.Start();
+                    HandleImage(element);
+                    Perf.Stop(Perf.UitkImage, tImage);
 
                     var asText = AsTextElement(element);
                     if (asText != null) ProcessElement(asText);
@@ -1538,8 +1808,7 @@ namespace UnityGameTranslator.Core
             internal int Frame;   // when the text was assigned — its layout comes at that frame's end
         }
 
-        private static readonly ConditionalWeakTable<object, PendingRtl> _pendingRtl =
-            new ConditionalWeakTable<object, PendingRtl>();
+        private static readonly ElementStore<PendingRtl> _pendingRtl = new ElementStore<PendingRtl>();
 
         // The fast lane: every element assigned since the last tick, looked at ONCE, the frame
         // after its assignment — the first moment its layout can be read. Laid out by then, it
@@ -1549,22 +1818,30 @@ namespace UnityGameTranslator.Core
         // element costs one check here, ever: no per-frame polling of anything.
         private static readonly List<object> _pendingLane = new List<object>();
 
+        /// <summary>Where a list of elements holds this one, -1 if nowhere — by IdFor: on IL2CPP one element comes as several wrappers.</summary>
+        private static int IndexOfElement(List<object> list, object element)
+        {
+            long id = IdFor(element);
+            for (int i = 0; i < list.Count; i++) if (IdFor(list[i]) == id) return i;
+            return -1;
+        }
+
         internal static void DeferUntilLaidOut(object element, string logicalSource, string logical,
                                                string measure, string assigned, bool mirror)
         {
-            _pendingRtl.Remove(element);
-            _pendingRtl.Add(element, new PendingRtl
+            _pendingRtl.Set(element, new PendingRtl
             {
                 LogicalSource = logicalSource, Logical = logical, Measure = measure,
                 Assigned = assigned, Mirror = mirror, Frame = Time.frameCount,
             });
-            if (!_pendingLane.Contains(element)) _pendingLane.Add(element);
+            if (IndexOfElement(_pendingLane, element) < 0) _pendingLane.Add(element);
         }
 
         internal static void ForgetPending(object element)
         {
             _pendingRtl.Remove(element);
-            _pendingLane.Remove(element);
+            int lane = IndexOfElement(_pendingLane, element);
+            if (lane >= 0) _pendingLane.RemoveAt(lane);
         }
 
         // The font lane: every element the setter prefix met for the FIRST time, looked at once
@@ -1578,8 +1855,8 @@ namespace UnityGameTranslator.Core
 
         private static void QueueForFont(object element)
         {
-            if (_originalFontName.TryGetValue(element, out _)) return;
-            if (_fontLane.Contains(element)) return;
+            if (_originalFontName.TryGet(element, out _)) return;
+            if (IndexOfElement(_fontLane, element) >= 0) return;
             _fontLane.Add(element);
             _fontLaneFrame.Add(Time.frameCount);
         }
@@ -1606,7 +1883,7 @@ namespace UnityGameTranslator.Core
             for (int i = _pendingLane.Count - 1; i >= 0; i--)
             {
                 object element = _pendingLane[i];
-                if (!_pendingRtl.TryGetValue(element, out var pending)) { _pendingLane.RemoveAt(i); continue; }
+                if (!_pendingRtl.TryGet(element, out var pending)) { _pendingLane.RemoveAt(i); continue; }
                 if (frame <= pending.Frame) continue;   // its layout has not run yet — next tick
                 _pendingLane.RemoveAt(i);
                 try { TryFinishPending(element, pending, "lane"); }
@@ -1645,7 +1922,7 @@ namespace UnityGameTranslator.Core
             if (_fontStyleWritten)
             {
                 pending.Frame = Time.frameCount;
-                if (!_pendingLane.Contains(element)) _pendingLane.Add(element);
+                if (IndexOfElement(_pendingLane, element) < 0) _pendingLane.Add(element);
                 return;
             }
             // The alignment is mirrored HERE and not at set_text: it is computed from the
@@ -1665,14 +1942,10 @@ namespace UnityGameTranslator.Core
         {
             // An RTL text the fast lane could not finish (see above): the walk is here because
             // the element is attached, and if its layout has run by now, that is the moment.
-            if (_pendingRtl.TryGetValue(element, out var pending))
+            if (_pendingRtl.TryGet(element, out var pending))
                 TryFinishPending(element, pending, "walk");
 
-            // Pictures are not text and do not depend on the font gate: an element can carry a
-            // picture and no text at all, which is most of them.
-            long tImage = Perf.Start();
-            HandleImage(element);
-            Perf.Stop(Perf.UitkImage, tImage);
+            // Its picture was asked about by the walk, as every element's is (Scan).
 
             // Also the switch for "translate this font or not", so it is asked every pass.
             if (!HandleFont(element)) return;
@@ -1695,7 +1968,7 @@ namespace UnityGameTranslator.Core
 
                 // Ours already. Reading it back and asking for a translation would be asking to
                 // translate the target language into itself.
-                if (_written.TryGetValue(element, out var mine) && mine == current) return;
+                if (_written.TryGet(element, out var mine) && mine == current) return;
 
                 if (IsEchoOfTyping(element, current)) return;
 
@@ -1704,7 +1977,7 @@ namespace UnityGameTranslator.Core
                                             isOwnUI: false, componentType: "UIToolkit", textValue: ref translated);
                 // Stage D, same as the setter path — the scan is the other way text reaches a
                 // UI Toolkit screen. Same catch-up: override rules match here too.
-                _originalFontName.TryGetValue(element, out string scanFont);
+                _originalFontName.TryGet(element, out string scanFont);
                 FontOverrideRule scanOverride = null;
                 if (TranslatorCore.FontOverrides.Count > 0)
                     scanOverride = TranslatorCore.FindFontOverride(IdFor(element), PathOf(element), scanFont, current);  // the game's text, not ours
@@ -1718,7 +1991,7 @@ namespace UnityGameTranslator.Core
                 finally { _writingBack = false; }
 
                 _written.Remove(element);
-                _written.Add(element, translated);
+                _written.Set(element, translated);
             }
             catch (Exception ex) { Faults.Say("UIToolkit.TranslateElement", ex); }
             finally { Perf.Stop(Perf.UitkElement, tElement); }
@@ -1760,11 +2033,12 @@ namespace UnityGameTranslator.Core
 
                 bool stable = ReferenceEquals(first, again);
 
+                // Said for what it is: how the walk meets elements. Per-element state does not rest
+                // on it — on IL2CPP an element is known by its native object (IdFor), because a
+                // hook's wrapper is new at every call even where the walk's are kept.
                 TranslatorCore.LogInfo(stable
-                    ? "[UIToolkit] Element identity is stable — per-element state will work."
-                    : "🔴 [UIToolkit] Element identity is NOT stable (a fresh proxy per call): "
-                      + "per-element state cannot be keyed on the object. Translation will repeat "
-                      + "and fonts will be re-applied every pass.");
+                    ? "[UIToolkit] The tree walk meets each element as the same object."
+                    : $"[UIToolkit] The tree walk meets each element as a new object ({(IsInteropWrapper(first) ? "known by its native object" : "🔴 and nothing else tells them apart: per-element state will repeat")}).");
             }
             catch (Exception ex) { Faults.Say("UIToolkit.ReportProxyIdentityOnce", ex); }
         }
@@ -1853,8 +2127,7 @@ namespace UnityGameTranslator.Core
         /// ⚠ Keyed by element rather than by instance id, because a VisualElement has none. That is
         /// also why FontManager.GetSettingsFontName is not called here: it is an instance-id API.
         /// </summary>
-        private static readonly ConditionalWeakTable<object, string> _originalFontName =
-            new ConditionalWeakTable<object, string>();
+        private static readonly ElementStore<string> _originalFontName = new ElementStore<string>();
 
         /// <summary>
         /// The font OBJECT each element started with, kept so it can be put back.
@@ -1864,8 +2137,7 @@ namespace UnityGameTranslator.Core
         /// puts the element back exactly as it was is the object it had. This is what
         /// FontManager.RestoreOriginalFont does per component, with `_originalFontsPerComponent`.
         /// </summary>
-        private static readonly ConditionalWeakTable<object, object> _originalFontObject =
-            new ConditionalWeakTable<object, object>();
+        private static readonly ElementStore<object> _originalFontObject = new ElementStore<object>();
 
         /// <summary>
         /// Registers the element's font, applies the configured replacement, and says whether this
@@ -1911,15 +2183,15 @@ namespace UnityGameTranslator.Core
                     // ever registered, replaced or highlighted, and nothing else in the log says why
                     // (2026-10-02, a UI Toolkit game on Unity 6000.5: every font "0 in scene").
                     if (DiagnosticOnce.First("UIToolkit.noFont", element.GetType().FullName))
-                        TranslatorCore.LogWarning($"[UIToolkit] {element.GetType().Name}: its font cannot be read — {DescribeFontRead(resolved)}");
+                        TranslatorCore.LogWarning($"[UIToolkit] {element.GetType().Name}: its font cannot be read — {DescribeFontRead(element, resolved)}");
                     return true;
                 }
 
-                if (!_originalFontName.TryGetValue(element, out var settingsName))
+                if (!_originalFontName.TryGet(element, out var settingsName))
                 {
                     settingsName = currentFont.name;
-                    _originalFontName.Add(element, settingsName);
-                    _originalFontObject.Add(element, currentFont);
+                    _originalFontName.Set(element, settingsName);
+                    _originalFontObject.Set(element, currentFont);
 
                     // The shared registry, so the font reaches the Fonts tab and can be given a
                     // fallback. RegisterFontObject rather than ...ByName: we hold the object, which
@@ -2040,7 +2312,7 @@ namespace UnityGameTranslator.Core
                                                 UnityEngine.Object currentFont)
         {
             if (string.Equals(currentFont.name, settingsName, StringComparison.Ordinal)) return;
-            if (!_originalFontObject.TryGetValue(element, out var original) || original == null) return;
+            if (!_originalFontObject.TryGet(element, out var original) || original == null) return;
 
             try
             {
@@ -2094,9 +2366,10 @@ namespace UnityGameTranslator.Core
             if (!string.Equals(value, current, StringComparison.Ordinal)) WriteBack(element, value);
         }
 
-        /// <summary>Elements whose original size we hold, so a scale can be undone.</summary>
-        private static readonly ConditionalWeakTable<object, object> _originalFontSize =
-            new ConditionalWeakTable<object, object>();
+        /// <summary>Elements whose original size we hold, so a scale can be undone. [0] = the size (float).
+        /// An ElementStore: the font lane hands over the set_text hook's wrapper, another one at each
+        /// call on IL2CPP — kept by the wrapper, the scaled size was taken for the original.</summary>
+        private static readonly ElementStore<object[]> _originalFontSize = new ElementStore<object[]>();
 
         private static readonly HashSet<string> _replacementLogged = new HashSet<string>();
         private static bool _scaleDiagnosed;
@@ -2114,7 +2387,7 @@ namespace UnityGameTranslator.Core
         /// </summary>
         private static void ApplyScale(object element, string settingsName)
         {
-            if (_styleFontSizeProp == null || _resolvedFontSizeProp == null
+            if (_styleFontSizeProp == null || _resolvedFontSize == null || !_resolvedFontSize.CanRead
                 || _styleLengthType == null) return;
 
             try
@@ -2122,22 +2395,29 @@ namespace UnityGameTranslator.Core
                 var resolved = _resolvedStyleProp.GetValue(element, null);
                 if (resolved == null) return;
 
-                if (!(_resolvedFontSizeProp.GetValue(resolved, null) is float currentSize)) return;
-                if (currentSize <= 0f) return;
+                object read = _resolvedFontSize.Get(element, resolved);
+                if (!(read is float currentSize) || currentSize <= 0f)
+                {
+                    if (TranslatorCore.DebugMode && DiagnosticOnce.First("UITK.scale.unread", settingsName + "\u0001" + (read?.GetType().Name ?? "null")))
+                        TranslatorCore.LogDebug($"[UIToolkit] size for '{settingsName}' not scaled: its resolved size reads {(read == null ? "nothing" : $"{read.GetType().Name} {read}")}");
+                    return;
+                }
 
                 float original;
-                if (_originalFontSize.TryGetValue(element, out var stored) && stored is float kept)
+                if (_originalFontSize.TryGet(element, out var stored) && stored[0] is float kept)
                 {
                     original = kept;
                 }
                 else
                 {
                     original = currentSize;
-                    _originalFontSize.Add(element, original);
+                    _originalFontSize.Set(element, new object[] { original });
                 }
 
                 float scale = FontManager.GetFontScale(settingsName);
                 float wanted = original * scale;
+                if (TranslatorCore.DebugMode && DiagnosticOnce.First("UITK.scale", settingsName + "\u0001" + scale + "\u0001" + original + "\u0001" + currentSize))
+                    TranslatorCore.LogDebug($"[UIToolkit] size for '{settingsName}' on {PathOf(element)}: started {original}, reads {currentSize}, ×{scale} → {wanted}");
 
                 // Below what the eye or the layout can tell apart — writing it would cost a style
                 // resolution every pass for nothing.
@@ -2168,14 +2448,13 @@ namespace UnityGameTranslator.Core
         /// UI Toolkit states its font as a TextCore FontAsset, and `unityFontDefinition` is where
         /// that lives. Both are UnityEngine.Objects, so the caller only needs the name.
         /// </summary>
-        private static UnityEngine.Object ReadResolvedFont(object resolvedStyle, out bool isSdf)
+        private static UnityEngine.Object ReadResolvedFont(object element, object resolvedStyle, out bool isSdf)
         {
             isSdf = false;
 
             try
             {
-                if (_resolvedFontProp != null
-                    && _resolvedFontProp.GetValue(resolvedStyle, null) is Font legacy && legacy != null)
+                if (_resolvedFont != null && _resolvedFont.Get(element, resolvedStyle) is Font legacy && legacy != null)
                 {
                     return legacy;
                 }
@@ -2216,7 +2495,7 @@ namespace UnityGameTranslator.Core
         /// </summary>
         private static UnityEngine.Object CurrentFontOf(object element, object resolvedStyle, out bool isSdf)
         {
-            var font = ReadResolvedFont(resolvedStyle, out isSdf);
+            var font = ReadResolvedFont(element, resolvedStyle, out isSdf);
             if (font != null && !string.IsNullOrEmpty(font.name)) return font;
 
             var panelDefault = PanelDefaultFont(element);
@@ -2296,26 +2575,15 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>What each member <see cref="ReadResolvedFont"/> asks gave back, for the line saying why it found nothing.</summary>
-        private static string DescribeFontRead(object resolvedStyle)
+        private static string DescribeFontRead(object element, object resolvedStyle)
         {
-            string Read(System.Reflection.PropertyInfo p, object on)
-            {
-                if (p == null) return "member absent";
-                try
-                {
-                    object v = p.GetValue(on, null);
-                    if (v == null) return "null";
-                    if (v is UnityEngine.Object o) return o == null ? "destroyed" : $"{v.GetType().Name} '{o.name}'";
-                    return v.GetType().Name;
-                }
-                catch (Exception ex) { return "threw " + (ex.InnerException ?? ex).GetType().Name; }
-            }
-
             object definition = null;
             try { definition = _resolvedFontDefProp?.GetValue(resolvedStyle, null); }
             catch (Exception ex) { Faults.Say("UIToolkit.DescribeFontRead", ex); }
-            return $"unityFont: {Read(_resolvedFontProp, resolvedStyle)}; unityFontDefinition: {Read(_resolvedFontDefProp, resolvedStyle)}"
-                 + (definition == null ? "" : $" (fontAsset: {Read(_fontDefAssetProp, definition)}, font: {Read(_fontDefFontProp, definition)})");
+            string legacy = _resolvedFont == null || !_resolvedFont.CanRead ? "member absent"
+                : DescribeRead(() => _resolvedFont.Get(element, resolvedStyle));
+            return $"unityFont: {legacy}; unityFontDefinition: {DescribeMember(_resolvedFontDefProp, resolvedStyle)}"
+                 + (definition == null ? "" : $" (fontAsset: {DescribeMember(_fontDefAssetProp, definition)}, font: {DescribeMember(_fontDefFontProp, definition)})");
         }
 
         /// <summary>Replacement fonts already turned into SDF assets, by font name.</summary>
@@ -2360,10 +2628,8 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>The SDF asset made from the derived copy's file, asked at once for a Latin letter and some of the copy's private names (what a shaped text is written in).</summary>
-        private static object CreateFromDerivedFile(string settingsName, string name)
+        private static object CreateFromDerivedFile(DerivedFonts.Entry derived, string name)
         {
-            var derived = FontManager.DerivedForSettings(settingsName);
-            if (derived == null) return null;
             var probe = new System.Text.StringBuilder("A");
             var added = derived.Namer?.Added;
             if (added != null)
@@ -2394,12 +2660,20 @@ namespace UnityGameTranslator.Core
                     // with no usable data) the second asks by family name and often succeeds on the
                     // very same font. Using only the first is what made some fonts work and others
                     // not: Ebrima and Lato went through, Liberation Sans and the Adobe faces did not.
-                    // The third reads the derived copy's FILE: a copy is known by no family the
-                    // system lists, and both others failed on it. Named as the Font it stands for,
-                    // so the element wearing it is recognised as wearing the replacement.
-                    asset = FontManager.CreateSdfFontAsset(replacement, _textCoreFontAssetType)
-                            ?? FontManager.CreateSdfFontAssetByFamily(replacement, _textCoreFontAssetType)
-                            ?? CreateFromDerivedFile(settingsName, replacement.name);
+                    // The derived copy's FILE comes FIRST when the replacement is that copy
+                    // (DerivedForSettings: GetUnityReplacementFont's own conditions): a copy is known
+                    // by no family the system lists and its OS Font has no data, so both others fail
+                    // on it by construction (FontManager.CreateSdfFontAssetFromFile) — tried first,
+                    // they filled every Unity 6 log with four warnings for a font that then drew
+                    // fine. Named as the Font it stands for, so the element wearing it is recognised
+                    // as wearing the replacement.
+                    var derived = FontManager.DerivedForSettings(settingsName);
+                    asset = derived != null
+                        ? CreateFromDerivedFile(derived, replacement.name)
+                          ?? FontManager.CreateSdfFontAsset(replacement, _textCoreFontAssetType)
+                          ?? FontManager.CreateSdfFontAssetByFamily(replacement, _textCoreFontAssetType)
+                        : FontManager.CreateSdfFontAsset(replacement, _textCoreFontAssetType)
+                          ?? FontManager.CreateSdfFontAssetByFamily(replacement, _textCoreFontAssetType);
 
                     _sdfCache[key] = asset;
                     ShieldFromUnload(asset);
@@ -2430,8 +2704,7 @@ namespace UnityGameTranslator.Core
         #region Highlight (Fonts tab — which text wears which font)
 
         /// <summary>Colour each element had before we tinted it.</summary>
-        private static readonly ConditionalWeakTable<object, object> _highlightOriginalColor =
-            new ConditionalWeakTable<object, object>();
+        private static readonly ElementStore<object> _highlightOriginalColor = new ElementStore<object>();
 
         /// <summary>Elements currently tinted, so clearing does not have to walk the tree again.</summary>
         private static readonly List<object> _highlighted = new List<object>();
@@ -2579,7 +2852,7 @@ namespace UnityGameTranslator.Core
             {
                 try
                 {
-                    if (_highlightOriginalColor.TryGetValue(element, out var stored)
+                    if (_highlightOriginalColor.TryGet(element, out var stored)
                         && stored is Color original)
                     {
                         SetColour(element, original);
@@ -2609,17 +2882,17 @@ namespace UnityGameTranslator.Core
             string font = SettingsFontNameOf(element);
             FontOverrideRule rule = TranslatorCore.FontOverrides.Count > 0
                 ? TranslatorCore.FindFontOverride(IdFor(element), PathOf(element), font, null) : null;
-            TextShaping.RtlPresenter.AlignTypedLabel(element, typed, font, rule, false, key);
-            if (TranslatorCore.DebugMode && _resolvedStyleProp != null && _resolvedTextAlignProp != null
+            TextShaping.RtlPresenter.AlignTypedLabel(element, typed, font, rule, false);
+            if (TranslatorCore.DebugMode && _resolvedStyleProp != null && CanReadResolvedTextAlign
                 && DiagnosticOnce.First("UITK.typedAlignResult", key + "\u0001" + typed))
-                TranslatorCore.LogDebug($"[RtlInputFields] UI Toolkit field {key} aligned for its text: inline {StyleGet(_styleTextAlignProp, _styleProp.GetValue(element, null))}, resolved {_resolvedTextAlignProp.GetValue(_resolvedStyleProp.GetValue(element, null), null)}");
+                TranslatorCore.LogDebug($"[RtlInputFields] UI Toolkit field {key} aligned for its text: inline {StyleGet(_styleTextAlignProp, _styleProp.GetValue(element, null))}, resolved {ResolvedTextAlign(element, _resolvedStyleProp.GetValue(element, null))}");
             return true;
         }
 
         /// <summary>The font this element is filed under: the one it had before any replacement.</summary>
         private static string SettingsFontNameOf(object element)
         {
-            if (_originalFontName.TryGetValue(element, out var recorded)) return recorded;
+            if (_originalFontName.TryGet(element, out var recorded)) return recorded;
 
             try
             {
@@ -2633,7 +2906,7 @@ namespace UnityGameTranslator.Core
 
         private static void RememberColour(object element)
         {
-            if (_highlightOriginalColor.TryGetValue(element, out _)) return;
+            if (_highlightOriginalColor.TryGet(element, out _)) return;
 
             try
             {
@@ -2641,7 +2914,7 @@ namespace UnityGameTranslator.Core
                 if (resolved == null || _resolvedColorProp == null) return;
 
                 if (_resolvedColorProp.GetValue(resolved, null) is Color current)
-                    _highlightOriginalColor.Add(element, current);
+                    _highlightOriginalColor.Set(element, current);
             }
             catch (Exception ex) { Faults.Say("UIToolkit.RememberColour", ex); }
         }
@@ -2673,10 +2946,10 @@ namespace UnityGameTranslator.Core
         private static MethodInfo _measureTextSize;          // TextElement.MeasureTextSize(string, float, MeasureMode, float, MeasureMode)
         private static object _measureUndefined;             // MeasureMode.Undefined, boxed once
         private static PropertyInfo _contentRectProp;        // VisualElement.contentRect -> Rect
-        private static PropertyInfo _resolvedWhiteSpaceProp; // resolvedStyle.whiteSpace (computed)
+        private static ResolvedRead _resolvedWhiteSpace;     // resolvedStyle.whiteSpace (computed)
         private static PropertyInfo _styleTextAlignProp;     // IStyle.unityTextAlign    (inline)
         private static PropertyInfo _styleWhiteSpaceProp;    // IStyle.whiteSpace        (inline)
-        private static PropertyInfo _resolvedTextAlignProp;  // resolvedStyle.unityTextAlign
+        private static ResolvedRead _resolvedTextAlign;      // resolvedStyle.unityTextAlign
         private static PropertyInfo _resolvedTextGenProp;    // resolvedStyle.unityTextGenerator (Unity 6+, else null)
         private static MethodInfo _atgEnabledForElement;      // TextUtilities.IsAdvancedTextEnabledForElement — the engine's own answer
         private static PropertyInfo _resolvedDisplayProp;    // resolvedStyle.display
@@ -2684,23 +2957,24 @@ namespace UnityGameTranslator.Core
         // The INLINE style values an element wore before our adjustments — restored verbatim
         // when its text goes back to LTR, so an element that never had an inline value gets its
         // "unset" keyword back, not a frozen copy of what the stylesheet computed that day.
+        // Kept in the ElementStores below.
+
+        private static bool CanReadResolvedTextAlign => _resolvedTextAlign != null && _resolvedTextAlign.CanRead;
+
+        private static object ResolvedWhiteSpace(object element, object resolved) => _resolvedWhiteSpace?.Get(element, resolved);
+        private static object ResolvedTextAlign(object element, object resolved) => _resolvedTextAlign?.Get(element, resolved);
+
         // [0] = inline unityTextAlign, [1] = the RESOLVED original the mirror is computed from.
-        private static readonly ConditionalWeakTable<object, object[]> _rtlAlignOriginal =
-            new ConditionalWeakTable<object, object[]>();
-        // The same, for an element the caller names by a stable key (MirrorAlign's stableKey).
-        private static readonly Dictionary<long, object[]> _rtlAlignOriginalByKey = new Dictionary<long, object[]>();
+        private static readonly ElementStore<object[]> _rtlAlignOriginal = new ElementStore<object[]>();
         // [0] = inline whiteSpace, before OUR NoWrap (DisableWrap).
-        private static readonly ConditionalWeakTable<object, object[]> _rtlWrapOriginal =
-            new ConditionalWeakTable<object, object[]>();
+        private static readonly ElementStore<object[]> _rtlWrapOriginal = new ElementStore<object[]>();
         // Same content, for an element whose wrap was just PUT BACK for a new measurement
         // (RestoreWrap): until DisableWrap takes it again, its resolved style may still read our
         // NoWrap — a resolved style is recomputed at the next layout, not at the write — so
         // TryBreakLines must measure against the width rather than trust that shortcut.
-        private static readonly ConditionalWeakTable<object, object[]> _rtlWrapRestoring =
-            new ConditionalWeakTable<object, object[]>();
+        private static readonly ElementStore<object[]> _rtlWrapRestoring = new ElementStore<object[]>();
         // [0] = VisualElement.languageDirection before OUR right-to-left (SetRtlDirection).
-        private static readonly ConditionalWeakTable<object, object[]> _rtlDirectionOriginal =
-            new ConditionalWeakTable<object, object[]>();
+        private static readonly ElementStore<object[]> _rtlDirectionOriginal = new ElementStore<object[]>();
         private static PropertyInfo _languageDirectionProp;  // VisualElement.languageDirection (Unity 6+, else null)
 
         private static void EnsureRtlPlumbing()
@@ -2739,15 +3013,16 @@ namespace UnityGameTranslator.Core
             _styleTextAlignProp = Members.Property(styleType, "unityTextAlign", pubInst) ?? ExplicitStyleProperty(inlineType, "IStyle", "unityTextAlign");
             _styleWhiteSpaceProp = Members.Property(styleType, "whiteSpace", pubInst) ?? ExplicitStyleProperty(inlineType, "IStyle", "whiteSpace");
 
-            // ⚠ The RESOLVED unityTextAlign and whiteSpace were stripped from IResolvedStyle there too,
-            // and VisualElement's explicit implementation the interop generates is not usable: read on
-            // the element, it threw "Object was garbage collected in IL2CPP domain" and left the
-            // element's style unwritable (bench 2026-10-04). Missing, then — and said.
+            // The RESOLVED ones through ResolvedRead (stripped from IResolvedStyle there too). Unread,
+            // a single-line NoWrap label was cut into lines by width, and no RTL text was ever
+            // mirrored, on IL2CPP 2022.3.
             var resolvedType = _resolvedStyleProp?.PropertyType;
-            _resolvedWhiteSpaceProp = Members.Property(resolvedType, "whiteSpace", pubInst);
-            _resolvedTextAlignProp = Members.Property(resolvedType, "unityTextAlign", pubInst);
-            if (_resolvedTextAlignProp == null && _resolvedStyleProp != null)
+            _resolvedWhiteSpace = ResolvedMember("whiteSpace");
+            _resolvedTextAlign = ResolvedMember("unityTextAlign");
+            if (_resolvedStyleProp != null && !CanReadResolvedTextAlign)
                 TranslatorCore.LogWarning("[UIToolkit] the resolved text alignment cannot be read on this runtime: right-to-left text keeps the game's alignment (no mirror)");
+            if (_resolvedStyleProp != null && !_resolvedWhiteSpace.CanRead)
+                TranslatorCore.LogWarning("[UIToolkit] the resolved white space cannot be read on this runtime: a text's lines are measured against its width, NoWrap or not");
             _resolvedTextGenProp = Members.Property(resolvedType, "unityTextGenerator", pubInst);
             _resolvedDisplayProp = Members.Property(resolvedType, "display", pubInst);
 
@@ -2814,7 +3089,7 @@ namespace UnityGameTranslator.Core
             try { _textProp.SetValue(element, text, null); }
             finally { _writingBack = false; }
             _written.Remove(element);
-            _written.Add(element, text);
+            _written.Set(element, text);
         }
 
         internal static bool IsElementAttached(object element)
@@ -3024,11 +3299,11 @@ namespace UnityGameTranslator.Core
         internal static bool? WrapsOwnLines(object element)
         {
             EnsureRtlPlumbing();
-            if (_rtlWrapOriginal.TryGetValue(element, out _) || _rtlWrapRestoring.TryGetValue(element, out _)) return true;
+            if (_rtlWrapOriginal.Has(element) || _rtlWrapRestoring.Has(element)) return true;
             try
             {
                 var resolved = _resolvedStyleProp?.GetValue(element, null);
-                object ws = resolved == null || _resolvedWhiteSpaceProp == null ? null : _resolvedWhiteSpaceProp.GetValue(resolved, null);
+                object ws = ResolvedWhiteSpace(element, resolved);
                 if (ws == null) return null;
                 string name = Enum.GetName(ws.GetType(), ws);
                 return name != "NoWrap" && name != "Pre";
@@ -3055,13 +3330,12 @@ namespace UnityGameTranslator.Core
             // that NoWrap is OURS, just put back for this very measurement and not yet
             // recomputed out of the resolved style (see _rtlWrapRestoring): then the element does
             // wrap, and only the width can say where.
-            if (!_rtlWrapRestoring.TryGetValue(element, out _))
+            if (!_rtlWrapRestoring.Has(element))
             {
                 try
                 {
                     var resolved = _resolvedStyleProp?.GetValue(element, null);
-                    object ws = resolved == null || _resolvedWhiteSpaceProp == null
-                        ? null : _resolvedWhiteSpaceProp.GetValue(resolved, null);
+                    object ws = ResolvedWhiteSpace(element, resolved);
                     string wsName = ws == null ? null : Enum.GetName(ws.GetType(), ws);
                     if (wsName == "NoWrap" || wsName == "Pre")
                         return new List<string>(assigned.Split('\n'));
@@ -3137,29 +3411,22 @@ namespace UnityGameTranslator.Core
         /// 🔴 Only callable once the element has been styled by its panel (attached, and a frame
         /// gone by): the resolved value read before that is the engine default, and it would be
         /// stored as the original for the life of the element.
+        /// The original is kept by the native object on IL2CPP (ElementStore): kept by the wrapper,
+        /// the mirrored side was taken for the original and a field flipped back.
         /// </summary>
-        /// <param name="stableKey">The element's own key when the caller has one (an input field: its
-        /// native key) — 🔴 on IL2CPP a hook receives a NEW wrapper of the same element at each call:
-        /// kept by the object, the original was never found again, the mirrored side was taken for
-        /// the original and the field flipped back (bench 2026-10-04, 2022.3 IL2CPP).</param>
-        internal static void MirrorAlign(object element, bool mirror, long? stableKey = null)
+        internal static void MirrorAlign(object element, bool mirror)
         {
             EnsureRtlPlumbing();
-            if (_styleTextAlignProp == null || _resolvedTextAlignProp == null) return;
-            // Where the original is kept: by the given key, or by the element object itself.
-            bool Find(out object[] found) =>
-                stableKey.HasValue ? _rtlAlignOriginalByKey.TryGetValue(stableKey.Value, out found) : _rtlAlignOriginal.TryGetValue(element, out found);
-            void Forget() { if (stableKey.HasValue) _rtlAlignOriginalByKey.Remove(stableKey.Value); else _rtlAlignOriginal.Remove(element); }
-            void Keep(object[] original) { if (stableKey.HasValue) _rtlAlignOriginalByKey[stableKey.Value] = original; else _rtlAlignOriginal.Add(element, original); }
+            if (_styleTextAlignProp == null || !CanReadResolvedTextAlign) return;
             if (!mirror)
             {
                 // "Keep the game's": an element mirrored under an earlier choice gets its inline
                 // value back (see RtlPresenter.MirrorAlignment — same rule, same reason).
                 try
                 {
-                    if (Find(out var align))
+                    if (_rtlAlignOriginal.TryGet(element, out var align))
                     {
-                        Forget();
+                        _rtlAlignOriginal.Remove(element);
                         var styleBack = _styleProp.GetValue(element, null);
                         if (styleBack != null && align[0] != null) StyleSet(_styleTextAlignProp, styleBack, align[0]);
                     }
@@ -3170,7 +3437,7 @@ namespace UnityGameTranslator.Core
             try
             {
                 object[] stored;
-                if (!Find(out stored))
+                if (!_rtlAlignOriginal.TryGet(element, out stored))
                 {
                     var style = _styleProp.GetValue(element, null);
                     var resolved = _resolvedStyleProp.GetValue(element, null);
@@ -3178,9 +3445,9 @@ namespace UnityGameTranslator.Core
                     stored = new object[]
                     {
                         StyleGet(_styleTextAlignProp, style),
-                        _resolvedTextAlignProp.GetValue(resolved, null),
+                        ResolvedTextAlign(element, resolved),
                     };
-                    Keep(stored);
+                    _rtlAlignOriginal.Set(element, stored);
                 }
 
                 object originalEnum = stored[1];
@@ -3221,14 +3488,13 @@ namespace UnityGameTranslator.Core
                 if (wsType == null) return;
                 var noWrap = Activator.CreateInstance(styleEnumType, Enum.Parse(wsType, "NoWrap"));
 
-                if (_rtlWrapRestoring.TryGetValue(element, out var restoring))
+                if (_rtlWrapRestoring.TryGet(element, out var restoring))
                 {
                     // Ours again: the original was kept across the restore.
                     _rtlWrapRestoring.Remove(element);
-                    _rtlWrapOriginal.Remove(element);
-                    _rtlWrapOriginal.Add(element, restoring);
+                    _rtlWrapOriginal.Set(element, restoring);
                 }
-                else if (_rtlWrapOriginal.TryGetValue(element, out _))
+                else if (_rtlWrapOriginal.Has(element))
                 {
                     // Already ours.
                 }
@@ -3236,11 +3502,10 @@ namespace UnityGameTranslator.Core
                 {
                     // Natively wrap-free (stylesheet or inline): not ours to touch.
                     var resolved = _resolvedStyleProp?.GetValue(element, null);
-                    object ws = resolved == null || _resolvedWhiteSpaceProp == null
-                        ? null : _resolvedWhiteSpaceProp.GetValue(resolved, null);
+                    object ws = ResolvedWhiteSpace(element, resolved);
                     string wsName = ws == null ? null : Enum.GetName(ws.GetType(), ws);
                     if (wsName == "NoWrap" || wsName == "Pre") return;
-                    _rtlWrapOriginal.Add(element, new object[] { StyleGet(_styleWhiteSpaceProp, style) });
+                    _rtlWrapOriginal.Set(element, new object[] { StyleGet(_styleWhiteSpaceProp, style) });
                 }
                 // Same rule as MirrorAlign: writing an unchanged inline style still invalidates
                 // the layout, every single set_text.
@@ -3259,7 +3524,7 @@ namespace UnityGameTranslator.Core
         /// </summary>
         internal static void RestoreWrap(object element)
         {
-            if (!_rtlWrapOriginal.TryGetValue(element, out var wrap)) return;
+            if (!_rtlWrapOriginal.TryGet(element, out var wrap)) return;
             _rtlWrapOriginal.Remove(element);
             try
             {
@@ -3267,8 +3532,7 @@ namespace UnityGameTranslator.Core
                 if (style != null && wrap[0] != null && _styleWhiteSpaceProp != null) StyleSet(_styleWhiteSpaceProp, style, wrap[0]);
             }
             catch (Exception ex) { Faults.Say("UIToolkit.RestoreWrap", ex); }
-            _rtlWrapRestoring.Remove(element);
-            _rtlWrapRestoring.Add(element, wrap);
+            _rtlWrapRestoring.Set(element, wrap);
         }
 
         /// <summary>
@@ -3288,8 +3552,8 @@ namespace UnityGameTranslator.Core
             try
             {
                 object current = _languageDirectionProp.GetValue(element, null);
-                if (!_rtlDirectionOriginal.TryGetValue(element, out _))
-                    _rtlDirectionOriginal.Add(element, new[] { current });
+                if (!_rtlDirectionOriginal.Has(element))
+                    _rtlDirectionOriginal.Set(element, new[] { current });
                 object rtl = Enum.Parse(_languageDirectionProp.PropertyType, "RTL");
                 if (!Equals(current, rtl)) _languageDirectionProp.SetValue(element, rtl, null);
             }
@@ -3306,7 +3570,7 @@ namespace UnityGameTranslator.Core
         {
             try
             {
-                if (!keepDirection && _rtlDirectionOriginal.TryGetValue(element, out var direction))
+                if (!keepDirection && _rtlDirectionOriginal.TryGet(element, out var direction))
                 {
                     _rtlDirectionOriginal.Remove(element);
                     if (direction[0] != null && !Equals(_languageDirectionProp?.GetValue(element, null), direction[0]))
@@ -3314,12 +3578,12 @@ namespace UnityGameTranslator.Core
                 }
                 var style = _styleProp?.GetValue(element, null);
                 if (style == null) return;
-                if (!keepAlignment && _rtlAlignOriginal.TryGetValue(element, out var align))
+                if (!keepAlignment && _rtlAlignOriginal.TryGet(element, out var align))
                 {
                     _rtlAlignOriginal.Remove(element);
                     if (align[0] != null && _styleTextAlignProp != null) StyleSet(_styleTextAlignProp, style, align[0]);
                 }
-                if (_rtlWrapOriginal.TryGetValue(element, out var wrap))
+                if (_rtlWrapOriginal.TryGet(element, out var wrap))
                 {
                     _rtlWrapOriginal.Remove(element);
                     if (wrap[0] != null && _styleWhiteSpaceProp != null) StyleSet(_styleWhiteSpaceProp, style, wrap[0]);

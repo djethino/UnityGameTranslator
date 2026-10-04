@@ -96,7 +96,7 @@ namespace UnityGameTranslator.Core.TextShaping
                 Ngui.Wrap.Invoke(label, args);
                 final = args[1] as string;
             }
-            catch (Exception ex) { Note("NGUI field: UILabel.Wrap failed, laid out on its hard breaks: " + (ex.InnerException ?? ex).Message); return null; }
+            catch (Exception ex) { Note("NGUI field: UILabel.Wrap failed, laid out on its hard breaks", ex); return null; }
             if (final == null || final == text) return null;
 
             var wraps = new List<int>();
@@ -163,7 +163,7 @@ namespace UnityGameTranslator.Core.TextShaping
                 finally { TranslatorPatches.BypassTextPrefix = false; }
                 Ngui.RedrawOverlay(__instance, label);
             }
-            catch (Exception ex) { Note("NGUI field presentation after UpdateLabel failed: " + (ex.InnerException ?? ex).Message); }
+            catch (Exception ex) { Note("NGUI field presentation after UpdateLabel failed", ex); }
         }
 
         // ══ Caret and selection ══════════════════════════════════════════════════════════════
@@ -211,7 +211,7 @@ namespace UnityGameTranslator.Core.TextShaping
             }
             catch (Exception ex)
             {
-                Note("NGUI caret mapping failed, NGUI's own used: " + (ex.InnerException ?? ex).Message);
+                Note("NGUI caret mapping failed, NGUI's own used", ex);
                 return true;
             }
         }
@@ -256,7 +256,7 @@ namespace UnityGameTranslator.Core.TextShaping
                 __result = s.Layout.CaretAtBoundary(__result);
                 s.GoalLanded = -1;   // a click starts a new column
             }
-            catch (Exception ex) { Note("NGUI click mapping failed: " + ex.Message); }
+            catch (Exception ex) { Note("NGUI click mapping failed", ex); }
         }
 
         // ══ Arrow keys ═══════════════════════════════════════════════════════════════════════
@@ -368,7 +368,7 @@ namespace UnityGameTranslator.Core.TextShaping
             }
             catch (Exception ex)
             {
-                Note("NGUI arrow move failed, NGUI's own used: " + (ex.InnerException ?? ex).Message);
+                Note("NGUI arrow move failed, NGUI's own used", ex);
                 return true;
             }
         }
@@ -433,7 +433,7 @@ namespace UnityGameTranslator.Core.TextShaping
                     { PrintOverlay = null; Note("NGUI fields: UILabel.PrintOverlay or UIGeometry not as expected — the caret is NGUI's"); }
                     if (GetCharacterIndexAtPosition == null) Note("NGUI fields: UILabel.GetCharacterIndexAtPosition missing — clicks are NGUI's");
                 }
-                catch (Exception ex) { _ok = false; Note("NGUI fields unavailable: " + ex.Message); }
+                catch (Exception ex) { _ok = false; Note("NGUI fields unavailable", ex); }
                 return _ok;
             }
 
@@ -460,7 +460,7 @@ namespace UnityGameTranslator.Core.TextShaping
                     if (!_fieldOk) Note("NGUI fields: a UIInput member the arrows need is missing — the arrows are NGUI's");
                     if (_drawStart == null) Note("NGUI fields: UIInput.mDrawStart not found — a scrolled field steps from the start of its text");
                 }
-                catch (Exception ex) { _fieldOk = false; Note("NGUI field arrows unavailable: " + ex.Message); }
+                catch (Exception ex) { _fieldOk = false; Note("NGUI field arrows unavailable", ex); }
                 return _fieldOk;
             }
 

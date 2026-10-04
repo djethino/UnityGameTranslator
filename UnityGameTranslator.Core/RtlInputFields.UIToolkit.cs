@@ -48,22 +48,8 @@ namespace UnityGameTranslator.Core.TextShaping
         // By the element's key (ObjectKey): a text element is no UnityEngine.Object.
         private static readonly Dictionary<long, UitkState> _uitk = new Dictionary<long, UitkState>();
 
-        private static readonly Type _il2cppObject = Type.GetType("Il2CppInterop.Runtime.InteropTypes.Il2CppObjectBase, Il2CppInterop.Runtime");
-        private static readonly PropertyInfo _il2cppPointer = _il2cppObject?.GetProperty("Pointer", BindingFlags.Instance | BindingFlags.Public);
-
-        /// <summary>
-        /// The same number for the same engine object, every time it is met. On IL2CPP an object
-        /// reaches managed code through a wrapper the interop may let go and make again: keyed by
-        /// the wrapper, a field's text info or editor met later no longer found its field (bench,
-        /// 2021.3 IL2CPP: one case in eight left unmapped). The native pointer is the object; on
-        /// Mono the object is itself (UIToolkitSupport.IdFor).
-        /// </summary>
-        private static long ObjectKey(object o)
-        {
-            if (o != null && _il2cppPointer != null && _il2cppObject.IsInstanceOfType(o))
-                return ((IntPtr)_il2cppPointer.GetValue(o, null)).ToInt64();
-            return UIToolkitSupport.IdFor(o);
-        }
+        /// <summary>The same number for the same engine object, every time it is met — on IL2CPP the native object, never the wrapper a hook receives (UIToolkitSupport.IdFor).</summary>
+        private static long ObjectKey(object o) => UIToolkitSupport.IdFor(o);
         [ThreadStatic] private static bool _uitkRawIndices;
 
         /// <summary>The hooks, when this engine has the shape they are written for (Unity 6).</summary>
@@ -152,7 +138,7 @@ namespace UnityGameTranslator.Core.TextShaping
                 string suffix = rendered != null && rendered.EndsWith(RenderedSuffix, StringComparison.Ordinal) ? RenderedSuffix : "";
                 PresentUitkField(__instance, id, rendered?.Substring(0, rendered.Length - suffix.Length), suffix);
             }
-            catch (Exception ex) { Note("UI Toolkit field presentation failed, drawn as typed: " + ex.Message); }
+            catch (Exception ex) { Note("UI Toolkit field presentation failed, drawn as typed", ex); }
         }
 
         // Fields written before their panel styled them, by the object's key (ObjectKey: on IL2CPP the
@@ -230,7 +216,7 @@ namespace UnityGameTranslator.Core.TextShaping
                 if (!widthMoved && wraps == s.LaidWraps) return;
                 if (PresentUitkField(__instance, id, s.Logical, s.Suffix) != null) Uitk.Relayout(__instance);
             }
-            catch (Exception ex) { Note("UI Toolkit field re-layout failed: " + ex.Message); }
+            catch (Exception ex) { Note("UI Toolkit field re-layout failed", ex); }
         }
 
         /// <summary>
@@ -303,7 +289,7 @@ namespace UnityGameTranslator.Core.TextShaping
                 var s = UitkStateOfHandle(__instance);
                 if (s != null) __0 = s.Layout.BoundaryOf(__0);
             }
-            catch (Exception ex) { Note("UI Toolkit caret mapping failed: " + ex.Message); }
+            catch (Exception ex) { Note("UI Toolkit caret mapping failed", ex); }
         }
 
         [ThreadStatic] private static bool _atgEdgeAsking;
@@ -343,7 +329,7 @@ namespace UnityGameTranslator.Core.TextShaping
                 float x = Mathf.Abs(near.x - r.xMin) < Mathf.Abs(near.x - r.xMax) ? r.xMax : r.xMin;
                 __result = new Vector2(x, near.y);
             }
-            catch (Exception ex) { Note("UI Toolkit end caret placement failed: " + ex.Message); }
+            catch (Exception ex) { Note("UI Toolkit end caret placement failed", ex); }
         }
 
         /// <summary>TextHandle.GetCursorIndexFromPosition: the display gap under the pointer, made the caret standing there.</summary>
@@ -370,7 +356,7 @@ namespace UnityGameTranslator.Core.TextShaping
                     caret = s.Layout.CaretAtLineSide(line, rightSide: __0.x > maxX);
                 __result = caret;
             }
-            catch (Exception ex) { Note("UI Toolkit click mapping failed: " + ex.Message); }
+            catch (Exception ex) { Note("UI Toolkit click mapping failed", ex); }
         }
 
         // ══ Arrow keys ═══════════════════════════════════════════════════════════════════════
@@ -497,7 +483,7 @@ namespace UnityGameTranslator.Core.TextShaping
             }
             catch (Exception ex)
             {
-                Note("UI Toolkit arrow move failed, the field's own used: " + (ex.InnerException ?? ex).Message);
+                Note("UI Toolkit arrow move failed, the field's own used", ex);
                 return false;
             }
         }
@@ -545,7 +531,7 @@ namespace UnityGameTranslator.Core.TextShaping
             }
             catch (Exception ex)
             {
-                Note("UI Toolkit Up/Down failed, the field's own used: " + (ex.InnerException ?? ex).Message);
+                Note("UI Toolkit Up/Down failed, the field's own used", ex);
                 return false;
             }
         }
@@ -657,7 +643,7 @@ namespace UnityGameTranslator.Core.TextShaping
             }
             catch (Exception ex)
             {
-                Note("UI Toolkit Home/End failed, the field's own used: " + (ex.InnerException ?? ex).Message);
+                Note("UI Toolkit Home/End failed, the field's own used", ex);
                 return false;
             }
         }
@@ -690,7 +676,7 @@ namespace UnityGameTranslator.Core.TextShaping
             }
             catch (Exception ex)
             {
-                Note("UI Toolkit Up/Down: the field could not be read, the engine's own used: " + (ex.InnerException ?? ex).Message);
+                Note("UI Toolkit Up/Down: the field could not be read, the engine's own used", ex);
                 return false;
             }
             try
@@ -730,7 +716,7 @@ namespace UnityGameTranslator.Core.TextShaping
             catch (Exception ex)
             {
                 // An ATG field with right-to-left text: its own Up/Down would be the crash above — the caret stays.
-                Note("UI Toolkit Up/Down failed on an Advanced Text Generator field, the caret stays: " + (ex.InnerException ?? ex).Message);
+                Note("UI Toolkit Up/Down failed on an Advanced Text Generator field, the caret stays", ex);
                 return true;
             }
         }
@@ -769,7 +755,7 @@ namespace UnityGameTranslator.Core.TextShaping
             }
             catch (Exception ex)
             {
-                Note("UI Toolkit word selection failed, the field's own used: " + (ex.InnerException ?? ex).Message);
+                Note("UI Toolkit word selection failed, the field's own used", ex);
                 return true;
             }
         }
@@ -808,7 +794,7 @@ namespace UnityGameTranslator.Core.TextShaping
             }
             catch (Exception ex)
             {
-                Note("UI Toolkit drag by words failed, the field's own used: " + (ex.InnerException ?? ex).Message);
+                Note("UI Toolkit drag by words failed, the field's own used", ex);
                 return true;
             }
         }
@@ -847,7 +833,7 @@ namespace UnityGameTranslator.Core.TextShaping
             }
             catch (Exception ex)
             {
-                Note("UI Toolkit selection drawing failed, the field's own used: " + (ex.InnerException ?? ex).Message);
+                Note("UI Toolkit selection drawing failed, the field's own used", ex);
                 return true;
             }
         }
@@ -1043,7 +1029,7 @@ namespace UnityGameTranslator.Core.TextShaping
                                                      || _lineNumber == null || _lineHeight == null || PositionByLine == null))
                     { DrawHighlighting = null; Note("UI Toolkit fields: the selection's drawing members are missing — the selection is the field's"); }
                 }
-                catch (Exception ex) { _ok = false; Note("UI Toolkit fields unavailable: " + ex.Message); }
+                catch (Exception ex) { _ok = false; Note("UI Toolkit fields unavailable", ex); }
                 return _ok;
             }
 

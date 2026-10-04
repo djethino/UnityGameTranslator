@@ -808,6 +808,13 @@ namespace UnityGameTranslator.Core
                     // recognized by patches and ApplyToScene on subsequent reloads
                     EngineStrings.SetName(sprite, spriteName);
 
+                    // 🔴 It outlives the game's unloads, as the mod's fonts do (FontManager.Kept): the
+                    // engine's sweep of unused assets destroyed a replacement nothing wore at that
+                    // instant, and every picture asked for it afterwards found none (IL2CPP 2022.3,
+                    // UI Toolkit, bench 2026-10-04).
+                    texture.hideFlags |= HideFlags.DontUnloadUnusedAsset;
+                    sprite.hideFlags |= HideFlags.DontUnloadUnusedAsset;
+
                     // Cleanup previous loaded sprite
                     if (_loadedSprites.TryGetValue(spriteName, out var prev) && prev != null)
                         UnityEngine.Object.Destroy(prev);
@@ -837,9 +844,12 @@ namespace UnityGameTranslator.Core
         {
             if (!TranslatorCore.ImageReplacementActive) return null;
             if (string.IsNullOrEmpty(spriteName)) return null;
-            if (_loadedSprites.TryGetValue(spriteName, out var sprite))
-                return sprite;
-            return null;
+            if (!_loadedSprites.TryGetValue(spriteName, out var sprite)) return null;
+            // Loaded and destroyed since, by something other than the mod: said, never taken for
+            // "no replacement" — that is how an unshielded sprite went unseen.
+            if (sprite == null && DiagnosticOnce.First("ImageReplacer.destroyed", spriteName))
+                TranslatorCore.LogWarning($"[ImageReplacer] the replacement for '{spriteName}' was destroyed by the game: the picture keeps its own until the replacements are loaded again");
+            return sprite == null ? null : sprite;
         }
 
         /// <summary>

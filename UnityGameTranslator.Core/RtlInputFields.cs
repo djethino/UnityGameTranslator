@@ -541,7 +541,7 @@ namespace UnityGameTranslator.Core.TextShaping
                     TranslatorCore.LogInfo($"[RtlInputFields] TMP field label laid out: boxes {(s.BoxesFromReorder ? "read" : "NOT read")}, {s.Layout.LineCount} line(s)");
                 return moved;
             }
-            catch (Exception ex) { Note("TMP glyph move failed: " + ex.Message); return null; }
+            catch (Exception ex) { Note("TMP glyph move failed", ex); return null; }
         }
 
         /// <summary>
@@ -733,7 +733,7 @@ namespace UnityGameTranslator.Core.TextShaping
                 s.GoalLanded = -1;   // a click starts a new column
                 __result = CaretAt(s, __0);
             }
-            catch (Exception ex) { Note("click mapping failed: " + ex.Message); }
+            catch (Exception ex) { Note("click mapping failed", ex); }
         }
 
         /// <summary>
@@ -774,7 +774,7 @@ namespace UnityGameTranslator.Core.TextShaping
                 if (shift) SetFocus(s, caret);   // Shift-click: the selection extended to the click
                 else SetCaret(s, caret);
             }
-            catch (Exception ex) { Note("TMP click mapping failed: " + ex.Message); }
+            catch (Exception ex) { Note("TMP click mapping failed", ex); }
         }
 
         /// <summary>TMP: a drag extends the selection to where the pointer is, from the map.</summary>
@@ -787,7 +787,7 @@ namespace UnityGameTranslator.Core.TextShaping
                 if (!ScreenToLocal(s.Label.rectTransform, __0.position, __0.pressEventCamera, out Vector2 local)) return;
                 SetFocus(s, CaretAt(s, local));
             }
-            catch (Exception ex) { Note("TMP drag mapping failed: " + ex.Message); }
+            catch (Exception ex) { Note("TMP drag mapping failed", ex); }
         }
 
         /// <summary>The engine line under a point of the label's local space: the nearest by its band.</summary>
@@ -911,7 +911,7 @@ namespace UnityGameTranslator.Core.TextShaping
             }
             catch (Exception ex)
             {
-                Note("arrow move failed, Unity's own used: " + ex.Message);
+                Note("arrow move failed, Unity's own used", ex);
                 return false;
             }
         }
@@ -938,7 +938,7 @@ namespace UnityGameTranslator.Core.TextShaping
                 bool shift = (modifiers & EventModifiers.Shift) != 0;
                 __state = new[] { Focus(s), key == KeyCode.End ? 1 : 0, shift ? 1 : 0, ctrl ? 1 : 0 };
             }
-            catch (Exception ex) { Note("Home/End reading failed, TMP's own used: " + ex.Message); }
+            catch (Exception ex) { Note("Home/End reading failed, TMP's own used", ex); }
         }
 
         /// <summary>
@@ -965,7 +965,7 @@ namespace UnityGameTranslator.Core.TextShaping
                 if (shift) SetFocus(s, target);
                 else SetCaret(s, target);
             }
-            catch (Exception ex) { Note("Home/End failed, TMP's own used: " + ex.Message); }
+            catch (Exception ex) { Note("Home/End failed, TMP's own used", ex); }
         }
 
         // ══ Up / Down ════════════════════════════════════════════════════════════════════════
@@ -1019,7 +1019,7 @@ namespace UnityGameTranslator.Core.TextShaping
             }
             catch (Exception ex)
             {
-                Note("Up/Down failed, Unity's own used: " + ex.Message);
+                Note("Up/Down failed, Unity's own used", ex);
                 return false;
             }
         }
@@ -1206,7 +1206,7 @@ namespace UnityGameTranslator.Core.TextShaping
                 if (_drawStartField != null) return Convert.ToInt32(_drawStartField.GetValue(field));
                 if (_drawStartProp != null) return Convert.ToInt32(_drawStartProp.GetValue(field, null));
             }
-            catch (Exception ex) { Note("m_DrawStart unreadable: " + ex.Message); }
+            catch (Exception ex) { Note("m_DrawStart unreadable", ex); }
             return 0;
         }
 
@@ -1214,6 +1214,18 @@ namespace UnityGameTranslator.Core.TextShaping
         {
             if (!DiagnosticOnce.First("RtlInputFields.note", message)) return;
             TranslatorCore.LogWarning("[RtlInputFields] " + message);
+        }
+
+        /// <summary>
+        /// A failure: what failed, and the exception that says why — the one behind a reflective call
+        /// (a bare "Exception has been thrown by the target of an invocation" named nothing), with
+        /// where it was thrown.
+        /// </summary>
+        private static void Note(string what, Exception ex)
+        {
+            if (ex is TargetInvocationException tie && tie.InnerException != null) ex = tie.InnerException;
+            if (!DiagnosticOnce.First("RtlInputFields.note", what + "\u0001" + ex.GetType().Name + "\u0001" + ex.Message)) return;
+            TranslatorCore.LogWarning($"[RtlInputFields] {what}: {ex.GetType().Name}: {ex.Message}\n{ex.StackTrace}");
         }
 
         // ══ TMP by reflection: the Core names no TMP type (it may not be in the game) ═══════
@@ -1259,7 +1271,7 @@ namespace UnityGameTranslator.Core.TextShaping
                 catch (Exception ex)
                 {
                     _ok = false;
-                    Note("TMP input fields unavailable: " + ex.Message);
+                    Note("TMP input fields unavailable", ex);
                 }
                 return _ok;
             }

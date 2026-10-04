@@ -110,7 +110,7 @@ namespace UnityGameTranslator.Core.TextShaping
             }
             catch (Exception ex)
             {
-                Note("UI Toolkit 2021 field presentation failed, drawn as typed: " + (ex.InnerException ?? ex).Message);
+                Note("UI Toolkit 2021 field presentation failed, drawn as typed", ex);
                 return true;
             }
         }
@@ -209,7 +209,7 @@ namespace UnityGameTranslator.Core.TextShaping
                     if (DiagnosticOnce.First("RtlInputFields.Uitk21", "caret")) TranslatorCore.LogInfo("[RtlInputFields] UI Toolkit 2021 field: caret mapped");
                 }
             }
-            catch (Exception ex) { Note("UI Toolkit 2021 caret mapping failed: " + ex.Message); }
+            catch (Exception ex) { Note("UI Toolkit 2021 caret mapping failed", ex); }
         }
 
         // ══ Selection ════════════════════════════════════════════════════════════════════════
@@ -258,7 +258,7 @@ namespace UnityGameTranslator.Core.TextShaping
             }
             catch (Exception ex)
             {
-                Note("UI Toolkit 2021 selection drawing failed, the field's own used: " + (ex.InnerException ?? ex).Message);
+                Note("UI Toolkit 2021 selection drawing failed, the field's own used", ex);
                 return true;
             }
         }
@@ -298,7 +298,7 @@ namespace UnityGameTranslator.Core.TextShaping
             }
             catch (Exception ex)
             {
-                Note("UI Toolkit 2021 click mapping failed, the field's own used: " + (ex.InnerException ?? ex).Message);
+                Note("UI Toolkit 2021 click mapping failed, the field's own used", ex);
                 return true;
             }
         }
@@ -336,7 +336,7 @@ namespace UnityGameTranslator.Core.TextShaping
             }
             catch (Exception ex)
             {
-                Note("UI Toolkit 2021 drag mapping failed, the field's own used: " + (ex.InnerException ?? ex).Message);
+                Note("UI Toolkit 2021 drag mapping failed, the field's own used", ex);
                 return true;
             }
         }
@@ -373,7 +373,7 @@ namespace UnityGameTranslator.Core.TextShaping
                 }
                 Uitk21.SetScroll(__instance, scroll);
             }
-            catch (Exception ex) { Note("UI Toolkit 2021 scrolling failed, the field's own used: " + (ex.InnerException ?? ex).Message); }
+            catch (Exception ex) { Note("UI Toolkit 2021 scrolling failed, the field's own used", ex); }
         }
 
         /// <summary>
@@ -389,7 +389,7 @@ namespace UnityGameTranslator.Core.TextShaping
                 if (s == null) return;
                 Uitk21.SetGraphicalCursor(editor, Uitk21CaretPixel(editor, s, Uitk21.LocalPosition(editor)));
             }
-            catch (Exception ex) { Note("UI Toolkit 2021 caret position failed: " + (ex.InnerException ?? ex).Message); }
+            catch (Exception ex) { Note("UI Toolkit 2021 caret position failed", ex); }
         }
 
         // ══ Words ════════════════════════════════════════════════════════════════════════════
@@ -416,7 +416,7 @@ namespace UnityGameTranslator.Core.TextShaping
             }
             catch (Exception ex)
             {
-                Note("UI Toolkit 2021 word selection failed, the field's own used: " + (ex.InnerException ?? ex).Message);
+                Note("UI Toolkit 2021 word selection failed, the field's own used", ex);
                 return true;
             }
         }
@@ -456,7 +456,7 @@ namespace UnityGameTranslator.Core.TextShaping
             }
             catch (Exception ex)
             {
-                Note("UI Toolkit 2021 arrow move failed, the field's own used: " + (ex.InnerException ?? ex).Message);
+                Note("UI Toolkit 2021 arrow move failed, the field's own used", ex);
                 return false;
             }
         }
@@ -566,7 +566,7 @@ namespace UnityGameTranslator.Core.TextShaping
                     if (Rectangle != null && (_rectRect == null || _rectColor == null || _selectionColor == null || _contentRect == null))
                     { Rectangle = null; Note("UI Toolkit 2021 fields: the selection's drawing members are missing — the selection is the field's"); }
                 }
-                catch (Exception ex) { _ok = false; Note("UI Toolkit 2021 fields unavailable: " + ex.Message); }
+                catch (Exception ex) { _ok = false; Note("UI Toolkit 2021 fields unavailable", ex); }
                 return _ok;
             }
 

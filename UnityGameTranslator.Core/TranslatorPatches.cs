@@ -1328,14 +1328,13 @@ namespace UnityGameTranslator.Core
                 {
                     try
                     {
-                        // Skip if it's the standard TMPro type we already patch
-                        if (type == standardTmpType || type.IsSubclassOf(standardTmpType))
-                            continue;
-
                         string typeName = type.Name;
-                        string typeNamespace = type.Namespace ?? "";
 
-                        // Check if this is a TMP-like type
+                        // Check if this is a TMP-like type — by NAME first, which loads nothing:
+                        // its namespace (it loads the enclosing type) and its base, asked of every
+                        // type of every assembly, loaded interop types an IL2CPP game cannot load (a
+                        // closure class nested in a generic UI Toolkit event threw TypeLoadException,
+                        // logged as a fault on Unity 6).
                         bool isTmpType = false;
                         foreach (var name in tmpTypeNames)
                         {
@@ -1347,6 +1346,11 @@ namespace UnityGameTranslator.Core
                         }
 
                         if (!isTmpType) continue;
+
+                        // Skip if it's the standard TMPro type we already patch
+                        if (type == standardTmpType || type.IsSubclassOf(standardTmpType))
+                            continue;
+                        string typeNamespace = type.Namespace ?? "";
 
                         // Check if it's in an alternate namespace (not standard TMPro)
                         bool isAltNamespace = typeNamespace != "TMPro";

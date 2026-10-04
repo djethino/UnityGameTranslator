@@ -391,7 +391,7 @@ namespace UnityGameTranslator.Core.TextShaping
         /// <summary>
         /// TextEditor.SelectToPosition(point) — a drag, by the point measured on the presented form;
         /// after a double-click it snaps to the typed text's words, as the editor does
-        /// (<see cref="RtlFieldLayout.WordEdge"/>). A drag snapping to paragraphs stays the editor's.
+        /// (<see cref="RtlFieldLayout.WordEdge"/>); after a triple-click, to its paragraphs (its own rule).
         /// </summary>
         public static bool Uitk21_SelectToPosition_Prefix(TextEditor __instance, Vector2 __0)
         {
@@ -405,8 +405,17 @@ namespace UnityGameTranslator.Core.TextShaping
                     __instance.cursorIndex = under;
                     return false;
                 }
-                if (!Uitk21.SnapsToWords(__instance)) return true;
                 int start = Math.Max(0, Math.Min(Uitk21.DoubleClickAt(__instance), s.Logical.Length));
+                if (!Uitk21.SnapsToWords(__instance))
+                {
+                    // After a triple-click: whole paragraphs — the TextEditor's own rule on the typed
+                    // text, from the caret DRAWN under the pointer (it measured the typed text there:
+                    // one paragraph of two was kept, bench 2021.3).
+                    ParagraphDragRule(s.Logical, under, false, start, start, out int cursor, out int select);
+                    __instance.cursorIndex = cursor;
+                    __instance.selectIndex = select;
+                    return false;
+                }
                 if (under < start)
                 {
                     __instance.cursorIndex = RtlFieldLayout.WordEdge(s.Logical, under, false);

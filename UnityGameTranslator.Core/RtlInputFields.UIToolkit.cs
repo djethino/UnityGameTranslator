@@ -84,6 +84,7 @@ namespace UnityGameTranslator.Core.TextShaping
             else TranslatorCore.LogWarning("[Patches] UI Toolkit fields: a multi-line field resized after it was filled keeps the lines it was first cut into (no TextElement.UpdateVisibleText or IncrementVersion)");
             if (Uitk.SelectCurrentWord != null) { patcher(Uitk.SelectCurrentWord, Hook(nameof(Uitk_SelectCurrentWord_Prefix)), null); count++; }
             if (Uitk.SelectToPosition != null && Uitk.IndexFromPosition != null) { patcher(Uitk.SelectToPosition, Hook(nameof(Uitk_SelectToPosition_Prefix)), null); count++; }
+            if (Uitk.SelectCurrentParagraph != null) { patcher(Uitk.SelectCurrentParagraph, Hook(nameof(Uitk_SelectCurrentParagraph_Prefix)), null); count++; }
             // Only where the ATG exists: its drag state is native, the word a drag starts from is kept here.
             if (Uitk.KnowsCharacterBoxes && Uitk.MouseDragSelectsWholeWords != null) { patcher(Uitk.MouseDragSelectsWholeWords, null, Hook(nameof(Uitk_MouseDragSelectsWholeWords_Postfix))); count++; }
             if (Uitk.LineUp != null && Uitk.LineDown != null && Uitk.PositionByLine != null)
@@ -777,6 +778,72 @@ namespace UnityGameTranslator.Core.TextShaping
             }
         }
 
+        /// <summary>
+        /// TextSelectingUtilities.SelectCurrentParagraph() — the triple-click — on a presented field: the
+        /// engine's own rule (the caret to its paragraph's end, the anchor to its start), on the TYPED text.
+        /// It looked for line breaks in the DRAWN text, where every soft wrap of ours is one: only the first
+        /// drawn line was selected (bench 2022.3 / 6000.3; the same field in Latin takes the paragraph).
+        /// </summary>
+        public static bool Uitk_SelectCurrentParagraph_Prefix(object __instance)
+        {
+            try
+            {
+                var s = UitkStateOfHandle(Uitk.HandleOf(__instance));
+                if (s == null) return true;
+                string typed = s.Logical;
+                Uitk.ParagraphSelected(__instance);
+                int cursor = Uitk.CursorIndex(__instance), select = Uitk.SelectIndex(__instance);
+                if (cursor < typed.Length)
+                {
+                    int lineEnd = typed.IndexOf('\n', Math.Max(0, cursor));
+                    Uitk.SetCursorIndex(__instance, lineEnd < 0 ? typed.Length : lineEnd);
+                }
+                if (select != 0) Uitk.SetSelectIndex(__instance, typed.LastIndexOf('\n', Math.Min(typed.Length, select) - 1) + 1);
+                return false;
+            }
+            catch (Exception ex)
+            {
+                Note("UI Toolkit paragraph selection failed, the field's own used", ex);
+                return true;
+            }
+        }
+
+        /// <summary>
+        /// A drag after a triple-click, by whole paragraphs — the engines' own rule, on the TYPED text from
+        /// the caret under the pointer (theirs looked for line breaks in the DRAWN text, where every soft
+        /// wrap of ours is one). <paramref name="range"/>: the triple-click's paragraph kept as its two
+        /// ends (2022.3, Unity 6); otherwise its one position (IMGUI's TextEditor, 2021, and 2022.2).
+        /// </summary>
+        private static void ParagraphDragRule(string text, int under, bool range, int start, int end, out int cursor, out int select)
+        {
+            int n = text.Length;
+            int LineEnd(int i) { int k = text.IndexOf('\n', i); return k < 0 ? n : k; }
+            if (range)
+            {
+                if (under <= start)
+                {
+                    cursor = under > 0 ? text.LastIndexOf('\n', Math.Max(0, under - 1)) + 1 : 0;
+                    select = text.LastIndexOf('\n', Math.Min(n - 1, end + 1));
+                }
+                else if (under >= end)
+                {
+                    cursor = under < n ? LineEnd(under) : n;
+                    select = text.LastIndexOf('\n', Math.Max(0, end - 2)) + 1;
+                }
+                else { cursor = start; select = end; }
+            }
+            else if (under < start)
+            {
+                cursor = under > 0 ? text.LastIndexOf('\n', Math.Max(0, under - 2)) + 1 : 0;
+                select = text.LastIndexOf('\n', Math.Min(n - 1, start));
+            }
+            else
+            {
+                cursor = under < n ? LineEnd(under) : n;
+                select = text.LastIndexOf('\n', Math.Max(0, start - 2)) + 1;
+            }
+        }
+
         // ATG fields: the word a drag by words starts from — the selection when the drag began (by element).
         private static readonly Dictionary<long, int[]> _uitkAtgDrag = new Dictionary<long, int[]>();
 
@@ -814,9 +881,18 @@ namespace UnityGameTranslator.Core.TextShaping
                 var presented = UitkStateOfHandle(handle);
                 if (presented != null)
                 {
-                    if (!Uitk.DragSnapsToWords(__instance)) return true;
+                    if (!Uitk.DragsWholeUnits(__instance)) return true;
                     typed = presented.Logical;
                     range = Uitk.DoubleClickRange(__instance, out start, out end);
+                    if (!Uitk.SnapsToWords(__instance))
+                    {
+                        // After a triple-click: whole paragraphs (one of two kept, a single character
+                        // even, when the engine read them in the drawn text — bench 2022.2/2022.3/6000.3).
+                        ParagraphDragRule(typed, Uitk.IndexAt(handle, __0), range, start, end, out int pc, out int ps);
+                        Uitk.SetCursorIndex(__instance, pc);
+                        Uitk.SetSelectIndex(__instance, ps);
+                        return false;
+                    }
                 }
                 else
                 {
@@ -911,7 +987,7 @@ namespace UnityGameTranslator.Core.TextShaping
         {
             private const BindingFlags Inst = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
             private static bool _resolved, _ok;
-            internal static MethodInfo SetValueWithoutNotify, PositionByLine, PositionByCharacter, IndexFromPosition, DrawHighlighting, SelectCurrentWord, SelectToPosition, MouseDragSelectsWholeWords, LineUp, LineDown;
+            internal static MethodInfo SetValueWithoutNotify, PositionByLine, PositionByCharacter, IndexFromPosition, DrawHighlighting, SelectCurrentWord, SelectCurrentParagraph, SelectToPosition, MouseDragSelectsWholeWords, LineUp, LineDown;
             private static MethodInfo _clearCursorPos;
             private static MemberInfo _justSelected, _dragWords, _snap, _dblStart, _dblEnd, _dblAt;
 
@@ -927,6 +1003,9 @@ namespace UnityGameTranslator.Core.TextShaping
             }
 
             /// <summary>What SelectCurrentWord does once the word is chosen.</summary>
+            /// <summary>What SelectCurrentParagraph does before choosing: a new column for the next vertical move.</summary>
+            internal static void ParagraphSelected(object utilities) => _clearCursorPos?.Invoke(utilities, null);
+
             internal static void WordSelected(object utilities)
             {
                 _clearCursorPos.Invoke(utilities, null);
@@ -934,8 +1013,10 @@ namespace UnityGameTranslator.Core.TextShaping
             }
 
             /// <summary>A drag after a double-click, snapping to words (not paragraphs).</summary>
-            internal static bool DragSnapsToWords(object utilities) =>
-                Members.Get(_dragWords, utilities) is bool words && words && SnapsToWords(utilities);
+            internal static bool DragSnapsToWords(object utilities) => DragsWholeUnits(utilities) && SnapsToWords(utilities);
+
+            /// <summary>A drag after a double- or triple-click: by whole words or whole paragraphs (SnapsToWords tells which).</summary>
+            internal static bool DragsWholeUnits(object utilities) => Members.Get(_dragWords, utilities) is bool whole && whole;
 
             /// <summary>A drag after a double-click snaps to words, not to paragraphs (the field's own setting, on every generator).</summary>
             internal static bool SnapsToWords(object utilities) => Members.Get(_snap, utilities)?.ToString() == "WORDS";
@@ -1080,6 +1161,7 @@ namespace UnityGameTranslator.Core.TextShaping
                     if (_incrementVersion == null) UpdateVisibleText = null;
                     // The two that find a word's edges (FindEndOfClassification's callers): double-click, drag by words.
                     SelectCurrentWord = utilities.GetMethod("SelectCurrentWord", Inst, null, Type.EmptyTypes, null);
+                    SelectCurrentParagraph = utilities.GetMethod("SelectCurrentParagraph", Inst, null, Type.EmptyTypes, null);
                     SelectToPosition = utilities.GetMethod("SelectToPosition", Inst, null, new[] { typeof(Vector2) }, null);
                     MouseDragSelectsWholeWords = utilities.GetMethod("MouseDragSelectsWholeWords", Inst, null, new[] { typeof(bool) }, null);
                     _clearCursorPos = utilities.GetMethod("ClearCursorPos", Inst, null, Type.EmptyTypes, null);

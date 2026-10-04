@@ -397,6 +397,10 @@ namespace UnityGameTranslator.Core
                         method.Invoke(comp, null);
                         marked++;
                     }
+                    // A TextMesh has no SetAllDirty and needs none: the engine redraws it itself when
+                    // its font's atlas is rebuilt (measured: the same pixels before and after a rebuild
+                    // of the mod's replacement, banc-unity textmesh-atlas, 2021.3 Mono / 6000.3 IL2CPP).
+                    else if (IsTextMesh(comp)) { }
                     else if (DiagnosticOnce.First("MarkDirty.missing", comp.GetType().FullName))
                     {
                         TranslatorCore.LogWarning($"[MarkDirty] SetAllDirty NOT FOUND on {comp.GetType().FullName}");

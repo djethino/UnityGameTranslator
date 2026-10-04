@@ -272,12 +272,29 @@ namespace UnityGameTranslator.Core
             Leave(spent);
             _ticks[FindAll] += spent;
             _calls[FindAll]++;
+            AddFind(spent, by, type, found);
             if (spent <= _max[FindAll]) return;
 
             _max[FindAll] = spent;
             _worstFindBy = by;
             _worstFindType = type?.Name;
             _worstFindCount = found;
+        }
+
+        // Every lookup of the window by what it was for (type and caller): the worst alone does not
+        // say which ones come back each cycle, and those are the ones to ask less often.
+        private sealed class FindTotal { public int Calls; public long Ticks; public int Found; }
+        private static readonly System.Collections.Generic.Dictionary<string, FindTotal> _findTotals =
+            new System.Collections.Generic.Dictionary<string, FindTotal>();
+
+        private static void AddFind(long spent, string by, System.Type type, int found)
+        {
+            if (!TranslatorCore.DebugMode) return;
+            string key = (type?.Name ?? "?") + " for " + (by ?? "?");
+            if (!_findTotals.TryGetValue(key, out var total)) _findTotals[key] = total = new FindTotal();
+            total.Calls++;
+            total.Ticks += spent;
+            total.Found = found;
         }
 
         /// <summary>
@@ -353,6 +370,16 @@ namespace UnityGameTranslator.Core
             {
                 TranslatorCore.LogDebug($"[PASS-PERF] the slowest lookup was {_worstFindType} for {_worstFindBy} ({_worstFindCount} found)");
                 _worstFindBy = null;
+            }
+            if (_findTotals.Count > 0)
+            {
+                var lookups = new System.Text.StringBuilder();
+                foreach (var kv in _findTotals)
+                    lookups.Append(lookups.Length == 0 ? "" : " · ").Append(kv.Key).Append(' ').Append(kv.Value.Calls)
+                           .Append("x ").Append((kv.Value.Ticks / freq * 1000).ToString("F1")).Append("ms (")
+                           .Append(kv.Value.Found).Append(" found)");
+                TranslatorCore.LogDebug($"[PASS-PERF] lookups: {lookups}");
+                _findTotals.Clear();
             }
         }
 

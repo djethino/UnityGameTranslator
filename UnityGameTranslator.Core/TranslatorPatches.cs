@@ -2546,6 +2546,8 @@ namespace UnityGameTranslator.Core
                 var postfix = typeof(TranslatorPatches).GetMethod(nameof(Graphic_OnEnable_Postfix),
                     BindingFlags.Static | BindingFlags.Public);
                 patcher(onEnableMethod, null, postfix);
+                // Every UI.Text runs it (Text.OnEnable calls base): its scene lookup waits for one.
+                TranslatorScanner.AnnouncedBy(TypeHelper.UI_TextType);
                 TranslatorCore.LogDebug("[Patches] Graphic.OnEnable postfix applied");
                 return 1;
             }
@@ -2596,6 +2598,9 @@ namespace UnityGameTranslator.Core
                     TranslatorCore.LogWarning($"[Patches] Failed to patch {concrete}.OnEnable: {ex.Message}");
                 }
             }
+            // Both concrete components hooked: every TMP text announces its arrival, and the
+            // scanner stops looking the scene up for one. One missing: it keeps looking every cycle.
+            if (count == 2) TranslatorScanner.AnnouncedBy(TypeHelper.TMP_TextType);
             TranslatorCore.LogDebug($"[Patches] TMP OnEnable postfix applied on {count} type(s)");
             return count;
         }
@@ -2612,8 +2617,6 @@ namespace UnityGameTranslator.Core
             {
                 // Skip during shutdown or if not initialized
                 if (TranslatorCore.Adapter == null || TranslatorCore.Config == null) return;
-                if (!TranslatorCore.TranslationsActive) return;
-
 
                 // Fast exit: only process types we know are text components.
                 // 🔴 On IL2CPP the instance arrives wrapped as the PATCHED type (Graphic), whatever
@@ -2639,8 +2642,15 @@ namespace UnityGameTranslator.Core
                 var comp = __instance as Component;
                 if (comp == null) return;
 
+                // A text arrived: the scanner looks UI.Text up at its next cycle — also while
+                // translations are off, so it finds what appeared meanwhile when they come back on.
+                // The mod's own window only when its texts are translated too.
+                bool ownUi = TranslatorCore.IsOwnUI(comp);
+                if (!ownUi || TranslatorCore.ShouldTranslateOwnUI) TranslatorScanner.Appeared(TypeHelper.UI_TextType);
+                if (!TranslatorCore.TranslationsActive) return;
+
                 // Defense-in-depth: never re-apply game fonts to our own UI.
-                if (TranslatorCore.IsOwnUI(comp)) return;
+                if (ownUi) return;
 
                 // A copy of a template still wearing the template's right-to-left form: presented
                 // on its own at the next pass.
@@ -3698,10 +3708,17 @@ namespace UnityGameTranslator.Core
             long tEnable = Perf.Start();
             try
             {
-                // A copy of a template still wearing the template's right-to-left form: presented
-                // on its own at the next pass (written then, not here).
-                if (TranslatorCore.TranslationsActive && __instance is Component tmpComp && !TranslatorCore.IsOwnUI(tmpComp))
-                    TextShaping.RtlPresenter.NoteEnabled(__instance);
+                if (__instance is Component tmpComp)
+                {
+                    bool ownUi = TranslatorCore.IsOwnUI(tmpComp);
+                    // A text arrived: the scanner looks TMP_Text up at its next cycle (see the
+                    // UI.Text twin in Graphic_OnEnable_Postfix).
+                    if (!ownUi || TranslatorCore.ShouldTranslateOwnUI) TranslatorScanner.Appeared(TypeHelper.TMP_TextType);
+                    // A copy of a template still wearing the template's right-to-left form:
+                    // presented on its own at the next pass (written then, not here).
+                    if (TranslatorCore.TranslationsActive && !ownUi)
+                        TextShaping.RtlPresenter.NoteEnabled(__instance);
+                }
                 if (!TranslatorCore.FontReplacementActive) return;
                 if (!FontManager.TmpReplacesPerComponent) return;
                 FontManager.OnComponentEnabled(__instance);

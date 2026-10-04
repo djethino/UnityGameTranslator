@@ -551,27 +551,66 @@ namespace UnityGameTranslator.Core
         /// </summary>
         // 🔴 Components announce their arrival, so the scene is not searched to find out whether
         // any appeared. The per-type lookup is one atomic engine call whose cost follows the SCENE,
-        // not the type: 0.1 ms in a menu, ~30 ms in a large city — measured — and the refresh
+        // not the type: 0.1 ms in a menu, ~25-30 ms in a large city — measured — and the refresh
         // made two of them every detection cycle to re-confirm that TMP_Text and UI.Text were
-        // still absent from a UI Toolkit game. Felt as one hitch per second. Every uGUI text
-        // component descends from Graphic, whose OnEnable fires on creation and on activation of
-        // a hidden pane — the two ways a static-text component reaches the screen without a
-        // set_text. When it fires, the next cycle looks up again; when it never fires, no cycle
-        // does. A scene change already drops the caches, which forces a lookup on its own.
+        // still absent from a UI Toolkit game. Felt as one hitch per second.
+        //
+        // 🔴 Announced PER TYPE, by the OnEnable that every instance of that type runs — on
+        // creation and on activation of a hidden pane, the two ways a static-text component
+        // reaches the screen without a set_text. A single "some graphic was enabled" flag got
+        // both wrong at once: any Image (or the mod's own window) made UI.Text and TMP_Text look
+        // the scene up again, so a game with no uGUI text at all still paid both lookups up to
+        // ten times in five seconds (measured, 2026-10-04); and a TMP text arriving alone was
+        // never found, since TextMeshProUGUI.OnEnable does not call Graphic's (bench, static
+        // prefab test). A type nobody announces keeps the per-cycle lookup — the safe answer
+        // when its hook could not be placed. A scene change drops the caches, which forces a
+        // lookup on its own.
         private static bool _appearanceHooked;
-        private static bool _componentAppeared;
-        private static bool _cycleLooksUp;
+        private static bool _graphicAppeared;
+        private static bool _cycleGraphicAppeared;
         private static Type _graphicType;
+        // Types whose every instance announces itself (TranslatorPatches' OnEnable postfixes).
+        private static readonly HashSet<Type> _announcedTypes = new HashSet<Type>();
+        private static readonly HashSet<Type> _appeared = new HashSet<Type>();
+        private static readonly HashSet<Type> _cycleAppeared = new HashSet<Type>();
+        // The mod's own window announces nothing unless its texts are translated too: what the
+        // last cycle knew, so turning that option on is itself an arrival.
+        private static bool _ownUiTranslatedAtLastCycle;
 
         /// <summary>
-        /// Only a type that DESCENDS from Graphic is announced by Graphic.OnEnable. The generic
-        /// frameworks (NGUI's UILabel, SuperTextMesh…) do not, so gating their lookup on that
-        /// event would silently stop discovering them; they keep the per-cycle lookup.
+        /// The OnEnable every instance of <paramref name="componentType"/> runs is hooked and calls
+        /// <see cref="Appeared"/>: its lookup now waits for that. Whatever already exists is taken
+        /// by the next cycle.
+        /// </summary>
+        internal static void AnnouncedBy(Type componentType)
+        {
+            if (componentType == null) return;
+            _announcedTypes.Add(componentType);
+            _appeared.Add(componentType);
+        }
+
+        /// <summary>A component of this registered type was just enabled: the next cycle looks it up.</summary>
+        internal static void Appeared(Type componentType) => _appeared.Add(componentType);
+
+        /// <summary>
+        /// Only a type that DESCENDS from Graphic, and runs Graphic.OnEnable, is announced by the
+        /// generic Graphic hook — the fallback for a Graphic-derived text with no hook of its own.
+        /// TMP is excluded: its components override OnEnable without calling base. The generic
+        /// frameworks that are no Graphic (NGUI's UILabel, SuperTextMesh…) keep the per-cycle lookup.
         /// </summary>
         private static bool AnnouncedByGraphic(RegisteredTextType type)
-            => _graphicType != null && type.ComponentType != null && _graphicType.IsAssignableFrom(type.ComponentType);
+            => _graphicType != null && type.ComponentType != null && _graphicType.IsAssignableFrom(type.ComponentType)
+               && type.ComponentType != TypeHelper.TMP_TextType;
 
-        public static void Graphic_OnEnable_Postfix() { _componentAppeared = true; GraphicsEnabled++; }
+        private static bool LooksUp(RegisteredTextType type)
+        {
+            if (type.CachedComponents == null) return true;
+            if (_announcedTypes.Contains(type.ComponentType)) return _cycleAppeared.Contains(type.ComponentType);
+            if (AnnouncedByGraphic(type)) return _cycleGraphicAppeared;
+            return true;
+        }
+
+        public static void Graphic_OnEnable_Postfix() { _graphicAppeared = true; GraphicsEnabled++; }
 
         /// <summary>
         /// How many uGUI graphics have been enabled so far — what makes a text that was inactive
@@ -608,7 +647,7 @@ namespace UnityGameTranslator.Core
                 patcher(onEnable, null, postfix);
                 _graphicType = graphic;
                 _appearanceHooked = true;
-                _componentAppeared = true;   // whatever is already there is taken by the first cycle
+                _graphicAppeared = true;   // whatever is already there is taken by the first cycle
                 TranslatorCore.LogInfo("[Scanner] Patched Graphic.OnEnable — components are discovered on arrival, not by lookup");
                 return 1;
             }
@@ -625,9 +664,18 @@ namespace UnityGameTranslator.Core
             _refreshTypeIndex = 0;
             _refreshNewTotal = 0;
             _refreshNeedsFilter = new List<RegisteredTextType>();
-            // Without the hook every cycle looks up, as it always did.
-            _cycleLooksUp = !_appearanceHooked || _componentAppeared;
-            _componentAppeared = false;
+            // Without the Graphic hook, its fallback types look up every cycle, as they always did.
+            _cycleGraphicAppeared = !_appearanceHooked || _graphicAppeared;
+            _graphicAppeared = false;
+            bool ownUiTranslated = TranslatorCore.ShouldTranslateOwnUI;
+            if (ownUiTranslated != _ownUiTranslatedAtLastCycle)
+            {
+                _ownUiTranslatedAtLastCycle = ownUiTranslated;
+                if (ownUiTranslated) _appeared.UnionWith(_announcedTypes);
+            }
+            _cycleAppeared.Clear();
+            _cycleAppeared.UnionWith(_appeared);
+            _appeared.Clear();
             _lateUpdateCacheDirty = true;
         }
 
@@ -652,9 +700,9 @@ namespace UnityGameTranslator.Core
                 }
 
                 var type = _registeredTypes[_refreshTypeIndex];
-                // A known list stays valid until a component announces itself (or the scene
-                // changes, which nulls the cache) — see HookComponentAppearance.
-                if (type.CachedComponents == null || _cycleLooksUp || !AnnouncedByGraphic(type))
+                // A known list stays valid until a component of its type announces itself (or the
+                // scene changes, which nulls the cache) — see AnnouncedBy.
+                if (LooksUp(type))
                     type.CachedComponents = RefreshTypeCacheDirect(type);
                 _refreshNewTotal += type.CachedComponents?.Length ?? 0;
 

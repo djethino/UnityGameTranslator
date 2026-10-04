@@ -36,7 +36,13 @@ namespace UnityGameTranslator.Core.TextShaping
             public RtlFieldLayout Layout;
             public string Logical;
             public string Shown;
+            public string Suffix;   // what the element keeps after the text it draws (a zero-width space in 2022.3)
+            public string Rendered => Shown + Suffix;
         }
+
+        // 2022.3's TextElement keeps a zero-width space after the text it draws (renderedText's setter):
+        // the typed text is laid out without it, and it is put back after the presented form.
+        private static readonly string RenderedSuffix = ((char)0x200B).ToString();
 
         // By the element's id (UIToolkitSupport.IdFor): a text element is no UnityEngine.Object.
         private static readonly Dictionary<long, UitkState> _uitk = new Dictionary<long, UitkState>();
@@ -86,17 +92,19 @@ namespace UnityGameTranslator.Core.TextShaping
                     return;
                 }
                 string rendered = Uitk.RenderedText(__instance);
-                if (_uitk.TryGetValue(id, out var held) && held.Shown == rendered) return;
-                var prep = string.IsNullOrEmpty(rendered) ? null : RtlFieldLayout.Prepare(rendered);
+                if (_uitk.TryGetValue(id, out var held) && held.Rendered == rendered) return;
+                string suffix = rendered != null && rendered.EndsWith(RenderedSuffix, StringComparison.Ordinal) ? RenderedSuffix : "";
+                string typed = rendered?.Substring(0, rendered.Length - suffix.Length);
+                var prep = string.IsNullOrEmpty(typed) ? null : RtlFieldLayout.Prepare(typed);
                 if (prep == null) { _uitk.Remove(id); return; }
 
-                var s = new UitkState { Element = new WeakReference(__instance), Logical = rendered };
+                var s = new UitkState { Element = new WeakReference(__instance), Logical = typed, Suffix = suffix };
                 s.Layout = prep.Lay(null);
                 s.Shown = s.Layout.Display;
                 _uitk[id] = s;
-                TranslatorCore.RegisterPresentedText(s.Shown, rendered);
-                Describe("UI Toolkit", __instance, rendered, s.Shown);
-                Uitk.SetRenderedTextField(__instance, s.Shown);
+                TranslatorCore.RegisterPresentedText(s.Shown, typed);
+                Describe("UI Toolkit", __instance, typed, s.Shown);
+                Uitk.SetRenderedTextField(__instance, s.Rendered);
             }
             catch (Exception ex) { Note("UI Toolkit field presentation failed, drawn as typed: " + ex.Message); }
         }
@@ -109,7 +117,7 @@ namespace UnityGameTranslator.Core.TextShaping
         {
             if (element == null || _uitk.Count == 0) return null;
             if (!_uitk.TryGetValue(UIToolkitSupport.IdFor(element), out var s)) return null;
-            return Uitk.RenderedText(element) == s.Shown ? s : null;
+            return Uitk.RenderedText(element) == s.Rendered ? s : null;
         }
 
         // ══ Caret and click ═══════════════════════════════════════════════════════════════════
@@ -228,7 +236,9 @@ namespace UnityGameTranslator.Core.TextShaping
             private static MemberInfo _isInputField, _isPassword, _renderedText, _handleElement, _utilitiesHandle;
             private static MemberInfo _selectingManipulator, _manipulatorUtilities, _uitkTextHandle, _selectionColor;
             private static PropertyInfo _cursorIndex, _selectIndex, _contentRect;
-            private static MethodInfo _isAdvanced, _lineNumber, _lineHeight, _meshGenerator;
+            private static MethodInfo _isAdvanced, _lineNumber, _lineHeight, _meshGenerator, _rectangleExtension, _classListContains;
+            private static string _innerFieldClass;
+            private static Type _uitkHandleType;
 
             internal static bool Resolve()
             {
@@ -247,29 +257,42 @@ namespace UnityGameTranslator.Core.TextShaping
                         return _ok = false;
                     }
 
-                    // Not Unity 6's shape (no rendered text apart from the value): another engine's fields.
-                    if (element.GetMethod("SetRenderedText", Inst, null, new[] { typeof(string) }, null) == null)
+                    // Not this shape (no rendered text apart from the value): another engine's fields —
+                    // 2021's draw the typed text themselves. Private in Unity 6, an explicit
+                    // ITextElementExperimentalFeatures member in 2022.3: found by what its name ends with.
+                    if (EndingWith(element, "SetRenderedText", typeof(string)) == null)
                     {
-                        TranslatorCore.LogDebug("[RtlInputFields] UI Toolkit fields not Unity 6's shape: no TextElement.SetRenderedText(string)");
+                        TranslatorCore.LogDebug("[RtlInputFields] UI Toolkit fields not this shape: no TextElement.SetRenderedText(string)");
                         return _ok = false;
                     }
                     // The explicit INotifyValueChanged<string> implementation: its name is the interface's
                     // on Mono and mangled by the IL2CPP interop — found by what it ends with.
-                    foreach (var m in element.GetMethods(Inst))
-                        if (m.Name.EndsWith("SetValueWithoutNotify", StringComparison.Ordinal) && m.DeclaringType == element
-                            && m.GetParameters().Length == 1 && m.GetParameters()[0].ParameterType == typeof(string))
-                            SetValueWithoutNotify = m;
+                    SetValueWithoutNotify = EndingWith(element, "SetValueWithoutNotify", typeof(string));
 
+                    // A field's own text element: Unity 6 says it (isInputField); 2022.3 does not, and
+                    // marks it with the USS class every field gives its inner text element (Unity's
+                    // public TextInputBase.innerTextElementUssClassName, the same in Unity 6).
                     _isInputField = Members.FieldOrProperty(element, "isInputField", Inst);
-                    _isPassword = Members.FieldOrProperty(element, "isPassword", Inst);
+                    if (_isInputField == null)
+                    {
+                        var ussClass = Members.FieldOrProperty(element, "ussClassName", BindingFlags.Static | BindingFlags.Public);
+                        if (ussClass != null && Members.Get(ussClass, null) is string elementClass) _innerFieldClass = elementClass + "--inner-input-field-component";
+                        _classListContains = AssemblyTypes.Find("UnityEngine.UIElements.VisualElement")
+                            ?.GetMethod("ClassListContains", BindingFlags.Instance | BindingFlags.Public, null, new[] { typeof(string) }, null);
+                    }
+                    // Members of their own in Unity 6, explicit ITextEdition / ITextSelection ones in 2022.3.
+                    _isPassword = Members.FieldOrProperty(element, "isPassword", Inst) ?? PropertyEndingWith(element, "isPassword");
                     _renderedText = Members.FieldOrProperty(element, "m_RenderedText", Inst);
                     _uitkTextHandle = Members.FieldOrProperty(element, "uitkTextHandle", Inst);
                     _selectingManipulator = Members.FieldOrProperty(element, "selectingManipulator", Inst);
-                    _selectionColor = Members.FieldOrProperty(element, "selectionColor", Inst);
+                    _selectionColor = Members.FieldOrProperty(element, "selectionColor", Inst) ?? PropertyEndingWith(element, "selectionColor");
                     _contentRect = Members.Property(element, "contentRect", BindingFlags.Instance | BindingFlags.Public);
                     _manipulatorUtilities = Members.FieldOrProperty(Members.TypeOf(_selectingManipulator), "m_SelectingUtilities", Inst);
+                    _uitkHandleType = uitkHandle;
                     _handleElement = Members.FieldOrProperty(uitkHandle, "m_TextElement", Inst);
-                    _utilitiesHandle = Members.FieldOrProperty(utilities, "textHandle", Inst);
+                    // Public in Unity 6, private m_TextHandle in 2022.3.
+                    _utilitiesHandle = Members.FieldOrProperty(utilities, "textHandle", Inst)
+                                       ?? Members.FieldOrProperty(utilities, "m_TextHandle", Inst);
                     _cursorIndex = Members.Property(utilities, "cursorIndex", Inst);
                     _selectIndex = Members.Property(utilities, "selectIndex", Inst);
                     _isAdvanced = textUtilities?.GetMethod("IsAdvancedTextEnabledForElement", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
@@ -285,14 +308,22 @@ namespace UnityGameTranslator.Core.TextShaping
                         if (m != null) Moves.Add(new KeyValuePair<string, MethodInfo>("Uitk_" + move + "_Prefix", m));
                     }
                     var mgc = AssemblyTypes.Find("UnityEngine.UIElements.MeshGenerationContext");
+                    // A rectangle: through the context's mesh generator in Unity 6, through the
+                    // MeshGenerationContextUtils.Rectangle extension in 2022.3.
                     _meshGenerator = Members.Property(mgc, "meshGenerator", Inst)?.GetMethod;
+                    if (_meshGenerator == null)
+                        foreach (var m in AssemblyTypes.Find("UnityEngine.UIElements.MeshGenerationContextUtils")?.GetMethods(BindingFlags.Static | BindingFlags.Public) ?? new MethodInfo[0])
+                            if (m.Name == "Rectangle" && m.GetParameters().Length == 2 && m.GetParameters()[1].ParameterType.Name == "RectangleParams")
+                            { _rectangleExtension = m; _rectParams = m.GetParameters()[1].ParameterType; }
                     DrawHighlighting = element.GetMethod("DrawHighlighting", Inst, null, mgc == null ? Type.EmptyTypes : new[] { mgc }, null);
 
-                    _ok = SetValueWithoutNotify != null && _isInputField != null && _renderedText != null && _handleElement != null && _utilitiesHandle != null
-                          && _cursorIndex != null && _selectIndex != null && _isAdvanced != null;
-                    if (!_ok) Note("UI Toolkit fields: a member this needs is missing — left to the field's own drawing");
+                    // The Advanced Text Generator's question: absent where there is none (2022.3).
+                    bool knowsFields = _isInputField != null || (_innerFieldClass != null && _classListContains != null);
+                    _ok = SetValueWithoutNotify != null && knowsFields && _renderedText != null && _handleElement != null && _utilitiesHandle != null
+                          && _cursorIndex != null && _selectIndex != null;
+                    if (!_ok) Note($"UI Toolkit fields: a member this needs is missing — left to the field's own drawing (set={SetValueWithoutNotify != null} field={knowsFields} rendered={_renderedText != null} handle={_handleElement != null} utilities={_utilitiesHandle != null} indices={_cursorIndex != null && _selectIndex != null})");
                     if (DrawHighlighting != null && (_selectingManipulator == null || _manipulatorUtilities == null || _uitkTextHandle == null
-                                                     || _selectionColor == null || _contentRect == null || _meshGenerator == null
+                                                     || _selectionColor == null || _contentRect == null || (_meshGenerator == null && _rectangleExtension == null)
                                                      || _lineNumber == null || _lineHeight == null || PositionByLine == null))
                     { DrawHighlighting = null; Note("UI Toolkit fields: the selection's drawing members are missing — the selection is the field's"); }
                 }
@@ -303,14 +334,52 @@ namespace UnityGameTranslator.Core.TextShaping
             /// <summary>A field's text element, drawing with the standard generator, not a password.</summary>
             internal static bool IsPresentableField(object element)
             {
-                if (!(Members.Get(_isInputField, element) is bool input) || !input) return false;
+                bool input = _isInputField != null
+                    ? Members.Get(_isInputField, element) is bool isInput && isInput
+                    : _classListContains.Invoke(element, new object[] { _innerFieldClass }) is bool hasClass && hasClass;
+                if (!input) return false;
                 if (_isPassword != null && Members.Get(_isPassword, element) is bool password && password) return false;
-                return !(bool)_isAdvanced.Invoke(null, new[] { element });
+                return _isAdvanced == null || !(bool)_isAdvanced.Invoke(null, new[] { element });
+            }
+
+            /// <summary>
+            /// The method of that name declared by this type — its own, or an explicit interface
+            /// implementation, whose name carries the interface's (and the IL2CPP interop's mangling)
+            /// in front: found by what the name ends with.
+            /// </summary>
+            private static MethodInfo EndingWith(Type type, string name, Type parameter)
+            {
+                foreach (var m in type.GetMethods(Inst))
+                    if (m.DeclaringType == type && m.Name.EndsWith(name, StringComparison.Ordinal)
+                        && m.GetParameters().Length == 1 && m.GetParameters()[0].ParameterType == parameter)
+                        return m;
+                return null;
+            }
+
+            /// <summary>An explicit interface property of this type (ITextEdition.isPassword…), by what its name ends with.</summary>
+            private static PropertyInfo PropertyEndingWith(Type type, string name)
+            {
+                foreach (var p in type.GetProperties(Inst))
+                    if (p.DeclaringType == type && p.GetIndexParameters().Length == 0 && p.Name.EndsWith("." + name, StringComparison.Ordinal))
+                        return p;
+                // IL2CPP interop: the interface's name joined with underscores.
+                foreach (var p in type.GetProperties(Inst))
+                    if (p.DeclaringType == type && p.GetIndexParameters().Length == 0 && p.Name.EndsWith("_" + name, StringComparison.Ordinal))
+                        return p;
+                return null;
             }
 
             internal static string RenderedText(object element) => Members.Get(_renderedText, element) as string;
             internal static void SetRenderedTextField(object element, string value) => Members.Set(_renderedText, element, value);
-            internal static object ElementOf(object handle) => Members.Get(_handleElement, handle);
+            /// <summary>
+            /// The element a text handle draws for. 🔴 Cast first: on IL2CPP a handle reaches a hook (or
+            /// comes out of TextSelectingUtilities.textHandle) wrapped as its base TextHandle until
+            /// something asked for it as a UITKTextHandle — the interop keeps one wrapper per object —
+            /// and m_TextElement, declared on UITKTextHandle, then refused it ("Object does not match
+            /// target type"): the field's first text was left unmapped (2026-10-03 bench, 7/8).
+            /// </summary>
+            internal static object ElementOf(object handle) =>
+                handle == null ? null : Members.Get(_handleElement, TypeHelper.Il2CppCast(handle, _uitkHandleType));
             internal static object HandleOf(object utilities) => Members.Get(_utilitiesHandle, utilities);
             internal static object HandleOfElement(object element) => Members.Get(_uitkTextHandle, element);
 
@@ -341,9 +410,17 @@ namespace UnityGameTranslator.Core.TextShaping
             private static Type _rectParams;
             private static MemberInfo _paramsRect, _paramsColor, _paramsTint;
 
-            /// <summary>One rectangle through the context's mesh generator, as the element draws its own highlight.</summary>
+            /// <summary>One rectangle, as the element draws its own highlight: the context's mesh generator (Unity 6), or its Rectangle extension (2022.3).</summary>
             internal static void DrawRectangle(object mgc, Rect rect, Color color)
             {
+                if (_meshGenerator == null)
+                {
+                    _paramsRect = _paramsRect ?? Members.FieldOrProperty(_rectParams, "rect", Inst);
+                    _paramsColor = _paramsColor ?? Members.FieldOrProperty(_rectParams, "color", Inst);
+                    _paramsTint = _paramsTint ?? Members.FieldOrProperty(_rectParams, "playmodeTintColor", Inst);
+                    _rectangleExtension.Invoke(null, new[] { mgc, RectangleParams(rect, color) });
+                    return;
+                }
                 var generator = _meshGenerator.Invoke(mgc, null);
                 if (_drawRectangle == null)
                 {
@@ -355,12 +432,17 @@ namespace UnityGameTranslator.Core.TextShaping
                     _paramsColor = Members.FieldOrProperty(_rectParams, "color", Inst);
                     _paramsTint = Members.FieldOrProperty(_rectParams, "playmodeTintColor", Inst);
                 }
+                _drawRectangle.Invoke(generator, new[] { RectangleParams(rect, color) });
+            }
+
+            private static object RectangleParams(Rect rect, Color color)
+            {
                 // Boxed once, written in place: a struct copied at each write would lose the earlier ones.
                 object parameters = Activator.CreateInstance(_rectParams);
                 Members.Set(_paramsRect, parameters, rect);
                 Members.Set(_paramsColor, parameters, color);
                 if (_paramsTint != null) Members.Set(_paramsTint, parameters, Color.white);
-                _drawRectangle.Invoke(generator, new[] { parameters });
+                return parameters;
             }
         }
     }

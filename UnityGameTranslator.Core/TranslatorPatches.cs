@@ -1104,7 +1104,7 @@ namespace UnityGameTranslator.Core
                 // the clicks and the arrows mapped onto it (RtlInputFields.Ngui), as uGUI's and TMP's.
                 object nguiInput = TypeHelper.NGUI_InputType != null ? GetParentInputFieldCached(component) : null;
                 if (nguiInput != null && TypeHelper.IsTypedNguiLabel(nguiInput, component))
-                    TextShaping.RtlInputFields.PresentNguiLabel(nguiInput, __instance, ref value, settingsFontName ?? fontName);
+                    TextShaping.RtlInputFields.PresentNguiLabel(nguiInput, __instance, ref value, settingsFontName ?? fontName, genericOverride);
                 else
                     TextShaping.RtlPresenter.Present(__instance, TypeHelper.GetInstanceID(__instance), ref value,
                                                      settingsFontName ?? fontName, genericOverride);
@@ -3157,7 +3157,7 @@ namespace UnityGameTranslator.Core
                 && TranslatorCore.IsOwnUI(ownCandidate) && !TranslatorCore.IsOwnUITranslatable(ownCandidate))
             {
                 if (componentType != "TextMesh" && IsInputFieldTextComponentCached(__instance))
-                    TextShaping.RtlInputFields.PresentLabel(GetParentInputFieldCached(__instance), __instance, ref textValue, settingsFontName: null, ownUi: true);
+                    TextShaping.RtlInputFields.PresentLabel(GetParentInputFieldCached(__instance), __instance, ref textValue, settingsFontName: null, overrideRule: null, ownUi: true);
                 else
                     TextShaping.RtlPresenter.Present(__instance, TypeHelper.GetInstanceID(__instance), ref textValue, ownUi: true);
                 return;
@@ -3330,7 +3330,7 @@ namespace UnityGameTranslator.Core
                 // wears its replacement font, and its clone atlas gets the presented characters.
                 if ((componentType == "Unity" || componentType == "TMP") && IsInputFieldTextComponentCached(__instance))
                 {
-                    TextShaping.RtlInputFields.PresentLabel(GetParentInputFieldCached(__instance), __instance, ref textValue, settingsFontName ?? fontName, ownUi: false);
+                    TextShaping.RtlInputFields.PresentLabel(GetParentInputFieldCached(__instance), __instance, ref textValue, settingsFontName ?? fontName, fontOverrideMatched, ownUi: false);
                     if (unityCloneFont != null && !string.IsNullOrEmpty(textValue))
                         FontManager.EnsureCharsInCloneAtlasDirect(textValue, unityCloneFont, unityCloneFallback);
                     return;

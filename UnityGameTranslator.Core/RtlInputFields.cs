@@ -115,9 +115,12 @@ namespace UnityGameTranslator.Core.TextShaping
             else if (TranslatorCore.IsAlreadyTargetText(value)) FontManager.NoteUnshaped(settingsFontName, value);
         }
 
-        internal static void PresentLabel(object fieldObj, object labelObj, ref string value, string settingsFontName, bool ownUi)
+        /// <param name="overrideRule">the font rule matching the label, null when none</param>
+        internal static void PresentLabel(object fieldObj, object labelObj, ref string value, string settingsFontName, FontOverrideRule overrideRule, bool ownUi)
         {
             if (!TranslatorCore.IsMainThread || fieldObj == null || labelObj == null) return;
+            // Aligned as the game's texts of its font are (mirror RTL), from what was typed.
+            RtlPresenter.AlignTypedLabel(labelObj, value, settingsFontName, overrideRule, ownUi);
 
             if (TypeHelper.TMP_InputFieldType != null && TypeHelper.TMP_InputFieldType.IsInstanceOfType(fieldObj))
             {

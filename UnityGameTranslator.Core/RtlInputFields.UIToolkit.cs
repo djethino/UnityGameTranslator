@@ -137,10 +137,12 @@ namespace UnityGameTranslator.Core.TextShaping
                     _uitkGoal.Remove(id);   // new text: the column Up/Down aimed at no longer stands
                     string value = UIToolkitSupport.GetElementText(__instance);
                     if (RtlText.ParagraphDirection(value) < 0) UIToolkitSupport.SetRtlDirection(__instance);
-                    else UIToolkitSupport.RestoreRtlAdjustments(__instance);
+                    else UIToolkitSupport.RestoreRtlAdjustments(__instance, keepAlignment: true);
+                    UIToolkitSupport.AlignTypedField(__instance, value);
                     return;
                 }
                 if (kind == Uitk.FieldKind.None) return;
+                UIToolkitSupport.AlignTypedField(__instance, UIToolkitSupport.GetElementText(__instance));
                 string rendered = Uitk.RenderedText(__instance);
                 if (_uitk.TryGetValue(id, out var held) && held.Rendered == rendered) return;
                 string suffix = rendered != null && rendered.EndsWith(RenderedSuffix, StringComparison.Ordinal) ? RenderedSuffix : "";
@@ -160,7 +162,7 @@ namespace UnityGameTranslator.Core.TextShaping
             if (prep == null)
             {
                 // Left to right again: the field's own wrapping back, if it was ours.
-                if (_uitk.Remove(id)) UIToolkitSupport.RestoreRtlAdjustments(element);
+                if (_uitk.Remove(id)) UIToolkitSupport.RestoreRtlAdjustments(element, keepAlignment: true);   // AlignTypedField decides it
                 return null;
             }
 
@@ -199,7 +201,9 @@ namespace UnityGameTranslator.Core.TextShaping
         {
             try
             {
-                if (_uitk.Count == 0 || __instance == null || !TranslatorCore.IsMainThread) return;
+                if (__instance == null || !TranslatorCore.IsMainThread) return;
+                UIToolkitSupport.FinishTypedFieldAlign(__instance);   // a field written before its panel styled it
+                if (_uitk.Count == 0) return;
                 long id = ObjectKey(__instance);
                 if (!_uitk.TryGetValue(id, out var s) || Uitk.RenderedText(__instance) != s.Rendered) return;
                 float width = UIToolkitSupport.ContentWidth(__instance);
@@ -301,13 +305,28 @@ namespace UnityGameTranslator.Core.TextShaping
         }
 
         /// <summary>TextHandle.GetCursorIndexFromPosition: the display gap under the pointer, made the caret standing there.</summary>
-        public static void Uitk_CursorIndexFromPosition_Postfix(object __instance, ref int __result)
+        public static void Uitk_CursorIndexFromPosition_Postfix(object __instance, Vector2 __0, ref int __result)
         {
             try
             {
                 ForgetVerticalGoal(__instance);   // a click starts a new column (an ATG field's too)
                 var s = UitkStateOfHandle(__instance);
-                if (s != null) __result = s.Layout.CaretAtBoundary(__result);
+                if (s == null) return;
+                int caret = s.Layout.CaretAtBoundary(__result);
+                // Beside the line, not on it (a line aligned right, clicked in the space on its left):
+                // the end of the line on that side, as every editor does — the engine's answer there
+                // is not one (bench, 6000.3: a click left of a right-aligned Hebrew line gave caret 0).
+                int line = s.Layout.LineOfCaret(caret);
+                float minX = float.MaxValue, maxX = float.MinValue;
+                foreach (int c in s.Layout.CaretsOnLine(line))
+                {
+                    float x = Uitk.PositionOf(__instance, c).x;
+                    minX = Math.Min(minX, x);
+                    maxX = Math.Max(maxX, x);
+                }
+                if (minX <= maxX && (__0.x < minX || __0.x > maxX))
+                    caret = s.Layout.CaretAtLineSide(line, rightSide: __0.x > maxX);
+                __result = caret;
             }
             catch (Exception ex) { Note("UI Toolkit click mapping failed: " + ex.Message); }
         }

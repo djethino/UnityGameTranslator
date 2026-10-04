@@ -759,6 +759,9 @@ namespace UnityGameTranslator.Core.TextShaping
             return best < 0 ? _lineLogStart[target] : best;
         }
 
+        /// <summary>The caret positions a line holds, as a click or an arrow can reach them.</summary>
+        internal IEnumerable<int> CaretsOnLine(int line) => CaretsOf(Math.Max(0, Math.Min(LineCount - 1, line)));
+
         private IEnumerable<int> CaretsOf(int line)
         {
             int from = _lineLogStart[line];

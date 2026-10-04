@@ -50,9 +50,11 @@ namespace UnityGameTranslator.Core.TextShaping
         /// field remembered for the caret, the clicks and the arrows. A text needing nothing
         /// (Latin, say) leaves the field as NGUI has it.
         /// </summary>
-        internal static void PresentNguiLabel(object field, object label, ref string value, string settingsFontName)
+        internal static void PresentNguiLabel(object field, object label, ref string value, string settingsFontName, FontOverrideRule overrideRule)
         {
             if (!TranslatorCore.IsMainThread || field == null || label == null || !Ngui.Resolve()) return;
+            // Aligned as the game's texts of its font are (mirror RTL), from what was typed.
+            RtlPresenter.AlignTypedLabel(label, value, settingsFontName, overrideRule, false);
             int id = TypeHelper.GetInstanceID(label);
 
             var derived = FontManager.DerivedForSettings(settingsFontName);
@@ -148,7 +150,11 @@ namespace UnityGameTranslator.Core.TextShaping
                 if (_ngui.TryGetValue(TypeHelper.GetInstanceID(label), out var held) && held.Shown == written) return;
 
                 string value = written;
-                PresentNguiLabel(__instance, label, ref value, Ngui.SettingsFontOf(label));
+                string font = Ngui.SettingsFontOf(label);
+                FontOverrideRule rule = TranslatorCore.FontOverrides.Count > 0 && label is Component labelComponent
+                    ? TranslatorCore.FindFontOverride(TypeHelper.GetInstanceID(label), TranslatorCore.GetGameObjectPath(labelComponent.gameObject), font, null)
+                    : null;
+                PresentNguiLabel(__instance, label, ref value, font, rule);
                 if (value == written) return;
                 TranslatorPatches.BypassTextPrefix = true;
                 try { TypeHelper.SetText(label, value); }

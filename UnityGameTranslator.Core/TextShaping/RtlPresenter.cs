@@ -1896,6 +1896,26 @@ namespace UnityGameTranslator.Core.TextShaping
         private static bool MirrorsEveryText(string settingsFontName, FontOverrideRule overrideRule)
             => TranslatorCore.TargetIsRightToLeft && TranslatorCore.ShouldMirrorRtlAlignment(settingsFontName, overrideRule);
 
+        /// <summary>
+        /// An input field's label showing what was TYPED (RtlInputFields): aligned by the same rule
+        /// as the game's texts of its font — mirrored when the typed paragraph reads right to left
+        /// and the font's setting (or the rule matching the label) says mirror; a left-to-right one
+        /// stays mirrored when every text of that font is (<see cref="MirrorsEveryText"/>), else gets
+        /// the game's alignment back. The direction is the typed text's first paragraph (UAX #9 P2),
+        /// as every editor aligns a field set to follow its text. The mod's own window: mirrored
+        /// while it reads right to left, as its other texts.
+        /// </summary>
+        internal static void AlignTypedLabel(object label, string typed, string settingsFontName, FontOverrideRule overrideRule, bool ownUi)
+        {
+            if (label == null) return;
+            bool rightToLeft = !string.IsNullOrEmpty(typed) && RtlText.ParagraphDirection(typed) < 0;
+            bool mirror = rightToLeft
+                ? ownUi || TranslatorCore.ShouldMirrorRtlAlignment(settingsFontName, overrideRule)
+                : !ownUi && MirrorsEveryText(settingsFontName, overrideRule);
+            if (UIToolkitSupport.IsTextElementInstance(label)) UIToolkitSupport.MirrorAlign(label, mirror);
+            else MirrorAlignment(label, TypeHelper.GetInstanceID(label), mirror);
+        }
+
         /// <param name="keepMirrored">The component leaves right-to-left text but stays aligned the
         /// reading way (<see cref="MirrorsEveryText"/>): its flag and wrap go back, its alignment
         /// stays mirrored.</param>

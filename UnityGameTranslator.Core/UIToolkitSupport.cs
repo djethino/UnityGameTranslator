@@ -2591,6 +2591,37 @@ namespace UnityGameTranslator.Core
             _highlighted.Clear();
         }
 
+        /// <summary>
+        /// A field's text element showing what was typed: aligned as the game's texts of its font are
+        /// (RtlPresenter.AlignTypedLabel), with the font it is filed under and the rule matching it.
+        /// </summary>
+        internal static void AlignTypedField(object element, string typed)
+        {
+            // 🔴 Only once the panel has styled and laid it out: the alignment is mirrored from the
+            // RESOLVED style, the engine default before that (see TryFinishPending). Until then it
+            // waits for the field's next UpdateVisibleText (FinishTypedFieldAlign).
+            if (!IsElementAttached(element) || !(ContentWidth(element) > 0f))   // NaN: no box yet
+            {
+                _typedAlignPending.Remove(element);
+                _typedAlignPending.Add(element, typed);
+                return;
+            }
+            _typedAlignPending.Remove(element);
+            string font = SettingsFontNameOf(element);
+            FontOverrideRule rule = TranslatorCore.FontOverrides.Count > 0
+                ? TranslatorCore.FindFontOverride(IdFor(element), PathOf(element), font, null) : null;
+            TextShaping.RtlPresenter.AlignTypedLabel(element, typed, font, rule, false);
+        }
+
+        // Fields written before their panel styled them: the typed text whose alignment waits.
+        private static readonly ConditionalWeakTable<object, string> _typedAlignPending = new ConditionalWeakTable<object, string>();
+
+        /// <summary>From the field's UpdateVisibleText (its box is known): the alignment that waited, decided now.</summary>
+        internal static void FinishTypedFieldAlign(object element)
+        {
+            if (_typedAlignPending.TryGetValue(element, out var typed)) AlignTypedField(element, typed);
+        }
+
         /// <summary>The font this element is filed under: the one it had before any replacement.</summary>
         private static string SettingsFontNameOf(object element)
         {
@@ -3239,7 +3270,8 @@ namespace UnityGameTranslator.Core
         /// paragraph direction unless <paramref name="keepDirection"/> (an element the ATG still
         /// draws right to left: put back and set again at each text, it would re-lay out each time).
         /// </summary>
-        internal static void RestoreRtlAdjustments(object element, bool keepDirection = false)
+        /// <param name="keepAlignment">The alignment is decided by the caller (an input field: AlignTypedField).</param>
+        internal static void RestoreRtlAdjustments(object element, bool keepDirection = false, bool keepAlignment = false)
         {
             try
             {
@@ -3251,7 +3283,7 @@ namespace UnityGameTranslator.Core
                 }
                 var style = _styleProp?.GetValue(element, null);
                 if (style == null) return;
-                if (_rtlAlignOriginal.TryGetValue(element, out var align))
+                if (!keepAlignment && _rtlAlignOriginal.TryGetValue(element, out var align))
                 {
                     _rtlAlignOriginal.Remove(element);
                     if (align[0] != null && _styleTextAlignProp != null) StyleSet(_styleTextAlignProp, style, align[0]);

@@ -327,10 +327,17 @@ namespace UnityGameTranslator.Core
             {
                 if (!_typesRegistered) RegisterBuiltInTypes();
 
+                // 🔴 The same rule as the cycle: a type that announces its arrivals keeps its list
+                // until one arrived. A font rewrite refreshes every game font that takes it, one
+                // after the other — five fonts were five scene-wide lookups per type in one frame
+                // (~135 ms each in a large scene, 2026-10-04) to re-confirm that nothing was there.
+                // ⚠ The cycle this cancels (below) has already consumed what appeared before it
+                // began: LooksUp still sees it in _cycleAppeared.
                 int total = 0;
                 foreach (var type in _registeredTypes)
                 {
-                    type.CachedComponents = RefreshTypeCache(type);
+                    if (LooksUp(type, outsideCycle: true))
+                        type.CachedComponents = RefreshTypeCache(type);
                     total += type.CachedComponents?.Length ?? 0;
                 }
 
@@ -602,11 +609,17 @@ namespace UnityGameTranslator.Core
             => _graphicType != null && type.ComponentType != null && _graphicType.IsAssignableFrom(type.ComponentType)
                && type.ComponentType != TypeHelper.TMP_TextType;
 
-        private static bool LooksUp(RegisteredTextType type)
+        /// <summary>
+        /// Whether this type's list must be asked of the engine again. <paramref name="outsideCycle"/>:
+        /// asked by a forced refresh rather than by the cycle, so what appeared since the cycle began
+        /// counts too.
+        /// </summary>
+        private static bool LooksUp(RegisteredTextType type, bool outsideCycle = false)
         {
             if (type.CachedComponents == null) return true;
-            if (_announcedTypes.Contains(type.ComponentType)) return _cycleAppeared.Contains(type.ComponentType);
-            if (AnnouncedByGraphic(type)) return _cycleGraphicAppeared;
+            if (_announcedTypes.Contains(type.ComponentType))
+                return _cycleAppeared.Contains(type.ComponentType) || (outsideCycle && _appeared.Contains(type.ComponentType));
+            if (AnnouncedByGraphic(type)) return _cycleGraphicAppeared || (outsideCycle && _graphicAppeared);
             return true;
         }
 
@@ -1006,8 +1019,10 @@ namespace UnityGameTranslator.Core
                 return result;
 
             // Fallback to MonoBehaviourFilter for this single type — not when the engine itself
-            // already said there is none (same rule as the incremental refresh, Phase 2).
-            if (type.EngineSaidNone) return null;
+            // already said there is none (same rule as the incremental refresh, Phase 2). That
+            // answer is a real empty list, as the cycle records it: null would make the next
+            // forced refresh ask the engine again.
+            if (type.EngineSaidNone) return _noComponents;
             if (type.MonoBehaviourFilterState != StrategyState.Failed)
             {
                 var seenIds = new HashSet<int>();

@@ -195,7 +195,7 @@ namespace UnityGameTranslator.Core.TextShaping
             prep = prep.SplitTokensAt(prep.TokenSplitsAt(wraps));   // a tag wider than the line, cut by the element: cut there too
             var s = new UitkState { Logical = typed, Suffix = suffix };
             s.Layout = prep.Lay(wraps);
-            s.Shown = s.Layout.Display;
+            s.Shown = PaddedToTyped(s.Layout.Display, typed);
             // What it was cut for: a change of either cuts it again (the box drawn next, not a timer).
             s.LaidWidth = UIToolkitSupport.ContentWidth(element);
             s.LaidWraps = UIToolkitSupport.WrapsOwnLines(element);
@@ -234,6 +234,23 @@ namespace UnityGameTranslator.Core.TextShaping
         }
 
         /// <summary>
+        /// The presented form, never fewer characters than were typed: the field's selecting
+        /// utilities CLAMP every caret they read to the drawn text's character count
+        /// (ClampTextIndex, 2022.3 and Unity 6), and a ligature draws two typed letters as one —
+        /// with a lam-alef in it the caret could not reach the end of the text, End stopped short and
+        /// a double-click cut the last word (bench 2026-10-04). Word joiners (U+2060: zero-width,
+        /// synthesized by every TextCore font asset) after the last glyph make up the difference;
+        /// nothing moves on screen and no typed position is drawn among them.
+        /// </summary>
+        private static string PaddedToTyped(string display, string typed)
+        {
+            int drawn = 0;
+            for (int i = 0; i < display.Length; i++) { drawn++; if (char.IsHighSurrogate(display[i]) && i + 1 < display.Length) i++; }
+            int missing = typed.Length - drawn;
+            return missing > 0 ? display + new string(RtlFieldLayout.MergedSlot, missing) : display;
+        }
+
+        /// <summary>
         /// Where the soft lines start in the measured text, from the lines the element cut it into
         /// (TryBreakLines: a space between two lines of one paragraph, a '\n' between paragraphs).
         /// Null when the lines do not lie end to end in it — then nothing is cut but the hard breaks.
@@ -265,7 +282,14 @@ namespace UnityGameTranslator.Core.TextShaping
         {
             if (element == null || _uitk.Count == 0) return null;
             if (!_uitk.TryGetValue(ObjectKey(element), out var s)) return null;
-            return Uitk.RenderedText(element) == s.Rendered ? s : null;
+            string rendered = Uitk.RenderedText(element);
+            if (rendered == s.Rendered) return s;
+            // Laid out for one text, drawing another: the engine's own editing answers until the next
+            // write presents it again. Said once per field and text (debug), the first thing to read
+            // when an RTL field edits as typed.
+            if (TranslatorCore.DebugMode && DiagnosticOnce.First("RtlInputFields.uitk.stale", ObjectKey(element) + "\u0001" + rendered))
+                TranslatorCore.LogDebug($"[RtlInputFields] UI Toolkit field {ObjectKey(element)} draws another text than it was laid out for: {RtlPresenter.Escape(rendered ?? "null")} (laid out {RtlPresenter.Escape(s.Rendered)})");
+            return null;
         }
 
         // ══ Caret and click ═══════════════════════════════════════════════════════════════════
@@ -718,15 +742,25 @@ namespace UnityGameTranslator.Core.TextShaping
         // selected other letters than the word clicked. Its two callers are replaced, not it: on IL2CPP
         // it is compiled into them and a hook on it never ran (bench, 2021.3 / 2022.3 IL2CPP).
 
-        /// <summary>TextSelectingUtilities.SelectCurrentWord() — the double-click: the word around the caret, on the typed text.</summary>
+        /// <summary>
+        /// TextSelectingUtilities.SelectCurrentWord() — the double-click: the word around the caret, on
+        /// the typed text. Also an ATG field holding right-to-left text: the ATG's own took the space
+        /// after a one-letter word clicked on its far side (bench 2026-10-04, « 3 »).
+        /// </summary>
         public static bool Uitk_SelectCurrentWord_Prefix(object __instance)
         {
             try
             {
-                var s = UitkStateOfHandle(Uitk.HandleOf(__instance));
-                if (s == null) return true;
-                int caret = Math.Max(0, Math.Min(Uitk.CursorIndex(__instance), s.Logical.Length));
-                int back = RtlFieldLayout.WordEdge(s.Logical, caret, false), forward = RtlFieldLayout.WordEdge(s.Logical, caret, true);
+                var handle = Uitk.HandleOf(__instance);
+                var presented = UitkStateOfHandle(handle);
+                string typed = presented?.Logical ?? UitkAtgStateOf(handle)?.Logical;
+                if (typed == null) return true;
+                int caret = Math.Max(0, Math.Min(Uitk.CursorIndex(__instance), typed.Length));
+                // The character clicked, from the caret the click left: a click on a word's far half
+                // leaves the caret AFTER it, on the space that follows — the word is still that one.
+                int at = caret < typed.Length && !UnicodeInfo.IsWhiteSpace(typed[caret]) ? caret
+                       : caret > 0 && !UnicodeInfo.IsWhiteSpace(typed[caret - 1]) ? caret - 1 : caret;
+                int back = RtlFieldLayout.WordEdge(typed, at, false), forward = RtlFieldLayout.WordEdge(typed, at, true);
                 bool before = Uitk.CursorIndex(__instance) < Uitk.SelectIndex(__instance);
                 Uitk.SetCursorIndex(__instance, before ? back : forward);
                 Uitk.SetSelectIndex(__instance, before ? forward : back);

@@ -309,6 +309,20 @@ namespace UnityGameTranslator.Core.Checks
             check(cut.Display.Replace("\n", "").Contains("ADD8E6>") && cut.Display.Contains("<color=#"),
                   "both pieces of the cut tag are drawn as typed", "\"<color=#\" and \"ADD8E6>\" on the screen");
 
+            // A word ending in a lam-alef ligature (« جولات »: lam and alef drawn as one glyph), on the
+            // second line: the double-click takes it whole, End reaches the end of the text.
+            const string ligatured = "اللاعب Alex فاز في 3 جولات";
+            var ligPrep = RtlFieldLayout.Prepare(ligatured);
+            int wrapAtFi = ligPrep.MeasureStartOfCp[ligPrep.CpOfLogical[16]];
+            var ligLay = ligPrep.Lay(new[] { wrapAtFi });
+            int wordStart = ligatured.IndexOf("جولات", StringComparison.Ordinal);
+            check(RtlFieldLayout.WordEdge(ligatured, wordStart + 1, true) == ligatured.Length
+                  && RtlFieldLayout.WordEdge(ligatured, wordStart + 1, false) == wordStart,
+                "a word with a lam-alef inside is one word", $"edges {RtlFieldLayout.WordEdge(ligatured, wordStart + 1, false)}..{RtlFieldLayout.WordEdge(ligatured, wordStart + 1, true)}, wanted {wordStart}..{ligatured.Length}");
+            check(ligLay.LineCount == 2 && ligLay.LineEndCaret(1) == ligatured.Length,
+                "End on a line ending in a lam-alef word reaches the end of the text",
+                $"{ligLay.LineCount} line(s), End at {ligLay.LineEndCaret(ligLay.LineCount - 1)} of {ligatured.Length}");
+
             int endOfFirst = 5;
             check(soft.VisualStep(endOfFirst, toRight: false) == 6,
                 "← at the left end of an Arabic line goes to the next line",

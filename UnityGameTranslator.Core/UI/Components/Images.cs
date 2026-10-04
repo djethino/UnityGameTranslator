@@ -29,6 +29,9 @@ namespace UnityGameTranslator.Core.UI.Components
         // doing so would take the picture off the object the person is looking at.
         private Sprite _mine;
 
+        // The texture decoded HERE for the last picture (ShowEncoded), destroyed with its sprite.
+        private Texture2D _mineTexture;
+
         internal ImageHandle(GameObject box, Image shown, LabelHandle why)
         {
             _box = box;
@@ -87,6 +90,33 @@ namespace UnityGameTranslator.Core.UI.Components
         }
 
         /// <summary>
+        /// Show a picture from its encoded bytes (PNG, JPG) — a game's cover fetched for a list
+        /// (2026-10-05). Decoded the way every picture of this mod is (TextureUtils: the overload
+        /// the running game actually has); the texture and its sprite are this box's, and go with
+        /// the next picture or <see cref="Clear"/>. Nothing decodable leaves the box empty: a cover
+        /// helps recognise a game, the words beside it still say which one it is.
+        /// </summary>
+        /// <returns>Whether a picture is shown.</returns>
+        public bool ShowEncoded(byte[] bytes)
+        {
+            Drop();
+            if (bytes == null || bytes.Length == 0) return false;
+
+            var texture = Compat.MakeTexture2D(2, 2, TextureFormat.RGBA32, false);
+            if (texture == null) return false;
+
+            if (!TextureUtils.LoadImageToTexture(texture, bytes))
+            {
+                UnityEngine.Object.Destroy(texture);
+                return false;
+            }
+
+            _mineTexture = texture;
+            Show(texture);
+            return _shown != null && _shown.sprite != null;
+        }
+
+        /// <summary>
         /// Say why there is no picture, in the words the code composed — an ordinary sentence of
         /// this interface, so it goes through the label's own Dynamic policy like any other.
         /// </summary>
@@ -119,10 +149,19 @@ namespace UnityGameTranslator.Core.UI.Components
         /// <summary>Let go of the sprite built for the last picture, if it was built here.</summary>
         private void Drop()
         {
-            if (_mine == null) return;
-            // Qualified: `Object` alone is this handle's own property, not the engine's type.
-            UnityEngine.Object.Destroy(_mine);
-            _mine = null;
+            if (_mine != null)
+            {
+                // Qualified: `Object` alone is this handle's own property, not the engine's type.
+                UnityEngine.Object.Destroy(_mine);
+                _mine = null;
+            }
+
+            // After the sprite built on it: a texture destroyed under a live sprite draws magenta.
+            if (_mineTexture != null)
+            {
+                UnityEngine.Object.Destroy(_mineTexture);
+                _mineTexture = null;
+            }
         }
     }
 

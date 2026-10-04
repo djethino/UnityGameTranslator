@@ -1,4 +1,6 @@
+using System;
 using System.Collections.Generic;
+using System.Linq;
 using Newtonsoft.Json.Linq;
 using UnityGameTranslator.Common;
 
@@ -590,13 +592,40 @@ namespace UnityGameTranslator.Core
                         Name = g["name"]?.Value<string>(),
                         SteamId = g["steam_id"]?.Value<string>(),
                         ImageUrl = g["image_url"]?.Value<string>(),
-                        Source = g["source"]?.Value<string>()
+                        Source = g["source"]?.Value<string>(),
+                        // What tells it apart from a game of the same title, as one line
+                        // (common GameCandidates.Facts — the site's list says the same).
+                        Facts = GameCandidates.Facts(IdsOf(g["ids"]),
+                            g["year"]?.Type == JTokenType.Integer ? g["year"].Value<int>() : (int?)null,
+                            NamesOf(g["developers"]), NamesOf(g["publishers"]))
                     });
                 }
             }
 
             return result;
         }
+
+        /// <summary>A search hit's `ids` — every id the game answers to, by source — or null.</summary>
+        private static Dictionary<string, string> IdsOf(JToken ids)
+        {
+            if (!(ids is JObject given)) return null;
+
+            var found = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var id in given.Properties())
+            {
+                string value = id.Value.Type == JTokenType.String || id.Value.Type == JTokenType.Integer
+                    ? id.Value.ToString()
+                    : null;
+                if (!string.IsNullOrEmpty(value)) found[id.Name] = value;
+            }
+            return found;
+        }
+
+        /// <summary>A list of names (`developers`, `publishers`), or null.</summary>
+        private static List<string> NamesOf(JToken names) =>
+            names is JArray list
+                ? list.Where(n => n.Type == JTokenType.String).Select(n => n.Value<string>()).ToList()
+                : null;
 
         // ── Account ─────────────────────────────────────────────────────────────────────────
 

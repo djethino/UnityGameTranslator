@@ -61,6 +61,12 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         private Host LanguagesSection => _screen.Host("LanguagesSection");
 
+        // The covers on screen — dropped with the list they belong to (ForgetCovers): shown while
+        // the list is, never kept (user, 2026-10-04: "un moyen d'identification éphémère"). The
+        // counter drops a cover that arrives for an older list.
+        private readonly List<ImageHandle> _covers = new List<ImageHandle>();
+        private int _coversAsked;
+
         // What the site said about the picked game being for adults only — null until it answered
         // about THIS game (analyse/adult-declaration-at-publish.md). The counter drops an answer
         // that comes back after another game was picked.
@@ -190,6 +196,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // Reset search state
             _gameSearchResults = null;
+            ForgetCovers();
             ResultsList.Clear();
 
             OpenOnTheGame();
@@ -207,6 +214,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             SetMode(gameOnly: true);
 
             _gameSearchResults = null;
+            ForgetCovers();
             ResultsList.Clear();
 
             OpenOnTheGame();
@@ -295,7 +303,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 case "search": return PerformGameSearch;
                 case "sourceChanged":
                 case "targetChanged": return UpdateValidation;
-                case "cancel": return () => SetActive(false);
+                case "cancel": return () => { ForgetCovers(); SetActive(false); };
                 case "continue": return OnContinue;
                 default: return null;
             }
@@ -463,6 +471,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             GameSearchStatus.Tone = Tone.Muted;
 
             // Clear previous results
+            ForgetCovers();
             ResultsList.Clear();
 
             try
@@ -514,6 +523,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         private void PopulateGameResults()
         {
             var list = ResultsList;
+            ForgetCovers();
             list.Clear();
 
             if (_gameSearchResults == null) return;
@@ -532,10 +542,17 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // Name, source in brackets, mark — the socle's row, the same one the Manager lists.
                 // The tone says how sure the match is: a rule, so it is set here.
                 var capturedGame = game;
-                var row = _screen.Instantiate("GameBtn", list.Rows, act => act == "pick" ? (Action)(() => OnGameSelected(capturedGame)) : null);
+                var row = _screen.Instantiate("GameHit", list.Rows, act => act == "pick" ? (Action)(() => OnGameSelected(capturedGame)) : null);
                 var btn = row.Button("GameBtn");
                 btn.Label = GameCandidates.Row(game.Name, game.Source, confidence);
                 btn.Tone = ConfidenceTone(confidence);
+
+                // What tells it apart from a game of the same title, and its cover (2026-10-05):
+                // the person can check before picking.
+                var facts = row.Label("GameFacts");
+                facts.Show(game.Facts ?? "");
+                facts.Visible = !string.IsNullOrEmpty(game.Facts);
+                LoadCover(row.Picture("Cover"), game.ImageUrl, _coversAsked);
             }
 
             list.Filled(anotherSubject: true);
@@ -547,6 +564,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _gameSearchResults = null;
             GameSearchInput.Text = "";
             GameSearchStatus.Show("");
+            ForgetCovers();
             ResultsList.Clear();
 
             SelectGame(new GameInfo
@@ -554,6 +572,34 @@ namespace UnityGameTranslator.Core.UI.Panels
                 name = gameApi.Name,
                 steam_id = gameApi.SteamId
             }, ChoiceOf(gameApi));
+        }
+
+        /// <summary>
+        /// A row's cover, fetched from where the site says it is (ApiClient.FetchCover: HTTPS,
+        /// never with the account's token) and decoded by its box — a game that cannot decode it
+        /// leaves the empty frame.
+        /// </summary>
+        private async void LoadCover(ImageHandle picture, string url, int asked)
+        {
+            if (string.IsNullOrEmpty(url)) return;
+
+            var bytes = await ApiClient.FetchCover(url);
+
+            TranslatorUIManager.RunOnMainThread(() =>
+            {
+                if (asked != _coversAsked || bytes == null) return; // another list since
+
+                // The box decodes it and owns what it made (ImageHandle.ShowEncoded).
+                if (picture.ShowEncoded(bytes)) _covers.Add(picture);
+            });
+        }
+
+        /// <summary>The covers of the list being left: each box lets go of what it made.</summary>
+        private void ForgetCovers()
+        {
+            _coversAsked++;
+            foreach (var cover in _covers) cover.Clear();
+            _covers.Clear();
         }
 
         /// <summary>A list answer as a choice (common GameCandidates.PickOf), or null when it carries no usable id.</summary>
@@ -637,6 +683,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             // used to be, here, so the game picked replaced what the game's own files say and every
             // later upload sent the pick as if it had been read on disk. The choice now travels
             // apart — kept as the game confirmed (Change), or handed to the upload (`game_pick`).
+            ForgetCovers();
+
             if (_gameOnly)
             {
                 if (_selectedPick == null) return;

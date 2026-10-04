@@ -19,6 +19,13 @@ namespace UnityGameTranslator.Core
     public static class ApiClient
     {
         private static readonly HttpClient client;
+
+        /// <summary>
+        /// Covers only: the stores' own image servers, asked directly while a list of games is on
+        /// screen. 🔴 **Never the site's client**: that one carries the account's token in its
+        /// default headers, and a third-party image server must never receive it.
+        /// </summary>
+        private static readonly HttpClient coverClient;
         private static readonly HttpClient sseClient;
         private static bool _urlOverrideLogged = false;
 
@@ -344,6 +351,40 @@ namespace UnityGameTranslator.Core
             sseClient = new HttpClient(new AuthRejectionHandler(sseHandler));
             sseClient.Timeout = System.Threading.Timeout.InfiniteTimeSpan;
             sseClient.DefaultRequestHeaders.Add("User-Agent", UserAgent());
+
+            // No token, no Accept: a plain image fetch. Same per-step limit as the site's calls,
+            // and the same ceiling on what is read.
+            coverClient = new HttpClient(new StallGuardHandler(new HttpClientHandler
+            {
+                AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate
+            }, StallLimit));
+            coverClient.Timeout = System.Threading.Timeout.InfiniteTimeSpan;
+            coverClient.MaxResponseContentBufferSize = Limits.TranslationFileBytes;
+            coverClient.DefaultRequestHeaders.Add("User-Agent", UserAgent());
+        }
+
+        /// <summary>
+        /// A game's cover, fetched from where the site says it is — HTTPS only — or null. Shown
+        /// while a list is on screen and never written to disk (user, 2026-10-04: "un moyen
+        /// d'identification éphémère"); directly from the store's image server, not through the
+        /// site (a middle hop is the same image twice and bandwidth paid for nothing).
+        /// </summary>
+        public static async Task<byte[]> FetchCover(string url)
+        {
+            if (string.IsNullOrEmpty(url) || !url.StartsWith("https://", StringComparison.OrdinalIgnoreCase)) return null;
+
+            try
+            {
+                return await coverClient.GetByteArrayAsync(url);
+            }
+            catch (Exception e)
+            {
+                // Once per address: the frame stays empty on screen, the name beside it still says
+                // which game it is.
+                if (DiagnosticOnce.First("ApiClient.cover", url))
+                    TranslatorCore.LogWarning($"[ApiClient] Cover not shown ({url}): {Connectivity.ForLog(e)}");
+                return null;
+            }
         }
 
         /// <summary>

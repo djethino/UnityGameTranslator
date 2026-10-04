@@ -277,6 +277,9 @@ namespace UnityGameTranslator.Core
         public string ImageUrl { get; set; }
         public int TranslationsCount { get; set; }
         public string Source { get; set; } // "local", "steam", "igdb", "rawg"
+
+        /// <summary>Its store ids, year and makers on one line (common GameCandidates.Facts); empty when nothing is known.</summary>
+        public string Facts { get; set; } = "";
     }
 
     public class DeviceFlowInitResult

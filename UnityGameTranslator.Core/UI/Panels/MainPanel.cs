@@ -615,7 +615,11 @@ namespace UnityGameTranslator.Core.UI.Panels
             bool fromTheSite = server?.Game != null || TranslatorCore.SourceSiteId > 0;
             bool mainOwner = server != null && server.IsOwner && server.Role == LineageRole.Main;
 
-            if (!TranslatorCore.Config.online_mode || (fromTheSite && !mainOwner))
+            // The site's game search answers a signed-in caller only (it costs the stores' quota):
+            // without an account Change could not list anything, so it is not offered.
+            bool canSearch = !string.IsNullOrEmpty(TranslatorCore.Config.api_token);
+
+            if (!TranslatorCore.Config.online_mode || (fromTheSite && !mainOwner) || (!fromTheSite && !canSearch))
             {
                 _gameChangeBtn.Visible = false;
             }

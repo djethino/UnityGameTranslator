@@ -435,7 +435,9 @@ namespace UnityGameTranslator.Core.UI.Panels
 
                     // Online, which game this is can be confirmed here (2026-10-05): the same game
                     // screen as Change and the publication.
-                    _screen.Button("WizardChangeGameBtn").Visible = _onlineMode;
+                    // The site's game search answers a signed-in caller only.
+                    _screen.Button("WizardChangeGameBtn").Visible = _onlineMode
+                        && !string.IsNullOrEmpty(TranslatorCore.Config.api_token);
 
                     if (_detectedGame != null || TranslatorCore.ConfirmedGame != null)
                     {
@@ -555,6 +557,9 @@ namespace UnityGameTranslator.Core.UI.Panels
             _translationList?.Refresh();
 
             bool isLoggedIn = !string.IsNullOrEmpty(TranslatorCore.Config.api_token);
+
+            // Signing in here opens Change: the site's game search answers a signed-in caller only.
+            _screen.Button("WizardChangeGameBtn").Visible = _onlineMode && isLoggedIn;
 
             if (isLoggedIn)
             {

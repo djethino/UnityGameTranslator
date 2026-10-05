@@ -367,9 +367,10 @@ namespace UnityGameTranslator.Core.Checks
             check(statusCard.IsPart && statusCard.Body.Count == 0 && statusCard.Nodes.Count == 0 && statusCard.Templates.Keys.SequenceEqual(new[] { "Card" }),
                 "status-card.json is a part: one template, no screen of its own", "the card is built by its component into the host main.json leaves for it");
             var card = statusCard.Templates["Card"];
-            check(card.Pieces.Acts.Keys.OrderBy(k => k).SequenceEqual(new[] { "dismiss", "manage" })
+            // `site`: "View on website", at the end of the identity row (2026-10-05).
+            check(card.Pieces.Acts.Keys.OrderBy(k => k).SequenceEqual(new[] { "dismiss", "manage", "site" })
                   && card.Pieces.Binds.Keys.OrderBy(k => k).SequenceEqual(new[] { "details", "identity", "legend", "notice", "noticeVerb", "secondary", "stage", "voteHint" }),
-                "the card asks for two acts and eight slots", $"got {string.Join(",", card.Pieces.Acts.Keys)} / {string.Join(",", card.Pieces.Binds.Keys)}");
+                "the card asks for three acts and eight slots", $"got {string.Join(",", card.Pieces.Acts.Keys)} / {string.Join(",", card.Pieces.Binds.Keys)}");
             check(card.Root.Kind == "stack" && card.Root.Word("pad") == "SectionPadding" && card.Root.Word("surface") == null,
                 "the card is a section among sections: their padding, no surface of its own", "dressed as a card it read as a box of the wrong width stacked among the others");
             check(new[] { "IdentityMarks", "BadgeHost", "QualityRow", "Contributions", "VoteHost" }.All(h => card.Pieces.Nodes[h].Children.Count == 0)

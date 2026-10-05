@@ -98,6 +98,7 @@ namespace UnityGameTranslator.Core.UI.Components
         private LabelHandle _emptyLabel;
         private ButtonHandle _emptyBtn;
         private ButtonHandle _dismissBtn;
+        private ButtonHandle _siteBtn;
         private Host _modeRow;
         /// <summary>Where the tag chips of what a contribution holds are drawn.</summary>
         private Host _contributionRow;
@@ -139,6 +140,12 @@ namespace UnityGameTranslator.Core.UI.Components
             // recognise. It is EMPTY whenever the marks carry the names, because "🇬🇧 English →
             // 🇫🇷 French  English → French" is the same sentence twice.
             _identityLabel = _card.Label("IdentityLabel");
+
+            // At the row's end, compact: the way to this translation's page on the website
+            // (2026-10-05). The site picks the page by who looks — My translations for its author,
+            // its page for anybody else (ApiClient.GetTranslationUrl). Shown only for a file the
+            // site knows; a description, not an act on the translation, so no lock to carry.
+            _siteBtn = _card.Button("SiteBtn");
 
             // ⚠ The role chip used to live here, alone and in its own colours. It moved into the
             // badge strip below, where it sits beside the other things it has to be read WITH —
@@ -267,6 +274,11 @@ namespace UnityGameTranslator.Core.UI.Components
                         TranslatorCore.OpenUrlSafe(ApiClient.GetMyTranslationsUrl(state?.SiteId));
                     };
                 case "dismiss": return DismissCurrentNotice;
+                case "site":
+                    return () =>
+                    {
+                        if (SiteId() is int id) TranslatorCore.OpenUrlSafe(ApiClient.GetTranslationUrl(id));
+                    };
                 default: return null;
             }
         }
@@ -375,6 +387,8 @@ namespace UnityGameTranslator.Core.UI.Components
             _standing = standing;
             _standingSet = true;
             if (_badgeHost == null) return;
+
+            if (_siteBtn != null) _siteBtn.Visible = SiteId() != null;
 
             // What the file is made of, measured here: the socle's chips for it are the
             // Manager's and the site's, and this card dropped them (see the filter below).
@@ -496,6 +510,17 @@ namespace UnityGameTranslator.Core.UI.Components
         {
             if (!_standingSet) return;
             SetStanding(_standing);
+        }
+
+        /// <summary>
+        /// The row of the site this file is: the account's own row when the server answered for it,
+        /// otherwise the one it was taken from (`_source.site_id`). Null for a file the site has
+        /// never seen — a new translation, a fork not published yet.
+        /// </summary>
+        private static int? SiteId()
+        {
+            int? id = TranslatorCore.ServerState?.SiteId ?? TranslatorCore.SourceSiteId;
+            return id > 0 ? id : null;
         }
 
         /// <summary>

@@ -95,7 +95,10 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// Get the translation detail page URL
+        /// A translation's page on the website — "View on website". The site picks the page by who
+        /// is signed in in the browser: My translations on its row for its author, otherwise its
+        /// Main's card on the game's page (website TranslationController::open). The browser's
+        /// account may not be the game's, so the page cannot be chosen here.
         /// </summary>
         public static string GetTranslationUrl(int translationId)
         {

@@ -45,7 +45,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         /// <summary>
         /// The list answer the selected game came from, as a publication sends it (`game_pick`) —
-        /// null when the game was taken as detected (no answer of the site named it).
+        /// null while nothing is picked, and nothing can be kept or sent then (UpdateValidation).
         /// </summary>
         private GameChoice _selectedPick = null;
 
@@ -396,52 +396,19 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             if (_screen == null) return;
 
-            if (_gameOnly)
-            {
-                ShowAgainstSaved();
-                UpdateValidation();
-                return;
-            }
-
-            if (_selectedGame != null && !string.IsNullOrEmpty(_selectedGame.name))
-            {
-                // Game confirmed by user selection
-                GameDisplay.Show(_selectedGame.name);
-                GameDisplay.Tone = Tone.Success;
-                GameSource.Show("✓ " + Tr("confirmed"));
-                GameSource.Tone = Tone.Success;
-            }
-            else
-            {
-                // Show detected game but require confirmation
-                var detected = TranslatorCore.CurrentGame;
-                if (detected != null && !string.IsNullOrEmpty(detected.name))
-                {
-                    GameDisplay.Show(detected.name);
-                    GameDisplay.Tone = Tone.Warning;
-                    GameSource.Show("⚠ " + Tr("confirm below"));
-                    GameSource.Tone = Tone.Warning;
-                }
-                else
-                {
-                    GameDisplay.Say("No game detected");
-                    GameDisplay.Tone = Tone.Warning;
-                    GameSource.Show("- " + Tr("please search"));
-                    GameSource.Tone = Tone.Muted;
-                }
-            }
-
+            ShowGameLine();
             UpdateValidation();
         }
 
         /// <summary>
-        /// The game line where Apply keeps the choice (Change): the game Apply would keep, and its
-        /// state against what is SAVED, in the words of the title's chip (common
+        /// The game line, the same in Change and in a publication: the game the act would keep or
+        /// send, and its state against what is SAVED, in the words of the title's chip (common
         /// GameChoices.IdentityBadge) — Confirmed only for the game written in config.json, Detected
-        /// while nothing is. A pick waiting for Apply carries no state: Apply (1) says it (user,
-        /// 2026-10-05: "j'ai rien fait et j'ai apply (1) et confirmed en même temps").
+        /// while nothing is. A row clicked and not yet applied or published carries no state: the
+        /// button says it (user, 2026-10-05: "j'ai rien fait et j'ai apply (1) et confirmed en même
+        /// temps"; and "cohérent avec le change").
         /// </summary>
-        private void ShowAgainstSaved()
+        private void ShowGameLine()
         {
             var held = TranslatorCore.ConfirmedGame;
             bool pending = _selectedPick != null
@@ -461,7 +428,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             else GameDisplay.Show(name);
             GameDisplay.Tone = Tone.Plain;
 
-            // Not on the site from here: Change is only offered while the game is not fixed by it.
+            // Not on the site from here: this screen is only opened while the game is not fixed by it.
             var chip = GameChoices.IdentityBadge(!string.IsNullOrEmpty(name), held != null, onTheSite: false);
             GameSource.Show(chip?.Text ?? "");
             GameSource.Tone = chip?.Tone == BadgeTone.Good ? Tone.Success : Tone.Warning;
@@ -480,38 +447,24 @@ namespace UnityGameTranslator.Core.UI.Panels
                 {
                     GameSearchStatus.Clear();
 
-                    // Change: listed, ★ on the likeliest, and left to the person — what Apply keeps
-                    // is what they clicked, never what this screen guessed on its own.
-                    if (_gameOnly)
-                    {
-                        if (result.Success && result.Games != null && result.Games.Count > 0)
-                        {
-                            ForgetCovers();
-                            ResultsList.Clear();
-                            _gameSearchResults = result.Games;
-                            GameSearchStatus.Say($"Found {result.Games.Count} game(s)", Tone.Success);
-                            PopulateGameResults();
-                        }
-                        UpdateValidation();
-                        return;
-                    }
-
+                    // 🔴 Listed, ★ on the likeliest, and left to the person — in Change and in a
+                    // publication alike: what is kept or sent is what they clicked, never what this
+                    // screen guessed on its own (user, 2026-10-05: "on met en avant celui qui a le
+                    // steamid ou le nom exacte mais on laisse clicker… ça évite le mec qui click ok
+                    // sans relire"). Nothing is ever "taken as detected".
                     if (result.Success && result.Games != null && result.Games.Count > 0)
                     {
-                        // Game exists on server — use the server's canonical info
-                        var serverGame = result.Games[0];
-                        SelectGame(new GameInfo
-                        {
-                            name = serverGame.Name,
-                            steam_id = serverGame.SteamId
-                        }, ChoiceOf(serverGame), serverGame.Ids);
+                        ForgetCovers();
+                        ResultsList.Clear();
+                        _gameSearchResults = result.Games;
+                        GameSearchStatus.Say($"Found {result.Games.Count} game(s)", Tone.Success);
+                        PopulateGameResults();
                     }
-                    else if (!_gameOnly)
+                    else
                     {
-                        // Nothing answers to that id on the site: taken as detected, and the site
-                        // decides at upload (it refuses a game nothing identifies — said before the
-                        // click from its answer). Change takes only an answer of the list.
-                        SelectGame(detectedGame, null);
+                        // Nothing answers to that id: the name is searched instead, so the list
+                        // still has something to click.
+                        SearchByDetectedName(detectedGame);
                     }
 
                     UpdateValidation();
@@ -519,15 +472,24 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
             catch (Exception ex)
             {
-                // Network error — fall back to local detection, and say why
-                TranslatorCore.LogWarning($"[UploadSetup] Game lookup on the site failed, using local detection: {ex.Message}");
+                // Said, and the name searched instead — nothing taken in the game's place.
+                TranslatorCore.LogWarning($"[UploadSetup] Game lookup by Steam id failed: {ex.Message}");
                 TranslatorUIManager.RunOnMainThread(() =>
                 {
                     GameSearchStatus.Clear();
-                    if (!_gameOnly) SelectGame(detectedGame, null);
+                    SearchByDetectedName(detectedGame);
                     UpdateValidation();
                 });
             }
+        }
+
+        /// <summary>The detected name in the search box, and searched — what the person then picks from.</summary>
+        private void SearchByDetectedName(GameInfo detectedGame)
+        {
+            string name = detectedGame?.product_name ?? detectedGame?.name;
+            if (string.IsNullOrEmpty(name)) return;
+            GameSearchInput.Text = name;
+            PerformGameSearch();
         }
 
         private async void PerformGameSearch()
@@ -682,10 +644,10 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             if (_screen == null) return;
 
-            // For NEW uploads, game MUST be confirmed by selecting from search results
-            // No fallback to auto-detected game
+            // A game picked from the site's list — a row clicked, or the one already confirmed here —
+            // in Change and in a publication alike. Never the detected game on its own.
             var game = _selectedGame;
-            bool hasGame = game != null && !string.IsNullOrEmpty(game.name);
+            bool hasGame = game != null && !string.IsNullOrEmpty(game.name) && _selectedPick != null;
 
             // Ensure language is selected (dropdown values are always from the list)
             string source = SourceDropdown.SelectedValue;
@@ -694,7 +656,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             bool hasValidTarget = !string.IsNullOrEmpty(target);
             bool differentLangs = hasValidSource && hasValidTarget && source != target;
 
-            if (!hasGame || (_gameOnly && _selectedPick == null))
+            if (!hasGame)
             {
                 Validation.Say("Please select a game");
                 Validation.Tone = Tone.Warning;

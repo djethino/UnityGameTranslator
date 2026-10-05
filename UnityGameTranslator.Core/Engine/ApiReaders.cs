@@ -586,6 +586,7 @@ namespace UnityGameTranslator.Core
             {
                 foreach (var g in games)
                 {
+                    var ids = IdsOf(g["ids"]);
                     result.Games.Add(new GameApiInfo
                     {
                         Id = g["id"]?.Value<int>() ?? 0,
@@ -593,9 +594,10 @@ namespace UnityGameTranslator.Core
                         SteamId = g["steam_id"]?.Value<string>(),
                         ImageUrl = g["image_url"]?.Value<string>(),
                         Source = g["source"]?.Value<string>(),
+                        Ids = ids,
                         // What tells it apart from a game of the same title, as one line
                         // (common GameCandidates.Facts — the site's list says the same).
-                        Facts = GameCandidates.Facts(IdsOf(g["ids"]),
+                        Facts = GameCandidates.Facts(ids,
                             g["year"]?.Type == JTokenType.Integer ? g["year"].Value<int>() : (int?)null,
                             NamesOf(g["developers"]), NamesOf(g["publishers"]))
                     });

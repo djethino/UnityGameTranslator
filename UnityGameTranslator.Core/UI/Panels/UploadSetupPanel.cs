@@ -48,6 +48,10 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// null when the game was taken as detected (no answer of the site named it).
         /// </summary>
         private GameChoice _selectedPick = null;
+
+        // Every id the selected answer gathers, by source — what makes the same game picked on
+        // another of its rows nothing to apply (common GameChoices.Holds).
+        private Dictionary<string, string> _selectedIds = null;
         private List<GameApiInfo> _gameSearchResults = null;
 
         // Callback
@@ -322,10 +326,11 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// follow it. Several paths pick a game (auto-detection, a search result, a reset); none of
         /// them may leave the box answering about the previous one.
         /// </summary>
-        private void SelectGame(GameInfo game, GameChoice pick)
+        private void SelectGame(GameInfo game, GameChoice pick, Dictionary<string, string> ids = null)
         {
             _selectedGame = game;
             _selectedPick = pick;
+            _selectedIds = ids;
             RefreshGameDisplay();
             AskAboutAdultContent();
         }
@@ -442,7 +447,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                         {
                             name = serverGame.Name,
                             steam_id = serverGame.SteamId
-                        }, ChoiceOf(serverGame));
+                        }, ChoiceOf(serverGame), serverGame.Ids);
                     }
                     else if (!_gameOnly)
                     {
@@ -578,7 +583,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             {
                 name = gameApi.Name,
                 steam_id = gameApi.SteamId
-            }, ChoiceOf(gameApi));
+            }, ChoiceOf(gameApi), gameApi.Ids);
         }
 
         /// <summary>
@@ -648,7 +653,9 @@ namespace UnityGameTranslator.Core.UI.Panels
             else if (_gameOnly)
             {
                 var held = TranslatorCore.ConfirmedGame;
-                bool differs = !(held != null && held.Source == _selectedPick.Source && held.Id == _selectedPick.Id);
+                // By the game, not by the row's source: the same game picked on another of its rows
+                // is nothing to apply (common GameChoices.Holds, the Manager's window says the same).
+                bool differs = !GameChoices.Holds(held, _selectedPick.Source, _selectedPick.Id, _selectedIds);
 
                 Validation.Show(game.name);
                 Validation.Tone = Tone.Success;

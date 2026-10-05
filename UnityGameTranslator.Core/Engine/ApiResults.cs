@@ -280,6 +280,9 @@ namespace UnityGameTranslator.Core
 
         /// <summary>Its store ids, year and makers on one line (common GameCandidates.Facts); empty when nothing is known.</summary>
         public string Facts { get; set; } = "";
+
+        /// <summary>Every id the game answers to, by source (`ids`: "local", "steam", "igdb", "rawg"); null when unknown.</summary>
+        public Dictionary<string, string> Ids { get; set; }
     }
 
     public class DeviceFlowInitResult

@@ -84,6 +84,12 @@
     -->
     <Compile Include="../../UnityGameTranslator.Core/Engine/RayBox.cs" />
     <!--
+      A game's picture in the publish list's portrait frame: a cover cropped to fill it, a wide one
+      over a blurred copy (2026-10-06). The crop and the shrink are arithmetic a game never shows
+      wrong loudly — a blur that reads past the pixels is a crash on one picture in a thousand.
+    -->
+    <Compile Include="../../UnityGameTranslator.Core/Engine/CoverFit.cs" />
+    <!--
       Which languages a translation is in, and what happens when the file, the machine and the
       server disagree. Which value wins is the socle's; the SEQUENCE is here, and every defect it
       can carry is a right answer taken at the wrong moment.

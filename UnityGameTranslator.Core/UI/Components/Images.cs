@@ -1,3 +1,4 @@
+using System;
 using UnityEngine;
 using UnityEngine.UI;
 using UniverseLib.UI;
@@ -32,9 +33,16 @@ namespace UnityGameTranslator.Core.UI.Components
         // The texture decoded HERE for the last picture (ShowEncoded), destroyed with its sprite.
         private Texture2D _mineTexture;
 
-        internal ImageHandle(GameObject box, Image shown, LabelHandle why)
+        // Behind the picture: a game's wide picture blurred over the whole box (ShowGameCover).
+        // Hidden otherwise. Its few pixels and its sprite are this box's, like the picture's.
+        private readonly Image _backdrop;
+        private Texture2D _backdropTexture;
+        private Sprite _backdropSprite;
+
+        internal ImageHandle(GameObject box, Image backdrop, Image shown, LabelHandle why)
         {
             _box = box;
+            _backdrop = backdrop;
             _shown = shown;
             _why = why;
         }
@@ -130,6 +138,122 @@ namespace UnityGameTranslator.Core.UI.Components
         }
 
         /// <summary>
+        /// Show a GAME's picture from its encoded bytes, the way the site and the Manager show it
+        /// (common GameCandidates.FillsFrame, user 2026-10-06): a cover — taller than wide — fills
+        /// the box, cropped at its edges; a wider picture (a store header, a screenshot) is shown
+        /// whole over a blurred copy of itself.
+        ///
+        /// 🔴 **Nothing here the mod does not already do in a game**: the picture is decoded as
+        /// ShowEncoded decodes it, the crop is a sprite of one region (TextureUtils.CreateSpriteSafe
+        /// with a Rect, as the shape atlas), and the blur is a few pixels written like a language
+        /// flag (Icons.FlagSprite) that the engine's bilinear sampling stretches. The arithmetic is
+        /// Engine/CoverFit, held by CoverFitChecks.
+        ///
+        /// ⚠ A box not laid out yet (no size) shows the picture whole, as ShowEncoded does; a
+        /// picture whose pixels come in an order CoverFit does not read gets no blur — said once.
+        /// </summary>
+        /// <returns>Whether a picture is shown.</returns>
+        public bool ShowGameCover(byte[] bytes)
+        {
+            if (!ShowEncoded(bytes)) return false;
+
+            var texture = _mineTexture;
+            int width = texture.width, height = texture.height;
+            float frameAspect = FrameAspect();
+
+            if (Common.GameCandidates.FillsFrame(width, height))
+            {
+                if (frameAspect > 0f) Crop(texture, frameAspect);
+                return true;
+            }
+
+            Blur(texture, frameAspect > 0f ? frameAspect : (float)width / height);
+            return true;
+        }
+
+        /// <summary>The proportions of the room the picture is drawn in, or 0 before it is laid out.</summary>
+        private float FrameAspect()
+        {
+            var rect = _shown != null ? _shown.rectTransform.rect : default(Rect);
+            return rect.width > 0f && rect.height > 0f ? rect.width / rect.height : 0f;
+        }
+
+        /// <summary>The picture's centred region with the frame's proportions, in place of the whole.</summary>
+        private void Crop(Texture2D texture, float frameAspect)
+        {
+            CoverFit.CentredRegion(texture.width, texture.height, frameAspect, out int x, out int y, out int w, out int h);
+            if (w == texture.width && h == texture.height) return;
+
+            var region = TextureUtils.CreateSpriteSafe(texture, Compat.MakeRect(x, y, w, h),
+                                                       new Vector2(0.5f, 0.5f), 100f, Vector4.zero) as Sprite;
+            if (region == null) return; // the whole picture stays, fitted
+
+            UnityEngine.Object.Destroy(_mine);
+            _mine = region;
+            _mine.hideFlags |= HideFlags.DontUnloadUnusedAsset;
+            _shown.sprite = region;
+        }
+
+        /// <summary>A blurred copy of the picture over the whole box, behind the picture shown whole.</summary>
+        private void Blur(Texture2D texture, float frameAspect)
+        {
+            if (_backdrop == null) return;
+
+            CoverFit.Layout layout;
+            switch (texture.format)
+            {
+                case TextureFormat.RGB24: layout = CoverFit.Layout.Rgb24; break;
+                case TextureFormat.RGBA32: layout = CoverFit.Layout.Rgba32; break;
+                case TextureFormat.ARGB32: layout = CoverFit.Layout.Argb32; break;
+                case TextureFormat.BGRA32: layout = CoverFit.Layout.Bgra32; break;
+                default:
+                    if (DiagnosticOnce.First("cover-blur-format", texture.format.ToString()))
+                        TranslatorCore.LogInfo($"[Images] A game picture decoded as {texture.format}: shown whole, without its blurred backdrop.");
+                    return;
+            }
+
+            CoverFit.CentredRegion(texture.width, texture.height, frameAspect, out int x, out int y, out int w, out int h);
+
+            // A few pixels: the blur IS the shrink. Eight rows, as many columns as the frame's shape.
+            const int rows = 8;
+            int columns = Math.Max(1, (int)Math.Round(rows * frameAspect));
+            var shrunk = CoverFit.Shrink(TextureUtils.GetRawTextureDataSafe(texture), texture.width, texture.height,
+                                         layout, x, y, w, h, columns, rows);
+            if (shrunk == null) return;
+
+            var colours = new Color32[columns * rows];
+            for (int i = 0; i < colours.Length; i++)
+                colours[i] = new Color32(shrunk[i * 4], shrunk[i * 4 + 1], shrunk[i * 4 + 2], shrunk[i * 4 + 3]);
+
+            var small = Compat.MakeTexture2D(columns, rows, TextureFormat.RGBA32, false);
+            if (small == null) return;
+            small.filterMode = FilterMode.Bilinear;
+            small.wrapMode = TextureWrapMode.Clamp;
+            if (!TextureUtils.SetPixels32Safe(small, colours))
+            {
+                UnityEngine.Object.Destroy(small);
+                return;
+            }
+            small.Apply(false, false);
+
+            var sprite = TextureUtils.CreateSpriteSafe(small, new Vector2(0.5f, 0.5f), 100f, Vector4.zero) as Sprite;
+            if (sprite == null)
+            {
+                UnityEngine.Object.Destroy(small);
+                return;
+            }
+
+            // Out of the engine's sweep of unused assets, like the picture (ShowEncoded).
+            small.hideFlags |= HideFlags.DontUnloadUnusedAsset;
+            sprite.hideFlags |= HideFlags.DontUnloadUnusedAsset;
+            _backdropTexture = small;
+            _backdropSprite = sprite;
+
+            _backdrop.sprite = sprite;
+            _backdrop.gameObject.SetActive(true);
+        }
+
+        /// <summary>
         /// Say why there is no picture, in the words the code composed — an ordinary sentence of
         /// this interface, so it goes through the label's own Dynamic policy like any other.
         /// </summary>
@@ -175,6 +299,23 @@ namespace UnityGameTranslator.Core.UI.Components
                 UnityEngine.Object.Destroy(_mineTexture);
                 _mineTexture = null;
             }
+
+            // The blurred copy goes with the picture it was made from — same order.
+            if (_backdrop != null)
+            {
+                _backdrop.sprite = null;
+                _backdrop.gameObject.SetActive(false);
+            }
+            if (_backdropSprite != null)
+            {
+                UnityEngine.Object.Destroy(_backdropSprite);
+                _backdropSprite = null;
+            }
+            if (_backdropTexture != null)
+            {
+                UnityEngine.Object.Destroy(_backdropTexture);
+                _backdropTexture = null;
+            }
         }
     }
 
@@ -197,6 +338,17 @@ namespace UnityGameTranslator.Core.UI.Components
             UIFactory.SetLayoutElement(box, minHeight: height, preferredHeight: height,
                                        flexibleHeight: 0, flexibleWidth: 9999);
 
+            // Behind the picture, a blurred copy of it — only for a game's wide picture
+            // (ImageHandle.ShowGameCover). Created first, so it is drawn under the picture; stretched
+            // over the same room, dimmed so the picture in front stays the subject.
+            GameObject backdropObj = UIFactory.CreateUIObject("Backdrop", box);
+            var backdrop = backdropObj.AddComponent<Image>();
+            backdrop.raycastTarget = false;
+            backdrop.preserveAspect = false;
+            backdrop.color = new Color(0.7f, 0.7f, 0.7f, 1f);
+            Stretch(backdropObj, UIStyles.SmallSpacing);
+            backdropObj.SetActive(false);
+
             // The picture, inset a little so the surface reads as a frame around it.
             GameObject shownObj = UIFactory.CreateUIObject("Shown", box);
             var shown = shownObj.AddComponent<Image>();
@@ -214,7 +366,7 @@ namespace UnityGameTranslator.Core.UI.Components
             Stretch(why.Object, UIStyles.ElementSpacing);
             why.Visible = false;
 
-            return new ImageHandle(box, shown, why);
+            return new ImageHandle(box, backdrop, shown, why);
         }
 
         /// <summary>Fill the parent, keeping <paramref name="inset"/> pixels on every side.</summary>

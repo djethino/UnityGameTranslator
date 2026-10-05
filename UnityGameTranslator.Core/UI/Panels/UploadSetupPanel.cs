@@ -630,8 +630,9 @@ namespace UnityGameTranslator.Core.UI.Panels
             {
                 if (asked != _coversAsked || bytes == null) return; // another list since
 
-                // The box decodes it and owns what it made (ImageHandle.ShowEncoded).
-                if (picture.ShowEncoded(bytes)) _covers.Add(picture);
+                // The box decodes it, fits it by its shape as the site and the Manager do, and
+                // owns what it made (ImageHandle.ShowGameCover).
+                if (picture.ShowGameCover(bytes)) _covers.Add(picture);
             });
         }
 

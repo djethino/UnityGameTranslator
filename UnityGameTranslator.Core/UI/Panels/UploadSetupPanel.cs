@@ -125,12 +125,10 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// </summary>
         private ButtonTone ConfidenceTone(int score)
         {
-            if (score >= GameCandidates.BestMatch)
-                return ButtonTone.Success; // high confidence
-            else if (score >= GameCandidates.LikelyMatch)
-                return ButtonTone.Warning; // medium confidence
-            else
-                return ButtonTone.Secondary; // low confidence
+            // ⚠ The best match only is coloured; a likely one keeps its ☆ on an ordinary button, as
+            // the Manager's list writes it (2026-10-06: white text on the warning yellow could not
+            // be read, and a whole list in yellow pointed at nothing).
+            return score >= GameCandidates.BestMatch ? ButtonTone.Success : ButtonTone.Secondary;
         }
 
         /// <summary>

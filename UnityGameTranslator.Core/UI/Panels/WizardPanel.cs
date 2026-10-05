@@ -429,15 +429,15 @@ namespace UnityGameTranslator.Core.UI.Panels
             {
                 // Detect game if not already done. Detection is synchronous; only the optional
                 // online search below performs an await that can resume on a background thread.
+                // Online, which game this is can be confirmed here (2026-10-05): the same game
+                // screen as Change and the publication — with or without an account, the list then
+                // being the site's own games (MainPanel.RefreshGameLine says why). Set at every
+                // entry: the mode can be changed by going back a step.
+                _screen.Button("WizardChangeGameBtn").Visible = _onlineMode;
+
                 if (_detectedGame == null)
                 {
                     _detectedGame = GameDetector.DetectGame();
-
-                    // Online, which game this is can be confirmed here (2026-10-05): the same game
-                    // screen as Change and the publication.
-                    // The site's game search answers a signed-in caller only.
-                    _screen.Button("WizardChangeGameBtn").Visible = _onlineMode
-                        && !string.IsNullOrEmpty(TranslatorCore.Config.api_token);
 
                     if (_detectedGame != null || TranslatorCore.ConfirmedGame != null)
                     {
@@ -558,8 +558,6 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             bool isLoggedIn = !string.IsNullOrEmpty(TranslatorCore.Config.api_token);
 
-            // Signing in here opens Change: the site's game search answers a signed-in caller only.
-            _screen.Button("WizardChangeGameBtn").Visible = _onlineMode && isLoggedIn;
 
             if (isLoggedIn)
             {

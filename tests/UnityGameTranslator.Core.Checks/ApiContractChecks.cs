@@ -266,6 +266,7 @@ namespace UnityGameTranslator.Core.Checks
                     var r = ApiReaders.ReadExternalGames(body);
                     d["Success"] = r.Success;
                     d["Count"] = r.Count;
+                    d["Stores"] = r.Stores;
                     for (int i = 0; i < r.Games.Count; i++)
                     {
                         d[$"Games.{i}.Name"] = r.Games[i].Name;

@@ -245,6 +245,12 @@ namespace UnityGameTranslator.Core
         public string Error { get; set; }
         public int Count { get; set; }
         public List<GameApiInfo> Games { get; set; }
+
+        /// <summary>
+        /// <c>GET /games/search</c>: whether the stores were asked. False without an account — the
+        /// list is then the site's catalogue alone, the games that have translations.
+        /// </summary>
+        public bool Stores { get; set; } = true;
     }
 
     /// <summary>

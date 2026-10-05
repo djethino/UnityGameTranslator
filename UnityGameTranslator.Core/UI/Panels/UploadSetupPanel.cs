@@ -457,7 +457,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                         ForgetCovers();
                         ResultsList.Clear();
                         _gameSearchResults = result.Games;
-                        GameSearchStatus.Say($"Found {result.Games.Count} game(s)", Tone.Success);
+                        GameSearchStatus.Say(Found(result.Games.Count, result.Stores), Tone.Success);
                         PopulateGameResults();
                     }
                     else
@@ -516,20 +516,22 @@ namespace UnityGameTranslator.Core.UI.Panels
                 var success = result.Success;
                 var games = result.Games;
                 var error = result.Error;
+                var stores = result.Stores;
 
                 TranslatorUIManager.RunOnMainThread(() =>
                 {
                     if (success && games != null && games.Count > 0)
                     {
                         _gameSearchResults = games;
-                        GameSearchStatus.Say($"Found {games.Count} game(s)", Tone.Success);
+                        GameSearchStatus.Say(Found(games.Count, stores), Tone.Success);
 
                         PopulateGameResults();
                     }
                     else if (success)
                     {
-                        // The way out, in the words of the site's own list (GameCandidates.NothingFound).
-                        GameSearchStatus.Say(GameCandidates.NothingFound, Tone.Muted);
+                        // The way out, in the words of the site's own list (GameCandidates.NothingFound)
+                        // — and, without an account, that the list was the site's games alone.
+                        GameSearchStatus.Say(GameCandidates.NothingFoundFor(stores), Tone.Muted);
                     }
                     else
                     {
@@ -550,6 +552,14 @@ namespace UnityGameTranslator.Core.UI.Panels
                 });
             }
         }
+
+        /// <summary>
+        /// How many games came back — and, for a search without an account, that they are the
+        /// site's games alone (common GameCandidates.CatalogueOnly): a missing game is then not
+        /// a game that does not exist.
+        /// </summary>
+        private static string Found(int count, bool stores) =>
+            $"Found {count} game(s)" + (stores ? "" : ". " + GameCandidates.CatalogueOnly);
 
         private void PopulateGameResults()
         {

@@ -581,6 +581,8 @@ namespace UnityGameTranslator.Core
             var result = new GameSearchResult { Success = true };
             result.Count = data["count"]?.Value<int>() ?? 0;
             result.Games = new List<GameApiInfo>();
+            // Absent from an older site, which answered an account only — and asked the stores.
+            result.Stores = data["stores"]?.Type == JTokenType.Boolean ? data["stores"].Value<bool>() : true;
 
             var games = data["games"] as JArray;
             if (games != null)

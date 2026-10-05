@@ -658,11 +658,11 @@ namespace UnityGameTranslator.Core.UI.Panels
                 _gameIdentity.Visible = chip != null;
             }
 
-            // The site's game search answers a signed-in caller only (it costs the stores' quota):
-            // without an account Change could not list anything, so it is not offered.
-            bool canSearch = !string.IsNullOrEmpty(TranslatorCore.Config.api_token);
-
-            if (!TranslatorCore.Config.online_mode || (fromTheSite && !mainOwner) || (!fromTheSite && !canSearch))
+            // Offered with or without an account (user, 2026-10-05): without one, the site's game
+            // search lists its own games — the ones that have translations — so a game detected
+            // wrong can still be pointed at the translations others published for it. The stores
+            // are searched for an account only, and the list says so (GameCandidates.CatalogueOnly).
+            if (!TranslatorCore.Config.online_mode || (fromTheSite && !mainOwner))
             {
                 _gameChangeBtn.Visible = false;
             }

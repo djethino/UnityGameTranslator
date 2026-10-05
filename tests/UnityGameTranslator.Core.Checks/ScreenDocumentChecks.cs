@@ -135,12 +135,12 @@ namespace UnityGameTranslator.Core.Checks
                 "main.json asks for the twenty-four acts its code handles", $"got {string.Join(",", main.Acts.Keys)}");
             check(main.Binds.Keys.OrderBy(k => k).SequenceEqual(new[] {
                       "account", "backups", "branchDesc", "communityGame", "downloadDesc", "failures", "failuresFix", "forkDesc",
-                      "gameChange", "gameDetected", "gameDiffers", "gameName",
+                      "gameChange", "gameDetected", "gameDiffers", "gameName", "gameNamesakes",
                       "loginLogout", "mergeDesc", "modManager", "modUpdate", "modUpdateVerb", "noTranslation",
                       "resourcesBy", "resourcesUrl", "roleActionsHint", "upload", "uploadHint" }),
                 "its slots are the lines the code writes on every redraw", $"got {string.Join(",", main.Binds.Keys)}");
-            check(main.Body.Count == 0 && main.Header.Count == 8 && main.Header[7].Kind == "tabs" && main.Header[7].Children.Count == 2
-                  && main.Header[7].Children.All(t => t.Kind == "tab" && t.Text != null && ScreenDocument.HelpOf(t) != null),
+            check(main.Body.Count == 0 && main.Header.Count == 9 && main.Header[8].Kind == "tabs" && main.Header[8].Children.Count == 2
+                  && main.Header[8].Children.All(t => t.Kind == "tab" && t.Text != null && ScreenDocument.HelpOf(t) != null),
                 "the row of tabs stays in the header and holds two named tabs; the body is theirs",
                 "the buttons stay put while what they show scrolls — the builder puts a tab's contents in the body");
             check(main.Nodes["StatusCardHost"].Kind == "stack" && main.Nodes["StatusCardHost"].Children.Count == 0

@@ -45,6 +45,12 @@ namespace UnityGameTranslator.Core
         public string Error { get; set; }
         public int Count { get; set; }
         public List<TranslationInfo> Translations { get; set; }
+
+        /// <summary>
+        /// A NAME search whose name describes several games — namesakes, or loose matches none of
+        /// which is exact (common GameNames). False for any other search.
+        /// </summary>
+        public bool Ambiguous { get; set; }
     }
 
     /// <summary>

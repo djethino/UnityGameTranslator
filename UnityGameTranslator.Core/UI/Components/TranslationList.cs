@@ -262,6 +262,12 @@ namespace UnityGameTranslator.Core.UI.Components
         }
 
         /// <summary>
+        /// The last search went by the game's NAME, and that name describes several games — the
+        /// main panel then asks for the game to be confirmed (common GameChoices.Namesakes).
+        /// </summary>
+        public bool NameAmbiguous { get; private set; }
+
+        /// <summary>
         /// Search for translations by steam ID or game name.
         /// </summary>
         /// <param name="confirmed">
@@ -274,6 +280,7 @@ namespace UnityGameTranslator.Core.UI.Components
             if (_isSearching) return;
 
             _isSearching = true;
+            NameAmbiguous = false;
             SetStatus("Searching online...", Tone.Warning, waiting: true);
             Clear();
 
@@ -306,6 +313,7 @@ namespace UnityGameTranslator.Core.UI.Components
                 if (!confirmedHere && (result == null || !result.Success || result.Count == 0) && !string.IsNullOrEmpty(gameName))
                 {
                     result = await ApiClient.SearchByGameName(gameName, targetLanguage);
+                    NameAmbiguous = result != null && result.Success && result.Ambiguous;
                 }
 
                 await library;

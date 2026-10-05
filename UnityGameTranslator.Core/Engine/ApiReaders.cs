@@ -141,6 +141,7 @@ namespace UnityGameTranslator.Core
                 }
 
                 var which = GameNames.Which(names, gameName);
+                result.Ambiguous = which.Ambiguous;
 
                 // ⚠ Counted from what was KEPT, never from the server's total: the total answers
                 // about every game the name touched, and printing it beside a filtered list is

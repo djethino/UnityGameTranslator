@@ -183,6 +183,10 @@ namespace UnityGameTranslator.Core.UI.Panels
         private ButtonHandle _gameChangeBtn;
         private Host _gameDiffersBanner;
         private LabelHandle _gameDiffersLabel;
+
+        // Under the title when the detected name describes several games (common GameChoices.Namesakes).
+        private Host _gameNamesakesBanner;
+        private LabelHandle _gameNamesakesLabel;
         private LabelHandle _modUpdateLabel;
         private ButtonHandle _modUpdateBtn;
         private ButtonHandle _modManagerBtn;
@@ -268,6 +272,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             _gameChangeBtn = _screen.Button("GameChangeBtn");
             _gameDiffersBanner = _screen.Host("GameDiffersBanner");
             _gameDiffersLabel = _screen.Label("GameDiffersLabel");
+            _gameNamesakesBanner = _screen.Host("GameNamesakesBanner");
+            _gameNamesakesLabel = _screen.Label("GameNamesakesLabel");
 
             _modUpdateBanner = _screen.Host("ModUpdateBanner");
             _modUpdateLabel = _screen.Label("ModUpdateLabel");
@@ -510,6 +516,9 @@ namespace UnityGameTranslator.Core.UI.Panels
             // After await, we may be on a background thread (IL2CPP issue)
             TranslatorUIManager.RunOnMainThread(() =>
             {
+                // The search may have found the detected name to be several games' (namesakes).
+                RefreshGameLine();
+
                 // Enable download button if results found
                 if (_downloadBtn != null)
                 {
@@ -662,6 +671,12 @@ namespace UnityGameTranslator.Core.UI.Panels
                 _gameChangeBtn.Visible = true;
                 _screen.Say("gameChange", fromTheSite ? "Change on website" : "Change");
             }
+
+            // A detected name several games carry: confirm which one — known once the community
+            // search has gone by name (TranslationList.NameAmbiguous). Change is on the line above.
+            string namesakes = GameChoices.Namesakes(confirmed, detectedName, _translationList?.NameAmbiguous ?? false);
+            _gameNamesakesBanner.Visible = namesakes != null;
+            if (namesakes != null) _gameNamesakesLabel.Show(namesakes);
 
             string differs = GameChoices.Banner(confirmed, server?.Game);
             _gameDiffersBanner.Visible = differs != null;

@@ -174,6 +174,12 @@ namespace UnityGameTranslator.Core.UI.Panels
         // line saying the site files the translation under another game.
         private LabelHandle _gameLineName;
         private LabelHandle _gameLineDetected;
+
+        // The chip raised beside the name — Detected or Confirmed until a translation is on the
+        // site (common GameChoices.IdentityBadge) — and the word it was last built for, so a
+        // refresh that changes nothing rebuilds nothing.
+        private Host _gameIdentity;
+        private string _gameIdentityShown;
         private ButtonHandle _gameChangeBtn;
         private Host _gameDiffersBanner;
         private LabelHandle _gameDiffersLabel;
@@ -258,6 +264,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             _gameLineName = _screen.Label("GameLineName");
             _gameLineDetected = _screen.Label("GameLineDetected");
+            _gameIdentity = _screen.Host("GameIdentity");
             _gameChangeBtn = _screen.Button("GameChangeBtn");
             _gameDiffersBanner = _screen.Host("GameDiffersBanner");
             _gameDiffersLabel = _screen.Label("GameDiffersLabel");
@@ -624,6 +631,23 @@ namespace UnityGameTranslator.Core.UI.Panels
             var server = TranslatorCore.ServerState;
             bool fromTheSite = server?.Game != null || TranslatorCore.SourceSiteId > 0;
             bool mainOwner = server != null && server.IsOwner && server.Role == LineageRole.Main;
+
+            // Raised beside the name until a translation of it is on the site: Detected (yellow)
+            // or Confirmed (green) — the socle's chip, the Manager's title wears the same.
+            var chip = GameChoices.IdentityBadge(!string.IsNullOrEmpty(name), confirmed != null, fromTheSite);
+            string chipWord = chip?.Text;
+            if (_gameIdentity != null && chipWord != _gameIdentityShown)
+            {
+                _gameIdentityShown = chipWord;
+                _gameIdentity.Clear();
+                if (chip is Badge shownChip)
+                {
+                    BadgeStrip.Create(_gameIdentity, "IdentityChip", new System.Collections.Generic.List<Badge> { shownChip }, 200f);
+                    // What it means, where every piece of this panel says it: the help bar.
+                    _helpZone?.Describe(_gameIdentity, shownChip.Tip);
+                }
+                _gameIdentity.Visible = chip != null;
+            }
 
             // The site's game search answers a signed-in caller only (it costs the stores' quota):
             // without an account Change could not list anything, so it is not offered.

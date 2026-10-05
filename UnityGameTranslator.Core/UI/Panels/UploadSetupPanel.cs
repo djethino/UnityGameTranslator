@@ -396,6 +396,13 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             if (_screen == null) return;
 
+            if (_gameOnly)
+            {
+                ShowAgainstSaved();
+                UpdateValidation();
+                return;
+            }
+
             if (_selectedGame != null && !string.IsNullOrEmpty(_selectedGame.name))
             {
                 // Game confirmed by user selection
@@ -427,6 +434,39 @@ namespace UnityGameTranslator.Core.UI.Panels
             UpdateValidation();
         }
 
+        /// <summary>
+        /// The game line where Apply keeps the choice (Change): the game Apply would keep, and its
+        /// state against what is SAVED, in the words of the title's chip (common
+        /// GameChoices.IdentityBadge) — Confirmed only for the game written in config.json, Detected
+        /// while nothing is. A pick waiting for Apply carries no state: Apply (1) says it (user,
+        /// 2026-10-05: "j'ai rien fait et j'ai apply (1) et confirmed en même temps").
+        /// </summary>
+        private void ShowAgainstSaved()
+        {
+            var held = TranslatorCore.ConfirmedGame;
+            bool pending = _selectedPick != null
+                           && !GameChoices.Holds(held, _selectedPick.Source, _selectedPick.Id, _selectedIds);
+
+            if (pending)
+            {
+                GameDisplay.Show(_selectedGame?.name ?? _selectedPick.Name);
+                GameDisplay.Tone = Tone.Plain;
+                GameSource.Show("");
+                return;
+            }
+
+            var detected = TranslatorCore.CurrentGame;
+            string name = held?.Name ?? detected?.product_name ?? detected?.name;
+            if (string.IsNullOrEmpty(name)) GameDisplay.Say("No game detected");
+            else GameDisplay.Show(name);
+            GameDisplay.Tone = Tone.Plain;
+
+            // Not on the site from here: Change is only offered while the game is not fixed by it.
+            var chip = GameChoices.IdentityBadge(!string.IsNullOrEmpty(name), held != null, onTheSite: false);
+            GameSource.Show(chip?.Text ?? "");
+            GameSource.Tone = chip?.Tone == BadgeTone.Good ? Tone.Success : Tone.Warning;
+        }
+
         private async void AutoSelectBySteamId(GameInfo detectedGame)
         {
             try
@@ -439,6 +479,23 @@ namespace UnityGameTranslator.Core.UI.Panels
                 TranslatorUIManager.RunOnMainThread(() =>
                 {
                     GameSearchStatus.Clear();
+
+                    // Change: listed, ★ on the likeliest, and left to the person — what Apply keeps
+                    // is what they clicked, never what this screen guessed on its own.
+                    if (_gameOnly)
+                    {
+                        if (result.Success && result.Games != null && result.Games.Count > 0)
+                        {
+                            ForgetCovers();
+                            ResultsList.Clear();
+                            _gameSearchResults = result.Games;
+                            GameSearchStatus.Say($"Found {result.Games.Count} game(s)", Tone.Success);
+                            PopulateGameResults();
+                        }
+                        UpdateValidation();
+                        return;
+                    }
+
                     if (result.Success && result.Games != null && result.Games.Count > 0)
                     {
                         // Game exists on server — use the server's canonical info

@@ -1,8 +1,8 @@
 using System;
-using System.Net.Http;
 using System.Threading.Tasks;
 using Newtonsoft.Json.Linq;
 using UnityGameTranslator.Common;
+using UnityGameTranslator.Net.Http;
 
 namespace UnityGameTranslator.Core
 {

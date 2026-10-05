@@ -112,6 +112,35 @@ in the Software without restriction.
 
 ---
 
+## Mono System.Net.Http (Xamarin / Unity Technologies)
+
+The mod's own HTTP client under `UnityGameTranslator.Core/Net/Http/` — how the mod talks to the
+website, to translation servers and to GitHub, without relying on the copy a game ships.
+
+- **Source:** https://github.com/Unity-Technologies/mono (branch `2019.4-branch-updates`,
+  `mcs/class/System.Net.Http`), Unity's fork of https://github.com/mono/mono
+- **License:** MIT (the license of Mono's class libraries)
+- **Copyright:** © 2011 Xamarin Inc
+- **Modifications:** only the parts this mod uses; namespace changed to
+  `UnityGameTranslator.Net.Http`; the calls upstream made to members internal to `System.dll`
+  replaced by public API. Each modified place is marked `UGT:`; the list is in
+  `UnityGameTranslator.Core/Net/Http/VENDORED.md`.
+
+```
+Permission is hereby granted, free of charge, to any person obtaining
+a copy of this software and associated documentation files (the
+"Software"), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish,
+distribute, sublicense, and/or sell copies of the Software, and to
+permit persons to whom the Software is furnished to do so, subject to
+the following conditions:
+
+The above copyright notice and this permission notice shall be
+included in all copies or substantial portions of the Software.
+```
+
+---
+
 ## Unity Engine
 
 Unity runtime libraries are used for compilation and compatibility.

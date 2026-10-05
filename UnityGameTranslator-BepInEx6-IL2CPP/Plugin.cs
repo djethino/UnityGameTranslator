@@ -54,6 +54,10 @@ namespace UnityGameTranslator.BepInEx6IL2CPP
                     logger.LogWarning($"[Worker] Could not attach the thread to the IL2CPP GC: {ex.Message}");
                 }
             }
+
+            /// <inheritdoc />
+            /// <remarks>The .NET BepInEx ships beside the game (its dotnet folder), not the game's libraries.</remarks>
+            public UnityGameTranslator.Net.Http.IHttpTransport HttpTransport { get; } = new UnityGameTranslator.Shared.PlatformHttpTransport();
         }
 
         public override void Load()

@@ -87,6 +87,7 @@ namespace UnityGameTranslator.Core.Checks
             WhatWaitsForABackend();
             WhatAConfigFileStillMeans();
             HowAnEventStreamIsRead();
+            HowARequestLeaves();
             WhatABackendIsHandedAndGivesBack();
             WhatATranslationFileYields();
             WhatALoadedFileSaysAboutItself();
@@ -165,6 +166,12 @@ namespace UnityGameTranslator.Core.Checks
         private static void HowAnEventStreamIsRead()
         {
             Section("Server-sent events, across a whole stream", SseStreamChecks.Run);
+        }
+
+        /// <summary>The mod's own HTTP client (issue #31): what reaches a server, and what comes back.</summary>
+        private static void HowARequestLeaves()
+        {
+            Section("The mod's own HTTP client, on the wire", OwnHttpClientChecks.Run);
         }
 
         /// <summary>What a backend is handed, and what is made of what comes back.</summary>

@@ -3,7 +3,6 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Net.Http;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -13,6 +12,7 @@ using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using UnityEngine;
 using UnityGameTranslator.Common;
+using UnityGameTranslator.Net.Http;
 // The pure text rules moved to Engine/TextNormalization.cs on 2026-09-08 — placeholders,
 // markup, line endings, and the two questions about letters. Imported unqualified so the
 // cut stayed a MOVE: not one call site here changed, which is what makes it reviewable.
@@ -63,6 +63,17 @@ namespace UnityGameTranslator.Core
         /// are what their collector already tracks.
         /// </summary>
         void OnWorkerThreadStarted();
+
+        /// <summary>
+        /// What carries the mod's HTTP requests on this runtime (see
+        /// <see cref="UnityGameTranslator.Net.Http.IHttpTransport"/>).
+        ///
+        /// 🔴 **Never a library of the game's** (issue #31): Mono adapters give
+        /// <see cref="UnityGameTranslator.Net.Http.WebRequestTransport"/>, the mod's own client over the
+        /// runtime's public HttpWebRequest; IL2CPP adapters give the loader's .NET HttpClient — the
+        /// game's managed libraries are not what that runtime runs on.
+        /// </summary>
+        UnityGameTranslator.Net.Http.IHttpTransport HttpTransport { get; }
     }
 
     /// <summary>
@@ -2080,6 +2091,9 @@ namespace UnityGameTranslator.Core
             // Before anything reads or writes JSON: a runtime that refuses to emit methods would
             // otherwise fail every object the config and the translation are made of (issue #29).
             JsonRuntime.AdaptToRuntime(adapter.LogInfo, adapter.LogWarning);
+
+            // Before anything can make a call: every HttpClientHandler sends through it (issue #31).
+            UnityGameTranslator.Net.Http.HttpTransport.Current = adapter.HttpTransport;
 
             // The adapter is what names the loader, so the User-Agent can only be complete from
             // here — see ApiClient.RefreshUserAgent. Done before anything can make a call.
@@ -5122,7 +5136,7 @@ namespace UnityGameTranslator.Core
             string key = apiKey ?? Config?.ai_api_key;
             if (!string.IsNullOrEmpty(key))
             {
-                request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", key);
+                request.Headers.Authorization = new UnityGameTranslator.Net.Http.Headers.AuthenticationHeaderValue("Bearer", key);
             }
         }
 
@@ -5310,7 +5324,7 @@ namespace UnityGameTranslator.Core
                 var request = new HttpRequestMessage(HttpMethod.Get, endpoint);
                 if (!string.IsNullOrEmpty(apiKey))
                 {
-                    request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", apiKey);
+                    request.Headers.Authorization = new UnityGameTranslator.Net.Http.Headers.AuthenticationHeaderValue("Bearer", apiKey);
                 }
                 var response = await httpClient.SendAsync(request);
                 LogDebug($"[AI] Test response: {(int)response.StatusCode} {response.ReasonPhrase}");
@@ -5403,7 +5417,7 @@ namespace UnityGameTranslator.Core
                 var request = new HttpRequestMessage(HttpMethod.Get, endpoint);
                 if (!string.IsNullOrEmpty(apiKey))
                 {
-                    request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", apiKey);
+                    request.Headers.Authorization = new UnityGameTranslator.Net.Http.Headers.AuthenticationHeaderValue("Bearer", apiKey);
                 }
                 var response = await httpClient.SendAsync(request);
                 LogDebug($"[AI] FetchModels response: {(int)response.StatusCode} {response.ReasonPhrase}");

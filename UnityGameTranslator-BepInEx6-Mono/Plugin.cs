@@ -37,6 +37,10 @@ namespace UnityGameTranslator.BepInEx6Mono
             /// <inheritdoc />
             /// <remarks>Nothing to do: Mono's collector already knows every .NET thread.</remarks>
             public void OnWorkerThreadStarted() { }
+
+            /// <inheritdoc />
+            /// <remarks>The mod's own client: never the game's System.Net.Http (issue #31).</remarks>
+            public UnityGameTranslator.Net.Http.IHttpTransport HttpTransport { get; } = new UnityGameTranslator.Net.Http.WebRequestTransport();
         }
 
         void Awake()

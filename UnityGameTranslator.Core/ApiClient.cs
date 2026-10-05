@@ -3,12 +3,12 @@ using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
 using System.Net;
-using System.Net.Http;
 using System.Text;
 using System.Threading.Tasks;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using UnityGameTranslator.Common;
+using UnityGameTranslator.Net.Http;
 
 namespace UnityGameTranslator.Core
 {
@@ -149,7 +149,7 @@ namespace UnityGameTranslator.Core
                 _limit = limit;
             }
 
-            protected override async Task<HttpResponseMessage> SendAsync(
+            protected internal override async Task<HttpResponseMessage> SendAsync(
                 HttpRequestMessage request, System.Threading.CancellationToken cancellationToken)
             {
                 if (request.Content != null && !(request.Content is StallGuardContent))
@@ -203,10 +203,10 @@ namespace UnityGameTranslator.Core
                 return wrapped;
             }
 
-            protected override Task SerializeToStreamAsync(System.IO.Stream stream, System.Net.TransportContext context)
+            protected internal override Task SerializeToStreamAsync(System.IO.Stream stream, System.Net.TransportContext context)
                 => StallGuard.WriteInPieces(stream, _bytes, _limit);
 
-            protected override bool TryComputeLength(out long length)
+            protected internal override bool TryComputeLength(out long length)
             {
                 length = _bytes.Length;
                 return true;
@@ -235,7 +235,7 @@ namespace UnityGameTranslator.Core
                 _carriesTokenByDefault = carriesTokenByDefault;
             }
 
-            protected override async Task<HttpResponseMessage> SendAsync(
+            protected internal override async Task<HttpResponseMessage> SendAsync(
                 HttpRequestMessage request, System.Threading.CancellationToken cancellationToken)
             {
                 // Read BEFORE sending: evaluating this after the round trip made it
@@ -786,7 +786,7 @@ namespace UnityGameTranslator.Core
         /// Put what this game says about itself, and which machine it sits on, on one set of
         /// headers — the client's defaults once signed in, or a single request when linking.
         /// </summary>
-        private static void Declare(System.Net.Http.Headers.HttpHeaders headers)
+        private static void Declare(UnityGameTranslator.Net.Http.Headers.HttpHeaders headers)
         {
             var declaration = DeviceFlowPayload();
 
@@ -823,7 +823,7 @@ namespace UnityGameTranslator.Core
         /// and grouping stays something somebody does by hand. An absent header is a fact, not a
         /// failure.
         /// </summary>
-        private static void DeclareMachine(System.Net.Http.Headers.HttpHeaders headers)
+        private static void DeclareMachine(UnityGameTranslator.Net.Http.Headers.HttpHeaders headers)
         {
             var machine = ManagerLink.DeviceId();
 
@@ -1596,7 +1596,7 @@ namespace UnityGameTranslator.Core
                 var compressed = memoryStream.ToArray();
                 var content = new ByteArrayContent(compressed);
                 content.Headers.Add("Content-Encoding", "gzip");
-                content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/json");
+                content.Headers.ContentType = new UnityGameTranslator.Net.Http.Headers.MediaTypeHeaderValue("application/json");
                 return content;
             }
         }
@@ -2159,7 +2159,7 @@ namespace UnityGameTranslator.Core
                 {
                     Content = content
                 };
-                request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+                request.Headers.Authorization = new UnityGameTranslator.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
 
                 var response = await client.SendAsync(request);
                 string json = await response.Content.ReadAsStringAsync();

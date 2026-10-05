@@ -249,6 +249,10 @@
     <Compile Include="../../UnityGameTranslator.Core/Engine/TextChunks.cs" />
     <Compile Include="../../UnityGameTranslator.Core/Engine/SaveOrder.cs" />
     <Compile Include="../../UnityGameTranslator.Core/Engine/StallGuard.cs" />
+    <!-- The mod's own HTTP client (issue #31), ported from Mono: pure .NET, played against a loopback
+         server by OwnHttpClientChecks. Here it runs on CoreCLR's HttpWebRequest, not Mono's — what
+         it proves is our side of the mapping, not the game's runtime. -->
+    <Compile Include="../../UnityGameTranslator.Core/Net/Http/**/*.cs" />
     <!-- The screens' sequence rules: which window is up after which act. No Unity: a view is an IScreen. -->
     <Compile Include="../../UnityGameTranslator.Core/Engine/Screens.cs" />
     <!-- What the engine asks of its host. No Unity: the day it needs one, this stops compiling. -->

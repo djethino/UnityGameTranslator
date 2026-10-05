@@ -41,6 +41,10 @@ namespace UnityGameTranslator.MelonLoaderIL2CPP
                     MelonLogger.Warning($"[Worker] Could not attach the thread to the IL2CPP GC: {ex.Message}");
                 }
             }
+
+            /// <inheritdoc />
+            /// <remarks>The .NET MelonLoader runs on — the one installed on the machine, not the game's.</remarks>
+            public UnityGameTranslator.Net.Http.IHttpTransport HttpTransport { get; } = new UnityGameTranslator.Shared.PlatformHttpTransport();
         }
 
         public override void OnInitializeMelon()

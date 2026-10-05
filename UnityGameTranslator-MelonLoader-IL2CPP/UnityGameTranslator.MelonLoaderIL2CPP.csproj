@@ -22,6 +22,8 @@
          after ILRepack changes the calling-assembly identity (see Shared/IgnoresAccessChecks.cs) -->
     <Compile Include="..\Shared\IgnoresAccessChecks.cs" Link="IgnoresAccessChecks.cs" />
     <Compile Include="..\Shared\IgnoresAccessChecksApplications.cs" Link="IgnoresAccessChecksApplications.cs" />
+    <!-- Shared (IL2CPP only): the mod's requests carried by the loader's .NET HttpClient -->
+    <Compile Include="..\Shared\PlatformHttpTransport.cs" Link="PlatformHttpTransport.cs" />
 
     <!-- Core library -->
     <ProjectReference Include="..\UnityGameTranslator.Core\UnityGameTranslator.Core.csproj" />

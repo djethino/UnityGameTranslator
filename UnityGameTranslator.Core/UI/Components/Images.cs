@@ -111,8 +111,21 @@ namespace UnityGameTranslator.Core.UI.Components
                 return false;
             }
 
-            _mineTexture = texture;
+            // Held only AFTER Show: Show begins by dropping what this box made for the last picture,
+            // and a texture held before it would be destroyed under its own sprite (drawn white).
             Show(texture);
+            if (_mine == null)
+            {
+                UnityEngine.Object.Destroy(texture);
+                return false;
+            }
+            _mineTexture = texture;
+
+            // Out of the engine's sweep of unused assets, as ImageReplacer's pictures are: a texture
+            // made at run time is "unused" to it, and the sweep took them (IL2CPP, 2026-10-04).
+            // Drop destroys both itself, so nothing outlives this box.
+            texture.hideFlags |= HideFlags.DontUnloadUnusedAsset;
+            _mine.hideFlags |= HideFlags.DontUnloadUnusedAsset;
             return _shown != null && _shown.sprite != null;
         }
 

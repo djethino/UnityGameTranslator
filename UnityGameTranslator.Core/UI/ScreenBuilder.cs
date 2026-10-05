@@ -291,7 +291,8 @@ namespace UnityGameTranslator.Core.UI
                 }
                 case "section":
                 {
-                    var host = Stacks.Section(parent, node.Name, MinHeight(node) ?? 0);
+                    var host = Stacks.Section(parent, node.Name, MinHeight(node) ?? 0,
+                                              fillHeight: node.Flag("fillHeight") ?? false);
                     built.Add(node.Name, host);
                     Describe(site, node, host);
                     foreach (var child in node.Children) Place(site, child, host);

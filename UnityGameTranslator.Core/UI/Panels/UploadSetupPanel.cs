@@ -35,6 +35,9 @@ namespace UnityGameTranslator.Core.UI.Panels
         protected override bool PersistWindowPreferences => Doc.Persist;
         protected override bool UseBackdrop => Doc.Backdrop;
 
+        // The list of games found grows with the panel height to show more of them at once.
+        protected override bool HasFlexibleContent => true;
+
         private BuiltScreen _screen;
 
         // Game

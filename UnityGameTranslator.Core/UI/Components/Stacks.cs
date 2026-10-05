@@ -86,9 +86,9 @@ namespace UnityGameTranslator.Core.UI.Components
         }
 
         /// <summary>A section inside a card: no edge, its own padding.</summary>
-        public static Host Section(Host parent, string name, int minHeight = 0)
+        public static Host Section(Host parent, string name, int minHeight = 0, bool fillHeight = false)
         {
-            return new Host(UIStyles.CreateSection(parent.Object, name, minHeight));
+            return new Host(UIStyles.CreateSection(parent.Object, name, minHeight, fillHeight: fillHeight));
         }
 
         /// <summary>One row of a list: dense, on the item surface, edged in accent when selected.</summary>

@@ -796,11 +796,14 @@ namespace UnityGameTranslator.Core.UI
         /// Creates a styled section box (smaller than card, for grouping related options).
         /// Clean design without borders - content flows naturally like website.
         /// </summary>
-        public static GameObject CreateSection(GameObject parent, string name, int minHeight = 0, bool showTopBorder = false)
+        /// <param name="fillHeight">Takes the spare height as well — a section holding a list that
+        /// grows with the window (the same word and the same 9999 as Stacks' fillHeight).</param>
+        public static GameObject CreateSection(GameObject parent, string name, int minHeight = 0, bool showTopBorder = false,
+                                               bool fillHeight = false)
         {
             // Container for optional top border + content
             var container = UIFactory.CreateVerticalGroup(parent, name + "_Container", false, false, true, true, 0);
-            UIFactory.SetLayoutElement(container, flexibleWidth: 9999);
+            UIFactory.SetLayoutElement(container, flexibleWidth: 9999, flexibleHeight: fillHeight ? 9999 : (int?)null);
 
             // Optional subtle top border (disabled by default for cleaner look)
             if (showTopBorder)
@@ -813,10 +816,11 @@ namespace UnityGameTranslator.Core.UI
 
             var section = UIFactory.CreateVerticalGroup(container, name, false, false, true, true, SmallSpacing);
 
+            int? flexibleHeight = fillHeight ? 9999 : (int?)null;
             if (minHeight > 0)
-                UIFactory.SetLayoutElement(section, minHeight: minHeight, flexibleWidth: 9999);
+                UIFactory.SetLayoutElement(section, minHeight: minHeight, flexibleWidth: 9999, flexibleHeight: flexibleHeight);
             else
-                UIFactory.SetLayoutElement(section, flexibleWidth: 9999);
+                UIFactory.SetLayoutElement(section, flexibleWidth: 9999, flexibleHeight: flexibleHeight);
 
             SetBackground(section, SectionBackground);
 

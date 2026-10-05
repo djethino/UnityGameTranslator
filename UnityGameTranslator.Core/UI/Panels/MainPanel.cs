@@ -173,6 +173,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         // The game line at the top (2026-10-05): which game this is, the act that says it, and the
         // line saying the site files the translation under another game.
         private LabelHandle _gameLineName;
+        private LabelHandle _gameLineDetected;
         private ButtonHandle _gameChangeBtn;
         private Host _gameDiffersBanner;
         private LabelHandle _gameDiffersLabel;
@@ -256,6 +257,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _loginLogoutBtn = _screen.Button("LoginLogoutBtn");
 
             _gameLineName = _screen.Label("GameLineName");
+            _gameLineDetected = _screen.Label("GameLineDetected");
             _gameChangeBtn = _screen.Button("GameChangeBtn");
             _gameDiffersBanner = _screen.Host("GameDiffersBanner");
             _gameDiffersLabel = _screen.Label("GameDiffersLabel");
@@ -611,6 +613,14 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (string.IsNullOrEmpty(name)) _gameLineName.Say("No game detected");
             else _gameLineName.Show(name);
 
+            // What this machine detected, when the game confirmed is named otherwise — a note
+            // under the title, never a second one (the Manager's card says the same).
+            string detectedName = detected?.product_name ?? detected?.name;
+            bool otherwise = confirmed != null && !string.IsNullOrEmpty(detectedName)
+                             && !string.Equals(confirmed.Name, detectedName, StringComparison.OrdinalIgnoreCase);
+            _gameLineDetected.Visible = otherwise;
+            if (otherwise) _gameLineDetected.Show(Tr("Detected as:") + " " + detectedName);
+
             var server = TranslatorCore.ServerState;
             bool fromTheSite = server?.Game != null || TranslatorCore.SourceSiteId > 0;
             bool mainOwner = server != null && server.IsOwner && server.Role == LineageRole.Main;
@@ -649,7 +659,12 @@ namespace UnityGameTranslator.Core.UI.Panels
                 return;
             }
 
-            Intents.ChooseGame(_ => RefreshUI());
+            // Said where every act of this mod says it is done, then seen in the title above.
+            Intents.ChooseGame(chosen =>
+            {
+                Intents.Toast(Tr("Game set:") + " " + chosen.Name, ToastTone.Info);
+                RefreshUI();
+            });
         }
 
         /// <summary>
@@ -665,6 +680,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 () =>
                 {
                     TranslatorCore.ConfirmGame(GameChoices.Of(siteGame));
+                    Intents.Toast(Tr("Game set:") + " " + siteGame.Name, ToastTone.Info);
                     RefreshUI();
                 },
                 isDanger: false);

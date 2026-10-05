@@ -230,7 +230,10 @@ namespace UnityGameTranslator.Core.UI.Panels
             _screen.Say("instructions", gameOnly
                 ? "Used to publish this game's translation and to find translations shared for it."
                 : "Configure your translation before uploading:");
-            _screen.Say("continue", gameOnly ? "Select" : "Continue to Upload");
+            // 🔴 Apply, like every other choice of this mod (user, 2026-10-05: "pourquoi ce n'est pas
+            // sur apply comme tout le reste ?") — greyed and without a count while nothing differs
+            // from the game already confirmed (UpdateValidation).
+            _screen.Say("continue", gameOnly ? "Apply" : "Continue to Upload");
             LanguagesSection.Visible = !gameOnly;
         }
 
@@ -641,9 +644,13 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
             else if (_gameOnly)
             {
+                var held = TranslatorCore.ConfirmedGame;
+                bool differs = !(held != null && held.Source == _selectedPick.Source && held.Id == _selectedPick.Id);
+
                 Validation.Show(game.name);
                 Validation.Tone = Tone.Success;
-                ContinueBtn.Enabled = true;
+                _screen.Say("continue", differs ? "Apply (1)" : "Apply");
+                ContinueBtn.Enabled = differs;
             }
             else if (!hasValidSource)
             {

@@ -602,7 +602,9 @@ namespace UnityGameTranslator.Core
                         // (common GameCandidates.Facts — the site's list says the same).
                         Facts = GameCandidates.Facts(ids,
                             g["year"]?.Type == JTokenType.Integer ? g["year"].Value<int>() : (int?)null,
-                            NamesOf(g["developers"]), NamesOf(g["publishers"]))
+                            NamesOf(g["developers"]), NamesOf(g["publishers"])),
+                        // A card's names in the other stores: why it answered a search for one.
+                        OtherNames = NamesOf(g["other_names"])
                     });
                 }
             }

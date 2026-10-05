@@ -583,7 +583,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 var capturedGame = game;
                 var row = _screen.Instantiate("GameHit", list.Rows, act => act == "pick" ? (Action)(() => OnGameSelected(capturedGame)) : null);
                 var btn = row.Button("GameBtn");
-                btn.Label = GameCandidates.Row(game.Name, game.Source, confidence);
+                btn.Label = GameCandidates.Row(game.Name, game.Source, confidence, game.OtherNames);
                 btn.Tone = ConfidenceTone(confidence);
 
                 // What tells it apart from a game of the same title, and its cover (2026-10-05):

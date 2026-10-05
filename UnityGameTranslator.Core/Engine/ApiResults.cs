@@ -295,6 +295,9 @@ namespace UnityGameTranslator.Core
 
         /// <summary>Every id the game answers to, by source (`ids`: "local", "steam", "igdb", "rawg"); null when unknown.</summary>
         public Dictionary<string, string> Ids { get; set; }
+
+        /// <summary>A card's names in the other stores (`other_names`), shown after its title in brackets; null when none.</summary>
+        public List<string> OtherNames { get; set; }
     }
 
     public class DeviceFlowInitResult

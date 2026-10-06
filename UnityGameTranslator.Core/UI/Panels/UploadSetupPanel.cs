@@ -414,14 +414,14 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             if (pending)
             {
-                GameDisplay.Show(_selectedGame?.name ?? _selectedPick.Name);
+                GameDisplay.Show(_selectedPick.Title);
                 GameDisplay.Tone = Tone.Plain;
                 GameSource.Show("");
                 return;
             }
 
             var detected = TranslatorCore.CurrentGame;
-            string name = held?.Name ?? detected?.product_name ?? detected?.name;
+            string name = held?.Title ?? detected?.product_name ?? detected?.name;
             if (string.IsNullOrEmpty(name)) GameDisplay.Say("No game detected");
             else GameDisplay.Show(name);
             GameDisplay.Tone = Tone.Plain;
@@ -646,7 +646,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         private static GameChoice ChoiceOf(GameApiInfo game)
         {
             var pick = GameCandidates.PickOf(game.Source, game.Id, game.SteamId);
-            return pick == null ? null : new GameChoice(pick.Source, pick.Id, game.Name);
+            return pick == null ? null : new GameChoice(pick.Source, pick.Id, game.Name, game.OtherNames);
         }
 
         private void UpdateValidation()
@@ -685,7 +685,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // is nothing to apply (common GameChoices.Holds, the Manager's window says the same).
                 bool differs = !GameChoices.Holds(held, _selectedPick.Source, _selectedPick.Id, _selectedIds);
 
-                Validation.Show(game.name);
+                Validation.Show(_selectedPick.Title);
                 Validation.Tone = Tone.Success;
                 _screen.Say("continue", differs ? "Apply (1)" : "Apply");
                 ContinueBtn.Enabled = differs;
@@ -710,7 +710,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
             else
             {
-                Validation.Show($"{game.name}: {source} -> {target}");
+                Validation.Show($"{_selectedPick?.Title ?? game.name}: {source} -> {target}");
                 Validation.Tone = Tone.Success;
                 ContinueBtn.Enabled = true;
             }

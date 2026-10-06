@@ -195,7 +195,9 @@ namespace UnityGameTranslator.Core
 
             return new LineageGame(id.Value, name,
                 game["steam_id"]?.Type == JTokenType.String ? game["steam_id"].Value<string>() : null,
-                Number("igdb_id"), Number("rawg_id"));
+                Number("igdb_id"), Number("rawg_id"),
+                // Additive: the card's names in the other stores, shown with its title.
+                NamesOf(game["other_names"]));
         }
 
         /// <summary>One translation as every listing describes it (<c>ListingRow</c> in the spec).</summary>
@@ -549,7 +551,8 @@ namespace UnityGameTranslator.Core
                         Slug = g["slug"]?.Value<string>(),
                         SteamId = g["steam_id"]?.Value<string>(),
                         ImageUrl = g["image_url"]?.Value<string>(),
-                        TranslationsCount = g["translations_count"]?.Value<int>() ?? 0
+                        TranslationsCount = g["translations_count"]?.Value<int>() ?? 0,
+                        OtherNames = NamesOf(g["other_names"])
                     });
                 }
             }

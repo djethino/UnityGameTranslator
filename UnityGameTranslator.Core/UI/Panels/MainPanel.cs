@@ -623,7 +623,8 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             var confirmed = TranslatorCore.ConfirmedGame;
             var detected = TranslatorCore.CurrentGame;
-            string name = confirmed?.Name ?? detected?.product_name ?? detected?.name;
+            // With its names in the other stores, as every product shows a game (GameChoice.Title).
+            string name = confirmed?.Title ?? detected?.product_name ?? detected?.name;
 
             // A game's name is data, never translated.
             if (string.IsNullOrEmpty(name)) _gameLineName.Say("No game detected");
@@ -701,7 +702,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Said where every act of this mod says it is done, then seen in the title above.
             Intents.ChooseGame(chosen =>
             {
-                Intents.Toast(Tr("Game set:") + " " + chosen.Name, ToastTone.Info);
+                Intents.Toast(Tr("Game set:") + " " + chosen.Title, ToastTone.Info);
                 RefreshUI();
             });
         }
@@ -715,11 +716,11 @@ namespace UnityGameTranslator.Core.UI.Panels
             var siteGame = TranslatorCore.ServerState?.Game;
             if (siteGame == null) return;
 
-            Intents.Confirm(GameChoices.ConfirmTitle, GameChoices.ConfirmBody(siteGame.Name), GameChoices.ConfirmVerb,
+            Intents.Confirm(GameChoices.ConfirmTitle, GameChoices.ConfirmBody(siteGame.Title), GameChoices.ConfirmVerb,
                 () =>
                 {
                     TranslatorCore.ConfirmGame(GameChoices.Of(siteGame));
-                    Intents.Toast(Tr("Game set:") + " " + siteGame.Name, ToastTone.Info);
+                    Intents.Toast(Tr("Game set:") + " " + siteGame.Title, ToastTone.Info);
                     RefreshUI();
                 },
                 isDanger: false);
@@ -1880,7 +1881,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             else if (confirmedGame != null || (game != null && !string.IsNullOrEmpty(game.name)))
             {
                 // Game name is data — never translated
-                _communityGameLabel.Show(Tr("Game:") + $" {confirmedGame?.Name ?? game.name}");
+                _communityGameLabel.Show(Tr("Game:") + $" {confirmedGame?.Title ?? game.name}");
                 _communityGameLabel.Tone = Tone.Secondary;
                 _searchBtn.Enabled = true;
             }

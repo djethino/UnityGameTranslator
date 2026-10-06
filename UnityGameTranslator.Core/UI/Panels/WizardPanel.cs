@@ -417,7 +417,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             Intents.ChooseGame(async chosen =>
             {
-                _gameLabel.Show(Tr("Game:") + $" {chosen.Name}");
+                _gameLabel.Show(Tr("Game:") + $" {chosen.Title}");
                 if (_onlineMode && !_translationList.IsSearching)
                     await _translationList.SearchAsync(_detectedGame?.steam_id, _detectedGame?.name, _targetLanguage, chosen);
             });
@@ -442,7 +442,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                     if (_detectedGame != null || TranslatorCore.ConfirmedGame != null)
                     {
                         // The game confirmed here first: it is the one searched.
-                        _gameLabel.Show(Tr("Game:") + $" {TranslatorCore.ConfirmedGame?.Name ?? _detectedGame.name}");
+                        _gameLabel.Show(Tr("Game:") + $" {TranslatorCore.ConfirmedGame?.Title ?? _detectedGame.name}");
                         if (_onlineMode && !_translationList.IsSearching)
                         {
                             // Use the selected target language from wizard

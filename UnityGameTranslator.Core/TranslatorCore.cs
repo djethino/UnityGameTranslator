@@ -180,6 +180,10 @@ namespace UnityGameTranslator.Core
         {
             if (ConfirmedGame == null && GameChoices.Adopt(null, game) is GameChoice taken)
                 ConfirmGame(taken);
+            // The SAME game, with the names the site now gives it: written, as they are only shown
+            // (GameChoices.WithNamesOf) — a different game is still only ever said, never taken.
+            else if (GameChoices.WithNamesOf(ConfirmedGame, game) is GameChoice renamed)
+                ConfirmGame(renamed);
         }
 
         /// <summary>

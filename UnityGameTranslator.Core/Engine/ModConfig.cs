@@ -85,7 +85,7 @@ namespace UnityGameTranslator.Core
                 if (c < '0' || c > '9') return null;
             }
 
-            return new GameChoice(entry.source, entry.id, entry.name);
+            return new GameChoice(entry.source, entry.id, entry.name, entry.other_names);
         }
 
         /// <summary>
@@ -672,15 +672,23 @@ namespace UnityGameTranslator.Core
         }
     }
 
-    /// <summary>`game_choice` as config.json holds it: `{source, id, name}` (spec/config/schema.json).</summary>
+    /// <summary>`game_choice` as config.json holds it: `{source, id, name, other_names?}` (spec/config/schema.json).</summary>
     public class GameChoiceEntry
     {
         public string source { get; set; }
         public string id { get; set; }
         public string name { get; set; }
 
+        /// <summary>The game's names in the other stores — display only; absent when none (2026-10-06).</summary>
+        [JsonProperty(NullValueHandling = NullValueHandling.Ignore)]
+        public List<string> other_names { get; set; }
+
         public static GameChoiceEntry Of(GameChoice choice) =>
-            choice == null ? null : new GameChoiceEntry { source = choice.Source, id = choice.Id, name = choice.Name };
+            choice == null ? null : new GameChoiceEntry
+            {
+                source = choice.Source, id = choice.Id, name = choice.Name,
+                other_names = choice.OtherNames.Count > 0 ? new List<string>(choice.OtherNames) : null,
+            };
     }
 
     public class SyncConfig

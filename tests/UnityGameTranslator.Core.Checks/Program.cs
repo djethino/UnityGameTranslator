@@ -280,6 +280,7 @@ namespace UnityGameTranslator.Core.Checks
             Section("Transfers (a limit per step, never on the whole)", StallGuardChecks.Run);
             Section("Picking (where a line of sight meets a box)", RayBoxChecks.Run);
             Section("A game's picture in its frame (crop, or whole over its blur)", CoverFitChecks.Run);
+            Section("The mod's own interface keeps its size (issue #32)", OwnUiSizeChecks.Run);
         }
 
         /// <summary>The frontier: a panel names nothing of the engine, a component lets no engine type through.</summary>

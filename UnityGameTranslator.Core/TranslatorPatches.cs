@@ -3874,6 +3874,14 @@ namespace UnityGameTranslator.Core
             if (__instance == null) return;
             try
             {
+                // 🔴 The mod's own interface keeps its size, whatever the game's fonts are set to
+                // (issue #32). It is drawn in UI.Text with the engine's Arial — a font a game can use
+                // too, so "arial" at 60% shrank every label of ours built after its panel: the chips,
+                // the font list's rows, the inspector. ShouldSkipTranslation below only knows the
+                // texts registered as ours or built during a panel's construction; the hierarchy
+                // knows them all — the guard the TMP prefix above already had.
+                if (IsOwnUIText(__instance)) return;
+
                 int instanceId = TypeHelper.GetInstanceID(__instance);
                 if (instanceId == -1) return;
                 if (TranslatorCore.ShouldSkipTranslation(instanceId)) return;

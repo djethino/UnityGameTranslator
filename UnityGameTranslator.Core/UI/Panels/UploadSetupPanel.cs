@@ -74,6 +74,11 @@ namespace UnityGameTranslator.Core.UI.Panels
         private readonly List<ImageHandle> _covers = new List<ImageHandle>();
         private int _coversAsked;
 
+        // Covers downloaded and not yet shown — ONE shown per frame (Update). Decoding a picture and
+        // fitting it run on the game's thread; a list of fifteen whose downloads land together
+        // froze the game for a second or two (2026-10-06). A budget per frame, not a wait.
+        private readonly Queue<KeyValuePair<ImageHandle, byte[]>> _coversArrived = new Queue<KeyValuePair<ImageHandle, byte[]>>();
+
         // What the site said about the picked game being for adults only — null until it answered
         // about THIS game (analyse/adult-declaration-at-publish.md). The counter drops an answer
         // that comes back after another game was picked.
@@ -106,6 +111,12 @@ namespace UnityGameTranslator.Core.UI.Panels
         public UploadSetupPanel(UIBase owner) : base(owner)
         {
             // Note: Components initialized in ConstructPanelContent() - base constructor calls ConstructUI() first
+        }
+
+        public override void Update()
+        {
+            base.Update();
+            ShowNextCover();
         }
 
         /// <summary>
@@ -628,15 +639,28 @@ namespace UnityGameTranslator.Core.UI.Panels
             {
                 if (asked != _coversAsked || bytes == null) return; // another list since
 
-                // The box decodes it, fits it by its shape as the site and the Manager do, and
-                // owns what it made (ImageHandle.ShowGameCover).
-                if (picture.ShowGameCover(bytes)) _covers.Add(picture);
+                // Shown by Update, one per frame (_coversArrived).
+                _coversArrived.Enqueue(new KeyValuePair<ImageHandle, byte[]>(picture, bytes));
             });
+        }
+
+        /// <summary>
+        /// One downloaded cover onto its box: the box decodes it, fits it by its shape as the site
+        /// and the Manager do, and owns what it made (ImageHandle.ShowGameCover).
+        /// </summary>
+        private void ShowNextCover()
+        {
+            if (_coversArrived.Count == 0) return;
+
+            var next = _coversArrived.Dequeue();
+            if (next.Key.ShowGameCover(next.Value)) _covers.Add(next.Key);
         }
 
         /// <summary>The covers of the list being left: each box lets go of what it made.</summary>
         private void ForgetCovers()
         {
+            // The covers still to show belong to that list too.
+            _coversArrived.Clear();
             _coversAsked++;
             foreach (var cover in _covers) cover.Clear();
             _covers.Clear();

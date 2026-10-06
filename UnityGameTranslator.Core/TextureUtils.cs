@@ -667,6 +667,36 @@ namespace UnityGameTranslator.Core
             return data;
         }
 
+        // The `CopyTo(byte[], int)` of each array type met, looked up once (null: it has none).
+        private static readonly Dictionary<Type, MethodInfo> _copyToByType = new Dictionary<Type, MethodInfo>();
+
+        /// <summary>
+        /// The array's own bulk copy into a managed <c>byte[]</c> — declared on Il2CppInterop's
+        /// <c>Il2CppArrayBase&lt;T&gt;</c>, a base class, hence the walk up the hierarchy — or null.
+        /// </summary>
+        private static MethodInfo CopyToOf(Type arrayType)
+        {
+            MethodInfo found;
+            if (_copyToByType.TryGetValue(arrayType, out found)) return found;
+
+            for (var type = arrayType; type != null && found == null; type = type.BaseType)
+            {
+                foreach (var method in type.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly))
+                {
+                    if (method.Name != "CopyTo") continue;
+                    var parameters = method.GetParameters();
+                    if (parameters.Length == 2 && parameters[0].ParameterType == typeof(byte[]) && parameters[1].ParameterType == typeof(int))
+                    {
+                        found = method;
+                        break;
+                    }
+                }
+            }
+
+            _copyToByType[arrayType] = found;
+            return found;
+        }
+
         /// <summary>
         /// Extract byte[] from an IL2CPP array-like object (Il2CppStructArray&lt;byte&gt;).
         /// </summary>
@@ -685,15 +715,38 @@ namespace UnityGameTranslator.Core
                 }
 
                 int length = (int)lengthProp.GetValue(result, null);
-                var indexer = resultType.GetProperty("Item");
-                if (indexer != null && length > 0)
+                if (length <= 0)
                 {
+                    TranslatorCore.LogWarning($"[TextureUtils] ExtractByteArrayFromIl2Cpp: {resultType.FullName} has Length={length}");
+                    return null;
+                }
+
+                // 🔴 **The whole array in ONE call** (2026-10-06): Il2CppInterop's arrays copy
+                // themselves out (`Il2CppArrayBase<T>.CopyTo(T[], int)`, a compiled loop over the
+                // native memory). The element-by-element reflection below cost ~300 000 reflective
+                // calls for a 460×215 picture — on the game's thread, for every cover of the publish
+                // list: the game froze while the list filled.
+                var copyTo = CopyToOf(resultType);
+                if (copyTo != null)
+                {
+                    byte[] copied = new byte[length];
+                    copyTo.Invoke(result, new object[] { copied, 0 });
+                    return copied;
+                }
+
+                var indexer = resultType.GetProperty("Item");
+                if (indexer != null)
+                {
+                    // Said once per type: this path is slow, and a game where it is taken is worth knowing.
+                    if (DiagnosticOnce.First("il2cpp-array-slow-copy", resultType.FullName ?? resultType.Name))
+                        TranslatorCore.LogWarning($"[TextureUtils] {resultType.FullName} has no CopyTo: copying {length} bytes one by one (slow).");
+
                     byte[] data = new byte[length];
                     for (int i = 0; i < length; i++)
                         data[i] = (byte)indexer.GetValue(result, new object[] { i });
                     return data;
                 }
-                TranslatorCore.LogWarning($"[TextureUtils] ExtractByteArrayFromIl2Cpp: {resultType.FullName} has Length={length} but indexer={(indexer != null ? "found" : "missing")}");
+                TranslatorCore.LogWarning($"[TextureUtils] ExtractByteArrayFromIl2Cpp: {resultType.FullName} has Length={length} but neither CopyTo nor an indexer");
             }
             catch (Exception ex)
             {

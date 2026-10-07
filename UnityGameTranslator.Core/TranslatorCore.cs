@@ -6486,6 +6486,7 @@ namespace UnityGameTranslator.Core
             Debug = Config.debug_ai,
             Backend = Config.translation_backend,
             RateLimitRetryDelay = Config.rate_limit_retry_delay,
+            StrictSourceLanguage = Config.strict_source_language ? Config.GetSourceLanguage() : null,
             Variables = GameVariables.Instance,
             Cache = TranslationCache,
             Queue = _queue,

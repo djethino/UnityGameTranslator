@@ -821,11 +821,13 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (_strictSourceToggle == null || _sourceLanguageDropdown == null) return;
 
             bool isAuto = _sourceLanguageDropdown.SelectedValue == "auto (Detect)";
-            bool isLLM = GetSelectedBackendConfig() == "llm";
             bool backendOn = _enableTranslationBackendToggle != null && _enableTranslationBackendToggle.IsOn;
             bool captureOnly = _captureKeysOnlyToggle != null && _captureKeysOnlyToggle.IsOn;
 
-            _strictSourceToggle.Enabled = !isAuto && isLLM && backendOn && !captureOnly;
+            // Every backend, not the AI's alone (user, 2026-10-08): a line written in another script
+            // than the source language's is skipped before any backend is asked (TranslationWorker),
+            // and Google and DeepL have no strict mode of their own.
+            _strictSourceToggle.Enabled = !isAuto && backendOn && !captureOnly;
 
             if (isAuto && _strictSourceToggle.IsOn)
                 _strictSourceToggle.IsOn = false;

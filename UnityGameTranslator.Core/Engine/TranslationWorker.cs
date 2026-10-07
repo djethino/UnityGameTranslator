@@ -62,6 +62,12 @@ namespace UnityGameTranslator.Core
         public string Backend;
         /// <summary>How long to back off after a rate limit (the <c>rate_limit_retry_delay</c> setting).</summary>
         public float RateLimitRetryDelay;
+        /// <summary>
+        /// The source language when <c>strict_source_language</c> is on, null otherwise: a game line
+        /// none of whose letters is in its script is skipped without calling any backend
+        /// (<see cref="Writing.OutsideSourceScript"/>).
+        /// </summary>
+        public string StrictSourceLanguage;
         /// <summary>The game's variables; may be null.</summary>
         public IVariableSubstitution Variables;
         /// <summary>The GAME's cache, where a hit spares a call. ⚠ The game's even for an interface item: the worker looks up, it does not file — see <see cref="TranslationWorker.Process"/>.</summary>
@@ -118,6 +124,7 @@ namespace UnityGameTranslator.Core
     /// | cache | is a usable translation already there? | the components are told now; then on to capture, or <see cref="WorkerOutcome.CacheHit"/> |
     /// | capture-only | are we collecting rather than translating? | <see cref="WorkerOutcome.Captured"/> / <see cref="WorkerOutcome.NotCaptured"/> — no backend, ever |
     /// | refused earlier | did this text fail its placeholders this session? | <see cref="WorkerOutcome.RefusedEarlier"/> |
+    /// | strict source | strict on, and no letter of the line in the source's script? | answered with the skip marker, no backend — on to filing |
     /// | backend | the one call | <see cref="WorkerOutcome.RateLimited"/> (same item back, back off) / <see cref="WorkerOutcome.Unreachable"/> (same item back, queue held) / <see cref="WorkerOutcome.NoAnswer"/> |
     /// | invented | did the answer make up a placeholder? | <see cref="WorkerOutcome.Invented"/> — nothing stored, nothing shown |
     /// | current | was the translation replaced while we waited? | <see cref="WorkerOutcome.Stale"/> — dropped |
@@ -221,8 +228,24 @@ namespace UnityGameTranslator.Core
                 return WorkerOutcome.RefusedEarlier;
             }
 
-            // Dispatch to the appropriate backend — the host's choice.
-            translation = host.Translate(normalizedOriginal, isOwnUI, out bool rateLimited);
+            // 🔴 Strict source, by script, BEFORE any backend: a game line none of whose letters is
+            // in the source language's script is not in that language — answered as the model is
+            // told to answer it (the skip marker), so it is filed "S" by the very rung below, for
+            // every backend alike (Google and DeepL know no strict mode). What cannot be known this
+            // way goes to the backend as before. Never our own interface: strict source is about
+            // the game's language (user, 2026-10-08; analyse/strict-source-ecriture-unicode.md).
+            bool rateLimited = false;
+            if (!isOwnUI && Writing.OutsideSourceScript(normalizedOriginal, ctx.StrictSourceLanguage))
+            {
+                translation = Answers.SkipMarker;
+                if (ctx.Debug)
+                    host.Debug($"[Worker] Not in the source language's script, skipped without asking: {normalizedOriginal.Substring(0, Math.Min(40, normalizedOriginal.Length))}");
+            }
+            else
+            {
+                // Dispatch to the appropriate backend — the host's choice.
+                translation = host.Translate(normalizedOriginal, isOwnUI, out rateLimited);
+            }
 
             if (ctx.Debug)
                 host.Debug($"[Worker] {ctx.Backend} returned: {(translation == null ? "(null)" : translation.Substring(0, Math.Min(40, translation.Length)))}");
@@ -283,8 +306,8 @@ namespace UnityGameTranslator.Core
                 return WorkerOutcome.Stale;
             }
 
-            // Check if AI returned the skip marker (text not in expected source language)
-            // Note: Google/DeepL don't return skip markers, so this only applies to LLM
+            // Check if the answer is the skip marker (text not in expected source language): the
+            // model's, or the strict-source rung's above — Google and DeepL return none themselves.
             // ⚠ Read ONCE: the kind decides what is filed just below, and the
             // same answer read twice is one call away from being read two ways.
             AnswerKind answerKind = Answers.Read(translation);

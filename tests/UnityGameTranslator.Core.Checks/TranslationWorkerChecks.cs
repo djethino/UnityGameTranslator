@@ -28,6 +28,7 @@ namespace UnityGameTranslator.Core.Checks
             Invented(check);
             Stale(check);
             SkippedOrDeclined(check);
+            StrictSourceByScript(check);
             SameAsSource(check);
             Logs(check);
             Refusals(check);
@@ -64,11 +65,13 @@ namespace UnityGameTranslator.Core.Checks
             public readonly FakeHost Host = new FakeHost();
             public bool CaptureOnly, Debug;
             public bool NormalizeNumbers = true;
+            public string StrictSource;
 
             public WorkerContext Context() => new WorkerContext
             {
                 CaptureOnly = CaptureOnly, NormalizeNumbers = NormalizeNumbers, Debug = Debug,
-                Backend = "llm", RateLimitRetryDelay = 2.5f, Variables = null, Cache = Cache, Queue = Queue,
+                Backend = "llm", RateLimitRetryDelay = 2.5f, StrictSourceLanguage = StrictSource,
+                Variables = null, Cache = Cache, Queue = Queue,
             };
 
             public QueuedText Item(string text, bool ownUi = false, object target = null)
@@ -264,6 +267,32 @@ namespace UnityGameTranslator.Core.Checks
             check(declined == WorkerOutcome.Declined && ui.Trace == "translate:Apply:ui",
                 "🔴 an interface label the model declined is stored NOWHERE",
                 "classified S it landed in the GAME's file, counted and merged as a game line — one of the two defects Answers.Store exists for");
+        }
+
+        /// <summary>Strict source decided by script before the backend (analyse/strict-source-ecriture-unicode.md).</summary>
+        private static void StrictSourceByScript(Action<bool, string, string> check)
+        {
+            var b = new Bench { StrictSource = "English", Host = { Answer = "Gain gold" } };
+            var outcome = b.Run(b.Item("获得金币"));
+            check(outcome == WorkerOutcome.Skipped && b.Trace == "store:获得金币=获得金币:S",
+                "strict source: a game line with no letter of the source's script is filed S, and no backend is called",
+                "the model classed 302 such lines as English in one game; Google and DeepL have no strict mode at all");
+
+            var mixed = new Bench { StrictSource = "English", Host = { Answer = "Gain HP" } };
+            mixed.Run(mixed.Item("获得 HP"));
+            check(mixed.Host.Calls.Count > 0 && mixed.Host.Calls[0] == "translate:获得 HP",
+                "one letter of the source's script and the backend decides, as before",
+                "only the certain case is taken from it");
+
+            var off = new Bench { Host = { Answer = "Gain gold" } };
+            off.Run(off.Item("获得金币"));
+            check(off.Host.Calls.Count > 0 && off.Host.Calls[0] == "translate:获得金币",
+                "strict source off: the line is translated", "a setting the person did not turn on decides nothing");
+
+            var ui = new Bench { StrictSource = "English", Host = { Answer = "Appliquer" } };
+            ui.Run(ui.Item("应用", ownUi: true));
+            check(ui.Host.Calls.Count > 0 && ui.Host.Calls[0] == "translate:应用:ui",
+                "never the mod's own interface", "strict source is about the game's language");
         }
 
         private static void SameAsSource(Action<bool, string, string> check)

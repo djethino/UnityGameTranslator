@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using UnityEngine;
+using UnityGameTranslator.Common;
 
 namespace UnityGameTranslator.Core
 {
@@ -85,28 +86,43 @@ namespace UnityGameTranslator.Core
 
         private static bool _antiCheatChecked;
         private static string _antiCheatName;
+        private static bool _antiCheatUnknown;
 
         /// <summary>
-        /// The anti-cheat guarding this game, or null. Detected once, by looking for the files
-        /// these systems install next to the executable.
+        /// Why freezing this game is not offered, in the words the Options screen shows — null when
+        /// it may be. Decided once, by looking for the files anti-cheat systems install next to the
+        /// executable.
         /// </summary>
         /// <remarks>
         /// ⚠ Altering timeScale is a textbook speedhack signature. The Manager already refuses to
         /// install on protected games; the mod cannot refuse to run, but it can refuse to offer
         /// this. Deliberately file-based and conservative: a false positive costs one greyed-out
         /// option, a false negative could cost somebody their account.
+        ///
+        /// 🔴 **So a folder that could not be looked at refuses too** (2026-10-07). The probe failing
+        /// used to leave the name null — read as "no anti-cheat" — and offered the freeze on a game
+        /// nobody had checked, with the failure written only to the debug log.
         /// </remarks>
-        public static string AntiCheat
+        public static string PauseRefusal
         {
             get
             {
-                if (_antiCheatChecked)
-                    return _antiCheatName;
+                if (!_antiCheatChecked)
+                {
+                    _antiCheatChecked = true;
+                    try { _antiCheatName = DetectAntiCheat(); }
+                    catch (Exception e)
+                    {
+                        _antiCheatUnknown = true;
+                        Faults.Say("GamePause.DetectAntiCheat", e, "the freeze is not offered");
+                    }
+                }
 
-                _antiCheatChecked = true;
-                try { _antiCheatName = DetectAntiCheat(); }
-                catch (Exception e) { TranslatorCore.LogDebug($"[Pause] anti-cheat probe failed: {e.Message}"); }
-                return _antiCheatName;
+                if (_antiCheatName != null)
+                    return $"Unavailable: this game is protected by {_antiCheatName}, which can treat freezing it as cheating.";
+                if (_antiCheatUnknown)
+                    return "Unavailable: this game's folder could not be checked for an anti-cheat, which can treat freezing it as cheating.";
+                return null;
             }
         }
 

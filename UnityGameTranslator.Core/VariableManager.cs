@@ -6,6 +6,7 @@ using System.Runtime.CompilerServices;
 using Newtonsoft.Json.Linq;
 using UnityEngine;
 using UniverseLib;
+using UnityGameTranslator.Common;
 
 namespace UnityGameTranslator.Core
 {

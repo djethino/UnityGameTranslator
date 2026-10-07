@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Reflection;
 using UnityGameTranslator.Core.Engine;
+using UnityGameTranslator.Common;
 
 namespace UnityGameTranslator.Core
 {

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
 using UniverseLib.UI;
+using UnityGameTranslator.Common;
 
 namespace UnityGameTranslator.Core.UI.Components
 {

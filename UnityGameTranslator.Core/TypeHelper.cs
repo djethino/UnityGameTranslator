@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using UnityEngine;
+using UnityGameTranslator.Common;
 
 namespace UnityGameTranslator.Core
 {
@@ -1849,8 +1850,10 @@ namespace UnityGameTranslator.Core
                         if (result != null) return result;
                     }
                     // Cast<T> throws on an object of another type — an answer, not a fault: the next
-                    // one is tried, and a debug line keeps it visible.
-                    catch (Exception ex) { TranslatorCore.LogDebug($"[TypeHelper] {method.Name}<{targetType.Name}> refused on {objType.Name}: {ex.GetType().Name}"); }
+                    // one is tried, and a debug line keeps it visible. It arrives wrapped by Invoke;
+                    // anything else (MakeGenericMethod refusing the type) is not that answer, and
+                    // reaches the caller.
+                    catch (TargetInvocationException ex) { TranslatorCore.LogDebug($"[TypeHelper] {method.Name}<{targetType.Name}> refused on {objType.Name}: {ex.InnerException?.GetType().Name}"); }
                 }
             }
 

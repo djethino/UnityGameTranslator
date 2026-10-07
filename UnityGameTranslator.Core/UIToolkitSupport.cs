@@ -1638,6 +1638,18 @@ namespace UnityGameTranslator.Core
                     var element = _walk.Pop();
                     if (element == null) continue;
 
+                    // ⚠ Children first: the walk resumes from the stack, so an element that throws
+                    // below is skipped ALONE — its subtree is already on the stack. Pushed after
+                    // it, a subtree under one bad element was never reached, at any pass.
+                    long tChildren = Perf.Start();
+                    int count = ChildCount(element);
+                    for (int i = 0; i < count; i++)
+                    {
+                        var child = ChildAt(element, i);
+                        if (child != null) _walk.Push(child);
+                    }
+                    Perf.Stop(Perf.UitkChildren, tChildren);
+
                     ReportProxyIdentityOnce(element);
 
                     // Pictures are not text and do not depend on the font gate: ANY element can
@@ -1649,21 +1661,14 @@ namespace UnityGameTranslator.Core
 
                     var asText = AsTextElement(element);
                     if (asText != null) ProcessElement(asText);
-
-                    long tChildren = Perf.Start();
-                    int count = ChildCount(element);
-                    for (int i = 0; i < count; i++)
-                    {
-                        var child = ChildAt(element, i);
-                        if (child != null) _walk.Push(child);
-                    }
-                    Perf.Stop(Perf.UitkChildren, tChildren);
                 }
             }
             catch (Exception ex)
             {
-                _walk.Clear();
-                TranslatorCore.LogDebug($"[UIToolkit] Scan error: {ex.Message}");
+                // 🔴 Only the element that threw is lost: the stack keeps the rest of the pass, which
+                // goes on at the next frame. Clearing it here dropped every element after the bad
+                // one, at every pass — the same one threw first each time.
+                Faults.Say("UIToolkitSupport.Scan", ex, "one element skipped");
             }
             finally { Perf.Stop(Perf.UitkScan, tScan); }
         }

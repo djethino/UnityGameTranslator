@@ -4,6 +4,7 @@ using System.Linq;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using UnityEngine;
+using UnityGameTranslator.Common;
 
 namespace UnityGameTranslator.Core
 {
@@ -265,12 +266,10 @@ namespace UnityGameTranslator.Core
                 if (!_fontHasCharacterResolved)
                 {
                     _fontHasCharacterResolved = true;
-                    try
-                    {
-                        _fontHasCharacterMethod = typeof(Font).GetMethod("HasCharacter",
-                            BindingFlags.Public | BindingFlags.Instance, null, new[] { typeof(char) }, null);
-                    }
-                    catch (Exception ex) { TranslatorCore.LogDebug($"[FontManager] Font.HasCharacter lookup failed: {ex.Message}"); }
+                    // Looked up by its exact parameter list, which cannot be ambiguous: absent
+                    // answers null, and nothing here throws.
+                    _fontHasCharacterMethod = typeof(Font).GetMethod("HasCharacter",
+                        BindingFlags.Public | BindingFlags.Instance, null, new[] { typeof(char) }, null);
                     if (_fontHasCharacterMethod == null)
                         TranslatorCore.LogDebug("[FontManager] Font.HasCharacter unavailable — clone coverage falls back to the cached-translation rule");
                 }
@@ -331,8 +330,9 @@ namespace UnityGameTranslator.Core
                 }
                 catch (Exception ex)
                 {
-                    // A failing probe must not silently downgrade to "covered".
-                    TranslatorCore.LogDebug($"[FontManager] HasCharacter probe failed on '{originalFontName}': {ex.Message}");
+                    // A failing probe must not silently downgrade to "covered" — nor go unsaid: the
+                    // text then keeps the game's font, which is what the player sees.
+                    Faults.Say("FontManager.CloneCoversText probe", ex, originalFontName);
                     return false;
                 }
 
@@ -528,7 +528,8 @@ namespace UnityGameTranslator.Core
             }
             catch (Exception ex)
             {
-                TranslatorCore.LogDebug($"[FontManager] Failed to subscribe willRenderCanvases: {ex.Message}");
+                // Without it, a font swap waits for the next text the game writes.
+                Faults.Say("FontManager.SubscribeWillRenderCanvases", ex);
             }
         }
 
@@ -548,7 +549,8 @@ namespace UnityGameTranslator.Core
             }
             catch (Exception ex)
             {
-                TranslatorCore.LogDebug($"[FontManager] Failed to unsubscribe willRenderCanvases: {ex.Message}");
+                // Left subscribed at shutdown is the crash this method exists to prevent: said.
+                Faults.Say("FontManager.UnsubscribeWillRenderCanvases", ex);
             }
             finally
             {
@@ -1065,8 +1067,10 @@ namespace UnityGameTranslator.Core
                         }
                         catch (Exception ex)
                         {
+                            // An engine without the method answered null above; this is the method
+                            // failing, so the system fonts are listed by name only — said.
                             kept.Clear();
-                            TranslatorCore.LogDebug($"[FontManager] GetPathsToOSFonts unavailable: {ex.Message}");
+                            Faults.Say("FontManager.GetPathsToOSFonts", ex, "system fonts listed by name only");
                         }
 
                         if (!byPath)
@@ -2340,7 +2344,8 @@ namespace UnityGameTranslator.Core
                 sdfShader = origMat != null && origMat.shader != null &&
                             origMat.shader.name.IndexOf("Distance Field", StringComparison.OrdinalIgnoreCase) >= 0;
             }
-            catch (Exception _e) { TranslatorCore.LogDebug($"[FontReplace] shader read failed: {_e.Message}"); }
+            // The game's preset is then dropped for the replacement font's own material: said.
+            catch (Exception ex) { Faults.Say("FontManager.ApplyAdaptedMaterial shader", ex, origMat?.name); }
 
             if (!sdfShader)
             {
@@ -2459,7 +2464,8 @@ namespace UnityGameTranslator.Core
                 shaderUtils?.GetMethod("UpdateShaderRatios", BindingFlags.Public | BindingFlags.Static)
                           ?.Invoke(null, new object[] { material });
             }
-            catch (Exception ex) { TranslatorCore.LogDebug($"[FontReplace] UpdateShaderRatios failed: {ex.Message}"); }
+            // Left unrun, the outline and underlay keep ratios meant for the old widths.
+            catch (Exception ex) { Faults.Say("FontManager.UpdateShaderRatios", ex, material?.name); }
         }
 
         /// <summary>
@@ -2570,7 +2576,8 @@ namespace UnityGameTranslator.Core
                 else
                     TranslatorCore.LogDebug($"[FontReplace] stroke of atlas '{texture.name}': not readable back");
             }
-            catch (Exception ex) { TranslatorCore.LogDebug($"[FontReplace] stroke of atlas '{texture.name}' failed: {ex.Message}"); }
+            // NaN is the answer callers already read as "unknown"; the why is said.
+            catch (Exception ex) { Faults.Say("FontManager.StrokeWidthPx", ex, texture.name); }
             finally { if (copy != null) UnityEngine.Object.Destroy(copy); }
 
             _strokeWidthPx[id] = result;
@@ -3204,15 +3211,12 @@ namespace UnityGameTranslator.Core
             if (!string.IsNullOrEmpty(originalFontName) && !_designScaleCache.ContainsKey(originalFontName))
             {
                 float ds = 1f;
-                try
+                // TryGetModernFaceInfo answers false, and says why, when the metrics cannot be read.
+                if (originalFontObj != null && CustomFontLoader.TryGetModernFaceInfo(originalFontObj, out float ps, out float sc))
                 {
-                    if (originalFontObj != null && CustomFontLoader.TryGetModernFaceInfo(originalFontObj, out float ps, out float sc))
-                    {
-                        ds = sc > 0f ? sc : 1f;
-                        TranslatorCore.LogDebug($"[DesignScale] '{originalFontName}' (TMP modern): faceInfo pointSize={ps}, scale={sc} → design-scale={ds:F3}");
-                    }
+                    ds = sc > 0f ? sc : 1f;
+                    TranslatorCore.LogDebug($"[DesignScale] '{originalFontName}' (TMP modern): faceInfo pointSize={ps}, scale={sc} → design-scale={ds:F3}");
                 }
-                catch (Exception ex) { TranslatorCore.LogDebug($"[DesignScale] read failed for '{originalFontName}': {ex.Message}"); }
                 _designScaleCache[originalFontName] = ds;
 
                 // Materialize the effective scale (design-scale × size_percent) into the stored
@@ -3270,7 +3274,9 @@ namespace UnityGameTranslator.Core
                 var sharedMatProp = component.GetType().GetProperty("fontSharedMaterial", BindingFlags.Public | BindingFlags.Instance);
                 originalSharedMaterial = sharedMatProp?.GetValue(component, null);
             }
-            catch (Exception _e) { TranslatorCore.LogDebug($"[FontReplace] fontSharedMaterial read failed: {_e.Message}"); }
+            // Without it, the game's styling preset (colour, shadow, outline) is lost on this
+            // component and cannot be restored: said.
+            catch (Exception ex) { Faults.Say("FontManager.ReplaceFont shared material", ex, originalFontName); }
             if (instanceId != -1 && originalSharedMaterial != null && !_originalMaterialsPerComponent.ContainsKey(instanceId))
                 _originalMaterialsPerComponent[instanceId] = originalSharedMaterial;
 
@@ -3319,7 +3325,8 @@ namespace UnityGameTranslator.Core
                             if (rect != null) rectStr = rect.ToString();
                         }
                     }
-                    catch (Exception _e) { TranslatorCore.LogDebug($"[FontManager] DIAG rect read failed: {_e.Message}"); }
+                    // The diagnostic line itself carries why the rect is missing.
+                    catch (Exception rectEx) { rectStr = $"unreadable ({rectEx.GetType().Name}: {rectEx.Message})"; }
                     // fontSize AFTER the forced mesh update = the auto-size RESULT when
                     // enableAutoSizing is on (TMP writes the computed size back).
                     object fsAfter = ReadProp("fontSize");
@@ -3331,7 +3338,8 @@ namespace UnityGameTranslator.Core
                 }
                 catch (Exception ex)
                 {
-                    TranslatorCore.LogDebug($"[FontManager] DIAG replace failed: {ex.Message}");
+                    // The one line a size report from a player depends on (issue #21).
+                    Faults.Say("FontManager.ReplaceFont diagnostic", ex, originalFontName);
                 }
             }
 
@@ -3549,7 +3557,8 @@ namespace UnityGameTranslator.Core
             }
             catch (Exception ex)
             {
-                TranslatorCore.LogDebug($"[FontManager] Override resolve failed: {ex.Message}");
+                // The rule the translator wrote is then not applied to this component: said.
+                Faults.Say("FontManager.ResolveFontNameWithOverrides", ex, settingsFontName);
             }
             return settingsFontName;
         }
@@ -3690,7 +3699,12 @@ namespace UnityGameTranslator.Core
             }
             catch (Exception ex)
             {
-                TranslatorCore.LogDebug($"[FontManager] ApplyReplacementsToScene error: {ex.Message}");
+                // 🔴 The pass resumes where it stopped (_sceneTmpAt). Left there, the component that
+                // threw threw again at every frame, and every component after it never got its
+                // font — a whole scene half-replaced, said only in debug. Step past it.
+                Faults.Say("FontManager.ApplyReplacementsToScene", ex,
+                           _sceneTmp != null ? $"component {_sceneTmpAt} of {_sceneTmp.Length} skipped" : "scene lookup");
+                if (_sceneTmp != null) _sceneTmpAt++;
             }
             finally { Perf.Stop(Perf.FontScene, tPerf); }
         }
@@ -3806,7 +3820,9 @@ namespace UnityGameTranslator.Core
                         }
                     }
                 }
-                catch (Exception ex) { TranslatorCore.LogDebug($"[FontReplace] clone rebind toggle failed: {ex.Message}"); }
+                // Without the toggle the component may keep drawing the old atlas until it is
+                // shown again: said.
+                catch (Exception ex) { Faults.Say("FontManager.TryApplyUnityClone rebind", ex, settingsFontName); }
             }
 
             return replacementFont;
@@ -3820,8 +3836,8 @@ namespace UnityGameTranslator.Core
         /// while their neighbours were swapped — mixed faces down a single menu. The TMP path had this
         /// net from the start; the UI.Text path had none.
         /// Runs off the same periodic tick as the TMP pass and applies no text, only the font.
+        /// ⚠ Same budget, same resumable walk as ApplyReplacementsToScene above.
         /// </summary>
-        /// <summary>⚠ Same budget, same resumable walk as ApplyReplacementsToScene above.</summary>
         public static void ApplyUnityClonesToScene(float budgetMs = 0f, System.Diagnostics.Stopwatch frameSw = null)
         {
             if (!TranslatorCore.FontReplacementActive) return;
@@ -3863,7 +3879,11 @@ namespace UnityGameTranslator.Core
             }
             catch (Exception ex)
             {
-                TranslatorCore.LogDebug($"[FontManager] ApplyUnityClonesToScene error: {ex.Message}");
+                // Same as ApplyReplacementsToScene: step past the component that threw, or the walk
+                // stops on it for good.
+                Faults.Say("FontManager.ApplyUnityClonesToScene", ex,
+                           _sceneUgui != null ? $"component {_sceneUguiAt} of {_sceneUgui.Length} skipped" : "scene lookup");
+                if (_sceneUgui != null) _sceneUguiAt++;
             }
             finally { Perf.Stop(Perf.FontClones, tPerf); }
         }
@@ -3980,7 +4000,9 @@ namespace UnityGameTranslator.Core
                             materialRestored = true;
                         }
                     }
-                    catch (Exception _e) { TranslatorCore.LogDebug($"[FontReplace] material restore failed: {_e.Message}"); }
+                    // The font's default material is used below instead, and the game's preset on
+                    // this component is lost: said.
+                    catch (Exception ex) { Faults.Say("FontManager.RestoreOriginalFont material", ex); }
                 }
                 if (!materialRestored && IsTextMesh(component))
                 {
@@ -4387,8 +4409,9 @@ namespace UnityGameTranslator.Core
                     }
                     catch (Exception inner)
                     {
-                        // Swallow per-component errors so one broken component doesn't stop the loop.
-                        TranslatorCore.LogDebug($"[FontManager] ForceRefreshUITextFont per-item error: {inner.Message}");
+                        // One broken component must not stop the loop — and must not go unsaid: it
+                        // keeps showing the old font until the game redraws it.
+                        Faults.Say("FontManager.ForceRefreshUITextFont component", inner, fontName);
                     }
                 }
 
@@ -5582,8 +5605,9 @@ namespace UnityGameTranslator.Core
                     }
                     catch (Exception ttfEx)
                     {
-                        // Resolution is best-effort; fall back to font.name on any failure.
-                        TranslatorCore.LogDebug($"[FontManager] TTF family name lookup failed for '{font.name}': {ttfEx.GetType().Name}: {ttfEx.Message}");
+                        // font.name is used instead — the case the comment above explains ends in
+                        // invisible text on some IL2CPP builds, so the failure is said.
+                        Faults.Say("FontManager.TTF family name", ttfEx, font.name);
                     }
 
                     // The family and style the file itself declares (name ids 16/17, else 1/2) — what the
@@ -5868,7 +5892,8 @@ namespace UnityGameTranslator.Core
                 }
                 catch (Exception ex)
                 {
-                    TranslatorCore.LogDebug($"[FontManager] Scene font count failed for {type.Name}: {ex.Message}");
+                    // The fonts list then under-counts this kind of text: said.
+                    Faults.Say("FontManager.SceneFontCounts", ex, type.Name);
                 }
             }
 

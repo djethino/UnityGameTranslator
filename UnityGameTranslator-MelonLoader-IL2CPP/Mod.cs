@@ -7,6 +7,7 @@ using MelonLoader.Utils;
 using HarmonyLib;
 using UnityEngine;
 using UnityGameTranslator.Core;
+using UnityGameTranslator.Common;
 
 [assembly: MelonInfo(typeof(UnityGameTranslator.MelonLoaderIL2CPP.TranslatorMod), "UnityGameTranslator", UnityGameTranslator.PluginInfo.Version, "Community")]
 [assembly: MelonGame(null, null)]
@@ -124,7 +125,13 @@ namespace UnityGameTranslator.MelonLoaderIL2CPP
                     }
                 }
             }
-            catch { }
+            // A resolve handler must answer, never throw: the runtime then reports the assembly as
+            // missing. But the file WAS there and refused to load (a corrupt or wrong-architecture
+            // copy) — the one fact that explains what fails next, said once and counted.
+            catch (System.Exception ex)
+            {
+                Faults.Say("MelonLoader IL2CPP AssemblyResolve", ex, assemblyName.Name);
+            }
 
             return null;
         }

@@ -5243,11 +5243,18 @@ namespace UnityGameTranslator.Core
                                 return;
                             }
                         }
+                        catch (AggregateException e)
+                        {
+                            // The request itself failed (Wait wraps it): not this server's route, or
+                            // the server went — the next one is tried. Expected on every server but
+                            // one, so a debug line, not a fault.
+                            var cause = e.GetBaseException();
+                            LogDebug($"[AI] {r.Server} refused {r.Url}: {cause.GetType().Name}: {cause.Message}");
+                        }
                         catch (Exception e)
                         {
-                            // Not this server's route, or the server went: the next one is tried.
-                            // Expected on every server but one, so a debug line, not a fault.
-                            LogDebug($"[AI] {r.Server} refused {r.Url}: {e.GetType().Name}: {e.Message}");
+                            // Anything else is this code failing to build the request: said.
+                            Faults.Say("TranslatorCore.SendModelMemory", e, $"{r.Server} {r.Url}");
                         }
                     }
                 }

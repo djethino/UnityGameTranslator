@@ -501,12 +501,13 @@ namespace UnityGameTranslator.Core
                 }
             });
 
-            Group("Unity.Localization StringTableEntry", () =>
-            {
-                Type stringTableEntryType = FindStringTableEntryType();
-                if (stringTableEntryType != null)
-                    patchCount += PatchStringTableEntry(stringTableEntryType, patcher);
-            });
+            // ⚠ Unity.Localization's StringTableEntry (GetLocalizedString, Value, LocalizedValue) is
+            // deliberately NOT patched. Translating there, at the source, was tried and cut the next
+            // day (e8d8a33, 2025-12-24): games assemble a displayed text from several entries, and
+            // the assembled text, made of translated pieces, is a key nowhere — it went to the model
+            // as new text already in the target language. Its body stayed commented out while the
+            // patch was still installed on every getter, for nothing, until 2026-10-07. Translating
+            // at the source is a design of its own: analyse/traduction-a-la-source-conception.md.
 
             Group("2D Toolkit tk2dTextMesh", () =>
             {
@@ -738,8 +739,6 @@ namespace UnityGameTranslator.Core
         }
 
         #endregion
-
-        private static Type FindStringTableEntryType() => AssemblyTypes.Find("UnityEngine.Localization.Tables.StringTableEntry");
 
         private static Type FindTk2dTextMeshType() => AssemblyTypes.Find("tk2dTextMesh");
 
@@ -1967,34 +1966,6 @@ namespace UnityGameTranslator.Core
             return count;
         }
 
-        private static int PatchStringTableEntry(Type stringTableEntryType, Action<MethodInfo, MethodInfo, MethodInfo> patcher)
-        {
-            int count = 0;
-            var postfix = typeof(TranslatorPatches).GetMethod(nameof(StringTableEntry_Postfix), BindingFlags.Static | BindingFlags.Public);
-
-            var allMethods = stringTableEntryType.GetMethods(BindingFlags.Public | BindingFlags.Instance);
-            foreach (var method in allMethods)
-            {
-                if (method.Name == "GetLocalizedString" && method.ReturnType == typeof(string))
-                {
-                    if (Patch(patcher, method, null, postfix)) count++;
-                }
-            }
-
-            var valueProp = stringTableEntryType.GetProperty("Value", BindingFlags.Public | BindingFlags.Instance);
-            if (valueProp?.GetMethod != null)
-            {
-                if (Patch(patcher, valueProp.GetMethod, null, postfix)) count++;
-            }
-
-            var localizedValueProp = stringTableEntryType.GetProperty("LocalizedValue", BindingFlags.Public | BindingFlags.Instance);
-            if (localizedValueProp?.GetMethod != null)
-            {
-                if (Patch(patcher, localizedValueProp.GetMethod, null, postfix)) count++;
-            }
-
-            return count;
-        }
 
         #region Patch Methods
 
@@ -2464,13 +2435,6 @@ namespace UnityGameTranslator.Core
             }
         }
 
-        public static void StringTableEntry_Postfix(object __instance, ref string __result)
-        {
-            // Disabled: sync translation here causes issues when the game builds strings
-            // using translated parts. Let TMP_Text/UI.Text patches handle translation instead.
-            // if (__instance == null || string.IsNullOrEmpty(__result)) return;
-            // try { __result = TranslatorCore.TranslateText(__result); } catch { }
-        }
 
         /// <summary>
         /// Postfix for custom localization types' ToString() and op_Implicit.
@@ -2931,7 +2895,8 @@ namespace UnityGameTranslator.Core
             }
             catch (Exception ex)
             {
-                TranslatorCore.LogDebug($"[Patches] AutoSize scale failed: {ex.Message}");
+                // The text keeps the size it had before the font changed — the issue #21 symptom.
+                Faults.Say("TranslatorPatches.AutoSize scale", ex);
             }
         }
 
@@ -3680,7 +3645,8 @@ namespace UnityGameTranslator.Core
             }
             catch (Exception ex)
             {
-                TranslatorCore.LogDebug($"[Patches] SetFont postfix error: {ex.Message}");
+                // A patch body the game calls: caught so the game survives, never silent.
+                Faults.Say("TranslatorPatches.TMPText_SetFont_Postfix", ex);
             }
         }
 
@@ -3725,7 +3691,8 @@ namespace UnityGameTranslator.Core
             }
             catch (Exception ex)
             {
-                TranslatorCore.LogDebug($"[Patches] OnEnable postfix error: {ex.Message}");
+                // A patch body the game calls: caught so the game survives, never silent.
+                Faults.Say("TranslatorPatches.TMPText_OnEnable_Postfix", ex);
             }
             finally { Perf.Stop(Perf.TextEnable, tEnable); }
         }
@@ -3823,7 +3790,8 @@ namespace UnityGameTranslator.Core
                         break;
                 }
             }
-            catch (Exception ex) { TranslatorCore.LogDebug($"[Reveal] maxVisibleCharacters prefix: {ex.Message}"); }
+            // A patch body the game calls: the reveal then counts on the game's own length.
+            catch (Exception ex) { Faults.Say("TranslatorPatches.maxVisibleCharacters prefix", ex); }
         }
 
         public static void TMPText_SetFontSize_Prefix(object __instance, ref float value)
@@ -4433,10 +4401,11 @@ namespace UnityGameTranslator.Core
                         forceMeshUpdate.Invoke(instance, null);
                         meshUpdateCalled = true;
                     }
-                    catch (Exception ex)
+                    catch (TargetInvocationException ex)
                     {
-                        // Expected for components not fully initialized yet: a retry follows.
-                        TranslatorCore.LogDebug($"[AlternateTMP] ForceMeshUpdate() refused ({ex.GetType().Name}: {ex.Message}), retry {retryCount}");
+                        // The component's own method refused — expected for one not fully
+                        // initialized yet: a retry follows. Anything else reaches the outer catch.
+                        TranslatorCore.LogDebug($"[AlternateTMP] ForceMeshUpdate() refused ({ex.InnerException?.GetType().Name}: {ex.InnerException?.Message}), retry {retryCount}");
                     }
                 }
 
@@ -4451,10 +4420,10 @@ namespace UnityGameTranslator.Core
                             forceMeshUpdate.Invoke(instance, new object[] { true });
                             meshUpdateCalled = true;
                         }
-                        catch (Exception ex)
+                        catch (TargetInvocationException ex)
                         {
-                            // Expected for components not fully initialized yet: a retry follows.
-                            TranslatorCore.LogDebug($"[AlternateTMP] ForceMeshUpdate(true) refused ({ex.GetType().Name}: {ex.Message}), retry {retryCount}");
+                            // Same as above: the component's own refusal, a retry follows.
+                            TranslatorCore.LogDebug($"[AlternateTMP] ForceMeshUpdate(true) refused ({ex.InnerException?.GetType().Name}: {ex.InnerException?.Message}), retry {retryCount}");
                         }
                     }
                 }

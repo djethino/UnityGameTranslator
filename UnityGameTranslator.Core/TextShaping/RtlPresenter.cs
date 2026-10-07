@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Reflection;
+using UnityGameTranslator.Common;
 
 namespace UnityGameTranslator.Core.TextShaping
 {
@@ -154,7 +155,8 @@ namespace UnityGameTranslator.Core.TextShaping
                     _reflows.Remove(compId);
                 }
             }
-            catch (Exception ex) { TranslatorCore.LogDebug($"[RtlPresenter] release failed: {ex.Message}"); }
+            // A component not released keeps its presented (reshaped) text: said.
+            catch (Exception ex) { Faults.Say("RtlPresenter.Release", ex); }
         }
 
         /// <summary>Whether the mod set this component's right-to-left flag or alignment, and has the game's to give back.</summary>
@@ -1321,7 +1323,8 @@ namespace UnityGameTranslator.Core.TextShaping
                     + $"size={F("fontSize")} min={F("resizeTextMinSize")} max={F("resizeTextMaxSize")} scale={F("scaleFactor")} "
                     + $"→ {lines} line(s) for {assigned.Length} chars '{preview}'");
             }
-            catch (Exception ex) { TranslatorCore.LogDebug("[RtlPresenter] cut describe failed: " + ex.Message); }
+            // Only reached in debug mode (the guard above): said at the level its reader chose.
+            catch (Exception ex) { TranslatorCore.LogInfo($"[RtlPresenter] cut describe failed: {ex.GetType().Name}: {ex.Message}"); }
         }
 
         /// <summary>
@@ -2046,7 +2049,8 @@ namespace UnityGameTranslator.Core.TextShaping
 
                 TranslatorCore.LogDebug($"[RtlPresenter] font comp={compId} {instance.GetType().Name} settings='{settingsFontName ?? "-"}' ({role}) drawn with '{current}', material {material}, layout{layout}, at {path}");
             }
-            catch (Exception ex) { TranslatorCore.LogDebug($"[RtlPresenter] font comp={compId} unreadable: {ex.Message}"); }
+            // Only reached in debug mode (the guard above): said at the level its reader chose.
+            catch (Exception ex) { TranslatorCore.LogInfo($"[RtlPresenter] font comp={compId} unreadable: {ex.GetType().Name}: {ex.Message}"); }
         }
 
         internal static string Escape(string s)

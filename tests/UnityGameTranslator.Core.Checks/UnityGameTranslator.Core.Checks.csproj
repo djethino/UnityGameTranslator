@@ -296,7 +296,10 @@
          pipeline) are not here: the pipeline logs through TranslatorCore. -->
     <Compile Include="../../UnityGameTranslator.Core/Rasterizer/TtfParser.cs" />
     <Compile Include="../../UnityGameTranslator.Core/Rasterizer/CffParser.cs" />
-    <Compile Include="../../UnityGameTranslator.Core/Engine/Faults.cs" />
+    <!-- Faults lives in common since 2026-10-07 (one voice for the mod, the Manager and the
+         library), reached through the ProjectReference above. -->
+    <!-- The silent-catch counter, written once in common and linked by the three check projects. -->
+    <Compile Include="../../common/tests/Shared/SilentCatches.cs" />
     <Compile Include="../../UnityGameTranslator.Core/Rasterizer/GlyphData.cs" />
     <Compile Include="../../UnityGameTranslator.Core/Rasterizer/OpenTypeLayout.cs" />
     <Compile Include="../../UnityGameTranslator.Core/Rasterizer/DerivedFontWriter.cs" />

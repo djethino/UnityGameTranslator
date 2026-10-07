@@ -1,4 +1,5 @@
 using System;
+using UnityGameTranslator.Common;
 
 namespace UnityGameTranslator.Core.TextShaping
 {

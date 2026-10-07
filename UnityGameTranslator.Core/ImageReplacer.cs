@@ -4,6 +4,7 @@ using System.IO;
 using System.Reflection;
 using Newtonsoft.Json.Linq;
 using UnityEngine;
+using UnityGameTranslator.Common;
 
 namespace UnityGameTranslator.Core
 {
@@ -294,7 +295,8 @@ namespace UnityGameTranslator.Core
             }
             catch (Exception ex)
             {
-                TranslatorCore.LogDebug($"[ImageReplacer] AddGOIdsForType({componentType.Name}) failed: {ex.Message}");
+                // The objects of this kind are then not counted as image holders: said.
+                Faults.Say("ImageReplacer.AddGOIdsForType", ex, componentType.Name);
             }
         }
 
@@ -477,7 +479,7 @@ namespace UnityGameTranslator.Core
             }
             catch (Exception ex)
             {
-                TranslatorCore.LogDebug($"[ImageReplacer] GetPropertySafe({propertyName}) failed on {obj.GetType().Name}: {ex.Message}");
+                Faults.Say("ImageReplacer.GetPropertySafe", ex, $"{obj.GetType().Name}.{propertyName}");
             }
             return null;
         }
@@ -1277,7 +1279,8 @@ namespace UnityGameTranslator.Core
             }
             catch (Exception ex)
             {
-                TranslatorCore.LogDebug($"[ImageReplacer] TrackReplacement failed: {ex.Message}");
+                // Untracked, the replacement cannot be undone by Restore: said.
+                Faults.Say("ImageReplacer.TrackReplacement", ex);
             }
         }
 
@@ -1361,7 +1364,8 @@ namespace UnityGameTranslator.Core
                 }
                 catch (Exception ex)
                 {
-                    TranslatorCore.LogDebug($"[ImageReplacer] RestoreAll error: {ex.Message}");
+                    // That object keeps the replacement image: said.
+                    Faults.Say("ImageReplacer.RestoreAll", ex);
                 }
             }
             _replacedComponents.Clear();
@@ -1551,7 +1555,8 @@ namespace UnityGameTranslator.Core
                 }
                 catch (Exception ex)
                 {
-                    TranslatorCore.LogDebug($"[ImageReplacer] ApplyToScene error for '{entry.SpriteName}': {ex.Message}");
+                    // That image stays the game's in this scene: said.
+                    Faults.Say("ImageReplacer.ApplyToScene", ex, entry.SpriteName);
                 }
             }
 

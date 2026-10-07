@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using UnityEngine;
+using UnityGameTranslator.Common;
 
 namespace UnityGameTranslator.Core
 {
@@ -1031,7 +1032,8 @@ namespace UnityGameTranslator.Core
             }
             catch (Exception ex)
             {
-                TranslatorCore.LogDebug($"[TextureUtils] GetPixels reflection failed: {ex.Message}");
+                // The pixel-by-pixel path below is tried next; the why is kept.
+                Faults.Say("TextureUtils.GetPixels reflection", ex);
             }
 
             // Fallback: pixel-by-pixel copy via GetPixel/SetPixel (always available)

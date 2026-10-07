@@ -5,6 +5,7 @@ using System.Linq;
 using System.Reflection;
 using Newtonsoft.Json;
 using UnityEngine;
+using UnityGameTranslator.Common;
 
 namespace UnityGameTranslator.Core
 {
@@ -1181,7 +1182,9 @@ namespace UnityGameTranslator.Core
                     }
                     catch (Exception ex)
                     {
-                        TranslatorCore.LogDebug($"[CustomFontLoader] Could not sample texture: {ex.Message}");
+                        // This block only runs in debug mode: the line is said at the level its
+                        // reader already chose, never hidden below it.
+                        TranslatorCore.LogInfo($"[CustomFontLoader] Could not sample texture: {ex.GetType().Name}: {ex.Message}");
                     }
                 }
 
@@ -1261,7 +1264,7 @@ namespace UnityGameTranslator.Core
             {
                 return Resources.FindObjectsOfTypeAll(type);
             }
-            catch (Exception _e) { TranslatorCore.LogDebug($"[CustomFontLoader] suppressed: {_e.GetType().Name}: {_e.Message}"); }
+            catch (Exception ex) { Faults.Say("CustomFontLoader.FindObjectsOfTypeAll direct", ex, $"{type.Name}; the overloads are tried next"); }
 
             // IL2CPP: try via reflection on the actual Resources type
             try
@@ -1300,11 +1303,12 @@ namespace UnityGameTranslator.Core
                             }
                         }
                     }
-                    // An overload that does not take this argument: an answer, the next is tried.
-                    catch (Exception _e) { TranslatorCore.LogDebug($"[CustomFontLoader] {method} refused: {_e.GetType().Name}: {_e.Message}"); }
+                    // The parameter type was checked above: what fails here is the engine's own
+                    // call, which is worth a line. The next overload is tried.
+                    catch (Exception ex) { Faults.Say("CustomFontLoader.FindObjectsOfTypeAll overload", ex, $"{method} on {type.Name}"); }
                 }
             }
-            catch (Exception _e) { TranslatorCore.LogDebug($"[CustomFontLoader] suppressed: {_e.GetType().Name}: {_e.Message}"); }
+            catch (Exception ex) { Faults.Say("CustomFontLoader.FindObjectsOfTypeAll reflection", ex, type.Name); }
 
             return new UnityEngine.Object[0];
         }
@@ -1320,7 +1324,7 @@ namespace UnityGameTranslator.Core
             {
                 return ScriptableObject.CreateInstance(type);
             }
-            catch (Exception _e) { TranslatorCore.LogDebug($"[CustomFontLoader] suppressed: {_e.GetType().Name}: {_e.Message}"); }
+            catch (Exception ex) { Faults.Say("CustomFontLoader.CreateInstance direct", ex, $"{type.Name}; the overloads are tried next"); }
 
             // IL2CPP: try via reflection
             try
@@ -1339,8 +1343,9 @@ namespace UnityGameTranslator.Core
                         if (result is UnityEngine.Object uobj)
                             return uobj;
                     }
-                    // An overload that does not take this argument: an answer, the next is tried.
-                    catch (Exception _e) { TranslatorCore.LogDebug($"[CustomFontLoader] {method} refused: {_e.GetType().Name}: {_e.Message}"); }
+                    // An overload that does not take this argument, or the engine refusing it: the
+                    // next is tried, and the why is kept.
+                    catch (Exception ex) { Faults.Say("CustomFontLoader.CreateInstance overload", ex, $"{method} on {type.Name}"); }
                 }
 
                 // Try generic version: ScriptableObject.CreateInstance<T>()
@@ -1365,7 +1370,7 @@ namespace UnityGameTranslator.Core
                 if (obj is UnityEngine.Object uobj)
                     return uobj;
             }
-            catch (Exception _e) { TranslatorCore.LogDebug($"[CustomFontLoader] suppressed: {_e.GetType().Name}: {_e.Message}"); }
+            catch (Exception ex) { Faults.Say("CustomFontLoader.CreateInstance Activator", ex, type.Name); }
 
             TranslatorCore.LogWarning($"[CustomFontLoader] Cannot create ScriptableObject of type {type.Name}");
             return null;
@@ -1377,41 +1382,27 @@ namespace UnityGameTranslator.Core
         /// </summary>
         private static bool SetPropertyOrField(object obj, Type type, string name, object value)
         {
-            // Try property first (IL2CPP exposes fields as properties)
-            try
+            // Property first (IL2CPP exposes fields as properties), then the field, then Unity's m_
+            // field. Members.Property answers a name held twice (a `new` property) instead of
+            // throwing; what can still fail is the write itself — a value of the wrong type, a setter
+            // that refuses — and that is a defect in what this loader builds, so it is said.
+            var prop = Members.Property(type, name, BindingFlags.Public | BindingFlags.Instance);
+            if (prop != null && prop.CanWrite)
             {
-                var prop = type.GetProperty(name, BindingFlags.Public | BindingFlags.Instance);
-                if (prop != null && prop.CanWrite)
-                {
-                    prop.SetValue(obj, value, null);
-                    return true;
-                }
+                try { prop.SetValue(obj, value, null); return true; }
+                catch (Exception ex) { Faults.Say("CustomFontLoader.SetPropertyOrField property", ex, $"{type.Name}.{name}; the field is tried next"); }
             }
-            catch (Exception _e) { TranslatorCore.LogDebug($"[CustomFontLoader] suppressed: {_e.GetType().Name}: {_e.Message}"); }
 
-            // Try field
-            try
+            foreach (var field in new[]
+                     {
+                         type.GetField(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance),
+                         type.GetField("m_" + name, BindingFlags.NonPublic | BindingFlags.Instance),
+                     })
             {
-                var field = type.GetField(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-                if (field != null)
-                {
-                    field.SetValue(obj, value);
-                    return true;
-                }
+                if (field == null) continue;
+                try { field.SetValue(obj, value); return true; }
+                catch (Exception ex) { Faults.Say("CustomFontLoader.SetPropertyOrField field", ex, $"{type.Name}.{field.Name}"); }
             }
-            catch (Exception _e) { TranslatorCore.LogDebug($"[CustomFontLoader] suppressed: {_e.GetType().Name}: {_e.Message}"); }
-
-            // Try with m_ prefix (Unity convention)
-            try
-            {
-                var field = type.GetField("m_" + name, BindingFlags.NonPublic | BindingFlags.Instance);
-                if (field != null)
-                {
-                    field.SetValue(obj, value);
-                    return true;
-                }
-            }
-            catch (Exception _e) { TranslatorCore.LogDebug($"[CustomFontLoader] suppressed: {_e.GetType().Name}: {_e.Message}"); }
 
             return false;
         }
@@ -1422,47 +1413,41 @@ namespace UnityGameTranslator.Core
         /// </summary>
         private static object GetPropertyOrField(object obj, Type type, string name)
         {
-            try
+            // Same order and same reasoning as SetPropertyOrField: the lookups answer null for what
+            // is not there, and only the read itself can fail — said, then the next shape is tried.
+            var prop = Members.Property(type, name, BindingFlags.Public | BindingFlags.Instance);
+            if (prop != null && prop.CanRead)
             {
-                var prop = type.GetProperty(name, BindingFlags.Public | BindingFlags.Instance);
-                if (prop != null && prop.CanRead)
-                    return prop.GetValue(obj, null);
+                try { return prop.GetValue(obj, null); }
+                catch (Exception ex) { Faults.Say("CustomFontLoader.GetPropertyOrField property", ex, $"{type.Name}.{name}; the field is tried next"); }
             }
-            catch (Exception _e) { TranslatorCore.LogDebug($"[CustomFontLoader] suppressed: {_e.GetType().Name}: {_e.Message}"); }
 
-            try
+            foreach (var field in new[]
+                     {
+                         type.GetField(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance),
+                         type.GetField("m_" + name, BindingFlags.NonPublic | BindingFlags.Instance),
+                     })
             {
-                var field = type.GetField(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-                if (field != null)
-                    return field.GetValue(obj);
+                if (field == null) continue;
+                try { return field.GetValue(obj); }
+                catch (Exception ex) { Faults.Say("CustomFontLoader.GetPropertyOrField field", ex, $"{type.Name}.{field.Name}"); }
             }
-            catch (Exception _e) { TranslatorCore.LogDebug($"[CustomFontLoader] suppressed: {_e.GetType().Name}: {_e.Message}"); }
-
-            try
-            {
-                var field = type.GetField("m_" + name, BindingFlags.NonPublic | BindingFlags.Instance);
-                if (field != null)
-                    return field.GetValue(obj);
-            }
-            catch (Exception _e) { TranslatorCore.LogDebug($"[CustomFontLoader] suppressed: {_e.GetType().Name}: {_e.Message}"); }
 
             return null;
         }
 
         /// <summary>
         /// Find a type by simple name in an assembly (handles IL2CPP prefixed namespaces).
+        /// AssemblyTypes.Of keeps every type that loads when one of the assembly's types cannot,
+        /// where GetTypes() refused them all.
         /// </summary>
         private static Type FindTypeByName(System.Reflection.Assembly asm, string typeName)
         {
-            try
+            foreach (var type in AssemblyTypes.Of(asm))
             {
-                foreach (var type in asm.GetTypes())
-                {
-                    if (type.Name == typeName)
-                        return type;
-                }
+                if (type.Name == typeName)
+                    return type;
             }
-            catch (Exception _e) { TranslatorCore.LogDebug($"[CustomFontLoader] suppressed: {_e.GetType().Name}: {_e.Message}"); }
             return null;
         }
 
@@ -2257,7 +2242,9 @@ namespace UnityGameTranslator.Core
             }
             catch (Exception ex)
             {
-                TranslatorCore.LogDebug($"[CustomFontLoader] Modern faceInfo read failed: {ex.Message}");
+                // The asset's own metrics could not be read: the design-scale falls back to none,
+                // which changes the size the player sees — said, never only in debug.
+                Faults.Say("CustomFontLoader.TryGetModernFaceInfo", ex, fontAsset.GetType().Name);
                 return false;
             }
         }
@@ -2300,7 +2287,7 @@ namespace UnityGameTranslator.Core
             }
             catch (Exception ex)
             {
-                TranslatorCore.LogDebug($"[CustomFontLoader] Legacy fontInfo read failed: {ex.Message}");
+                Faults.Say("CustomFontLoader.TryGetLegacyFaceInfo", ex, fontAsset.GetType().Name);
                 return false;
             }
         }
@@ -2665,16 +2652,12 @@ namespace UnityGameTranslator.Core
         {
             SetPropertyOrField(fontAsset, fontAssetType, "IsFontAssetLookupTablesDirty", true);
 
-            System.Reflection.MethodInfo readFontMethod = null;
-            System.Reflection.MethodInfo initLookupMethod = null;
-            try
-            {
-                readFontMethod = fontAssetType.GetMethod("ReadFontAssetDefinition",
-                    BindingFlags.Public | BindingFlags.Instance, null, Type.EmptyTypes, null);
-                initLookupMethod = fontAssetType.GetMethod("InitializeDictionaryLookupTables",
-                    BindingFlags.Public | BindingFlags.Instance, null, Type.EmptyTypes, null);
-            }
-            catch (Exception _e) { TranslatorCore.LogDebug($"[CustomFontLoader] resolve lookup methods failed: {_e.Message}"); }
+            // Looked up by their exact (empty) parameter list, which cannot be ambiguous: absent
+            // answers null, and nothing here throws.
+            var readFontMethod = fontAssetType.GetMethod("ReadFontAssetDefinition",
+                BindingFlags.Public | BindingFlags.Instance, null, Type.EmptyTypes, null);
+            var initLookupMethod = fontAssetType.GetMethod("InitializeDictionaryLookupTables",
+                BindingFlags.Public | BindingFlags.Instance, null, Type.EmptyTypes, null);
 
             bool rebuilt = false;
             if (readFontMethod != null)
@@ -3051,8 +3034,13 @@ namespace UnityGameTranslator.Core
                 // Try constructor with parameters first
                 object glyph = null;
 
-                // Try parameterless constructor
-                try { glyph = Activator.CreateInstance(glyphType); } catch (Exception _e) { TranslatorCore.LogDebug($"[CustomFontLoader] suppressed: {_e.GetType().Name}: {_e.Message}"); }
+                // Parameterless constructor, when the type has one (an IL2CPP proxy may not: the
+                // ScriptableObject path below is then the answer, not an error).
+                if (glyphType.IsValueType || glyphType.GetConstructor(Type.EmptyTypes) != null)
+                {
+                    try { glyph = Activator.CreateInstance(glyphType); }
+                    catch (Exception ex) { Faults.Say("CustomFontLoader.CreateModernGlyph constructor", ex, glyphType.Name); }
+                }
 
                 // If that fails, try ScriptableObject pattern (for IL2CPP types)
                 if (glyph == null)
@@ -3201,10 +3189,11 @@ namespace UnityGameTranslator.Core
                     character = ctor2.Invoke(new object[] { unicode, glyphIndex });
                 }
 
-                // Try parameterless constructor
-                if (character == null)
+                // Parameterless constructor, when the type has one.
+                if (character == null && (charType.IsValueType || charType.GetConstructor(Type.EmptyTypes) != null))
                 {
-                    try { character = Activator.CreateInstance(charType); } catch (Exception _e) { TranslatorCore.LogDebug($"[CustomFontLoader] suppressed: {_e.GetType().Name}: {_e.Message}"); }
+                    try { character = Activator.CreateInstance(charType); }
+                    catch (Exception ex) { Faults.Say("CustomFontLoader.CreateModernCharacter constructor", ex, charType.Name); }
                 }
 
                 if (character == null) return null;
@@ -3364,6 +3353,7 @@ namespace UnityGameTranslator.Core
                 var dictType = typeof(Dictionary<,>).MakeGenericType(typeof(int), glyphType);
                 var dict = Activator.CreateInstance(dictType);
                 var dictAdd = dictType.GetMethod("Add");
+                var dictHas = dictType.GetMethod("ContainsKey");
 
                 var listType = glyphList.GetType();
                 var countProp = listType.GetProperty("Count");
@@ -3377,11 +3367,9 @@ namespace UnityGameTranslator.Core
                     if (idField != null)
                     {
                         int id = (int)idField.GetValue(glyph);
-                        try
-                        {
+                        // A glyph listed twice keeps its first entry, as TMP's own build does.
+                        if (!(bool)dictHas.Invoke(dict, new object[] { id }))
                             dictAdd.Invoke(dict, new object[] { id, glyph });
-                        }
-                        catch (Exception _e) { TranslatorCore.LogDebug($"[CustomFontLoader] suppressed: {_e.GetType().Name}: {_e.Message}"); } // Ignore duplicates
                     }
                 }
 
@@ -3456,11 +3444,13 @@ namespace UnityGameTranslator.Core
                     if (elemType != null)
                     {
                         var arr = Array.CreateInstance(elemType, 10);
-                        // Initialize each element
-                        for (int i = 0; i < 10; i++)
+                        // Initialize each element — a struct always can be; a class only with a
+                        // parameterless constructor, and otherwise the slots stay empty, which
+                        // GenerateTextMesh reads as "no weight variant".
+                        if (elemType.IsValueType || elemType.GetConstructor(Type.EmptyTypes) != null)
                         {
-                            try { arr.SetValue(Activator.CreateInstance(elemType), i); }
-                            catch (Exception _e) { TranslatorCore.LogDebug($"[CustomFontLoader] suppressed: {_e.GetType().Name}: {_e.Message}"); }
+                            for (int i = 0; i < 10; i++)
+                                arr.SetValue(Activator.CreateInstance(elemType), i);
                         }
                         weightsField.SetValue(fontAsset, arr);
                     }
@@ -3500,7 +3490,9 @@ namespace UnityGameTranslator.Core
                     prop.SetValue(obj, value, null);
                     return;
                 }
-                catch (Exception _e) { TranslatorCore.LogDebug($"[CustomFontLoader] suppressed: {_e.GetType().Name}: {_e.Message}"); }
+                // A value this property will not take (a conversion that does not exist, a setter
+                // that refuses): the glyph or character is built wrong, so it is said.
+                catch (Exception ex) { Faults.Say("CustomFontLoader.SetFieldValue property", ex, $"{type.Name}.{fieldName}; the field is tried next"); }
             }
 
             // Try field (Mono)
@@ -3513,7 +3505,7 @@ namespace UnityGameTranslator.Core
                         value = Convert.ChangeType(value, field.FieldType);
                     field.SetValue(obj, value);
                 }
-                catch (Exception _e) { TranslatorCore.LogDebug($"[CustomFontLoader] suppressed: {_e.GetType().Name}: {_e.Message}"); }
+                catch (Exception ex) { Faults.Say("CustomFontLoader.SetFieldValue field", ex, $"{type.Name}.{fieldName}"); }
             }
         }
 

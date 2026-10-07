@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using UniverseLib.UI;
+using UnityGameTranslator.Common;
 
 namespace UnityGameTranslator.Core.UI
 {

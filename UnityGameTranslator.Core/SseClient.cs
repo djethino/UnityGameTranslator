@@ -5,6 +5,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using UnityGameTranslator.Net.Http;
+using UnityGameTranslator.Common;
 
 namespace UnityGameTranslator.Core
 {

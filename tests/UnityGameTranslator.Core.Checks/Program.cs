@@ -57,9 +57,7 @@ namespace UnityGameTranslator.Core.Checks
                 return 0;
             }
 
-            // Rewrites silent-catches.json with what is left — after fixing some, never to raise it.
-            if (args.Length >= 1 && args[0] == "silent-baseline")
-                return SilentCatchChecks.WriteBaseline();
+            // Where the silent catches are, in the Core and the adapters.
             if (args.Length >= 1 && args[0] == "silent-list")
                 return SilentCatchChecks.List(args.Length >= 2 ? args[1] : null);
 
@@ -289,7 +287,7 @@ namespace UnityGameTranslator.Core.Checks
             Section("UI frontier (panels hold handles only)", UiBoundaryChecks.Run);
             Section("Screen router (which screen is up after which act)", ScreenRouterChecks.Run);
             Section("Engine frontier (the engine names nothing of the interface)", EngineFrontierChecks.Run);
-            Section("Silent catches (a ratchet down to none)", SilentCatchChecks.Run);
+            Section("Silent catches", SilentCatchChecks.Run);
             Section("Font atlases filled through FontAtlas only", FontAtlasChecks.Run);
             Section("Strings handed to the engine through their doors only", TransformFindChecks.Run);
             Section("NGUI's [codes] kept as markup in right-to-left lines", NguiMarkupChecks.Run);

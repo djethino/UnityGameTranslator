@@ -260,8 +260,10 @@ namespace UnityGameTranslator.Core
                     try { text = await response.Content.ReadAsStringAsync(); }
                     catch (Exception ex)
                     {
+                        // The status code still decides below; what the server said about it is lost,
+                        // and that is worth a line a player's log carries.
                         text = null;
-                        TranslatorCore.LogDebug($"[API] {(int)response.StatusCode} body unreadable: {Connectivity.ForLog(ex)}");
+                        Faults.Say("ApiClient.RefusalBody", ex, $"{(int)response.StatusCode}: {Connectivity.ForLog(ex)}");
                     }
                     var body = ParseJsonOrNull(text);
                     string error = (body?["error"] as JValue)?.Value as string;
@@ -1969,10 +1971,10 @@ namespace UnityGameTranslator.Core
                 return response.StatusCode != System.Net.HttpStatusCode.NotFound;
             }
             // A keepalive that did not get through says nothing about the session: it is kept, and
-            // the next one asks again — with the reason in the log.
+            // the next one asks again — with the reason in the log, once and then counted.
             catch (Exception ex)
             {
-                TranslatorCore.LogDebug($"[EditSession] keepalive not delivered: {Connectivity.ForLog(ex)}");
+                Faults.Say("ApiClient.KeepAliveEditSession", ex, Connectivity.ForLog(ex));
                 return true;
             }
         }

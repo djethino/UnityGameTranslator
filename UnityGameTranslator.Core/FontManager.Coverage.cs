@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Reflection;
 using UnityEngine;
+using UnityGameTranslator.Common;
 
 namespace UnityGameTranslator.Core
 {
@@ -587,8 +588,9 @@ namespace UnityGameTranslator.Core
             try { return (bool)method.Invoke(target, args); }
             catch (Exception ex)
             {
-                // A probe that fails says nothing — never "missing".
-                TranslatorCore.LogDebug($"[FontManager] coverage probe {method.DeclaringType?.Name}.HasCharacter failed: {ex.GetBaseException().Message}");
+                // A probe that fails answers "unknown" — never "missing" — and says why: the coverage
+                // notices then hold back on this font.
+                Faults.Say("FontManager.Coverage probe", ex, $"{method.DeclaringType?.Name}.HasCharacter");
                 return null;
             }
         }

@@ -7,6 +7,7 @@ using UnityEngine.UI;
 using UniverseLib;
 using UniverseLib.Input;
 using UnityGameTranslator.Core.UI.Panels;
+using UnityGameTranslator.Common;
 
 namespace UnityGameTranslator.Core.UI
 {
@@ -692,7 +693,8 @@ namespace UnityGameTranslator.Core.UI
             }
             catch (Exception ex)
             {
-                TranslatorCore.LogDebug($"[Inspector] RefreshCameraList error: {ex.Message}");
+                // The picker then aims through the cameras it already knew: said.
+                Faults.Say("InspectorPicker.RefreshCameraList", ex);
             }
 
             _sceneCameras = cameraList.ToArray();
@@ -915,7 +917,8 @@ namespace UnityGameTranslator.Core.UI
                         }
                         catch (Exception ex)
                         {
-                            TranslatorCore.LogDebug($"[Inspector] BitmapReplace click handler error: {ex}");
+                            // A click the person made that did nothing: said.
+                            Faults.Say("InspectorPicker.BitmapReplace click", ex);
                         }
                     }
 
@@ -1224,13 +1227,14 @@ namespace UnityGameTranslator.Core.UI
                     }
                     catch (Exception ex)
                     {
-                        TranslatorCore.LogDebug($"[Inspector] Raycast on {raycasterObj.name} failed: {ex.Message}");
+                        // The other raycasters are still asked; this one's elements cannot be picked.
+                        Faults.Say("InspectorPicker.Raycast", ex, raycasterObj.name);
                     }
                 }
             }
             catch (Exception ex)
             {
-                TranslatorCore.LogDebug($"[Inspector] RaycastUIElement error: {ex.Message}");
+                Faults.Say("InspectorPicker.RaycastUIElement", ex);
             }
 
             return null;
@@ -1316,7 +1320,7 @@ namespace UnityGameTranslator.Core.UI
             }
             catch (Exception ex)
             {
-                TranslatorCore.LogDebug($"[Inspector] RaycastWorldSpaceCanvases error: {ex.Message}");
+                Faults.Say("InspectorPicker.RaycastWorldSpaceCanvases", ex);
             }
 
             return null;
@@ -1725,7 +1729,7 @@ namespace UnityGameTranslator.Core.UI
             }
             catch (Exception ex)
             {
-                TranslatorCore.LogDebug($"[Inspector] RaycastViaCamera error: {ex.Message}");
+                Faults.Say("InspectorPicker.RaycastViaCamera", ex);
                 return null;
             }
         }
@@ -2171,7 +2175,8 @@ namespace UnityGameTranslator.Core.UI
             }
             catch (Exception ex)
             {
-                TranslatorCore.LogDebug($"[Inspector] GetScreenBounds failed: {ex.Message}");
+                // No highlight is drawn around the element: said.
+                Faults.Say("InspectorPicker.GetScreenBounds", ex);
                 return false;
             }
         }

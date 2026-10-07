@@ -729,18 +729,18 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         /// <summary>
         /// Freezing the game: possible, the two lines saying why it is off and what is dangerous;
-        /// impossible (an anti-cheat), the one line naming it, and the box greyed with the same words.
+        /// impossible (an anti-cheat, or a folder that could not be checked for one), the one line
+        /// saying which, and the box greyed with the same words.
         /// </summary>
         private void SetUpPauseToggle()
         {
-            string antiCheat = GamePause.AntiCheat;
-            bool pausePossible = string.IsNullOrEmpty(antiCheat);
+            string why = GamePause.PauseRefusal;
+            bool pausePossible = why == null;
             _pauseGameToggle.Enabled = pausePossible;
             _screen.Label("PauseWhy").Visible = pausePossible;
             _screen.Label("PauseDanger").Visible = pausePossible;
             if (pausePossible) return;
 
-            string why = $"Unavailable: this game is protected by {antiCheat}, which can treat freezing it as cheating.";
             var blocked = _screen.Label("PauseBlocked");
             blocked.Show(why);   // runtime diagnostic, not UI chrome
             blocked.Visible = true;

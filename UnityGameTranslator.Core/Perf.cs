@@ -1,4 +1,5 @@
 ﻿using System.Diagnostics;
+using UnityGameTranslator.Common;
 
 namespace UnityGameTranslator.Core
 {
@@ -396,6 +397,14 @@ namespace UnityGameTranslator.Core
             _worstProcessed = null;
             if (subject == null) return;
 
+            // Destroyed between the call and this line, which is ordinary — recognised, and saying
+            // so is itself an answer: a component that dies mid-pass is worth knowing about.
+            if (!TypeHelper.IsUnityObjectAlive(subject))
+            {
+                TranslatorCore.LogDebug($"[PASS-PERF] the worst one ({subject.GetType().Name}) was destroyed before it could be named");
+                return;
+            }
+
             try
             {
                 var comp = subject as UnityEngine.Component;
@@ -409,9 +418,8 @@ namespace UnityGameTranslator.Core
             }
             catch (System.Exception e)
             {
-                // Destroyed between the call and this line, which is ordinary — and saying so is
-                // itself an answer: a component that dies mid-pass is worth knowing about.
-                TranslatorCore.LogDebug($"[PASS-PERF] the worst one could not be named: {e.Message}");
+                // Alive and still unreadable is not ordinary.
+                Faults.Say("Perf.SayWhatTheWorstWasAbout", e, subject.GetType().Name);
             }
         }
     }

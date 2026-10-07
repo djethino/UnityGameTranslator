@@ -1303,7 +1303,7 @@ namespace UnityGameTranslator.Core.UI
 
             // Freeze the game while our panels hold it — same state as everything else, so the
             // pause follows the interface instead of keeping a notion of its own.
-            if (_uiHoldsInput && TranslatorCore.PauseGame && string.IsNullOrEmpty(GamePause.AntiCheat))
+            if (_uiHoldsInput && TranslatorCore.PauseGame && GamePause.PauseRefusal == null)
                 GamePause.Engage();
             else if (GamePause.Active)
                 GamePause.Release();

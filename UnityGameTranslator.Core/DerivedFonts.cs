@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using UnityGameTranslator.Core.Rasterizer;
 using UnityGameTranslator.Core.TextShaping;
+using UnityGameTranslator.Common;
 
 namespace UnityGameTranslator.Core
 {

@@ -86,7 +86,7 @@ namespace UnityGameTranslator.Core
         /// the middle replaced by a length-preserving placeholder. Enough to tell two
         /// accounts apart in the same log, not enough to identify the human.
         ///
-        /// Example: "jsebagh" → "j*****h"   |   "ab" → "a*"   |   "x" → "*"
+        /// Example: "player42" → "p******2"   |   "ab" → "a*"   |   "x" → "*"
         /// </summary>
         public static string UserName(string name)
         {

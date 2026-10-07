@@ -1065,12 +1065,12 @@ namespace UnityGameTranslator.Core
 
                         var atlasTex = Compat.MakeTexture2D(w, h, TextureFormat.Alpha8, false);
                         atlasTex.filterMode = FilterMode.Bilinear;
-                        if (!LoadRawTextureDataSafe(atlasTex, ready.Alpha))
+                        if (!TextureUtils.LoadRawTextureDataSafe(atlasTex, ready.Alpha))
                         {
                             TranslatorCore.LogWarning("[CustomFontLoader] LoadRawTextureData failed on this runtime — falling back to SetPixels32 (4× transient RAM)");
                             var colors = new Color32[w * h];
                             for (int i = 0; i < colors.Length; i++) colors[i] = new Color32(0, 0, 0, ready.Alpha[i]);
-                            SetPixels32Safe(atlasTex, colors);
+                            TextureUtils.SetPixels32Safe(atlasTex, colors);
                         }
                         atlasTex.Apply();
                         // TMP only samples the GPU copy at render time: the CPU mirror goes.
@@ -1116,7 +1116,7 @@ namespace UnityGameTranslator.Core
                         var pngData = File.ReadAllBytes(paths[ai]);
                         var atlasTex = Compat.MakeTexture2D(2, 2, TextureFormat.RGBA32, false);
                         atlasTex.filterMode = FilterMode.Bilinear;
-                        if (!LoadImageToTexture(atlasTex, pngData))
+                        if (!TextureUtils.LoadImageToTexture(atlasTex, pngData))
                         {
                             fontInfo.Error = $"Failed to load PNG for atlas {ai}";
                             TranslatorCore.LogWarning($"[CustomFontLoader] Failed to load PNG for {fontName} atlas {ai}");
@@ -1162,8 +1162,8 @@ namespace UnityGameTranslator.Core
                     var texture = textures[0];
                     try
                     {
-                        byte[] rawSample = GetRawTextureDataSafe(texture);
-                        int bpp = GetBytesPerPixel(texture.format);
+                        byte[] rawSample = TextureUtils.GetRawTextureDataSafe(texture);
+                        int bpp = TextureUtils.GetBytesPerPixel(texture.format);
                         int pixelCount = rawSample.Length / bpp;
                         int sampleSize = Math.Min(100, pixelCount);
                         int nonWhiteCount = 0;
@@ -3509,18 +3509,6 @@ namespace UnityGameTranslator.Core
             }
         }
 
-        // Texture utility methods have been extracted to TextureUtils.cs
-        // The following are thin wrappers for backward compatibility within this class.
-
-        private static bool SetPixels32Safe(Texture2D texture, Color32[] colors)
-            => TextureUtils.SetPixels32Safe(texture, colors);
-
-        private static bool LoadImageToTexture(Texture2D texture, byte[] data)
-            => TextureUtils.LoadImageToTexture(texture, data);
-
-        private static byte[] GetRawTextureDataSafe(Texture2D texture)
-            => TextureUtils.GetRawTextureDataSafe(texture);
-
         /// <summary>
         /// Release the CPU-side mirror of a Texture2D. After this call the texture's bytes
         /// only live in VRAM — GetRawTextureData / SetPixels32 / EncodeToPNG will fail.
@@ -3546,12 +3534,6 @@ namespace UnityGameTranslator.Core
             }
         }
 
-        private static bool LoadRawTextureDataSafe(Texture2D texture, byte[] data)
-            => TextureUtils.LoadRawTextureDataSafe(texture, data);
-
-        private static int GetBytesPerPixel(TextureFormat format)
-            => TextureUtils.GetBytesPerPixel(format);
-
         /// <summary>
         /// Converts an SDF texture for TMP compatibility.
         /// msdf-atlas-gen outputs SDF as grayscale in RGB channels, but TMP reads distance from Alpha channel.
@@ -3573,7 +3555,7 @@ namespace UnityGameTranslator.Core
 
             try
             {
-                byte[] rawData = GetRawTextureDataSafe(texture);
+                byte[] rawData = TextureUtils.GetRawTextureDataSafe(texture);
                 if (rawData == null || rawData.Length == 0)
                 {
                     // GetRawTextureData returns an empty buffer on some IL2CPP runtimes
@@ -3590,7 +3572,7 @@ namespace UnityGameTranslator.Core
                     return;
                 }
 
-                int bpp = GetBytesPerPixel(texture.format);
+                int bpp = TextureUtils.GetBytesPerPixel(texture.format);
                 if (bpp < 3)
                 {
                     TranslatorCore.LogInfo($"[CustomFontLoader] Texture format {texture.format} (bpp={bpp}), skipping SDF conversion");
@@ -3649,7 +3631,7 @@ namespace UnityGameTranslator.Core
                         rawData[idx + bOffset] = 255;
                         rawData[idx + alphaOffset] = r;
                     }
-                    if (!LoadRawTextureDataSafe(texture, rawData))
+                    if (!TextureUtils.LoadRawTextureDataSafe(texture, rawData))
                     {
                         TranslatorCore.LogWarning("[CustomFontLoader] Failed to write converted texture data back");
                         return;

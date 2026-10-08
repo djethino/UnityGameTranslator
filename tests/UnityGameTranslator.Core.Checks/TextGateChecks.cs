@@ -234,9 +234,19 @@ namespace UnityGameTranslator.Core.Checks
             var store = Store(("Play", "Jouer", "A"), ("Wait", "Wait", "A"), ("Gone", "", "H"));
 
             var r = Look("  Play  ", store);
-            check(r.Outcome == GateOutcome.Hit && r.Stage == GateStage.Trimmed && r.Value == "Jouer",
-                "padding around a stored key still finds it",
-                "a component that pads its text shows the same line as one that does not");
+            check(r.Outcome == GateOutcome.Hit && r.Stage == GateStage.Trimmed && r.Value == "  Jouer  ",
+                "padding around a stored key still finds it, and the padding stays",
+                "the padding is the game's layout: room kept for an icon (issue #33)");
+
+            var menu = Store(("ROOM DIRECTORY", "ANNUAIRE DES CHAMBRES", "H"));
+            check(Look("\n\nROOM DIRECTORY", menu).Value == "\n\nANNUAIRE DES CHAMBRES",
+                "leading line breaks found on the trimmed rung are given back",
+                "a menu placing its entry two lines down, fed the bare value, drew it on the entry above");
+
+            var ownEdges = Store(("Play", " Jouer", "H"));
+            check(Look("  Play\n", ownEdges).Value == " Jouer\n",
+                "a side where the value has its own edge is left as written",
+                "the value's leading space was set by whoever wrote it; the bare trailing side gets the game's break");
 
             check(r.NormalizedText == "  Play  ",
                 "and the key shape keeps the padding",

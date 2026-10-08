@@ -248,7 +248,8 @@ namespace UnityGameTranslator.Core
                         return GateLookup.KnownAt(GateStage.Trimmed, normalizedText);
                     if (cachedTrimmedEntry.Value != trimmed)
                         return GateLookup.Found(GateStage.Trimmed,
-                            Restore(cachedTrimmedEntry.Value, extractedNumbers, extractedVars, variables), normalizedText);
+                            Repad(Restore(cachedTrimmedEntry.Value, extractedNumbers, extractedVars, variables), text),
+                            normalizedText);
                     knownAt = GateStage.Trimmed;
                 }
             }
@@ -397,6 +398,37 @@ namespace UnityGameTranslator.Core
                 normalizedText = ExtractNumbersToPlaceholders(afterVars, out extractedNumbers);
 
             return normalizedText;
+        }
+
+        /// <summary>
+        /// The value found for the bare key, given back the edges the game's text carries — on the
+        /// trimmed rung only, where the line was stored without them.
+        ///
+        /// 🔴 **The edges are the game's layout, not the line's words** (issue #33): a game places a
+        /// menu entry with leading line breaks, or reserves room for an icon with leading spaces.
+        /// Handed back bare, the entry jumped two lines up onto its neighbour and a label slid
+        /// under its icon — while the same line, found by its exact key, kept its place.
+        ///
+        /// ⚠ The edges of the text AS SHOWN, never of the key shape: a game appending a paragraph
+        /// writes "\r\n\r\n", the key holds "\n\n", and the downstream KeepBreaks (TextRouter) puts
+        /// the shown form back — handed the key's, it would find a break already there and keep it.
+        ///
+        /// ⚠ A side where the value already has an edge of its own is left as it is: whoever wrote
+        /// the value set it, and adding the game's would double it. Only the outer edges — what
+        /// sits between words is the translation's, and nothing here could say where it goes.
+        /// </summary>
+        private static string Repad(string value, string shown)
+        {
+            if (string.IsNullOrEmpty(value) || string.IsNullOrEmpty(shown)) return value;
+            string inner = shown.Trim();
+            if (inner.Length == 0) return value;
+            int leadLength = shown.Length - shown.TrimStart().Length;
+            string lead = shown.Substring(0, leadLength);
+            string trail = shown.Substring(leadLength + inner.Length);
+
+            if (lead.Length > 0 && !TextShaping.UnicodeInfo.IsWhiteSpace(value[0])) value = lead + value;
+            if (trail.Length > 0 && !TextShaping.UnicodeInfo.IsWhiteSpace(value[value.Length - 1])) value += trail;
+            return value;
         }
 
         /// <summary>Numbers back first, then variables — the reverse of the extraction.</summary>

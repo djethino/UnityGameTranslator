@@ -422,7 +422,7 @@
     },
     {
       "id": "readback/an-appended-paragraph-keeps-its-break",
-      "why": "a part opening with a Windows paragraph break ('\\r\\n\\r\\n'): found bare in the file, its translation must not glue the two paragraphs together; found with its break, it keeps its own",
+      "why": "a part opening with a Windows paragraph break ('\\r\\n\\r\\n'): found bare in the file, its translation must not glue the two paragraphs together, and gets back the space it ended with (issue #33: the edges are the game's layout); found with its break, it keeps its own",
       "file": {
         " Page one. ": " Première page. ",
         "The story.": "L'histoire.",
@@ -430,8 +430,8 @@
       },
       "steps": [
         { "f": 1, "t": 0.0, "write": " Page one. ", "shows": " Première page. " },
-        { "f": 60, "t": 1.0, "append": "\r\n\r\nThe story. ", "shows": " Première page. \r\n\r\nL'histoire." },
-        { "f": 120, "t": 2.0, "append": "\r\n\r\nNestled. ", "shows": " Première page. \r\n\r\nL'histoire.\n\nNichée. " }
+        { "f": 60, "t": 1.0, "append": "\r\n\r\nThe story. ", "shows": " Première page. \r\n\r\nL'histoire. " },
+        { "f": 120, "t": 2.0, "append": "\r\n\r\nNestled. ", "shows": " Première page. \r\n\r\nL'histoire. \n\nNichée. " }
       ],
       "queued": []
     },

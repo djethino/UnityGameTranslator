@@ -1867,12 +1867,17 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             _fontsList.Clear();
             _identifyByFont.Clear();
+            // Its row has just been destroyed: dressing that "?" back threw on every later reset —
+            // closing this window, clicking another "?", starting the override inspector (which
+            // then never opened). The font stays shown; its new "?" is found below.
+            _highlightedButton = null;
 
             var fonts = FontManager.GetDetectedFontsInfo();
             fonts = ApplyStableFontOrder(fonts);
 
             if (fonts.Count == 0)
             {
+                RebindHighlight();
                 if (_fontsStatus != null)
                 {
                     _fontsStatus.Say("0 fonts detected");
@@ -1891,6 +1896,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             {
                 CreateFontRow(fontInfo);
             }
+            RebindHighlight();
 
             _fontsList.Filled();
 
@@ -2230,13 +2236,33 @@ namespace UnityGameTranslator.Core.UI.Panels
 
                 TranslatorScanner.HighlightFont(fontName);
                 _highlightedFontName = fontName;
-                _highlightedButton = button;
-
-                // Visual feedback: active state on button
-                button.Text.Show("X");
-                button.Text.Tone = Tone.Plain;
-                button.Tone = ButtonTone.Primary;
+                ShowAsHighlighted(button);
             }
+        }
+
+        /// <summary>The "?" of the font shown in game, dressed as active.</summary>
+        private void ShowAsHighlighted(ButtonHandle button)
+        {
+            _highlightedButton = button;
+            button.Text.Show("X");
+            button.Text.Tone = Tone.Plain;
+            button.Tone = ButtonTone.Primary;
+        }
+
+        /// <summary>
+        /// After the rows are rebuilt: the font still shown in game gets its new row's "?" — or,
+        /// when it is no longer in the list, is no longer shown.
+        /// </summary>
+        private void RebindHighlight()
+        {
+            if (_highlightedFontName == null) return;
+            if (_identifyByFont.TryGetValue(_highlightedFontName, out var button) && button != null)
+            {
+                ShowAsHighlighted(button);
+                return;
+            }
+            TranslatorScanner.ClearHighlight();
+            _highlightedFontName = null;
         }
 
         /// <summary>

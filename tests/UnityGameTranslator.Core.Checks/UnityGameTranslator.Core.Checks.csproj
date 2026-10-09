@@ -153,6 +153,7 @@
       climb it in this order, and these cases are what holds it to that.
     -->
     <Compile Include="../../UnityGameTranslator.Core/Engine/TextGate.cs" />
+    <Compile Include="../../UnityGameTranslator.Core/Engine/SizeTags.cs" />
     <!--
       What happens to each text a game writes, IN SEQUENCE: reveals held until they settle, texts
       built in parts, read-backs of our own output, late translations put back into a page. The

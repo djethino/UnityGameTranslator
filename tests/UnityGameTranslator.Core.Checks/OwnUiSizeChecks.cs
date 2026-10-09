@@ -33,11 +33,19 @@ namespace UnityGameTranslator.Core.Checks
             var missing = new List<string>();
             int seen = 0;
 
+            // The guard may sit in the shared predicate the scale and the text's own sizes both ask
+            // (ScalesFontOf) — accepted only when that predicate itself holds it.
+            var shared = Regex.Match(source, @"static\s+bool\s+ScalesFontOf\s*\(");
+            string sharedBody = shared.Success ? BodyAfter(source, shared.Index + shared.Length) : null;
+            bool sharedGuards = sharedBody != null && sharedBody.Contains("IsOwnUIText(");
+
             foreach (Match m in Resizer.Matches(source))
             {
                 seen++;
                 string body = BodyAfter(source, m.Index + m.Length);
-                if (body == null || !body.Contains("IsOwnUIText(")) missing.Add(m.Groups[1].Value);
+                bool guarded = body != null
+                               && (body.Contains("IsOwnUIText(") || (sharedGuards && body.Contains("ScalesFontOf(")));
+                if (!guarded) missing.Add(m.Groups[1].Value);
             }
 
             check(seen >= 4, "the size setters and scale functions are found", seen + " found");

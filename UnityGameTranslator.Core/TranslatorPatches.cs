@@ -2179,6 +2179,7 @@ namespace UnityGameTranslator.Core
                 _originalAutoSizeMax.Remove(id);
                 _originalAutoSizeMin.Remove(id);
                 _inheritedCloneComponents.Remove(id);
+                _sizeTagWrites.Forget(id);
                 // Everything followed per component goes at once. ⚠ This drops a little more than
                 // the separate maps used to: the frame counters, the concat deltas and the
                 // typewriting state used to survive here. Dropping them is a no-op in fact — the
@@ -2341,6 +2342,9 @@ namespace UnityGameTranslator.Core
                     if (!TranslatorCore.FontSettingsMap.ContainsKey(settingsName))
                         continue;
                     ApplyFontScale(kvp.Value, settingsName);
+                    // Its own absolute sizes follow the new factor (SizeTags), before the relayout
+                    // below measures the text at it.
+                    RefitSizeTagsInPlace(kvp.Value, settingsName);
 
                     // A text the game broke into lines at the old size is broken again for the
                     // new one (TextRouter.Relayout): the game only lays a line out when it first
@@ -2710,13 +2714,68 @@ namespace UnityGameTranslator.Core
 
         private static void ApplyFontScaleGated(object instance, Font unityCloneFont, string unityCloneName, string fontNameForScale)
         {
-            if (unityCloneFont != null)
-            {
-                string curFontName = TypeHelper.FontNameOf(TypeHelper.GetFont(instance));
-                if (!string.Equals(curFontName, unityCloneName, StringComparison.OrdinalIgnoreCase))
-                    return;
-            }
+            if (!WearsClone(instance, unityCloneFont, unityCloneName)) return;
             ApplyFontScale(instance, fontNameForScale);
+        }
+
+        /// <summary>
+        /// The size gate of a uGUI/TextMesh replacement: scaled only once the component wears the
+        /// clone — scaling the original font first cumulates when the clone arrives. True when there
+        /// is no clone to wait for.
+        /// </summary>
+        private static bool WearsClone(object instance, Font unityCloneFont, string unityCloneName)
+        {
+            if (unityCloneFont == null) return true;
+            string curFontName = TypeHelper.FontNameOf(TypeHelper.GetFont(instance));
+            return string.Equals(curFontName, unityCloneName, StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>The memory that keeps a text read back by the game from being scaled twice.</summary>
+        private static readonly SizeTagWrites _sizeTagWrites = new SizeTagWrites();
+
+        /// <summary>
+        /// The factor this component's font is sized by — what its text's own absolute sizes must
+        /// follow (<see cref="SizeTags"/>) — or 1 when the mod does not size it. The same conditions
+        /// as <see cref="ApplyFontScale"/>, asked BEFORE the right-to-left presentation: the sizes are
+        /// fitted in the logical text, so the presented form that comes back is recognised as ours.
+        /// </summary>
+        /// <param name="cloneComing">The missed-SetFont repair below will put the clone on this
+        /// component in this same write: the gate is open for it.</param>
+        private static float SizeTagFactor(object instance, int compId, Font unityCloneFont, string unityCloneName,
+                                           string fontName, bool cloneComing)
+        {
+            if (compId == -1 || !ScalesFontOf(instance, fontName)) return 1f;
+            // Its size came with the template's clone, already scaled: ApplyFontScale leaves it.
+            if (_inheritedCloneComponents.Contains(compId)
+                && !_originalFontSizes.ContainsKey(compId) && !_trueOriginalFontSizes.ContainsKey(compId)) return 1f;
+            if (!cloneComing && !WearsClone(instance, unityCloneFont, unityCloneName)) return 1f;
+            return FontManager.GetFontScale(fontName, compId);
+        }
+
+        /// <summary>The text about to be written, its own absolute sizes fitted to the component's factor.</summary>
+        private static void FitSizeTags(object instance, int compId, Font unityCloneFont, string unityCloneName,
+                                        string fontName, bool cloneComing, ref string textValue)
+        {
+            if (compId == -1 || string.IsNullOrEmpty(textValue)) return;
+            textValue = _sizeTagWrites.Fit(compId, textValue,
+                SizeTagFactor(instance, compId, unityCloneFont, unityCloneName, fontName, cloneComing));
+        }
+
+        /// <summary>
+        /// After a size changed on a path that writes no text (an Apply, a replacement passing over
+        /// the scene): the text the component holds, its own sizes fitted again.
+        /// ⚠ Not for a text presented right to left: rewritten here, after its presentation, it
+        /// would come back unrecognised and be composed a second time. The game's next write of it
+        /// goes through the setter, where the sizes are fitted before the presentation.
+        /// </summary>
+        private static void RefitSizeTagsInPlace(object instance, string fontName)
+        {
+            int compId = TypeHelper.GetInstanceID(instance);
+            if (compId == -1 || TextShaping.RtlPresenter.HoldsRtlState(compId)) return;
+            string current = TypeHelper.GetText(instance);
+            if (string.IsNullOrEmpty(current)) return;
+            string fitted = _sizeTagWrites.Fit(compId, current, SizeTagFactor(instance, compId, null, null, fontName, false));
+            if (!string.Equals(fitted, current, StringComparison.Ordinal)) TypeHelper.SetText(instance, fitted);
         }
 
         /// <summary>
@@ -2724,14 +2783,29 @@ namespace UnityGameTranslator.Core
         /// been given its replacement by a path that writes no text (the font passes over the scene).
         /// The same work as the setter's, and as idempotent: nothing moves when the size is right.
         /// </summary>
-        internal static void ApplyScaleForFont(object instance, string fontName) => ApplyFontScale(instance, fontName);
+        internal static void ApplyScaleForFont(object instance, string fontName)
+        {
+            ApplyFontScale(instance, fontName);
+            // The text's own absolute sizes with it (SizeTags) — the one write this path makes,
+            // and only when a size tag needs it.
+            RefitSizeTagsInPlace(instance, fontName);
+        }
+
+        /// <summary>
+        /// Whether the mod sizes this component's font at all — the one answer ApplyFontScale and
+        /// the text's own sizes (<see cref="SizeTagFactor"/>) share, so the two cannot drift.
+        /// </summary>
+        private static bool ScalesFontOf(object instance, string fontName)
+        {
+            if (IsOwnUIText(instance)) return false;
+            if (instance == null || string.IsNullOrEmpty(fontName)) return false;
+            // A template's size stays the game's: every copy starts from it (TypeHelper.IsInScene).
+            return TypeHelper.IsInScene(instance);
+        }
 
         private static void ApplyFontScale(object instance, string fontName)
         {
-            if (IsOwnUIText(instance)) return;
-            if (instance == null || string.IsNullOrEmpty(fontName)) return;
-            // A template's size stays the game's: every copy starts from it (TypeHelper.IsInScene).
-            if (!TypeHelper.IsInScene(instance)) return;
+            if (!ScalesFontOf(instance, fontName)) return;
 
             int instanceId = TypeHelper.GetInstanceID(instance);
             float scale = FontManager.GetFontScale(fontName, instanceId);
@@ -3335,8 +3409,12 @@ namespace UnityGameTranslator.Core
                         // translation is re-set (scanner refresh) — the bookkeeping matched, the
                         // screen still needs the shaped form.
                         if (componentType == "TMP") FontManager.NoteFontTags(textValue, compId);
+                        // The text's own sizes, fitted in the LOGICAL text — see SizeTagFactor.
+                        FitSizeTags(__instance, compId, unityCloneFont, unityCloneName, settingsFontName ?? fontName,
+                                    cloneComing: false, ref textValue);
                         TextShaping.RtlPresenter.Present(__instance, compId, ref textValue,
                                                          settingsFontName ?? fontName, fontOverrideMatched);
+                        _sizeTagWrites.NoteShown(compId, textValue);
                         ApplyFontScaleGated(__instance, unityCloneFont, unityCloneName, settingsFontName ?? fontName);
                         RelayoutIfResized(__instance, compId, ref textValue);
                         return;
@@ -3351,11 +3429,23 @@ namespace UnityGameTranslator.Core
                 // concat/typewriter bookkeeping, caches — works on the logical text; only the
                 // string leaving for the screen is composed. The font code below then sees the
                 // shaped characters, which is what the atlas must actually carry.
+                // The text's own absolute sizes are fitted just before, in the logical text, to the
+                // factor the scale below gives this font — the missed-SetFont repair below counting
+                // as the clone arriving (SizeTagFactor).
+                // ⚠ The missed-SetFont test below asks whether the text was changed — by the routing
+                // or by the presentation — never by the sizes fitted here: a text left untranslated
+                // with its sizes fitted is still an untouched text.
+                bool translated = textValue != preTranslateText;
+                FitSizeTags(__instance, compId, unityCloneFont, unityCloneName, settingsFontName ?? fontName,
+                            cloneComing: unityCloneFont != null && translated && componentType == "Unity",
+                            ref textValue);
+                string fitted = textValue;
                 TextShaping.RtlPresenter.Present(__instance, compId, ref textValue,
                                                  settingsFontName ?? fontName, fontOverrideMatched);
+                _sizeTagWrites.NoteShown(compId, textValue);
 
                 // Detect missed SetFont: text was translated but HasCachedTranslation said no
-                if (unityCloneFont != null && textValue != preTranslateText && componentType == "Unity")
+                if (unityCloneFont != null && componentType == "Unity" && (translated || textValue != fitted))
                 {
                     string curFontName = TypeHelper.FontNameOf(TypeHelper.GetFont(__instance));
                     if (!string.Equals(curFontName, unityCloneName, StringComparison.OrdinalIgnoreCase))

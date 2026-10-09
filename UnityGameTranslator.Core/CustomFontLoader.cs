@@ -1576,6 +1576,28 @@ namespace UnityGameTranslator.Core
         /// two test fonts of a single past investigation and silently broke for
         /// every other user-supplied font (CJK, Arabic, custom Latin, etc.).
         /// </summary>
+        /// <summary>
+        /// Empties the fallback list a copy of a game font brought along (see the clone in
+        /// CreateFontAsset). Said once per source font when there was something to forget.
+        /// </summary>
+        private static void ForgetInheritedFallbacks(object copy, string sourceName)
+        {
+            try
+            {
+                var list = FontManager.GetFallbackListReflection(copy);
+                if (list == null) return;
+                var count = list.GetType().GetProperty("Count")?.GetValue(list, null);
+                if (count is int n && n > 0)
+                {
+                    list.GetType().GetMethod("Clear", Type.EmptyTypes)?.Invoke(list, null);
+                    if (DiagnosticOnce.First("CustomFontLoader.inheritedFallbacks", sourceName))
+                        TranslatorCore.LogDebug($"[CustomFontLoader] the copy of '{sourceName}' came with {n} fallback(s) of its own — emptied: the mod sets its font's fallbacks");
+                }
+            }
+            // Left as copied, a letter our font lacks is drawn by the source's fallback: said.
+            catch (Exception ex) { Faults.Say("CustomFontLoader.ForgetInheritedFallbacks", ex, sourceName); }
+        }
+
         private static bool IsModCreatedFont(string fontName)
         {
             if (string.IsNullOrEmpty(fontName)) return false;
@@ -1714,6 +1736,14 @@ namespace UnityGameTranslator.Core
                         // same way before the reflective writes (m_AtlasTexture, m_AtlasTextures,
                         // material, glyph tables, …) that follow can run cleanly.
                         PrimeIL2CppPropertyGetters(fontAsset);
+
+                        // 🔴 **The copy keeps none of the source's fallbacks** (issue #33, measured on
+                        // the bench 2026-10-09). Instantiate carries the game font's fallback list
+                        // over — TMP's own "LiberationSans SDF - Fallback" on a modern game — and,
+                        // searched before anything the mod adds, it drew every letter our font
+                        // lacks, for every component, instead of each component's own font. Our
+                        // font's fallbacks are the mod's to set: they start empty.
+                        ForgetInheritedFallbacks(fontAsset, existingFont.name);
 
                         break;
                     }

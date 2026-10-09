@@ -2141,9 +2141,8 @@ namespace UnityGameTranslator.Core
             // Handle fallback or enabled changes
             if (fallbackChanged || enabledChanged)
             {
-                // Remove old fallback tracking (both forward and reverse keys)
+                // Remove old fallback tracking
                 _fallbackAppliedFonts.Remove(fontName);
-                _fallbackAppliedFonts.Remove(fontName + "_reverse");
 
                 // Remove old fallback from the game font's actual fallback list
                 // Without this, TMProOld keeps using the old fallback (first in list wins)
@@ -3132,7 +3131,6 @@ namespace UnityGameTranslator.Core
             foreach (var gameFont in users)
             {
                 _fallbackAppliedFonts.Remove(gameFont);
-                _fallbackAppliedFonts.Remove(gameFont + "_reverse");
                 TranslatorScanner.RefreshForFont(gameFont);
             }
 
@@ -3241,8 +3239,11 @@ namespace UnityGameTranslator.Core
                 }
             }
 
-            var replacementFont = GetTMPReplacementFont(originalFontName);
-            if (replacementFont == null) return;
+            var shared = GetTMPReplacementFont(originalFontName);
+            if (shared == null) return;
+            // What the component wears: the replacement with THIS component's own font behind it
+            // (BackupHead) — or, where no head can be made, the shared replacement as before.
+            var replacementFont = BackupHead(shared, originalFontObj, originalFontName) ?? shared;
 
             // Don't re-apply if already replaced with the right font.
             // Liveness guard: GetTMPReplacementFont evicts dead cache entries, but if the
@@ -3343,43 +3344,9 @@ namespace UnityGameTranslator.Core
                 }
             }
 
-            // Add original game font as fallback on the replacement font
-            // So missing chars in replacement → fall back to original
-            if (originalFontObj != null && !_fallbackAppliedFonts.Contains(originalFontName + "_reverse"))
-            {
-                var fallbackList = GetFallbackListReflection(replacementFont);
-                if (fallbackList != null)
-                {
-                    var addMethod = fallbackList.GetType().GetMethod("Add");
-                    if (addMethod != null)
-                    {
-                        try
-                        {
-                            // Cast original font for IL2CPP compatibility
-                            var castedOriginal = TypeHelper.Il2CppCast(originalFontObj,
-                                TypeHelper.TMP_FontAssetType ?? originalFontObj.GetType());
-                            // The "_reverse" mark is dropped on every font-settings change, so
-                            // switching A→B→A would append the original a second time to A's
-                            // list. Ask the list itself rather than trusting the mark.
-                            bool alreadyThere = false;
-                            try
-                            {
-                                var containsMethod = fallbackList.GetType().GetMethod("Contains");
-                                if (containsMethod != null)
-                                    alreadyThere = (bool)containsMethod.Invoke(fallbackList, new[] { castedOriginal });
-                            }
-                            catch (Exception ex) { Faults.Say("FontManager.ApplyFontReplacement fallback Contains", ex); }
-                            if (!alreadyThere)
-                            {
-                                addMethod.Invoke(fallbackList, new[] { castedOriginal });
-                                ForgetBorrowedLetters();
-                            }
-                            _fallbackAppliedFonts.Add(originalFontName + "_reverse");
-                        }
-                        catch (Exception ex) { Faults.Say("FontManager.ApplyFontReplacement reverse fallback", ex); }
-                    }
-                }
-            }
+            // ⚠ No original is added behind the SHARED replacement any more (issue #33): one asset
+            // serves every game font that picks it, so the first original in its list answered for
+            // all of them. Each component's own font is behind its head (BackupHead).
         }
 
         // Guard: our restore paths assign original fonts through the same TMP setter the
@@ -3500,6 +3467,20 @@ namespace UnityGameTranslator.Core
 
             // Our own replacement asset — echo of our SetFont, nothing to do
             if (_createdFallbackFontNames.Contains(fontName)) return;
+
+            // 🔴 **Another of the game's fonts is this component's original from now on** (2026-10-09,
+            // bench `tmpbackup` on Unity 6000.6: a text met wearing TMP's default font, replaced, then
+            // given its own font by the game). The font recorded at the first replacement went on
+            // answering for it — its settings, and, since each component wears a head holding its
+            // own font behind ours (BackupHead), the wrong font for every letter ours lacks. What it
+            // wears now is the game's choice: read as its original, its material taken afresh.
+            if (_originalFontsPerComponent.TryGetValue(instanceId, out var recorded)
+                && !string.Equals(TypeHelper.FontNameOf(recorded), fontName, StringComparison.Ordinal))
+            {
+                _originalFontsPerComponent[instanceId] = fontObj;
+                _originalMaterialsPerComponent.Remove(instanceId);
+                _settingsFontNamePerComponent.Remove(instanceId);
+            }
 
             string settingsFontName = GetSettingsFontName(instanceId, fontName);
             if (!IsTranslationEnabled(settingsFontName)) return;
@@ -4673,6 +4654,144 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// Per (replacement, game font): the asset a component of that game font wears — no letter
+        /// of its own, and behind it the replacement, then the component's OWN font.
+        ///
+        /// 🔴 **The chosen font draws first; the component's own font only for what it lacks**
+        /// (`CLAUDE.md`, « Fallback is the REPLACEMENT font »). One replacement asset serves every
+        /// game font that picks it, so its own fallback list can hold only one order: the first
+        /// original added answered for all — measured on the bench (issue #33, `tmpbackup`): an
+        /// Arabic-only replacement chosen for 17 game fonts drew all their English in ONE of them.
+        ///
+        /// 🔴 **No letter, static: it never writes an atlas.** A copy that kept the replacement's
+        /// letters would share its dynamic atlas while keeping its own record of the free space —
+        /// a letter one of them adds lands where the other has one (this project measured it on
+        /// legacy fonts: GetUnityReplacementFont, « progressive corruption »). The letters stay in
+        /// the replacement alone; TMP reaches them through the head's fallback list, the
+        /// underline and the ellipsis included (TMP 3: searched in the fallbacks too).
+        ///
+        /// ⚠ Its metrics are the replacement's — it is a copy of it — so a line is laid out as the
+        /// chosen font lays it out. Modern TMP only (its character and glyph tables): TMProOld
+        /// keeps the shared replacement, with the fallback order that comes with it. Null when no
+        /// head can be made: the caller wears the shared replacement.
+        /// </summary>
+        private static object BackupHead(object replacement, object originalFontObj, string originalFontName)
+        {
+            if (!(replacement is UnityEngine.Object shared) || originalFontObj == null) return null;
+            var type = TypeHelper.TMP_FontAssetType;
+            if (type == null || type.GetProperty("characterTable", BindingFlags.Public | BindingFlags.Instance) == null) return null;
+            // The game font that IS the replacement (a "[Game]" fallback) is its own backup.
+            if (originalFontObj is UnityEngine.Object originalObj && originalObj == shared) return null;
+
+            string key = shared.GetInstanceID() + "\u0001" + originalFontName;
+            if (_backupHeads.TryGetValue(key, out var known))
+            {
+                if (TypeHelper.IsUnityObjectAlive(known)) return known;
+                _backupHeads.Remove(key);
+            }
+
+            try
+            {
+                var copy = UnityEngine.Object.Instantiate(shared);
+                var head = TypeHelper.Il2CppCast(copy, type);
+                if (!(head is UnityEngine.Object made)) return null;
+
+                // No letter of its own: every one is the replacement's, through the list below —
+                // save the underline's, which TMP looks for in the worn font alone.
+                var characters = type.GetProperty("characterTable", BindingFlags.Public | BindingFlags.Instance)?.GetValue(head, null);
+                var glyphs = type.GetProperty("glyphTable", BindingFlags.Public | BindingFlags.Instance)?.GetValue(head, null);
+                ClearList(characters);
+                ClearList(glyphs);
+                KeepUnderline(shared, type, characters, glyphs);
+                // And it never adds one: static, it never writes into the atlas it shares.
+                var mode = type.GetProperty("atlasPopulationMode", BindingFlags.Public | BindingFlags.Instance);
+                if (mode != null && mode.CanWrite) mode.SetValue(head, Enum.ToObject(mode.PropertyType, 0), null);
+
+                var fallbacks = GetFallbackListReflection(head);
+                if (fallbacks == null) return null;
+                ClearList(fallbacks);
+                var add = fallbacks.GetType().GetMethod("Add");
+                if (add == null) return null;
+                add.Invoke(fallbacks, new[] { TypeHelper.Il2CppCast(shared, type) });
+                add.Invoke(fallbacks, new[] { TypeHelper.Il2CppCast(originalFontObj, type) });
+                CustomFontLoader.RebuildLookupTables(head, type);
+
+                // Ours, standing for that game font: never listed as a game font, and read back as
+                // the game font it replaces wherever a component is met wearing it (GameFontOf).
+                EngineStrings.SetName(made, shared.name + " + " + originalFontName);
+                made.hideFlags |= HideFlags.DontUnloadUnusedAsset;
+                _createdFallbackFontNames.Add(made.name);
+                _gameFontOfCreated[made.name] = originalFontName;
+                _backupHeads[key] = head;
+                TranslatorCore.LogDebug($"[FontManager] '{made.name}': '{shared.name}' draws, '{originalFontName}' behind it for what it lacks");
+                return head;
+            }
+            catch (Exception ex)
+            {
+                // The shared replacement is worn instead: letters it lacks come from whichever
+                // original its list holds — said.
+                Faults.Say("FontManager.BackupHead", ex.InnerException ?? ex, originalFontName);
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// The replacement's "_" put in its head: TMP draws underlines and strikethroughs with the
+        /// "_" of the font a text WEARS and nowhere else — TMP 3.0.6 has that search in the
+        /// fallbacks commented out (GetUnderlineSpecialCharacter). Without it a head would draw
+        /// none, where its replacement worn alone draws them.
+        ///
+        /// ⚠ Drawn into the atlas by the replacement itself, its owner, when it lacks it; the head
+        /// only takes its record, pointing at the same place of the same texture, and never writes.
+        /// That record would point at nothing only if the replacement's atlas were cleared, which
+        /// TMP does from the editor, never while a game runs, and this mod never asks for.
+        /// A replacement with no "_" gives none: no decoration either way (the Fonts tab says so).
+        /// </summary>
+        private static void KeepUnderline(UnityEngine.Object shared, Type type, object characters, object glyphs)
+        {
+            if (characters == null || glyphs == null) return;
+            var replacement = TypeHelper.Il2CppCast(shared, type);
+            var lookup = type.GetProperty("characterLookupTable", BindingFlags.Public | BindingFlags.Instance)?.GetValue(replacement, null);
+            object found = LookUp(lookup, 0x5Fu);
+            if (found == null)
+            {
+                var add = type.GetMethod("TryAddCharacters", BindingFlags.Public | BindingFlags.Instance, null, new[] { typeof(string), typeof(bool) }, null);
+                if (add != null)
+                {
+                    add.Invoke(replacement, new object[] { "_", false });
+                    lookup = type.GetProperty("characterLookupTable", BindingFlags.Public | BindingFlags.Instance)?.GetValue(replacement, null);
+                    found = LookUp(lookup, 0x5Fu);
+                }
+            }
+            if (found == null) return;
+
+            var glyph = found.GetType().GetProperty("glyph", BindingFlags.Public | BindingFlags.Instance)?.GetValue(found, null);
+            if (glyph == null) return;
+            var ctor = found.GetType().GetConstructor(new[] { typeof(uint), glyph.GetType() });
+            var own = ctor != null ? ctor.Invoke(new object[] { 0x5Fu, glyph }) : found;
+            characters.GetType().GetMethod("Add")?.Invoke(characters, new[] { own });
+            glyphs.GetType().GetMethod("Add")?.Invoke(glyphs, new[] { glyph });
+        }
+
+        private static object LookUp(object dictionary, uint unicode)
+        {
+            if (dictionary == null) return null;
+            var tryGet = dictionary.GetType().GetMethod("TryGetValue");
+            if (tryGet == null) return null;
+            var args = new object[] { unicode, null };
+            return (bool)tryGet.Invoke(dictionary, args) ? args[1] : null;
+        }
+
+        /// <summary>The heads made, by replacement instance and game font name (BackupHead).</summary>
+        private static readonly Dictionary<string, object> _backupHeads = new Dictionary<string, object>(StringComparer.Ordinal);
+
+        private static void ClearList(object list)
+        {
+            if (list == null) return;
+            list.GetType().GetMethod("Clear", Type.EmptyTypes)?.Invoke(list, null);
+        }
+
+        /// <summary>
         /// Get the replacement font object for a TMP font.
         /// Returns null if no fallback is configured.
         /// </summary>
@@ -5429,7 +5548,7 @@ namespace UnityGameTranslator.Core
             TranslatorCore.LogDebug($"[FontManager] fallback list changed: {cleared} TMP font asset(s) forgot the letters they had found elsewhere");
         }
 
-        private static object GetFallbackListReflection(object font)
+        internal static object GetFallbackListReflection(object font)
         {
             if (font == null) return null;
             // The font asset's own type, not the base wrapper IL2CPP may hand back

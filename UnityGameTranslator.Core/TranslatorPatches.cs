@@ -2757,8 +2757,30 @@ namespace UnityGameTranslator.Core
                                         string fontName, bool cloneComing, ref string textValue)
         {
             if (compId == -1 || string.IsNullOrEmpty(textValue)) return;
-            textValue = _sizeTagWrites.Fit(compId, textValue,
-                SizeTagFactor(instance, compId, unityCloneFont, unityCloneName, fontName, cloneComing));
+            float factor = SizeTagFactor(instance, compId, unityCloneFont, unityCloneName, fontName, cloneComing);
+            string before = textValue;
+            textValue = _sizeTagWrites.Fit(compId, textValue, factor);
+            NoteSizeTags(compId, fontName, factor, before, textValue);
+        }
+
+        /// <summary>
+        /// One line per distinct text carrying a size tag: the factor found and what came of it — or
+        /// the tag itself when the rule does not read it as absolute, which is how a syntax it does
+        /// not know shows up. Once per text and factor (DiagnosticOnce), never a count.
+        /// ⚠ Under Debug logging only: a game full of sized text wrote some 600 of these a session
+        /// (2026-10-09), which is what proved the rule — and noise for anybody just playing.
+        /// </summary>
+        private static void NoteSizeTags(int compId, string fontName, float factor, string before, string after)
+        {
+            if (!TranslatorCore.DebugMode) return;
+            if (before == null || before.IndexOf("<size", StringComparison.OrdinalIgnoreCase) < 0) return;
+            if (!DiagnosticOnce.First("Patches.sizeTags", before + "\u0001" + factor.ToString("F3"))) return;
+            int at = before.IndexOf("<size", StringComparison.OrdinalIgnoreCase);
+            int end = before.IndexOf('>', at);
+            string tag = end > at ? before.Substring(at, end - at + 1) : before.Substring(at);
+            TranslatorCore.LogInfo($"[SizeTags] comp={compId} font '{fontName ?? "none"}' factor {factor:F3} first tag {tag} — "
+                + (!SizeTags.HasAbsolute(before) ? "not an absolute size, left as it is"
+                   : string.Equals(before, after, StringComparison.Ordinal) ? "unchanged" : "fitted"));
         }
 
         /// <summary>

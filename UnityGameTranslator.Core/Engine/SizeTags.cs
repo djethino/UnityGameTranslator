@@ -25,8 +25,10 @@ namespace UnityGameTranslator.Core
         // in px, optionally quoted. A relative one (50%, 1.5em) does not match — nothing follows the
         // digits but the closing of the tag. ⚠ [0-9], not \d: \d takes every script's digits, which
         // the invariant parse below refuses — and markup values are written in ASCII digits.
+        // ⚠ A leading point is a number too: TMP reads <size=.8> as 0.8, and a game writing it so
+        // (seen 2026-10-09) kept its size while the rest of the line followed the setting.
         private static readonly Regex AbsoluteSize = new Regex(
-            @"<size\s*=\s*(?<q>[""']?)(?<sign>[+-]?)(?<n>[0-9]+(?:\.[0-9]+)?)(?<px>px)?\k<q>\s*>",
+            @"<size\s*=\s*(?<q>[""']?)(?<sign>[+-]?)(?<n>[0-9]+(?:\.[0-9]+)?|\.[0-9]+)(?<px>px)?\k<q>\s*>",
             RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
         /// <summary>Does this text set any absolute size of its own?</summary>

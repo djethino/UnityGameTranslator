@@ -34,6 +34,9 @@ namespace UnityGameTranslator.Core.Checks
             check(SizeTags.Scale("<SIZE=\"40px\">a</size>", 1.5f) == "<size=\"60px\">a</size>",
                 "the unit and the quotes are kept", "the tag stays what the game wrote, only its number moves");
 
+            check(SizeTags.Scale(" <size=.8>STAMPS", 0.5f) == " <size=0.4>STAMPS",
+                "a size written with a leading point is a size", "TMP reads <size=.8> as 0.8; left alone it kept the game's size");
+
             check(SizeTags.Scale("<size=33>a", 0.7f) == "<size=23.1>a",
                 "a fraction is written with a dot, two decimals at most", "invariant: a comma would be a broken tag");
 

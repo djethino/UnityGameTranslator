@@ -2227,7 +2227,7 @@ namespace UnityGameTranslator.Core
                         replacementName = rule.replacement;
                 }
 
-                ApplyReplacement(element, replacementName, currentFont, isSdf);
+                ApplyReplacement(element, replacementName, currentFont);
                 ApplyScale(element, settingsName);
                 return true;
             }
@@ -2248,7 +2248,7 @@ namespace UnityGameTranslator.Core
         /// other paths do per component, which is what keeps the tab's counts truthful.
         /// </summary>
         private static void ApplyReplacement(object element, string settingsName,
-                                             UnityEngine.Object currentFont, bool isSdf)
+                                             UnityEngine.Object currentFont)
         {
             var replacement = FontManager.GetUnityReplacementFont(settingsName);
 
@@ -2282,7 +2282,8 @@ namespace UnityGameTranslator.Core
             string wanted = replacement.name;
             if (string.Equals(currentFont.name, wanted, StringComparison.Ordinal)) return;
 
-            object definition = BuildDefinition(replacement, isSdf, settingsName);
+            _originalFontObject.TryGet(element, out var original);
+            object definition = BuildDefinition(replacement, original, settingsName);
             if (definition == null) return;
 
             var styleValue = Activator.CreateInstance(_styleFontDefinitionType, definition);
@@ -2299,7 +2300,7 @@ namespace UnityGameTranslator.Core
             {
                 TranslatorCore.LogInfo(
                     $"[UIToolkit] Font replaced: {settingsName} -> {wanted}"
-                    + $" ({(isSdf ? "as an SDF asset" : "as a Font")})");
+                    + $" ({(_fromSdfFontMethod != null ? "as an SDF asset" : "as a Font")})");
             }
         }
 
@@ -2591,21 +2592,13 @@ namespace UnityGameTranslator.Core
                  + (definition == null ? "" : $" (fontAsset: {DescribeMember(_fontDefAssetProp, definition)}, font: {DescribeMember(_fontDefFontProp, definition)})");
         }
 
-        /// <summary>Replacement fonts already turned into SDF assets, by font name.</summary>
+        /// <summary>Replacement fonts already turned into SDF assets, by replacement name and the game font behind it (BuildDefinition).</summary>
         private static readonly Dictionary<string, object> _sdfCache =
             new Dictionary<string, object>();
 
-        /// <summary>
-        /// Wraps our replacement the way the game states its own.
-        ///
-        /// ⚠ Matching the engine matters: handing a legacy Font to a document laid out for SDF
-        /// changes how every glyph is rasterised, and USS styles written against SDF stop applying.
-        /// Building the SDF asset is the same move the TMP path makes with
-        /// TMP_FontAsset.CreateFontAsset — on the other engine's type.
-        ///
-        /// ⚠ Cached by name: creating a font asset rasterises an atlas, and doing it once per scan
-        /// pass would be the kind of leak that only shows up after twenty minutes of play.
-        /// </summary>
+        /// <summary>SDF assets made from a game's LEGACY Font, to stand behind a replacement (OriginalAsset), by instance id.</summary>
+        private static readonly Dictionary<int, object> _originalAssets = new Dictionary<int, object>();
+
         /// <summary>
         /// Keeps a font asset we made — and its atlas textures and material — out of the game's
         /// Resources.UnloadUnusedAssets.
@@ -2643,11 +2636,34 @@ namespace UnityGameTranslator.Core
             return FontManager.CreateSdfFontAssetFromFile(derived.CurrentFile, _textCoreFontAssetType, name, probe.ToString());
         }
 
-        private static object BuildDefinition(Font replacement, bool isSdf, string settingsName)
+        /// <summary>
+        /// What an element wears instead of its game font: an SDF asset of the replacement, made
+        /// per (replacement, game font), with the element's OWN game font behind it.
+        ///
+        /// 🔴 **An SDF asset even where the game wore a legacy Font.** UI Toolkit draws a legacy Font
+        /// through an asset TextCore makes from it — and a replacement made by name is a Font with no
+        /// data TextCore can read (CreateSdfFontAssetFromFile): measured at the bench (2026-10-10,
+        /// `tmpbackup`), a label given it drew broken pieces of letters on Unity 6000.0. Our asset is
+        /// made from the font's FILE; the game's own legacy Font stands behind it as an asset made from
+        /// it (OriginalAsset).
+        ///
+        /// 🔴 **The chosen font draws first; the element's own font only for what it lacks**
+        /// (`CLAUDE.md`, « Fallback is the REPLACEMENT font »; TMP: FontManager.BackupHead). With
+        /// nothing behind it, a letter the replacement lacks came from the engine's own fallback —
+        /// the system's Arial on Unity 6, NOTHING drawn at all on 2021.3 (same bench). One asset per
+        /// game font, never one shared: its fallback list holds one order (issue #33). Dynamic, each
+        /// writes its own atlas — the Advanced Text Generator refuses a static one.
+        ///
+        /// ⚠ Cached: creating a font asset rasterises an atlas, and doing it once per scan pass would
+        /// be the kind of leak that only shows up after twenty minutes of play.
+        /// Without TextCore's SDF API (UI Toolkit before 2021.2), the replacement Font as it is.
+        /// </summary>
+        private static object BuildDefinition(Font replacement, object original, string settingsName)
         {
-            if (isSdf && _textCoreFontAssetType != null && _fromSdfFontMethod != null)
+            if (_textCoreFontAssetType != null && _fromSdfFontMethod != null)
             {
-                string key = replacement.name ?? "?";
+                string originalName = original is UnityEngine.Object originalObject && originalObject != null ? originalObject.name : settingsName;
+                string key = (replacement.name ?? "?") + "\u0001" + originalName;
 
                 // A cached asset the engine destroyed since is made again, and said: the shield
                 // below should prevent it, and a text drawn with a dead asset shows nothing.
@@ -2689,6 +2705,7 @@ namespace UnityGameTranslator.Core
                             $"[UIToolkit] '{replacement.name}' cannot be turned into an SDF asset — "
                             + "keeping the game's font. Pick another one in the Fonts tab.");
                     }
+                    else PutOriginalBehind(asset, original, originalName);
                 }
 
                 if (asset != null)
@@ -2702,6 +2719,64 @@ namespace UnityGameTranslator.Core
             }
 
             return _fromFontMethod?.Invoke(null, new object[] { replacement });
+        }
+
+        /// <summary>
+        /// The element's own game font, put in our asset's fallback list (BuildDefinition): an SDF
+        /// asset as it is, a legacy Font as an asset made from it. Said once per font when it cannot.
+        /// </summary>
+        private static void PutOriginalBehind(object asset, object original, string originalName)
+        {
+            if (original == null) return;
+            try
+            {
+                object backup = original is Font legacy ? OriginalAsset(legacy) : TypeHelper.Il2CppCast(original, _textCoreFontAssetType);
+                if (backup == null || ReferenceEquals(backup, asset)) return;
+                var table = _textCoreFontAssetType.GetProperty("fallbackFontAssetTable", BindingFlags.Public | BindingFlags.Instance);
+                object list = table?.GetValue(asset, null);
+                if (list == null && table != null && table.CanWrite)
+                {
+                    list = Activator.CreateInstance(table.PropertyType);
+                    table.SetValue(asset, list, null);
+                }
+                var add = list?.GetType().GetMethod("Add");
+                if (add == null)
+                {
+                    if (DiagnosticOnce.First("UIToolkit.noFallbackTable", originalName))
+                        TranslatorCore.LogWarning($"[UIToolkit] no fallback list on this engine's font asset — letters the replacement lacks are not drawn by '{originalName}'");
+                    return;
+                }
+                add.Invoke(list, new[] { backup });
+                TranslatorCore.LogDebug($"[UIToolkit] '{originalName}' behind the replacement for what it lacks");
+            }
+            // Letters the replacement lacks then come from the engine's own fallback (or nothing): said.
+            catch (Exception ex) { Faults.Say("UIToolkit.PutOriginalBehind", ex.InnerException ?? ex, originalName); }
+        }
+
+        /// <summary>
+        /// An SDF asset made from a game's legacy Font, to stand behind a replacement: what UI Toolkit
+        /// itself draws such a font with. Made once per font, kept out of the game's unloads, named as
+        /// one of ours so no list ever offers it as a game font. Null when this font gives none (said).
+        /// </summary>
+        private static object OriginalAsset(Font legacy)
+        {
+            int id = legacy.GetInstanceID();
+            if (_originalAssets.TryGetValue(id, out var known) && TypeHelper.IsUnityObjectAlive(known)) return known;
+            // The creators the replacement goes through, in their order (BuildDefinition).
+            var made = FontManager.CreateSdfFontAsset(legacy, _textCoreFontAssetType)
+                       ?? FontManager.CreateSdfFontAssetByFamily(legacy, _textCoreFontAssetType);
+            if (!(made is UnityEngine.Object asset) || asset == null)
+            {
+                if (DiagnosticOnce.First("UIToolkit.noOriginalAsset", legacy.name))
+                    TranslatorCore.LogWarning($"[UIToolkit] '{legacy.name}' gives no SDF asset — letters the replacement lacks are not drawn by it");
+                _originalAssets.Remove(id);
+                return null;
+            }
+            EngineStrings.SetName(asset, legacy.name + " (UGT backup)");
+            FontManager.GetCreatedFallbackFontNames().Add(asset.name);
+            ShieldFromUnload(made);
+            _originalAssets[id] = made;
+            return made;
         }
 
         #endregion

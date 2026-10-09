@@ -3148,10 +3148,6 @@ namespace UnityGameTranslator.Core
         private static readonly Dictionary<int, object> _replacedComponentRefs = new Dictionary<int, object>();
 
         /// <summary>
-        /// Apply font replacement: SetFont to the replacement, add original as fallback.
-        /// Stores original font for runtime restore.
-        /// </summary>
-        /// <summary>
         /// Components wearing one of our replacements, and the settings font name it was put on
         /// them FOR — the fast path of every set_text (no reflection once a component is ours).
         ///
@@ -3166,6 +3162,10 @@ namespace UnityGameTranslator.Core
         // Fonts for which the one-shot replacement diagnostic was already logged (issue #21)
         private static readonly HashSet<string> _replacementDiagLogged = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
+        /// <summary>
+        /// Apply font replacement: SetFont to the replacement, with the component's original font
+        /// behind it (BackupHead). Stores original font for runtime restore.
+        /// </summary>
         public static void ApplyFontReplacement(object component, object originalFontObj, string originalFontName)
         {
             if (component == null || string.IsNullOrEmpty(originalFontName)) return;
@@ -3502,19 +3502,7 @@ namespace UnityGameTranslator.Core
             // Our own replacement asset — echo of our SetFont, nothing to do
             if (_createdFallbackFontNames.Contains(fontName)) return;
 
-            // 🔴 **Another of the game's fonts is this component's original from now on** (2026-10-09,
-            // bench `tmpbackup` on Unity 6000.6: a text met wearing TMP's default font, replaced, then
-            // given its own font by the game). The font recorded at the first replacement went on
-            // answering for it — its settings, and, since each component wears a head holding its
-            // own font behind ours (BackupHead), the wrong font for every letter ours lacks. What it
-            // wears now is the game's choice: read as its original, its material taken afresh.
-            if (_originalFontsPerComponent.TryGetValue(instanceId, out var recorded)
-                && !string.Equals(TypeHelper.FontNameOf(recorded), fontName, StringComparison.Ordinal))
-            {
-                _originalFontsPerComponent[instanceId] = fontObj;
-                _originalMaterialsPerComponent.Remove(instanceId);
-                _settingsFontNamePerComponent.Remove(instanceId);
-            }
+            AdoptGameFont(instanceId, fontObj, fontName);
 
             string settingsFontName = GetSettingsFontName(instanceId, fontName);
             if (!IsTranslationEnabled(settingsFontName)) return;
@@ -3544,6 +3532,29 @@ namespace UnityGameTranslator.Core
             }
 
             _directApplyNudge = true;
+        }
+
+        /// <summary>
+        /// 🔴 **Another of the game's fonts is this component's original from now on** — the game
+        /// put a font of its own on a component already replaced (TMP: OnGameAssignedFont; UI.Text:
+        /// PutUnityClone). Found by the bench (`tmpbackup`): on Unity 6000.6, a TMP text met wearing
+        /// TMP's default font, replaced, then given its own font (2026-10-09); on 2021.3, a UI.Text
+        /// replaced in the built-in font, then given another game font, which was never replaced at
+        /// all — the recorded font said "already wearing its clone" (2026-10-10). The font recorded at
+        /// the first replacement went on answering for the component: its settings, and the font
+        /// behind ours for every letter ours lacks. What it wears now is the game's choice: read as
+        /// its original, its material taken afresh. <paramref name="fontName"/> is a GAME font's —
+        /// the caller has set ours aside.
+        /// </summary>
+        private static void AdoptGameFont(int instanceId, object fontObj, string fontName)
+        {
+            if (_originalFontsPerComponent.TryGetValue(instanceId, out var recorded)
+                && !string.Equals(TypeHelper.FontNameOf(recorded), fontName, StringComparison.Ordinal))
+            {
+                _originalFontsPerComponent[instanceId] = fontObj;
+                _originalMaterialsPerComponent.Remove(instanceId);
+                _settingsFontNamePerComponent.Remove(instanceId);
+            }
         }
 
         /// <summary>
@@ -3934,6 +3945,8 @@ namespace UnityGameTranslator.Core
             // (TryApplyUnityClone).
             string fontName = WornFontName(id, fontObj);
             if (string.IsNullOrEmpty(fontName)) return false;
+            // A game font the game just put on a component already replaced: its original now.
+            if (!_createdFallbackFontNames.Contains(TypeHelper.FontNameOf(fontObj) ?? "")) AdoptGameFont(id, fontObj, fontName);
 
             string settingsFontName = GetSettingsFontName(id, fontName);
             // Already wearing its clone — the common case (and the echo of our own SetFont), kept cheap.
@@ -4543,27 +4556,19 @@ namespace UnityGameTranslator.Core
 
                 // IL2CPP fallback: modify the ORIGINAL font's fontNames to point to the system font
                 // This avoids clone atlas sharing issues — Unity re-rasterizes using the new font
-                Font originalGameFont = null;
-                if (replacementFont == null)
-                {
-                    // Try to find the original game font by name
-                    _gameUnityFonts.TryGetValue(originalFontName, out originalGameFont);
+                Font originalGameFont = replacementFont == null ? LoadedGameFont(originalFontName) : null;
 
-                    // Fallback: search all loaded fonts
-                    if (originalGameFont == null)
-                    {
-                        var allFonts = TypeHelper.FindAllObjectsOfType(typeof(Font));
-                        foreach (var f in allFonts)
-                        {
-                            var asFont = f as Font;
-                            if (asFont != null && asFont.name == originalFontName && !IsExternalFont(asFont))
-                            {
-                                originalGameFont = asFont;
-                                break;
-                            }
-                        }
-                    }
-                }
+                // 🔴 Behind ours, what the game font itself falls back to (issue #33): a legacy Font
+                // falls back only by NAMES of installed fonts (fontNames) — the game's own glyphs are
+                // in no file the engine can be pointed at. So the game font's own names follow ours:
+                // its family (what Unity's importer writes there, plus whatever the developer added),
+                // which IS the game font wherever that family is installed — elsewhere the system's
+                // default stands in (the game's embedded glyphs are out of reach). Without them, a
+                // letter ours lacks came from the system's default everywhere (bench 2026-10-10: a
+                // serif game font's untranslated Latin drawn in Arial). Only on a font we just made —
+                // never a game font's own fontNames.
+                if (replacementFont != null && !IsLoadedGameUnityFont(replacementFont))
+                    FollowGameFontNames(replacementFont, LoadedGameFont(originalFontName));
                 if (replacementFont == null && originalGameFont != null)
                 {
                     // Real font family name (+ TTF path for the cmap probe below) — shared resolver,
@@ -4674,6 +4679,33 @@ namespace UnityGameTranslator.Core
             }
 
             return replacementFont;
+        }
+
+        /// <summary>The game's own legacy Font of this name, loaded now (a font of ours never); null when none is.</summary>
+        private static Font LoadedGameFont(string originalFontName)
+        {
+            if (_gameUnityFonts.TryGetValue(originalFontName, out var known) && known != null) return known;
+            foreach (var f in TypeHelper.FindAllObjectsOfType(typeof(Font)))
+                if (f is Font font && font != null && font.name == originalFontName && !IsExternalFont(font))
+                    return font;
+            return null;
+        }
+
+        /// <summary>
+        /// A font we just made draws, after its own names, from the game font's names (see the
+        /// caller). Set once on the fresh font, before it drew anything (PinFontNames).
+        /// </summary>
+        private static void FollowGameFontNames(Font ours, Font gameFont)
+        {
+            var gameNames = gameFont != null ? FontNamesOf(gameFont) : null;
+            if (gameNames == null || gameNames.Length == 0) return;
+            var names = new List<string>(FontNamesOf(ours) ?? new string[0]);
+            int before = names.Count;
+            foreach (var name in gameNames)
+                if (!string.IsNullOrEmpty(name) && !names.Contains(name)) names.Add(name);
+            if (names.Count == before) return;
+            PinFontNames(ours, names);
+            TranslatorCore.LogDebug($"[FontManager] '{ours.name}' draws from [{string.Join(", ", names)}] — '{gameFont.name}''s own names behind ours");
         }
 
         /// <summary>

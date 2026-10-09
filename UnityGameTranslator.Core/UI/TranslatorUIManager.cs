@@ -852,6 +852,9 @@ namespace UnityGameTranslator.Core.UI
         private static bool _eventSystemTaken;
         private static string _sceneWhenTaken;
 
+        /// <summary>The situation last answered by <see cref="GiveBackALostEventSystem"/>: answered once each.</summary>
+        private static string _lostEventSystemAnswered;
+
         /// <summary>
         /// Take or return the game's EventSystem to match what is wanted right now.
         /// </summary>
@@ -889,6 +892,8 @@ namespace UnityGameTranslator.Core.UI
             // delay: two consecutive frames without a raycast while our window holds the input.
             // Latched once taken, until the interface lets go: our own EventSystem raycasts, so
             // re-reading the count would hand the pointer back and forth every other frame.
+            GiveBackALostEventSystem();
+
             bool wanted;
             if (!_uiHoldsInput)
                 wanted = false;
@@ -909,6 +914,42 @@ namespace UnityGameTranslator.Core.UI
             }
             else
                 EventSystemHelper.ReleaseEventSystem();
+        }
+
+        /// <summary>
+        /// No window of ours holds the input, and yet the EventSystem in charge is ours, or there is
+        /// none: the game's is handed back, once per such situation.
+        ///
+        /// 🔴 **A scene load could leave the game with no EventSystem at all** (2026-10-09, back to a
+        /// game's main menu: « je ne peux plus cliquer sur le menu », until a window was opened and
+        /// closed). The new scene's EventSystem announces itself and UniverseLib's hook on
+        /// EventSystem.current puts its own in place while the cursor is to be freed — and nothing
+        /// here gave it back, the "taken" state having just been forgotten with the old scene.
+        /// Answered from the real state, as the rest of this reconciliation is: what is current,
+        /// and whether we hold the input — not from which event led there.
+        /// </summary>
+        private static void GiveBackALostEventSystem()
+        {
+            if (_uiHoldsInput || _eventSystemTaken) { _lostEventSystemAnswered = null; return; }
+
+            var current = UniverseLib.Input.EventSystemHelper.CurrentEventSystem;
+            var ours = UniverseLib.UI.UniversalUI.EventSys;
+            // Compared as engine objects (ReferenceEqual): an IL2CPP proxy is not the same managed object twice.
+            bool lost = current == null || (ours != null && current.ReferenceEqual(ours));
+            if (!lost) { _lostEventSystemAnswered = null; return; }
+
+            // Once per situation — which EventSystem stood there, in which scene — never each frame:
+            // a scene with no EventSystem of its own stays in this state, and a hand-back that
+            // finds nothing to hand to has nothing more to do until something changes.
+            string situation = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name + "|"
+                               + (current == null ? "none" : "ours");
+            if (situation == _lostEventSystemAnswered) return;
+            _lostEventSystemAnswered = situation;
+
+            UniverseLib.Input.EventSystemHelper.ReleaseEventSystem();
+            var after = UniverseLib.Input.EventSystemHelper.CurrentEventSystem;
+            TranslatorCore.LogInfo($"[Ownership] no window holds the input but the game had {(current == null ? "no EventSystem" : "ours")} in charge "
+                                   + $"— given back: {(after != null && !after.ReferenceEqual(ours) ? after.name : "none found")}");
         }
 
         private static int _framesWithoutRaycast;

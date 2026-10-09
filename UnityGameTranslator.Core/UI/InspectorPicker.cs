@@ -87,6 +87,24 @@ namespace UnityGameTranslator.Core.UI
         private object _lastSelectedSpriteObj = null;
         private int _frameSkip = 0;
 
+        // Where the last hover search stood: the pointer, and the camera it picked through. A
+        // search is a scene walk (tens of thousands of objects on a big game); a pointer at rest
+        // over a scene at rest has the same answer, so it is asked again only when one of them
+        // moved, or when _searchAgain says the scene did.
+        private Vector3 _searchedAt = new Vector3(float.NaN, float.NaN, float.NaN);
+        private Vector3 _searchedFrom;
+        private Quaternion _searchedFacing;
+        private float _searchedFov;
+
+        /// <summary>What the hover marker frames, so it follows a moving object between searches.</summary>
+        private GameObject _hoverTarget;
+
+        /// <summary>The hover's pass through a camera still walking the renderers, or null.</summary>
+        private BoxPass _hoverPass;
+
+        /// <summary>What the hover being answered has cost so far, over every frame of its pass.</summary>
+        private long _answerTicks;
+
         // The panel's own window, so a click or hover over it is never picked as game content.
         // Handed in once at Start(): a panel's RectTransform reference does not change for the
         // life of the process, only its geometry does — and GetScreenBounds reads that live.
@@ -197,7 +215,49 @@ namespace UnityGameTranslator.Core.UI
             _renderersCache = null;
             _textsCache = null;
             _camerasCache = null;
+            // What is under the pointer may have changed with them: the next hover looks again.
+            _searchAgain = true;
         }
+
+        /// <summary>
+        /// Every transform that is a listed text or holds one, by instance id — for
+        /// <see cref="CarriesText"/>, built from the very array it describes and again whenever that
+        /// array is taken again.
+        ///
+        /// 🔴 **Asked as a lookup, not a walk** (2026-10-09). The question walked every listed text
+        /// and its parents on each hover; with the list complete (20 699 texts on one game, once
+        /// IL2CPP proxies were cast) that was a scene walk per hover. Built once per list, each
+        /// climb stopping at the first transform already met — siblings share their parents.
+        /// </summary>
+        private static HashSet<int> _textHolders;
+        private static Component[] _textHoldersFor;
+
+        private static HashSet<int> TextHolders()
+        {
+            var texts = Texts();
+            if (_textHolders != null && ReferenceEquals(_textHoldersFor, texts)) return _textHolders;
+
+            var holders = new HashSet<int>();
+            foreach (var comp in texts)
+            {
+                if (comp == null) continue;
+                try
+                {
+                    for (var tr = comp.transform; tr != null; tr = tr.parent)
+                        if (!holders.Add(tr.GetInstanceID())) break;
+                }
+                catch (Exception ex) { Faults.Say("InspectorPicker.TextHolders", ex); }
+            }
+            _textHolders = holders;
+            _textHoldersFor = texts;
+            return holders;
+        }
+
+        /// <summary>
+        /// Something that changes what is under a still pointer happened — the lists taken again, the
+        /// camera picked through changed, picking started. Lowered by the hover that looked again.
+        /// </summary>
+        private static bool _searchAgain = true;
 
         private static Camera[] Cameras()
         {
@@ -302,25 +362,24 @@ namespace UnityGameTranslator.Core.UI
         /// normalised, on purpose — the AABB test below compares a distance against a radius, and
         /// both scale by the same factor, so normalising would only cost six square roots.
         /// </summary>
-        private static readonly float[] _frustum = new float[24];
 
-        private static void BuildFrustum(Camera camera)
+        private static void BuildFrustum(Camera camera, float[] into)
         {
             Matrix4x4 m = camera.projectionMatrix * camera.worldToCameraMatrix;
 
             // left, right, bottom, top, near, far
-            Set(0, m.m30 + m.m00, m.m31 + m.m01, m.m32 + m.m02, m.m33 + m.m03);
-            Set(1, m.m30 - m.m00, m.m31 - m.m01, m.m32 - m.m02, m.m33 - m.m03);
-            Set(2, m.m30 + m.m10, m.m31 + m.m11, m.m32 + m.m12, m.m33 + m.m13);
-            Set(3, m.m30 - m.m10, m.m31 - m.m11, m.m32 - m.m12, m.m33 - m.m13);
-            Set(4, m.m30 + m.m20, m.m31 + m.m21, m.m32 + m.m22, m.m33 + m.m23);
-            Set(5, m.m30 - m.m20, m.m31 - m.m21, m.m32 - m.m22, m.m33 - m.m23);
+            Set(into, 0, m.m30 + m.m00, m.m31 + m.m01, m.m32 + m.m02, m.m33 + m.m03);
+            Set(into, 1, m.m30 - m.m00, m.m31 - m.m01, m.m32 - m.m02, m.m33 - m.m03);
+            Set(into, 2, m.m30 + m.m10, m.m31 + m.m11, m.m32 + m.m12, m.m33 + m.m13);
+            Set(into, 3, m.m30 - m.m10, m.m31 - m.m11, m.m32 - m.m12, m.m33 - m.m13);
+            Set(into, 4, m.m30 + m.m20, m.m31 + m.m21, m.m32 + m.m22, m.m33 + m.m23);
+            Set(into, 5, m.m30 - m.m20, m.m31 - m.m21, m.m32 - m.m22, m.m33 - m.m23);
         }
 
-        private static void Set(int plane, float a, float b, float c, float d)
+        private static void Set(float[] planes, int plane, float a, float b, float c, float d)
         {
             int i = plane * 4;
-            _frustum[i] = a; _frustum[i + 1] = b; _frustum[i + 2] = c; _frustum[i + 3] = d;
+            planes[i] = a; planes[i + 1] = b; planes[i + 2] = c; planes[i + 3] = d;
         }
 
         /// <summary>True once this runtime has shown it carries no physics; not asked again.</summary>
@@ -366,6 +425,7 @@ namespace UnityGameTranslator.Core.UI
             var ray = camera.ScreenPointToRay(screenPosition);
             Vector3 origin = ray.origin;
             float remaining = camera.farClipPlane;
+            float travelled = 0f;   // from the eye to the current origin: every distance said is from the eye
 
             // 🔴 **Only what is AROUND THE EYE is stepped over.** A ray that starts inside a
             // collider is reported as hitting it at no distance at all, so standing on a pavement
@@ -378,11 +438,18 @@ namespace UnityGameTranslator.Core.UI
             // interior wall whose collider does not carry the mesh was walked straight through, and
             // the pick landed on the building's outer shell. A collider one is NOT inside is
             // solid — what is behind it is not visible, whatever is or is not drawn on it.
+            // 🔴 **Nor what is drawn transparent** (2026-10-09): a bus shelter's glass, a window,
+            // water. One sees through it, so it hides nothing: the ray goes on to the first opaque
+            // surface behind it, and only if there is none is the glass itself the answer. Told by
+            // the engine's own fact, the materials' render queue (RenderQueue.Transparent), never by
+            // a name or a guess. A poster behind the glass of a shelter could not be picked.
+            GameObject seenThrough = null;
+            _lastSeenThrough = null;
             for (int skin = 0; skin < MaxSkinsAroundTheEye && remaining > 0f; skin++)
             {
                 RaycastHit hit;
-                if (!Physics.Raycast(origin, ray.direction, out hit, remaining)) return null;
-                if (hit.collider == null) return null;
+                if (!Physics.Raycast(origin, ray.direction, out hit, remaining)) return seenThrough;
+                if (hit.collider == null) return seenThrough;
 
                 // A trigger is a region, not a surface: it stops nothing and is never drawn.
                 bool aroundTheEye = hit.distance < camera.nearClipPlane;
@@ -404,19 +471,68 @@ namespace UnityGameTranslator.Core.UI
                                                 ray.direction.x, ray.direction.y, ray.direction.z,
                                                 shell.min.x, shell.min.y, shell.min.z,
                                                 shell.max.x, shell.max.y, shell.max.z);
-                    blockedAt = leaves > hit.distance ? leaves : hit.distance;
+                    var drawn = Drawn(hit.collider.gameObject, hit.point);
+
+                    if (SeenThrough(drawn))
+                    {
+                        // Kept as the answer should nothing opaque stand behind it; the ray goes on
+                        // from where it leaves this volume. Distances stay measured from the eye.
+                        if (seenThrough == null)
+                        {
+                            seenThrough = drawn;
+                            _lastSeenThrough = hit.collider.gameObject != null ? hit.collider.gameObject.name : "?";
+                        }
+                        float past = (leaves > hit.distance ? leaves : hit.distance) + PastTheHit;
+                        travelled += past;
+                        origin += ray.direction * past;
+                        remaining -= past;
+                        continue;
+                    }
+
+                    blockedAt = travelled + (leaves > hit.distance ? leaves : hit.distance);
                     // What the ray actually struck, kept for the line logged on a click: the gap
                     // between this and what is picked is where three rounds of wrong diagnosis
                     // went, and it costs one string to close it.
                     _lastColliderName = hit.collider.gameObject != null ? hit.collider.gameObject.name : "?";
-                    return Drawn(hit.collider.gameObject, hit.point);
+                    return drawn;
                 }
 
                 float step = hit.distance + PastTheHit;
+                travelled += step;
                 origin += ray.direction * step;
                 remaining -= step;
             }
-            return null;
+            return seenThrough;
+        }
+
+        /// <summary>The see-through surface the last ray went through, for the hover and pick lines.</summary>
+        private static string _lastSeenThrough;
+
+        /// <summary>
+        /// Whether what is drawn at a collider can be seen through: every material it is drawn with
+        /// sits in the transparent part of the engine's render queue. Nothing drawn, or nothing
+        /// readable, is NOT see-through — a collider one is not inside is solid.
+        /// </summary>
+        private static bool SeenThrough(GameObject drawn)
+        {
+            if (drawn == null) return false;
+            try
+            {
+                var rend = drawn.GetComponent<Renderer>();
+                if (rend == null) return false;
+                var materials = rend.sharedMaterials;
+                if (materials == null || materials.Length == 0) return false;
+                foreach (var material in materials)
+                    if (material == null || material.renderQueue < (int)UnityEngine.Rendering.RenderQueue.Transparent)
+                        return false;
+                return true;
+            }
+            catch (Exception ex)
+            {
+                if (DiagnosticOnce.First("Inspector.seenThrough", ex.GetType().Name))
+                    TranslatorCore.LogWarning($"[Inspector] cannot read whether a surface is see-through ({ex.Message}) — it is taken as solid");
+                return false;
+            }
         }
 
         /// <summary>
@@ -507,13 +623,71 @@ namespace UnityGameTranslator.Core.UI
                                 min.x, min.y, min.z, max.x, max.y, max.z);
         }
 
+        /// <summary>
+        /// How far along the ray it meets this renderer's OWN box — its shape's bounds in the
+        /// object's frame, turned and scaled with it — or -1 when it passes beside it. Null when
+        /// the renderer's shape cannot be read: its world box stands.
+        ///
+        /// 🔴 **The world box is a sort, not a measure** (2026-10-09). It is aligned on the world's
+        /// axes, so a wall that is turned — or a whole bus shelter — has a world box reaching well
+        /// in front of its surface: the ray met a poster's collider at 1.77 and the shelter wall's
+        /// world box at 1.67, and the wall it hangs on was picked instead of the poster. The world
+        /// box still rejects the tens of thousands of renderers the ray cannot reach; this answers
+        /// only for the few it lets through.
+        ///
+        /// ⚠ The ray is carried into the object's frame by the inverse matrix, not normalised there:
+        /// a point at t along it in that frame is the point at t along the world ray, so the
+        /// distance found is a world distance, comparable with the ray's and the other boxes'.
+        /// </summary>
+        private static float? OrientedReach(Renderer rend, Ray ray)
+        {
+            Bounds local;
+            if (!ShapeBounds(rend, out local)) return null;
+
+            var toLocal = rend.transform.worldToLocalMatrix;
+            Vector3 origin = toLocal.MultiplyPoint3x4(ray.origin);
+            Vector3 direction = toLocal.MultiplyVector(ray.direction);
+            return RayReachesBox(origin, direction, local);
+        }
+
+        /// <summary>
+        /// The bounds of what a renderer draws, in its own object's frame: a mesh's or a sprite's.
+        /// False for anything else (skinned meshes, particles, lines, trails), whose world box is
+        /// the only shape known.
+        /// </summary>
+        private static bool ShapeBounds(Renderer rend, out Bounds local)
+        {
+            local = default(Bounds);
+            try
+            {
+                var filter = rend.GetComponent<MeshFilter>();
+                var mesh = filter != null ? filter.sharedMesh : null;
+                if (mesh != null) { local = mesh.bounds; return true; }
+
+                // ⚠ No skinned mesh: its bones deform it and move it out of its object's frame, and
+                // the property that would follow them (localBounds) is not in Unity 2018.1. Its
+                // world box, which Unity keeps fitted to the deformed shape, stands.
+
+                // IL2CPP hands a renderer back as its base proxy: the derived type is reached by a cast.
+                var sprite = TypeHelper.Il2CppCast(rend, typeof(SpriteRenderer)) as SpriteRenderer;
+                if (sprite != null && sprite.sprite != null) { local = sprite.sprite.bounds; return true; }
+            }
+            catch (Exception ex)
+            {
+                // Its world box stands; said once per kind of renderer, not per object.
+                if (DiagnosticOnce.First("Inspector.shapeBounds", rend.GetType().Name + ":" + ex.GetType().Name))
+                    TranslatorCore.LogWarning($"[Inspector] cannot read the shape of a {rend.GetType().Name} ({ex.Message}) — picked by its world box");
+            }
+            return false;
+        }
+
         /// <summary>Is this box inside what the camera frames? Plain arithmetic, no Unity helper.</summary>
-        private static bool InFrustum(Bounds bounds)
+        private static bool InFrustum(Bounds bounds, float[] planes)
         {
             Vector3 c = bounds.center, e = bounds.extents;
             for (int i = 0; i < 24; i += 4)
             {
-                float a = _frustum[i], b = _frustum[i + 1], cc = _frustum[i + 2], d = _frustum[i + 3];
+                float a = planes[i], b = planes[i + 1], cc = planes[i + 2], d = planes[i + 3];
                 float radius = e.x * Mathf.Abs(a) + e.y * Mathf.Abs(b) + e.z * Mathf.Abs(cc);
                 if (a * c.x + b * c.y + cc * c.z + d + radius < 0f) return false;
             }
@@ -609,6 +783,39 @@ namespace UnityGameTranslator.Core.UI
             _probeWalkedTotal = 0;
             _probeRayHits = 0;
             _probeBoxWins = 0;
+            _probeGameTicks = 0;
+            _probeTextTicks = 0;
+        }
+
+        // The two halves of a hover, added up over the probe's run: the game's own answer (its
+        // raycasters, or in camera mode the ray and the box pass over the renderers), then the
+        // text found or refined by rectangle.
+        private static long _probeGameTicks, _probeTextTicks;
+
+        /// <summary>The camera picked through moved since the last search — what is under a still pointer changed.</summary>
+        private bool PickingCameraMoved()
+        {
+            if (_selectedCamera == null) return false;
+            try
+            {
+                var tr = _selectedCamera.transform;
+                return tr.position != _searchedFrom || tr.rotation != _searchedFacing
+                       || !Mathf.Approximately(_selectedCamera.fieldOfView, _searchedFov);
+            }
+            catch (Exception ex) { Faults.Say("InspectorPicker.PickingCameraMoved", ex); return true; }
+        }
+
+        private void RememberPickingCamera()
+        {
+            if (_selectedCamera == null) return;
+            try
+            {
+                var tr = _selectedCamera.transform;
+                _searchedFrom = tr.position;
+                _searchedFacing = tr.rotation;
+                _searchedFov = _selectedCamera.fieldOfView;
+            }
+            catch (Exception ex) { Faults.Say("InspectorPicker.RememberPickingCamera", ex); }
         }
 
         private void NoteProbe(long ticks)
@@ -626,7 +833,8 @@ namespace UnityGameTranslator.Core.UI
             TranslatorCore.LogInfo(
                 $"[INSPECTOR-PROBE] {where}: {_probeTicks * toMs / _probeCount:F2} ms avg, "
                 + $"{_probeWorst * toMs:F2} ms worst, over {_probeCount} hovers — "
-                + $"{_probeWalkedTotal / _probeCount} object(s) walked each | "
+                + $"{_probeWalkedTotal / _probeCount} object(s) walked each, "
+                + $"{_probeGameTicks * toMs / _probeCount:F2} ms in the game's answer, {_probeTextTicks * toMs / _probeCount:F2} ms by text rectangles | "
                 + $"ray {_probeRayHits}, box in front {_probeBoxWins}");
             ResetProbe();
         }
@@ -704,6 +912,7 @@ namespace UnityGameTranslator.Core.UI
         {
             if (_isInspecting) _picking--;
             _isInspecting = false;
+            _hoverPass = null;
             HideAllHighlights();
             if (_highlightCanvas != null)
                 _highlightCanvas.SetActive(false);
@@ -722,6 +931,9 @@ namespace UnityGameTranslator.Core.UI
         public void ClearHover()
         {
             _lastHoveredPath = "";
+            _hoverTarget = null;
+            _hoverPass = null;
+            _searchAgain = true;
             HideHoverMarker();
         }
 
@@ -756,6 +968,7 @@ namespace UnityGameTranslator.Core.UI
         public void SelectCamera(int index)
         {
             _selectedCamera = (index > 0 && index <= _sceneCameras.Length) ? _sceneCameras[index - 1] : null;
+            _searchAgain = true;
             ClearSelection();
             ClearHover();
         }
@@ -900,8 +1113,12 @@ namespace UnityGameTranslator.Core.UI
             // Skip if mouse is over our panel
             if (_panelRect != null && IsMouseOverPanel(mousePos))
             {
-                // Hide hover highlight when over our panel
+                // Hide hover highlight when over our panel — and drop a pass whose answer would show
+                // a game object under a pointer that is on the window.
                 HideHoverMarker();
+                _hoverPass = null;
+                _hoverTarget = null;
+                _searchAgain = true;
                 if (_lastHoveredPath != "")
                 {
                     _lastHoveredPath = "";
@@ -910,20 +1127,71 @@ namespace UnityGameTranslator.Core.UI
                 return;
             }
 
-            // --- Hover detection (every 2 frames) ---
-            if (doHoverRaycast)
+            // --- Hover detection: only when something moved, and spread over frames ---
+            //
+            // 🔴 **A pass through a camera walks the scene's renderers over several frames**
+            // (2026-10-09: 40 to 60 ms per hover over 80 000 objects, all of it this pass). It goes
+            // on every frame inside the deliberate budget and its answer is shown when it ends — a
+            // tenth of a second behind a moving pointer, with no frame of the game held back. A new
+            // one starts only once the last has ended: restarted at every move, a camera that never
+            // stops turning would never let one finish. A click still looks at once, in full.
+            bool answered = false;
+            GameObject hoveredObject = null;
+            Vector3 at = mousePos;
+            long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+            if (_hoverPass != null)
             {
-                long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
-                _probeWalked = 0;
-                var hoveredObject = RaycastUIElement(mousePos);
+                if (_hoverPass.Camera != _selectedCamera)
+                    _hoverPass = null;   // another camera picked: the pass answers another question
+                else if (StepBoxPass(_hoverPass, TranslatorScanner.DeliberateBudgetMs()))
+                {
+                    at = _hoverPass.Pointer;
+                    hoveredObject = EndBoxPass(_hoverPass);
+                    _hoverPass = null;
+                    answered = true;
+                }
+            }
+            else
+            {
+                bool lookAgain = doHoverRaycast && (_searchAgain || mousePos != _searchedAt || PickingCameraMoved());
+                if (doHoverRaycast && !lookAgain && _hoverTarget != null && _frameSkip % 10 == 0)
+                {
+                    // Same answer, but what it frames may move: the marker follows it, nothing is searched.
+                    PositionHighlight(_hoverHighlightRect, _hoverHighlight, _hoverEdges, _hoverEdgeImages, _hoverTarget);
+                }
+                if (lookAgain)
+                {
+                    _searchAgain = false;
+                    _searchedAt = mousePos;
+                    RememberPickingCamera();
+                    _probeWalked = 0;
+                    _answerTicks = 0;
+                    if (_selectedCamera != null)
+                        hoveredObject = BeginHoverThroughCamera(_selectedCamera, mousePos, out answered);
+                    else
+                    {
+                        hoveredObject = RaycastUIElement(mousePos);
+                        answered = true;
+                    }
+                }
+            }
+            long gameTicks = System.Diagnostics.Stopwatch.GetTimestamp() - t0;
+            _probeGameTicks += gameTicks;
+            _answerTicks += gameTicks;
+
+            if (answered)
+            {
+                _hoverTarget = null;
+                long t2 = System.Diagnostics.Stopwatch.GetTimestamp();
 
                 // Found nothing: the lists may predate a menu that has just opened. Look once
-                // more with fresh ones — and only once, until something is found again.
+                // more with fresh ones — and only once, until something is found again. Through a
+                // camera the next look is the next pass, which the dropped lists start.
                 if (hoveredObject == null && !_rebuiltOnMiss)
                 {
                     _rebuiltOnMiss = true;
                     DropSceneCaches();
-                    hoveredObject = RaycastUIElement(mousePos);
+                    if (_selectedCamera == null) hoveredObject = RaycastUIElement(at);
                 }
                 if (hoveredObject != null) _rebuiltOnMiss = false;
 
@@ -932,21 +1200,23 @@ namespace UnityGameTranslator.Core.UI
                 object uiToolkitElement = null;
                 Rect uiToolkitRect = default(Rect);
                 if (hoveredObject == null)
-                    uiToolkitElement = UIToolkitSupport.PickAt(mousePos, out uiToolkitRect);
+                    uiToolkitElement = UIToolkitSupport.PickAt(at, out uiToolkitRect);
 
                 // And when neither answer is a text, in a mode that is about text: the text under the
                 // pointer by its rectangle (see TextUnderPointer — after the game's answer, never
                 // instead of it). An answer holding texts is refined to the one under the pointer.
                 bool byRectangle = false;
+                long t1 = System.Diagnostics.Stopwatch.GetTimestamp();
                 if (uiToolkitElement == null && WantsText && (hoveredObject == null || !CarriesText(hoveredObject)))
                 {
-                    var text = TextUnderPointer(mousePos);
+                    var text = TextUnderPointer(at);
                     if (text != null) { hoveredObject = text; byRectangle = true; }
                 }
                 else if (uiToolkitElement == null)
-                    hoveredObject = RefineToText(hoveredObject, mousePos, out byRectangle);
+                    hoveredObject = RefineToText(hoveredObject, at, out byRectangle);
+                _probeTextTicks += System.Diagnostics.Stopwatch.GetTimestamp() - t1;
 
-                NoteProbe(System.Diagnostics.Stopwatch.GetTimestamp() - t0);
+                NoteProbe(_answerTicks + (System.Diagnostics.Stopwatch.GetTimestamp() - t2));
 
                 if (hoveredObject != null)
                 {
@@ -982,13 +1252,15 @@ namespace UnityGameTranslator.Core.UI
                                           + $"'{_lastColliderName}' whose far side is at {_lastBlockedAt:F2}")
                                     + (_rejectedName != null
                                         ? $" | nearest turned away for carrying no image: '{_rejectedName}' at {_rejectedAt:F2}"
-                                        : " | nothing was turned away for carrying no image"));
+                                        : " | nothing was turned away for carrying no image")
+                                    + SeenAndBehind());
 
                             Hovered?.Invoke(path);
                         }
 
                         // Position hover highlight
                         PositionHighlight(_hoverHighlightRect, _hoverHighlight, _hoverEdges, _hoverEdgeImages, hoveredObject);
+                        _hoverTarget = hoveredObject;
                     }
                 }
                 else
@@ -1043,7 +1315,8 @@ namespace UnityGameTranslator.Core.UI
                     else if (_selectedCamera != null)
                         TranslatorCore.LogDebug($"[Inspector] picked '{hitObject.name}' via "
                                                 + (_lastPathWasRay ? $"the ray, which struck the collider '{_lastColliderName}'"
-                                                                   : "a box in front of what the ray struck"));
+                                                                   : "a box in front of what the ray struck")
+                                                + SeenAndBehind());
 
                     Select(hitObject, mousePos);
                 }
@@ -1576,14 +1849,7 @@ namespace UnityGameTranslator.Core.UI
         private static bool CarriesText(GameObject go)
         {
             if (go == null) return false;
-            var root = go.transform;
-            foreach (var comp in Texts())
-            {
-                if (comp == null) continue;
-                for (var t = comp.transform; t != null; t = t.parent)
-                    if (t == root) return true;
-            }
-            return false;
+            return TextHolders().Contains(go.transform.GetInstanceID());
         }
 
         /// <summary>
@@ -1927,39 +2193,122 @@ namespace UnityGameTranslator.Core.UI
                 }
             }
 
-            // Then: bounds check for renderers visible to this camera
+            // Then: the box pass over the renderers this camera can see, all at once.
+            var pass = BeginBoxPass(camera, screenPosition, blocker, blockedAt);
+            if (pass == null) return null;
+            StepBoxPass(pass, double.MaxValue);
+            return EndBoxPass(pass);
+        }
+
+        /// <summary>
+        /// One box pass over the scene's renderers, able to stop and go on at the next frame: what
+        /// it was asked for (camera, pointer, line of sight, the camera's frustum, the nearest solid
+        /// thing) taken once at its start, what it found so far, and where it got to.
+        ///
+        /// 🔴 **Its own copy of everything it asked, never the shared one** (2026-10-09). A pass
+        /// spread over frames lives while a click runs a whole one and a camera moves: reading the
+        /// frustum or the best-so-far from shared fields would mix two passes into one answer.
+        /// </summary>
+        private sealed class BoxPass
+        {
+            public Camera Camera;
+            public Vector3 Pointer;
+            public Ray Cursor;
+            public readonly float[] Frustum = new float[24];
+            public float BlockedAt = float.MaxValue;
+            public GameObject Blocker;
+            public int CullingMask;
+            public Renderer[] All;
+            public int Next;
+            public GameObject BestHit;
+            public float BestDepth = float.MaxValue, BestArea = float.MaxValue;
+            public float RejectedAt = float.MaxValue;
+            public string RejectedName;
+            // The nearest box turned away for lying behind the solid thing — what a "why not
+            // this one?" asks first. Its name is read only under Debug logging.
+            public float BehindAt = float.MaxValue;
+            public Renderer Behind;
+            public long Ticks;
+            public int Walked;
+            public bool Done => All == null || Next >= All.Length;
+        }
+
+        private static string SeenAndBehind()
+            => (_lastSeenThrough != null ? $" | through the see-through '{_lastSeenThrough}'" : "")
+               + (_lastBehindName != null ? $" | nearest behind the solid thing: '{_lastBehindName}' at {_lastBehindAt:F2}" : "");
+
+        private static void NoteBehind(BoxPass pass, Renderer rend, float reach)
+        {
+            if (!TranslatorCore.DebugMode || reach >= pass.BehindAt) return;
+            pass.BehindAt = reach;
+            pass.Behind = rend;
+        }
+
+        /// <summary>The nearest box the last pass turned away as behind the solid thing, and where.</summary>
+        private static string _lastBehindName;
+        private static float _lastBehindAt;
+
+        /// <summary>A box pass from this pointer through this camera, the ray's answer already in hand.</summary>
+        private BoxPass BeginBoxPass(Camera camera, Vector3 screenPosition, GameObject blocker, float blockedAt)
+        {
             try
             {
-                int cullingMask = camera.cullingMask;
-                var all = Renderers();
+                var pass = new BoxPass
+                {
+                    Camera = camera,
+                    Pointer = screenPosition,
+                    Blocker = blocker,
+                    BlockedAt = blockedAt,
+                    CullingMask = camera.cullingMask,
+                    All = Renderers(),
+                    // The line of sight, worked out once for the whole pass rather than per renderer.
+                    Cursor = camera.ScreenPointToRay(screenPosition),
+                };
 
                 // 🔴 **Reject what the camera cannot see, before projecting anything** — measured
                 // 2026-09-19: 329 ms average per hover, 57 143 objects walked each time, on a
                 // game holding 71 336 renderers. `isVisible` filtered barely a fifth of them,
                 // because it is true as soon as ANY camera sees the object, shadow and offscreen
                 // cameras included. The frustum of the camera being picked through is the honest
-                // question, asked once per hover rather than per object.
-                //
-                BuildFrustum(camera);
+                // question, asked once per pass rather than per object.
+                BuildFrustum(camera, pass.Frustum);
+                return pass;
+            }
+            catch (Exception ex)
+            {
+                Faults.Say("InspectorPicker.BeginBoxPass", ex);
+                return null;
+            }
+        }
 
-                // The line of sight, worked out once for the whole pass rather than per renderer.
-                var cursor = camera.ScreenPointToRay(screenPosition);
-                _rejectedAt = float.MaxValue;
-                _rejectedName = null;
-
-                GameObject bestHit = null;
-                float bestDepth = float.MaxValue;
-                float bestArea = float.MaxValue;
-
+        /// <summary>
+        /// Walk the pass on from where it stopped, until it is done or <paramref name="budgetMs"/>
+        /// is spent — always at least one renderer. True once every renderer has been looked at.
+        /// </summary>
+        private bool StepBoxPass(BoxPass pass, double budgetMs)
+        {
+            long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+            long stopAt = budgetMs >= double.MaxValue / 2 ? long.MaxValue
+                : t0 + (long)(budgetMs * System.Diagnostics.Stopwatch.Frequency / 1000.0);
+            var all = pass.All;
+            var cursor = pass.Cursor;
+            try
+            {
                 // 🔴 **Geometry first, identity last.** Every test below that names `gameObject`
                 // is an interop call on IL2CPP — the proxy has to be found for each one — and they
                 // used to run before the box was even looked at, on all 33 380 renderers. The
                 // cheap questions, and the ones that reject almost everything, are the geometric
                 // ones: does the camera frame it, does the line of sight go through it.
-                foreach (var rend in all)
+                int first = pass.Next;
+                while (all != null && pass.Next < all.Length)
                 {
+                    // The clock asked every few renderers, BEFORE taking the next one: a renderer
+                    // taken then left for the next frame would never be looked at.
+                    if (pass.Next > first && (pass.Next & 63) == 0
+                        && System.Diagnostics.Stopwatch.GetTimestamp() >= stopAt) break;
+                    var rend = all[pass.Next++];
                     if (rend == null) continue;
-                    _probeWalked++;
+                    pass.Walked++;
 
                     if (!rend.enabled || !rend.isVisible) continue;
 
@@ -1967,7 +2316,7 @@ namespace UnityGameTranslator.Core.UI
                     if (bounds.size == Vector3.zero) continue;
 
                     // Outside what this camera frames: nothing to pick, nothing to measure.
-                    if (!InFrustum(bounds)) continue;
+                    if (!InFrustum(bounds, pass.Frustum)) continue;
 
                     // Does the line of sight actually go through this box, and how far along?
                     float reach = RayReachesBox(cursor.origin, cursor.direction, bounds);
@@ -1976,7 +2325,7 @@ namespace UnityGameTranslator.Core.UI
                     // 🔴 **Nothing behind the nearest solid thing.** This is what the ray is for:
                     // a box further away than the wall the ray stopped at is behind that wall, and
                     // a bounding box on its own can never know that.
-                    if (reach >= blockedAt) continue;
+                    if (reach >= pass.BlockedAt) { NoteBehind(pass, rend, reach); continue; }
 
                     // 🔴 **The nearest along the ray wins.** A real distance, not the depth of
                     // the box's centre — which put a large object behind a small one whenever
@@ -1987,14 +2336,25 @@ namespace UnityGameTranslator.Core.UI
                     // on) are the case, and a tie-break that changed with the viewpoint is the
                     // thing this pass was rewritten to be rid of.
                     float size = bounds.size.x * bounds.size.y * bounds.size.z;
-                    if (reach > bestDepth || (reach == bestDepth && size >= bestArea)) continue;
+                    if (reach > pass.BestDepth || (reach == pass.BestDepth && size >= pass.BestArea)) continue;
+
+                    // The world box only sorts: the few it lets through are measured by their own
+                    // box (OrientedReach), which a turned wall does not overhang.
+                    float? own = OrientedReach(rend, cursor);
+                    if (own.HasValue)
+                    {
+                        if (own.Value < 0f) continue;           // the ray passes beside it
+                        reach = own.Value;
+                        if (reach >= pass.BlockedAt) { NoteBehind(pass, rend, reach); continue; }
+                        if (reach > pass.BestDepth || (reach == pass.BestDepth && size >= pass.BestArea)) continue;
+                    }
 
                     // Only now, for the handful that are actually in front: who is it?
                     try
                     {
                         var go = rend.gameObject;
                         if (go == null || !go.activeInHierarchy) continue;
-                        if ((cullingMask & (1 << go.layer)) == 0) continue;
+                        if ((pass.CullingMask & (1 << go.layer)) == 0) continue;
                         if (IsOwnUI(go)) continue;
                         if (_currentMode == InspectorMode.BitmapReplace
                             && !ImageReplacer.HasImageComponent(go))
@@ -2004,13 +2364,13 @@ namespace UnityGameTranslator.Core.UI
                             // were not, and nothing said whether the furniture was being rejected
                             // by this filter or never reaching it at all — two completely
                             // different defects with one symptom (2026-09-19).
-                            if (reach < _rejectedAt) { _rejectedAt = reach; _rejectedName = go.name; }
+                            if (reach < pass.RejectedAt) { pass.RejectedAt = reach; pass.RejectedName = go.name; }
                             continue;
                         }
 
-                        bestDepth = reach;
-                        bestArea = size;
-                        bestHit = go;
+                        pass.BestDepth = reach;
+                        pass.BestArea = size;
+                        pass.BestHit = go;
                     }
                     catch (Exception ex)
                     {
@@ -2029,18 +2389,69 @@ namespace UnityGameTranslator.Core.UI
                         }
                     }
                 }
-
-                // A box in front of the nearest solid thing wins; otherwise the solid thing is the
-                // answer, if this mode can act on it.
-                if (bestHit != null) { _probeBoxWins++; _lastPathWasRay = false; _lastBoxAt = bestDepth; _lastBlockedAt = blockedAt; return bestHit; }
-                if (blocker != null && Pickable(blocker)) { _probeRayHits++; _lastPathWasRay = true; _lastBoxAt = -1f; _lastBlockedAt = blockedAt; return blocker; }
-                return null;
             }
             catch (Exception ex)
             {
-                Faults.Say("InspectorPicker.RaycastViaCamera", ex);
-                return null;
+                // The pass cannot go on: what it found so far is its answer.
+                Faults.Say("InspectorPicker.StepBoxPass", ex);
+                if (all != null) pass.Next = all.Length;
             }
+            pass.Ticks += System.Diagnostics.Stopwatch.GetTimestamp() - t0;
+            return pass.Done;
+        }
+
+        /// <summary>
+        /// What a finished pass answers: a box in front of the nearest solid thing wins; otherwise
+        /// the solid thing is the answer, if this mode can act on it.
+        /// </summary>
+        private GameObject EndBoxPass(BoxPass pass)
+        {
+            _probeWalked += pass.Walked;
+            _rejectedAt = pass.RejectedAt;
+            _rejectedName = pass.RejectedName;
+            _lastBehindAt = pass.BehindAt;
+            _lastBehindName = null;
+            if (pass.Behind != null)
+            {
+                try { _lastBehindName = pass.Behind.gameObject.name; }
+                catch (Exception ex) { Faults.Say("InspectorPicker.EndBoxPass", ex); }
+            }
+            if (pass.BestHit != null) { _probeBoxWins++; _lastPathWasRay = false; _lastBoxAt = pass.BestDepth; _lastBlockedAt = pass.BlockedAt; return pass.BestHit; }
+            if (pass.Blocker != null && Pickable(pass.Blocker)) { _probeRayHits++; _lastPathWasRay = true; _lastBoxAt = -1f; _lastBlockedAt = pass.BlockedAt; return pass.Blocker; }
+            return null;
+        }
+
+        /// <summary>
+        /// The hover's own search through a camera, begun now and walked within this frame's
+        /// budget: a canvas in the world answers at once, the box pass goes on at the next frames
+        /// (<see cref="_hoverPass"/>). Null with no pass left running means nothing is there.
+        /// </summary>
+        private GameObject BeginHoverThroughCamera(Camera camera, Vector3 screenPosition, out bool answered)
+        {
+            answered = true;
+            var canvasHit = RaycastWorldSpaceCanvases(camera, screenPosition);
+            if (canvasHit != null) return canvasHit;
+
+            float blockedAt = float.MaxValue;
+            GameObject blocker = null;
+            if (!_physicsRefused)
+            {
+                try { blocker = PhysicsPick(camera, screenPosition, out blockedAt); }
+                catch (Exception ex)
+                {
+                    _physicsRefused = true;
+                    TranslatorCore.LogWarning(
+                        $"[Inspector] This game ships no usable physics ({ex.Message}) — picking "
+                        + "falls back to bounding boxes, which cannot see what is in front");
+                }
+            }
+
+            var pass = BeginBoxPass(camera, screenPosition, blocker, blockedAt);
+            if (pass == null) return null;
+            if (StepBoxPass(pass, TranslatorScanner.DeliberateBudgetMs())) return EndBoxPass(pass);
+            _hoverPass = pass;
+            answered = false;
+            return null;
         }
 
         #endregion

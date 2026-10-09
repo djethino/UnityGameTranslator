@@ -2327,40 +2327,52 @@ namespace UnityGameTranslator.Core
         {
             var refs = new List<KeyValuePair<int, object>>(PatchedComponentRefs);
             foreach (var kvp in refs)
+                ReapplyScaleTo(kvp.Key, kvp.Value);
+        }
+
+        /// <summary>
+        /// One component's size re-derived from its current (gated) scale — the work
+        /// <see cref="ReapplyScaleToAllComponents"/> does for each, here for one.
+        ///
+        /// 🔴 **Called by the refresh with the component's text and font** (2026-10-09): a text put
+        /// back to the game's took its text and its font at once, and its size only at the end of
+        /// the whole walk, seconds later — three things arriving at three moments. Idempotent: the
+        /// pass at the end then finds nothing to move.
+        /// </summary>
+        internal static void ReapplyScaleTo(int id, object component)
+        {
+            // Destroyed since the patch saw it: the reference outlives the object.
+            if (component == null || (component is UnityEngine.Object gone && gone == null)) return;
+            try
             {
-                // Destroyed since the patch saw it: the reference outlives the object.
-                if (kvp.Value == null || (kvp.Value is UnityEngine.Object gone && gone == null)) continue;
-                try
-                {
-                    string cachedFontName = FontNameOfTracked(kvp.Key, kvp.Value);
-                    if (string.IsNullOrEmpty(cachedFontName)) continue;
+                string cachedFontName = FontNameOfTracked(id, component);
+                if (string.IsNullOrEmpty(cachedFontName)) return;
 
-                    string settingsName = FontManager.GetSettingsFontName(kvp.Key, cachedFontName);
-                    // Only re-apply when the resolved name is a REAL settings font. When a component's
-                    // per-component original tracking is absent, GetSettingsFontName falls back to the
-                    // raw current font name; for a fallback/variant font (e.g. a "<family>-Latin" subset
-                    // the game/TMP substitutes for Latin glyphs) that is NOT a settings key, GetFontScale
-                    // returns a bogus 1.0 and would SHRINK the component (issue #21: the title, rendered
-                    // through such a variant, collapsed to scale 1.0 on toggle). Leave those to the patch
-                    // path, which re-tracks the true original before scaling. No suffix stripping — stays
-                    // language/script agnostic.
-                    if (!TranslatorCore.FontSettingsMap.ContainsKey(settingsName))
-                        continue;
-                    ApplyFontScale(kvp.Value, settingsName);
-                    // Its own absolute sizes follow the new factor (SizeTags), before the relayout
-                    // below measures the text at it.
-                    RefitSizeTagsInPlace(kvp.Value, settingsName);
+                string settingsName = FontManager.GetSettingsFontName(id, cachedFontName);
+                // Only re-apply when the resolved name is a REAL settings font. When a component's
+                // per-component original tracking is absent, GetSettingsFontName falls back to the
+                // raw current font name; for a fallback/variant font (e.g. a "<family>-Latin" subset
+                // the game/TMP substitutes for Latin glyphs) that is NOT a settings key, GetFontScale
+                // returns a bogus 1.0 and would SHRINK the component (issue #21: the title, rendered
+                // through such a variant, collapsed to scale 1.0 on toggle). Leave those to the patch
+                // path, which re-tracks the true original before scaling. No suffix stripping — stays
+                // language/script agnostic.
+                if (!TranslatorCore.FontSettingsMap.ContainsKey(settingsName))
+                    return;
+                ApplyFontScale(component, settingsName);
+                // Its own absolute sizes follow the new factor (SizeTags), before the relayout
+                // below measures the text at it.
+                RefitSizeTagsInPlace(component, settingsName);
 
-                    // A text the game broke into lines at the old size is broken again for the
-                    // new one (TextRouter.Relayout): the game only lays a line out when it first
-                    // shows it, so after an Apply its bubbles kept breaks made for another size.
-                    string relaid = TranslatorCore.Router.Relayout(kvp.Value, kvp.Key, TypeHelper.GetText(kvp.Value));
-                    if (relaid != null) TypeHelper.SetText(kvp.Value, relaid);
-                }
-                // The game's own component, resized through its setters: one that fails keeps
-                // its size, the others are re-fitted, and it is said.
-                catch (Exception ex) { Faults.Say("Patches.ReapplyScaleToAllComponents", ex, kvp.Value.GetType().Name); }
+                // A text the game broke into lines at the old size is broken again for the
+                // new one (TextRouter.Relayout): the game only lays a line out when it first
+                // shows it, so after an Apply its bubbles kept breaks made for another size.
+                string relaid = TranslatorCore.Router.Relayout(component, id, TypeHelper.GetText(component));
+                if (relaid != null) TypeHelper.SetText(component, relaid);
             }
+            // The game's own component, resized through its setters: one that fails keeps
+            // its size, the others are re-fitted, and it is said.
+            catch (Exception ex) { Faults.Say("Patches.ReapplyScaleTo", ex, component.GetType().Name); }
         }
 
         /// <summary>
@@ -2620,6 +2632,9 @@ namespace UnityGameTranslator.Core
                 // The mod's own window only when its texts are translated too.
                 bool ownUi = TranslatorCore.IsOwnUI(comp);
                 if (!ownUi || TranslatorCore.ShouldTranslateOwnUI) TranslatorScanner.Appeared(TypeHelper.UI_TextType);
+                // A refresh walk still running and not there yet: this one first — on the way
+                // out as much as on the way in.
+                if (!ownUi) TranslatorScanner.ShownDuringSpread(__instance);
                 if (!TranslatorCore.TranslationsActive) return;
 
                 // Defense-in-depth: never re-apply game fonts to our own UI.
@@ -3793,6 +3808,8 @@ namespace UnityGameTranslator.Core
                     // A text arrived: the scanner looks TMP_Text up at its next cycle (see the
                     // UI.Text twin in Graphic_OnEnable_Postfix).
                     if (!ownUi || TranslatorCore.ShouldTranslateOwnUI) TranslatorScanner.Appeared(TypeHelper.TMP_TextType);
+                    // A refresh walk still running and not there yet: this one first.
+                    if (!ownUi) TranslatorScanner.ShownDuringSpread(__instance);
                     // A copy of a template still wearing the template's right-to-left form:
                     // presented on its own at the next pass (written then, not here).
                     if (TranslatorCore.TranslationsActive && !ownUi)

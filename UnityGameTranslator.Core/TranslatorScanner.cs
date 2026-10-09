@@ -2106,6 +2106,13 @@ namespace UnityGameTranslator.Core
             public List<KeyValuePair<int, object>> PatchRefs;
             public HashSet<int> Processed = new HashSet<int>();
             public int NextCached, NextPatchRef;
+            // How many of each list are on an active object — walked first (ShownFirst).
+            public int ShownCached, ShownPatchRefs;
+            public double OrderingMs;
+            public int ShownSettledFrame;
+            // Components that came on screen while the walk had not reached them (ShownDuringSpread).
+            public List<KeyValuePair<int, object>> ShownNow = new List<KeyValuePair<int, object>>();
+            public int ShownNowDone;
             public bool GlyphsChanged, ReapplyAllScales, GlobalRestore, TranslationsSwitched;
             public int Refreshed, Restored, Frames;
             public System.Diagnostics.Stopwatch Spent = new System.Diagnostics.Stopwatch();
@@ -2158,6 +2165,11 @@ namespace UnityGameTranslator.Core
             // meet a write in progress (it used to be caught, and read as "no component").
             pass.PatchRefs = new List<KeyValuePair<int, object>>(TranslatorPatches.PatchedComponentRefs);
 
+            var ordering = System.Diagnostics.Stopwatch.StartNew();
+            pass.ShownCached = ShownFirst(pass.Cached, i => i.Component);
+            pass.ShownPatchRefs = ShownFirst(pass.PatchRefs, kv => kv.Value);
+            pass.OrderingMs = ordering.Elapsed.TotalMilliseconds;
+
             if (_spread != null)
                 TranslatorCore.LogDebug("[SPREAD-REFRESH] a new one replaces the pass still running");
 
@@ -2166,8 +2178,44 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// Puts the components on an active object at the head of the list, in their order, and
+        /// says how many they are.
+        ///
+        /// 🔴 **What the player sees goes first** (2026-10-09). The walk is budgeted per frame and a
+        /// large game holds tens of thousands of text components, nearly all on inactive objects
+        /// (other rooms, pooled pages). Walked in their stored order, switching translations back
+        /// on left the screen in the source language for twelve seconds while hidden documents
+        /// were being redone; on-screen first, the screen is settled in the first frames and the
+        /// rest follows unseen. Nothing is skipped: the order changes, not the work.
+        /// </summary>
+        private static int ShownFirst<T>(List<T> items, Func<T, object> componentOf)
+        {
+            var shown = new List<T>();
+            var hidden = new List<T>();
+            foreach (var item in items)
+            {
+                bool active = false;
+                // A destroyed or foreign object reads as hidden: walked last, never dropped.
+                // ⚠ An IL2CPP scan result is wrapped as UnityEngine.Object: C# casts do not see
+                // the component it is, TryCast does (same as TypeHelper.ReadInScene).
+                object o = componentOf(item);
+                var c = o as Component ?? (o is UnityEngine.Object u && u != null ? TypeHelper.Il2CppCast(u, typeof(Component)) as Component : null);
+                if (c != null) active = c.gameObject.activeInHierarchy;
+                (active ? shown : hidden).Add(item);
+            }
+            items.Clear();
+            items.AddRange(shown);
+            items.AddRange(hidden);
+            return shown.Count;
+        }
+
+        /// <summary>
         /// Carries the spread forward for as long as this frame's allowance lasts. Called by the
         /// tick, before anything else that spends from it.
+        ///
+        /// ⚠ Four stretches, in this order: the shown components of the scanner's list, the shown
+        /// ones only the setter saw, then the hidden ones of each (ShownFirst). Pass 2 skips what
+        /// pass 1 did, so each stretch of it runs after the matching stretch of pass 1.
         /// </summary>
         private static void PumpSpreadRefresh(float budgetMs, System.Diagnostics.Stopwatch frame)
         {
@@ -2179,29 +2227,12 @@ namespace UnityGameTranslator.Core
 
             try
             {
-                while (pass.NextCached < pass.Cached.Count)
-                {
-                    if (frame.Elapsed.TotalMilliseconds >= budgetMs) return;
-
-                    var item = pass.Cached[pass.NextCached++];
-                    if (item.Component == null) continue;
-
-                    int id = GetComponentInstanceId(item.Component);
-                    if (id != -1) pass.Processed.Add(id);
-
-                    RefreshComponent(item.Component, item.Type, pass.GlobalRestore, pass.GlyphsChanged,
-                                     ref pass.Refreshed, ref pass.Restored);
-                }
-
-                while (pass.NextPatchRef < pass.PatchRefs.Count)
-                {
-                    if (frame.Elapsed.TotalMilliseconds >= budgetMs) return;
-
-                    var kvp = pass.PatchRefs[pass.NextPatchRef++];
-                    if (kvp.Value == null || pass.Processed.Contains(kvp.Key)) continue;
-
-                    RefreshPatchRef(kvp, pass.GlyphsChanged, pass.GlobalRestore, ref pass.Refreshed, ref pass.Restored);
-                }
+                if (!PumpShownNow(pass, budgetMs, frame)) return;
+                if (!PumpCached(pass, pass.ShownCached, budgetMs, frame)) return;
+                if (!PumpPatchRefs(pass, pass.ShownPatchRefs, budgetMs, frame)) return;
+                if (pass.ShownSettledFrame == 0) pass.ShownSettledFrame = pass.Frames;
+                if (!PumpCached(pass, pass.Cached.Count, budgetMs, frame)) return;
+                if (!PumpPatchRefs(pass, pass.PatchRefs.Count, budgetMs, frame)) return;
 
                 // Everything walked: the sizes, then the report. ⚠ Not spread itself — it is one
                 // pass over the tracked components and its share of the cost is in the line below,
@@ -2229,7 +2260,8 @@ namespace UnityGameTranslator.Core
                     TranslatorCore.LogInfo(
                         $"[SPREAD-REFRESH] {totalMs:F0}ms over {pass.Frames} frames "
                         + $"(glyphs {(pass.GlyphsChanged ? "CHANGED" : "same")}) | "
-                        + $"{pass.Cached.Count} cached, {pass.PatchRefs.Count} patch refs | "
+                        + $"{pass.Cached.Count} cached ({pass.ShownCached} shown), {pass.PatchRefs.Count} patch refs ({pass.ShownPatchRefs} shown), "
+                        + $"shown first in {pass.ShownSettledFrame} frame(s), ordering {pass.OrderingMs:F0}ms | "
                         + $"refreshed {pass.Refreshed}, restored {pass.Restored} | scales {scalesMs:F0}ms");
                 }
                 else
@@ -2251,6 +2283,86 @@ namespace UnityGameTranslator.Core
             {
                 pass.Spent.Stop();
             }
+        }
+
+        /// <summary>
+        /// A text component came on screen (its OnEnable) while a spread is running and has not
+        /// reached it: done first, at the next frame of the walk.
+        ///
+        /// 🔴 **Why** (2026-10-09): switching translations back on, a note on a table came back in
+        /// French at once (shown, so walked first) — and the same note opened in close-up, another
+        /// component, inactive until the click, showed the source text for seconds, until the walk
+        /// reached the hidden ones. What appears is what is looked at: it cannot wait its turn.
+        ///
+        /// ⚠ Only NOTED here, from inside the game's OnEnable, where the game may be about to set
+        /// the font and the material itself (TMPText_OnEnable_Postfix); the work is the walk's.
+        /// </summary>
+        internal static void ShownDuringSpread(object component)
+        {
+            var pass = _spread;
+            if (pass == null || component == null) return;
+            int id = TypeHelper.GetInstanceID(component);
+            if (id == -1 || pass.Processed.Contains(id)) return;
+            pass.ShownNow.Add(new KeyValuePair<int, object>(id, component));
+        }
+
+        /// <summary>What came on screen meanwhile (ShownDuringSpread); false when the allowance ran out.</summary>
+        private static bool PumpShownNow(SpreadPass pass, float budgetMs, System.Diagnostics.Stopwatch frame)
+        {
+            while (pass.ShownNowDone < pass.ShownNow.Count)
+            {
+                if (frame.Elapsed.TotalMilliseconds >= budgetMs) return false;
+
+                var kvp = pass.ShownNow[pass.ShownNowDone++];
+                if (!pass.Processed.Add(kvp.Key)) continue;
+                if (!(kvp.Value is UnityEngine.Object obj) || obj == null) continue;
+
+                // The scanner's own road when it knows the type, the setter's otherwise.
+                RegisteredTextType type = null;
+                foreach (var t in _registeredTypes)
+                    if (t.ComponentType != null && t.ComponentType.IsInstanceOfType(obj)) { type = t; break; }
+
+                if (type != null)
+                    RefreshComponent(obj, type, pass.GlobalRestore, pass.GlyphsChanged, ref pass.Refreshed, ref pass.Restored);
+                else
+                    RefreshPatchRef(kvp, pass.GlyphsChanged, pass.GlobalRestore, ref pass.Refreshed, ref pass.Restored);
+            }
+            return true;
+        }
+
+        /// <summary>Pass 1 up to <paramref name="until"/>; false when the frame's allowance ran out first.</summary>
+        private static bool PumpCached(SpreadPass pass, int until, float budgetMs, System.Diagnostics.Stopwatch frame)
+        {
+            while (pass.NextCached < until)
+            {
+                if (frame.Elapsed.TotalMilliseconds >= budgetMs) return false;
+
+                var item = pass.Cached[pass.NextCached++];
+                if (item.Component == null) continue;
+
+                // Done already, because it came on screen first (PumpShownNow).
+                int id = GetComponentInstanceId(item.Component);
+                if (id != -1 && !pass.Processed.Add(id)) continue;
+
+                RefreshComponent(item.Component, item.Type, pass.GlobalRestore, pass.GlyphsChanged,
+                                 ref pass.Refreshed, ref pass.Restored);
+            }
+            return true;
+        }
+
+        /// <summary>Pass 2 up to <paramref name="until"/>; false when the frame's allowance ran out first.</summary>
+        private static bool PumpPatchRefs(SpreadPass pass, int until, float budgetMs, System.Diagnostics.Stopwatch frame)
+        {
+            while (pass.NextPatchRef < until)
+            {
+                if (frame.Elapsed.TotalMilliseconds >= budgetMs) return false;
+
+                var kvp = pass.PatchRefs[pass.NextPatchRef++];
+                if (kvp.Value == null || pass.Processed.Contains(kvp.Key)) continue;
+
+                RefreshPatchRef(kvp, pass.GlyphsChanged, pass.GlobalRestore, ref pass.Refreshed, ref pass.Restored);
+            }
+            return true;
         }
 
         /// <summary>
@@ -2311,6 +2423,8 @@ namespace UnityGameTranslator.Core
                     {
                         FontManager.RestoreOriginalFont(kvp.Value);
                         textProp.SetValue(kvp.Value, original, null);
+                        // Its size with its text and font (TranslatorPatches.ReapplyScaleTo).
+                        TranslatorPatches.ReapplyScaleTo(kvp.Key, kvp.Value);
                         TypeHelper.ForceMeshUpdate(kvp.Value);
                         TypeHelper.SetAllDirty(kvp.Value);
                         ClearOriginalText(kvp.Key);
@@ -2461,6 +2575,9 @@ namespace UnityGameTranslator.Core
                     if (original != null)
                     {
                         SetTextForType(component, type, original);
+                        // Its size in the same breath as its text and its font — not at the end of
+                        // the whole walk (TranslatorPatches.ReapplyScaleTo).
+                        TranslatorPatches.ReapplyScaleTo(instanceId, component);
                         ClearOriginalText(instanceId);
                         processedTextHashes.Remove(instanceId);
                         restored++;
@@ -2493,7 +2610,13 @@ namespace UnityGameTranslator.Core
                         // into these two calls — and the text of almost all of them was already
                         // what it should be. Pass 2 got this guard on 2026-09-18; pass 1 kept
                         // rebuilding every mesh unconditionally, which is where the freeze moved.
-                        if (!TranslatorCore.HasCachedTranslation(currentText))
+                        // 🔴 « Already what it should be » is « already one of our translations »
+                        // (2026-10-09). The guard asked HasCachedTranslation — « is there a
+                        // translation for this SOURCE » — the inverse: every source text that HAD a
+                        // translation was skipped. Switching translations back on left the screen in
+                        // the source language until pass 2 or the game wrote each text again, seconds
+                        // later (12 s on a large game).
+                        if (!TranslatorCore.IsAlreadyTargetText(currentText))
                         {
                             SetTextForType(component, type, currentText);
                             rewrote = true;

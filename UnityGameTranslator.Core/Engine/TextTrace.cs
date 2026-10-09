@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using Newtonsoft.Json.Linq;
+using UnityGameTranslator.Common;
 
 namespace UnityGameTranslator.Core
 {
@@ -20,7 +21,8 @@ namespace UnityGameTranslator.Core
     /// adapter records the same thing the same way — which is what lets one corpus check them all.
     ///
     /// ⚠ Off by default, and only ever local: the file holds the game's text, written in this
-    /// game's mod folder beside the translation it was recorded against, and sent nowhere.
+    /// game's mod folder beside the translation it was recorded against, and sent nowhere. The
+    /// last <see cref="Kept"/> traces stay; starting one deletes the older ones.
     ///
     /// One JSON object per line, `k` saying which kind:
     /// <list type="bullet">
@@ -40,6 +42,17 @@ namespace UnityGameTranslator.Core
         private static StreamWriter _writer;
         private static Func<int> _frame;
         private static Func<double> _time;
+
+        private const string Prefix = "text-trace-";
+        private const string TraceSuffix = ".jsonl";
+        private const string CopySuffix = ".translations.json";
+
+        /// <summary>
+        /// How many traces a mod folder holds, the one being started included (user's decision,
+        /// 2026-10-09). The setting survives a restart, so every launch starts one, each with a
+        /// copy of the whole translation — left alone, a folder fills up launch after launch.
+        /// </summary>
+        public const int Kept = 3;
 
         /// <summary>Whether a trace is being written. Read before building anything to record.</summary>
         public static bool On { get; private set; }
@@ -61,7 +74,8 @@ namespace UnityGameTranslator.Core
             {
                 if (On) return;
 
-                string stem = "text-trace-" + DateTime.Now.ToString("yyyyMMdd-HHmmss");
+                Prune(folder, Kept - 1);
+                string stem = Prefix + DateTime.Now.ToString("yyyyMMdd-HHmmss");
                 string path = System.IO.Path.Combine(folder, stem + ".jsonl");
                 string copy = null;
                 if (!string.IsNullOrEmpty(translationsPath) && File.Exists(translationsPath))
@@ -83,6 +97,60 @@ namespace UnityGameTranslator.Core
                     ["translations"] = copy == null ? null : System.IO.Path.GetFileName(copy),
                 });
                 say?.Invoke($"[TextTrace] recording text writes to {path}");
+            }
+        }
+
+        /// <summary>
+        /// Deletes the oldest traces in <paramref name="folder"/> until <paramref name="keep"/>
+        /// are left — a trace being its <c>.jsonl</c> and the translation copied beside it, which
+        /// go together. Their names carry the moment they started, so name order is age order.
+        /// </summary>
+        /// <returns>How many traces went.</returns>
+        internal static int Prune(string folder, int keep)
+        {
+            if (keep < 0) throw new ArgumentOutOfRangeException(nameof(keep));
+            if (!Directory.Exists(folder)) return 0;
+
+            var stems = new SortedSet<string>(StringComparer.Ordinal);
+            foreach (string file in Directory.GetFiles(folder, Prefix + "*"))
+            {
+                string stem = StemOf(System.IO.Path.GetFileName(file));
+                if (stem != null) stems.Add(stem);
+            }
+
+            int gone = 0;
+            int toDrop = stems.Count - keep;
+            foreach (string stem in stems)
+            {
+                if (gone >= toDrop) break;
+                Delete(System.IO.Path.Combine(folder, stem + TraceSuffix));
+                Delete(System.IO.Path.Combine(folder, stem + CopySuffix));
+                gone++;
+            }
+            return gone;
+        }
+
+        /// <summary>The trace a file belongs to, or null when the file is not one of ours.</summary>
+        private static string StemOf(string name)
+        {
+            // The copy's suffix ends in ".json", not ".jsonl": tested first all the same, so the
+            // two can never be read as each other.
+            if (name.EndsWith(CopySuffix, StringComparison.Ordinal)) return name.Substring(0, name.Length - CopySuffix.Length);
+            if (name.EndsWith(TraceSuffix, StringComparison.Ordinal)) return name.Substring(0, name.Length - TraceSuffix.Length);
+            return null;
+        }
+
+        private static void Delete(string path)
+        {
+            try
+            {
+                if (File.Exists(path)) File.Delete(path);
+            }
+            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
+            {
+                // Open in an editor, or read-only: said, and the new trace starts anyway — an old
+                // file left behind costs room, a trace that refuses to start costs the report.
+                Faults.Say("TextTrace.Prune", ex, path);
             }
         }
 

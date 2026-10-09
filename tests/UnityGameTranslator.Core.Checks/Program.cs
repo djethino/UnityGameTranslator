@@ -269,6 +269,7 @@ namespace UnityGameTranslator.Core.Checks
         private static void WhatSitsBesideTheTranslation()
         {
             Section("Companion files (ancestors, images)", CompanionFilesChecks.Run);
+            Section("Text traces kept in the mod folder", TextTracePruneChecks.Run);
             Section("Translation store (the moments of the file)", TranslationStoreChecks.Run);
             Section("Failed lines (kept to be settled by hand)", FailureLedgerChecks.Run);
             Section("A server error blames the line, or the server", ServerErrorBlameChecks.Run);

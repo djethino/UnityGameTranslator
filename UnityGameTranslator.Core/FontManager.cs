@@ -3246,8 +3246,9 @@ namespace UnityGameTranslator.Core
             var replacementFont = BackupHead(shared, originalFontObj, originalFontName);
             if (replacementFont == null)
             {
-                // No head on this TMP (TMProOld): as before, the original goes behind the shared
-                // replacement — the first one there answers for every game font that picked it.
+                // No head (its making failed, said; or the replacement IS this game font): the
+                // original goes behind the shared replacement — the first one there answers for
+                // every game font that picked it.
                 replacementFont = shared;
                 AddBehindShared(shared, originalFontObj);
             }
@@ -3358,9 +3359,9 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// The game font behind the shared replacement — only where no head can be made (TMProOld).
-        /// The first original added then answers for every game font sharing the replacement: the
-        /// defect BackupHead removes on modern TMP, kept here rather than leaving no backup at all.
+        /// The game font behind the shared replacement — only where no head could be made
+        /// (BackupHead failed, said). The first original added then answers for every game font
+        /// sharing the replacement: the defect BackupHead removes, kept rather than no backup at all.
         /// </summary>
         private static void AddBehindShared(object shared, object originalFontObj)
         {
@@ -4704,15 +4705,19 @@ namespace UnityGameTranslator.Core
         /// underline and the ellipsis included (TMP 3: searched in the fallbacks too).
         ///
         /// ⚠ Its metrics are the replacement's — it is a copy of it — so a line is laid out as the
-        /// chosen font lays it out. Modern TMP only (its character and glyph tables): TMProOld
-        /// keeps the shared replacement, with the fallback order that comes with it. Null when no
-        /// head can be made: the caller wears the shared replacement.
+        /// chosen font lays it out. TMProOld: the same head, its letters one glyph list
+        /// (KeepOldSpecialGlyphs). Null when no head can be made: the caller wears the shared
+        /// replacement.
         /// </summary>
         private static object BackupHead(object replacement, object originalFontObj, string originalFontName)
         {
             if (!(replacement is UnityEngine.Object shared) || originalFontObj == null) return null;
             var type = TypeHelper.TMP_FontAssetType;
-            if (type == null || type.GetProperty("characterTable", BindingFlags.Public | BindingFlags.Instance) == null) return null;
+            if (type == null) return null;
+            bool modern = type.GetProperty("characterTable", BindingFlags.Public | BindingFlags.Instance) != null;
+            // TMProOld: its letters are one glyph list, its lookup rebuilt by ReadFontDefinition.
+            var oldRead = modern ? null : type.GetMethod("ReadFontDefinition", BindingFlags.Public | BindingFlags.Instance, null, Type.EmptyTypes, null);
+            if (!modern && oldRead == null) return null;
             // The game font that IS the replacement (a "[Game]" fallback) is its own backup.
             if (originalFontObj is UnityEngine.Object originalObj && originalObj == shared) return null;
 
@@ -4729,16 +4734,20 @@ namespace UnityGameTranslator.Core
                 var head = TypeHelper.Il2CppCast(copy, type);
                 if (!(head is UnityEngine.Object made)) return null;
 
-                // No letter of its own: every one is the replacement's, through the list below —
-                // save the underline's, which TMP looks for in the worn font alone.
-                var characters = type.GetProperty("characterTable", BindingFlags.Public | BindingFlags.Instance)?.GetValue(head, null);
-                var glyphs = type.GetProperty("glyphTable", BindingFlags.Public | BindingFlags.Instance)?.GetValue(head, null);
-                ClearList(characters);
-                ClearList(glyphs);
-                KeepUnderline(shared, type, characters, glyphs);
-                // And it never adds one: static, it never writes into the atlas it shares.
-                var mode = type.GetProperty("atlasPopulationMode", BindingFlags.Public | BindingFlags.Instance);
-                if (mode != null && mode.CanWrite) mode.SetValue(head, Enum.ToObject(mode.PropertyType, 0), null);
+                if (modern)
+                {
+                    // No letter of its own: every one is the replacement's, through the list below —
+                    // save the underline's, which TMP looks for in the worn font alone.
+                    var characters = type.GetProperty("characterTable", BindingFlags.Public | BindingFlags.Instance)?.GetValue(head, null);
+                    var glyphs = type.GetProperty("glyphTable", BindingFlags.Public | BindingFlags.Instance)?.GetValue(head, null);
+                    ClearList(characters);
+                    ClearList(glyphs);
+                    KeepUnderline(shared, type, characters, glyphs);
+                    // And it never adds one: static, it never writes into the atlas it shares.
+                    var mode = type.GetProperty("atlasPopulationMode", BindingFlags.Public | BindingFlags.Instance);
+                    if (mode != null && mode.CanWrite) mode.SetValue(head, Enum.ToObject(mode.PropertyType, 0), null);
+                }
+                else if (!KeepOldSpecialGlyphs(shared, type, head)) return null;
 
                 var fallbacks = GetFallbackListReflection(head);
                 if (fallbacks == null) return null;
@@ -4747,7 +4756,8 @@ namespace UnityGameTranslator.Core
                 if (add == null) return null;
                 add.Invoke(fallbacks, new[] { TypeHelper.Il2CppCast(shared, type) });
                 add.Invoke(fallbacks, new[] { TypeHelper.Il2CppCast(originalFontObj, type) });
-                CustomFontLoader.RebuildLookupTables(head, type);
+                if (modern) CustomFontLoader.RebuildLookupTables(head, type);
+                else oldRead.Invoke(head, null);
 
                 // Ours, standing for that game font: never listed as a game font, and read back as
                 // the game font it replaces wherever a component is met wearing it (GameFontOf).
@@ -4804,6 +4814,35 @@ namespace UnityGameTranslator.Core
             var own = ctor != null ? ctor.Invoke(new object[] { 0x5Fu, glyph }) : found;
             characters.GetType().GetMethod("Add")?.Invoke(characters, new[] { own });
             glyphs.GetType().GetMethod("Add")?.Invoke(glyphs, new[] { glyph });
+        }
+
+        /// <summary>
+        /// TMProOld's head: of the replacement's letters, only those the old TMP takes from the
+        /// WORN font and nowhere else — the underline "_" and the ellipsis "…" (GetSpecialCharacters
+        /// reads the worn font's dictionary alone) — and its space, which ReadFontDefinition would
+        /// otherwise make up. Every other letter is looked for in the head's fallbacks, the
+        /// replacement first: the old TMP searches a worn font's own list, one level deep, as the
+        /// modern one does. The glyphs are the replacement's own records on the replacement's atlas,
+        /// shared, never written (an old TMP atlas is never filled while the game runs). Letters
+        /// this mod adds to its font later reach the head through the replacement, unchanged.
+        /// False when the old tables cannot be reached: no head, the shared replacement is worn.
+        /// </summary>
+        private static bool KeepOldSpecialGlyphs(UnityEngine.Object shared, Type type, object head)
+        {
+            const BindingFlags any = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
+            var listField = type.GetField("m_glyphInfoList", any);
+            object list = listField != null ? listField.GetValue(head) : type.GetProperty("m_glyphInfoList", any)?.GetValue(head, null);
+            var add = list?.GetType().GetMethod("Add");
+            var dictionary = type.GetProperty("characterDictionary", BindingFlags.Public | BindingFlags.Instance)?.GetValue(TypeHelper.Il2CppCast(shared, type), null);
+            var tryGet = dictionary?.GetType().GetMethod("TryGetValue");
+            if (add == null || tryGet == null) return false;
+            ClearList(list);
+            foreach (int unicode in new[] { 0x20, 0x5F, 0x2026 })
+            {
+                var args = new object[] { unicode, null };
+                if ((bool)tryGet.Invoke(dictionary, args) && args[1] != null) add.Invoke(list, new[] { args[1] });
+            }
+            return true;
         }
 
         private static object LookUp(object dictionary, uint unicode)

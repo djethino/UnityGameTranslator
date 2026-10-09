@@ -1576,6 +1576,13 @@ namespace UnityGameTranslator.Core
         /// two test fonts of a single past investigation and silently broke for
         /// every other user-supplied font (CJK, Arabic, custom Latin, etc.).
         /// </summary>
+        private static bool IsModCreatedFont(string fontName)
+        {
+            if (string.IsNullOrEmpty(fontName)) return false;
+            if (_customFonts.ContainsKey(fontName)) return true;
+            return FontManager.GetCreatedFallbackFontNames().Contains(fontName);
+        }
+
         /// <summary>
         /// Empties the fallback list a copy of a game font brought along (see the clone in
         /// CreateFontAsset). Said once per source font when there was something to forget.
@@ -1598,16 +1605,51 @@ namespace UnityGameTranslator.Core
             catch (Exception ex) { Faults.Say("CustomFontLoader.ForgetInheritedFallbacks", ex, sourceName); }
         }
 
-        private static bool IsModCreatedFont(string fontName)
+        /// <summary>
+        /// Empties the weight table (the bold and italic typefaces) a copy of a game font brought
+        /// along. TMP draws a &lt;b&gt; or &lt;i&gt; letter with the WORN font's typeface for that
+        /// weight before anything else: left as copied, the source game font's bold drew every bold
+        /// letter of our font, on every component — two fonts in one line (bench, issue #33,
+        /// `tmpbackup` cases 5-6). Our font has no typeface of its own: TMP then thickens and slants
+        /// its letters itself. Modern TMP `fontWeightTable`, TMProOld `fontWeights`.
+        /// </summary>
+        private static void ForgetInheritedWeights(object copy, Type type, string sourceName)
         {
-            if (string.IsNullOrEmpty(fontName)) return false;
-            if (_customFonts.ContainsKey(fontName)) return true;
-            return FontManager.GetCreatedFallbackFontNames().Contains(fontName);
+            try
+            {
+                object table = GetPropertyOrField(copy, type, "fontWeightTable") ?? GetPropertyOrField(copy, type, "fontWeights");
+                int length = GetArrayLength(table);
+                if (length <= 0) return;
+                var managed = table as Array;
+                // IL2CPP: an interop array, read and written through its indexer.
+                var indexer = managed == null ? table.GetType().GetProperty("Item") : null;
+                if (managed == null && indexer == null) return;
+                int forgotten = 0;
+                for (int i = 0; i < length; i++)
+                {
+                    object pair = managed != null ? managed.GetValue(i) : indexer.GetValue(table, new object[] { i });
+                    if (pair == null) continue;
+                    var pairType = pair.GetType();
+                    bool held = false;
+                    foreach (var face in new[] { "regularTypeface", "italicTypeface" })
+                    {
+                        if (!(GetPropertyOrField(pair, pairType, face) is UnityEngine.Object typeface) || typeface == null) continue;
+                        SetPropertyOrField(pair, pairType, face, null);
+                        held = true;
+                    }
+                    if (!held) continue;
+                    forgotten++;
+                    // A struct element is a boxed copy: written back.
+                    if (managed != null) managed.SetValue(pair, i);
+                    else if (indexer.CanWrite) indexer.SetValue(table, pair, new object[] { i });
+                }
+                if (forgotten > 0 && DiagnosticOnce.First("CustomFontLoader.inheritedWeights", sourceName))
+                    TranslatorCore.LogDebug($"[CustomFontLoader] the copy of '{sourceName}' came with {forgotten} bold/italic typeface(s) of its own — emptied");
+            }
+            // Left as copied, a bold or italic letter is drawn by the source game font's typeface: said.
+            catch (Exception ex) { Faults.Say("CustomFontLoader.ForgetInheritedWeights", ex, sourceName); }
         }
 
-        /// <summary>
-        /// Creates a TMP_FontAsset from the loaded custom font data.
-        /// </summary>
         /// <summary>
         /// Element count of an atlas array, whatever its flavour: a managed array exposes Length,
         /// an Il2CppReferenceArray exposes Length/Count through its own wrapper. Returns -1 when
@@ -1677,6 +1719,9 @@ namespace UnityGameTranslator.Core
             return null;
         }
 
+        /// <summary>
+        /// Creates a TMP_FontAsset from the loaded custom font data.
+        /// </summary>
         private static object CreateFontAsset(CustomFontInfo fontInfo)
         {
             if (_tmpFontAssetType == null)
@@ -1744,6 +1789,8 @@ namespace UnityGameTranslator.Core
                         // lacks, for every component, instead of each component's own font. Our
                         // font's fallbacks are the mod's to set: they start empty.
                         ForgetInheritedFallbacks(fontAsset, existingFont.name);
+                        // Nor its bold and italic typefaces, searched before our own letters.
+                        ForgetInheritedWeights(fontAsset, _tmpFontAssetType, existingFont.name);
 
                         break;
                     }

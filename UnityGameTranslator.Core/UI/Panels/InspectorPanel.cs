@@ -43,7 +43,25 @@ namespace UnityGameTranslator.Core.UI.Panels
             : _currentMode == InspectorMode.FontOverride ? "Font Override Inspector"
             : Doc.Name;
         public override int MinWidth => Doc.MinWidth;
-        public override int MinHeight => Doc.MinHeight;
+        /// <summary>
+        /// The document's floor, or — while texts are listed — what the laid-out screen comes to
+        /// with the list at its least (BodySized): smaller than that, the body would wrap a
+        /// scrollbar around the camera, hover and selection blocks, which must stay in sight.
+        /// </summary>
+        public override int MinHeight => Math.Max(Doc.MinHeight, _floor);
+
+        /// <summary>
+        /// Never taller than everything shown — every text field showing all it holds — nor than
+        /// the screen; before texts are listed, the base's measure of the content.
+        /// </summary>
+        public override int MaxHeight => _ceiling > 0 ? Math.Min(Math.Max(_ceiling, MinHeight), TallestOnThisScreen) : base.MaxHeight;
+
+        /// <summary>
+        /// What the window opens at: the body with the list and its fields showing everything
+        /// (user, 2026-10-09: « le panel devrait s'adapter à la hauteur en fonction de son
+        /// contenu »). The base then opens it at that, or at what the screen allows.
+        /// </summary>
+        protected override float ContentHeightFloor => _bodyShares.ContentWhole(BodyContentHeight);
         public override int PanelWidth => Doc.Width;
         public override int PanelHeight => Doc.Height;
 
@@ -89,16 +107,10 @@ namespace UnityGameTranslator.Core.UI.Panels
         private readonly List<long> _textEditIds = new List<long>();
 
         /// <summary>
-        /// The list's floor, and its ceiling once filled. One text needs a small box; a busy screen
-        /// hands this panel a dozen at once, and 260px of them was the complaint. The ceiling is
-        /// not a limit on the list — it scrolls — but on how much window it may claim by itself;
-        /// past that the panel is still resizable by hand, up to the screen.
+        /// The least the text list is shown in, written once in the document. Under it the list
+        /// scrolls rather than shrinks; above it, it takes what the body leaves (BodySized).
         /// </summary>
         private static int TextEditListMinHeight => Doc.Nodes["TextEditScroll"].Int("minHeight") ?? 0;
-        private const int TextEditListMaxHeight = 560;
-
-        /// <summary>Rough height of one edit row: labels + field + preview + buttons + spacing.</summary>
-        private const int TextEditRowHeight = 120;
 
         /// <summary>
         /// Rows waiting for an AI retranslation. The answer arrives seconds later, on the worker
@@ -107,10 +119,6 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// A list, not a dictionary: the same text can be shown by several components at once.
         /// </summary>
         private readonly List<TextEditRowState> _pendingRetranslateRows = new List<TextEditRowState>();
-
-        /// <summary>Every edit row on the list now — what SizeTextEditList adds the grown fields from.</summary>
-        private readonly List<TextEditRowState> _textEditRowStates = new List<TextEditRowState>();
-
         /// <summary>
         /// The keys THIS panel asked about. The end of a retranslation is announced to everyone
         /// who listens — the Failures tab asks too — so an answer with no row here is only "lost"
@@ -133,7 +141,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             public Dictionary<int, string> LiveNumbers;
 
             public FieldHandle Input;
-            public LabelHandle KeyLabel;
+            public FieldHandle SourceField;
             /// <summary>
             /// The tag's coloured square and the letter on it — what the website has always drawn
             /// and this panel wrote as `[H] ` in front of the key, in the same grey as the key.
@@ -152,33 +160,6 @@ namespace UnityGameTranslator.Core.UI.Panels
             /// </summary>
             public string AiProposal;
 
-            /// <summary>The height its translation field was last given (FitTranslationField).</summary>
-            public int FieldHeight;
-        }
-
-        /// <summary>The translation field's own floor, as the document writes it.</summary>
-        private static int TranslationFieldFloor =>
-            Doc.Templates["TextEditEntry"].Pieces.Nodes["TranslationInput"].Int("minHeight") ?? 40;
-
-        /// <summary>
-        /// The translation field as tall as its text, up to what one row may take of the list.
-        ///
-        /// 🔴 **Not a one-line box over a paragraph** (2026-10-09, user: « j'ai de la place et tu me
-        /// mets une box où je ne vois qu'une ligne »). The field keeps its floor and scrolls inside
-        /// (scroll: true, decided for the value that looked empty) — but it grows first, so a line
-        /// is read whole wherever the window has the room, and it scrolls only past that.
-        /// </summary>
-        private void FitTranslationField(TextEditRowState row)
-        {
-            var area = row?.Input?.Area;
-            if (area == null) return;
-            int floor = TranslationFieldFloor;
-            // One row may take the whole list but for the rest of its own chrome.
-            int ceiling = Math.Max(floor, TextEditListMaxHeight - (TextEditRowHeight - floor));
-            int wanted = (int)Math.Ceiling(Math.Min(ceiling, Math.Max(floor, area.ContentHeight)));
-            if (wanted == row.FieldHeight) return;
-            row.FieldHeight = wanted;
-            area.SetHeight(wanted, fill: false);
         }
 
         // Camera selection — the dropdown lives here (it is UI); which camera is picked lives in
@@ -209,10 +190,10 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// - the title sits above the card, with the Local scope: everything here writes this
         ///   machine's files (exclusions, images, edited lines) and publishes nothing;
         /// - the card stretches so the text-edit list absorbs the room when the window grows; the
-        ///   list states its floor once, and SizeTextEditList revises it once filled — the
-        ///   smallest useful box for one line is not the smallest useful box for a dozen;
-        /// - three rows of actions, one per mode (exclusion, image, text edit), shown by
-        ///   UpdateUIForMode; a fourth, Clear Selection, shared by all;
+        ///   list states its floor once, and BodySized gives it what the body leaves;
+        /// - two rows of actions in the body, one per mode (exclusion, image), shown by
+        ///   UpdateUIForMode; Select Parent, Clear Selection and Stop sit in the footer, so they
+        ///   never leave the window;
         /// - the camera list is the picker's, set at show time (`options: code`).
         /// </summary>
         protected override void ConstructPanelContent()
@@ -237,6 +218,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _textEditRow = _screen.Host("TextEditRow");
             _textEditCountLabel = _screen.Label("TextEditCount");
             _textEditList = _screen.List("TextEditScroll");
+            _unfoldedList = new UnfoldedList(_textEditList, _fieldAreas);
             _textFontNoticeLabel = _screen.Label("TextFontNotice");
             _cancelBtn = _screen.Button("CancelBtn");
             _parentBtn = _screen.Button("ParentBtn");
@@ -302,6 +284,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _imagePreview.Visible = isImage;
             _spriteInfoLabel.Visible = isImage;
             _textEditRow.Visible = false; // Shown only after clicking a text
+            ForgetShares();
             _textEditIds.Clear();
 
             // The picker already rebuilt its camera list in Start(); just mirror it into the dropdown.
@@ -473,7 +456,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                 }
             }
 
-            if (isCanvasOrWorld)
+            // ⚠ Not over the text editor's own word: ShowTextEditUI says what it found — and
+            // « No text components found » was written over at once by « Element selected ».
+            if (isCanvasOrWorld && _currentMode != InspectorMode.TextEdit)
             {
                 _statusLabel.Say("Element selected");
                 _statusLabel.Tone = Tone.Success;
@@ -512,8 +497,9 @@ namespace UnityGameTranslator.Core.UI.Panels
             _pendingRetranslateRows.Clear();
             _textEditRow.Visible = false;
             _textEditList.Clear();
-            _textEditRowStates.Clear();
+            ForgetShares();
             _textEditIds.Clear();
+            RecalculateSize();
         }
 
         private void OnExcludeThisClicked()
@@ -709,6 +695,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             {
                 _statusLabel.Say("No text components found");
                 _statusLabel.Tone = Tone.Warning;
+                NoteNoText(path);
                 return;
             }
 
@@ -716,11 +703,13 @@ namespace UnityGameTranslator.Core.UI.Panels
             // that is about to be destroyed
             _pendingRetranslateRows.Clear();
             _textEditList.Clear();
-            _textEditRowStates.Clear();
+            ForgetShares();
 
             // Show the edit UI
             _textEditRow.Visible = true;
-            _textEditCountLabel.Say($"{textEntries.Count} text(s) found:");
+            var distinctLines = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var e in textEntries) distinctLines.Add(e.originalKey ?? "");
+            _textEditCountLabel.Say($"{distinctLines.Count} text(s) found:");
             _textEditIds.Clear();
             foreach (var entry in textEntries)
             {
@@ -729,43 +718,180 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
             RefreshTextFontNotice();
 
-            // Create an editable row for each text
+            // Create an editable row for each LINE of the file. Two components showing the same line
+            // (a text and its shadow, a front and a back) are one line to edit, not two rows saying
+            // the same thing — a saved row reaches both through the line.
+            var shownKeys = new HashSet<string>(StringComparer.Ordinal);
             for (int i = 0; i < textEntries.Count; i++)
             {
+                if (!shownKeys.Add(textEntries[i].originalKey ?? "")) continue;
                 CreateTextEditRow(textEntries[i]);
             }
 
-            // Each field as tall as its text — measured once the rows are laid out at their width:
-            // measured before, a field of no width wraps every character onto a line of its own.
-            TypeHelper.ForceUpdateCanvases();
-            foreach (var row in _textEditRowStates) FitTranslationField(row);
-
-            SizeTextEditList(textEntries.Count);
+            // The list shares the body, then its fields share the list; the window opens at what
+            // everything comes to (ContentHeightFloor), and grows to it on a new selection
+            // (FitToTexts). Measured on the next tick, never in this one: rows just built are not
+            // at their width yet, and a ceiling taken from them would shrink the window for a frame.
+            _bodyShares.Add(_unfoldedList, () => LinesIn(_unfoldedList), UIStyles.RowHeightSmall, 0,
+                            least: TextEditListMinHeight);
+            RecalculateSize();
+            FitToTextsSoon();
 
             _statusLabel.Say("Edit translations and click Save");
             _statusLabel.Tone = Tone.Secondary;
         }
 
         /// <summary>
-        /// Ask the window for the height this many rows actually need, and let it grow.
+        /// The rule every screen of lists uses (ListShares over the socle's ListRooms), the way
+        /// Backups shares its body: the text list takes what the body leaves once the camera,
+        /// hover and selection blocks are drawn — so the body never scrolls and those blocks never
+        /// leave the window (user, 2026-10-09: « ce qu'on veut faire défiler ce sont les textes, pas
+        /// tout ça »). Each translation field grows with what it holds, and the list scrolls.
         ///
-        /// ⚠ The panel measures its content to size itself, and a scrolling list is weighed at its
-        /// PREFERRED height, not at what it holds — so a list left at its floor keeps the window at
-        /// the size of one or two rows however many were found. Revising the floor is what makes
-        /// the measurement tell the truth. A size the user picked themselves still wins:
-        /// RecalculateSize leaves it alone.
+        /// 🔴 **One level of scrolling, not two** (2026-10-09). The fields used to scroll inside a
+        /// list that scrolls too: sharing the list's height between them left four long texts two
+        /// lines each, the wheel went to whichever field was under the pointer instead of the list,
+        /// and each field had a scrollbar of its own. A field grown alone, before the list shared
+        /// the body, had pushed the window past the screen (« rien ne va »); inside a shared list
+        /// it only makes the list longer.
         /// </summary>
-        private void SizeTextEditList(int rowCount)
+        private readonly ListShares _bodyShares = new ListShares();
+
+        /// <summary>
+        /// Per row, its source and translation fields sharing the room that shows the row whole in
+        /// the list: each takes all it holds while that fits, and past it they share the room by
+        /// what each holds and scroll inside, each with its bar. ⚠ A field never grows by itself
+        /// (uGUI's InputField has no preferred height of its own text), so this is what makes it a
+        /// form field rather than a two-line slot; and without the cap it never scrolled, which
+        /// left its bar's column empty (2026-10-09).
+        /// </summary>
+        private readonly List<(ListShares Shares, Host Row)> _fieldAreas = new List<(ListShares Shares, Host Row)>();
+
+        /// <summary>
+        /// The text list as the body's share sees it: what it holds with every row unfolded, its
+        /// fields showing ALL they hold. Measured as drawn, a list of capped fields reports the
+        /// capped height as its whole — the window's ceiling then falls to its current height and
+        /// it can never be made taller, the trap the resize grip already fell into (2026-10-09).
+        /// </summary>
+        private sealed class UnfoldedList : ISharedArea
         {
-            if (_textEditList == null) return;
+            private readonly ScrollList _list;
+            private readonly List<(ListShares Shares, Host Row)> _rows;
 
-            // Each row's field may have grown with its text (FitTranslationField): that room counts.
-            int grown = 0;
-            foreach (var r in _textEditRowStates) grown += Math.Max(0, r.FieldHeight - TranslationFieldFloor);
-            int wanted = Math.Max(TextEditListMinHeight, Math.Min(TextEditListMaxHeight, rowCount * TextEditRowHeight + grown));
-            _textEditList.SetHeight(wanted);
+            public UnfoldedList(ScrollList list, List<(ListShares Shares, Host Row)> rows)
+            {
+                _list = list;
+                _rows = rows;
+            }
 
-            RecalculateSize();
+            public float ContentHeight
+            {
+                get
+                {
+                    float drawn = _list.ContentHeight;   // also brings the rows' layout up to date
+                    float unfolded = 0f;
+                    foreach (var (shares, row) in _rows)
+                    {
+                        float h = ScrollList.HeightOf(row);
+                        unfolded += shares.ContentWhole(h) - h;
+                    }
+                    return drawn + unfolded;
+                }
+            }
+
+            /// <summary>The height last posed on it by the body's share — the room its rows are seen in.</summary>
+            public int Given { get; private set; }
+
+            public bool AtTop => _list.AtTop;
+            public void ToTop() => _list.ToTop();
+
+            public void SetHeight(int height, bool fill)
+            {
+                Given = height;
+                _list.SetHeight(height, fill);
+            }
+        }
+
+        private UnfoldedList _unfoldedList;
+
+        private static int TranslationFieldFloor =>
+            Doc.Templates["TextEditEntry"].Pieces.Nodes["TranslationInput"].Int("minHeight") ?? UIStyles.MultiLineMedium;
+
+        /// <summary>The window's floor and ceiling as last measured, chrome included; zero while no text is listed.</summary>
+        private int _floor, _ceiling;
+
+        private static int LinesIn(ISharedArea area)
+            => Math.Max(1, (int)Math.Ceiling(area.ContentHeight / UIStyles.RowHeightSmall));
+
+        private void ForgetShares()
+        {
+            _bodyShares.Forget();
+            _fieldAreas.Clear();
+            _floor = _ceiling = 0;
+        }
+
+        /// <summary>
+        /// Poses the list's height from the measured body — on every resize, after a fill, at a
+        /// keystroke — and puts the window back between its floor
+        /// and its ceiling if it is outside them.
+        /// </summary>
+        protected override void BodySized()
+        {
+            // ⚠ Nothing can be measured on a hidden hierarchy: the layout does not run there.
+            if (UIRoot == null || !UIRoot.activeInHierarchy) return;
+            if (_textEditRow == null || !_textEditRow.Visible || !_bodyShares.Any) return;
+
+            var body = BodyHeight;
+            if (body <= 1f) return;
+
+            // The list first, then its rows inside the height it was just given: capped on the
+            // height of a frame before, the fields stayed small in a list the window had grown.
+            if (!_bodyShares.Share(body, BodyContentHeight, Rect.rect.height - body)) return;
+
+            _floor = _bodyShares.Floor;
+            _ceiling = _bodyShares.Ceiling;
+
+            SizeFields();
+
+            var height = Rect.rect.height;
+            if (height < _floor - 0.5f) ResizeTo(_floor);
+            else if (height > MaxHeight + 0.5f) ResizeTo(MaxHeight);
+        }
+
+        /// <summary>
+        /// Each row's fields at all they hold, never past the room that shows the row whole in the
+        /// list at the height the body's share has just given it. Its chrome stays as it was —
+        /// the list's height is posed, not measured — so this changes no other part's room.
+        /// </summary>
+        private void SizeFields()
+        {
+            if (_fieldAreas.Count == 0) return;
+            float room = _textEditList.RowRoomAt(_unfoldedList.Given);
+            if (room <= 1f) return;
+            _ = _textEditList.ContentHeight;   // brings every row's layout up to date for HeightOf
+
+            foreach (var (shares, row) in _fieldAreas)
+                shares.Share(room, ScrollList.HeightOf(row), 0f);
+        }
+
+        /// <summary>
+        /// The same, on the next tick — after the layout has run over the rows just built. A
+        /// measure taken in the same frame as a rebuild sees rows at a width that is not yet theirs.
+        /// </summary>
+        private void FitToTextsSoon() => TranslatorUIManager.RunOnMainThread(FitToTexts);
+
+        /// <summary>
+        /// A new selection: shares the body again and GROWS the window to what its texts need,
+        /// up to the screen — even past a height picked by hand earlier, which was picked for
+        /// another selection (user, 2026-10-09: « le panel devrait s'adapter à la hauteur en
+        /// fonction de son contenu »). Never shrinks it: a window made taller by hand stays so,
+        /// down to the ceiling BodySized holds anyway. Not saved as the user's size.
+        /// </summary>
+        private void FitToTexts()
+        {
+            BodySized();
+            if (_ceiling > 0 && Rect.rect.height < Math.Min(_ceiling, TallestOnThisScreen) - 0.5f)
+                ResizeTo(_ceiling);
         }
 
         /// <summary>
@@ -805,6 +931,27 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
         }
 
+        /// <summary>
+        /// Why nothing was found under a picked element, once per path: how many texts the scene
+        /// holds and the ones whose place is nearest. A picked text that the editor cannot list was
+        /// silent (the status was even written over); this says whether the text is not listed at
+        /// all or listed somewhere else.
+        /// </summary>
+        private static void NoteNoText(string path)
+        {
+            if (string.IsNullOrEmpty(path) || !DiagnosticOnce.First("Inspector.noText", path)) return;
+            var all = TextTargets.All();
+            int cut = path.LastIndexOf('/');
+            string parent = cut > 0 ? path.Substring(0, cut) : path;
+            var near = new List<string>();
+            foreach (var t in all)
+                if (t.Path != null && t.Path.StartsWith(parent, StringComparison.Ordinal))
+                    near.Add($"'{t.Path}' ({t.Engine})");
+            TranslatorCore.LogInfo($"[Inspector] no text under '{path}': {all.Count} text(s) listed in the scene ({TextTargets.LastWalk}); "
+                                   + (near.Count == 0 ? $"none under '{parent}'"
+                                      : $"{near.Count} under its parent: " + string.Join(", ", near.ToArray())));
+        }
+
         private void CreateTextEditRow((object component, string text, string originalKey, string tag, string childPath, Dictionary<int, string> liveNumbers) entry)
         {
             // One editable line, from the document's template. Its three verbs are answered by
@@ -830,8 +977,10 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             var tagChip = row.Chip("Tag");
             tagChip.Retag(entry.tag);
-            var keyLabel = row.Label("Key");
-            row.Say("key", entry.originalKey);
+            // The game's text in a read-only field, like the Failures tab's: as long as the
+            // translation under it, so it scrolls the same way when the two outgrow the list.
+            var sourceField = row.Field("Key");
+            sourceField.Text = entry.originalKey;
 
             // Live values of the [!v*N] placeholders, as currently displayed in-game
             if (entry.liveNumbers != null && entry.liveNumbers.Count > 0)
@@ -861,7 +1010,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 Component = entry.component,
                 LiveNumbers = entry.liveNumbers,
                 Input = input,
-                KeyLabel = keyLabel,
+                SourceField = sourceField,
                 TagChip = tagChip,
                 PreviewLabel = previewLabel
             };
@@ -950,8 +1099,16 @@ namespace UnityGameTranslator.Core.UI.Panels
             };
 
             // FieldHandle.Changed, never a raw InputField event — see UIHelpers.
-            _textEditRowStates.Add(rowState);
-            input.Changed += _ => { RefreshRow(rowState); FitTranslationField(rowState); };
+            // The source and the translation share the room of one row seen whole — the same rule,
+            // and the same pair, as the Failures tab's game text and proposal: the same content
+            // in two languages, so the same length and the same way of scrolling.
+            var rowShares = new ListShares { CapAtContent = true };
+            if (sourceField.Area != null)
+                rowShares.Add(sourceField.Area, () => LinesIn(sourceField.Area), UIStyles.RowHeightSmall, 0);
+            if (input.Area != null)
+                rowShares.Add(input.Area, () => LinesIn(input.Area), UIStyles.RowHeightSmall, 0, least: TranslationFieldFloor);
+            if (rowShares.Any) _fieldAreas.Add((rowShares, row.Root));
+            input.Changed += _ => { RefreshRow(rowState); BodySized(); };
             RefreshRow(rowState);
         }
 
@@ -1020,9 +1177,12 @@ namespace UnityGameTranslator.Core.UI.Panels
 
                 row.PreviewLabel.Tone = Tone.Secondary;
 
-                // Shown only when there is markup to interpret. On a plain line the preview would
-                // repeat the field word for word.
-                bool worthShowing = field.IndexOf('<') >= 0 && field.IndexOf('>') >= 0;
+                // Shown only when there is markup THIS label interprets. On a plain line the
+                // preview would repeat the field word for word — and so it did on a line holding
+                // <u>, which the panel's UI.Text does not render (2026-10-09): the field showed up
+                // between the source and a second copy of itself. RichTextIndexMap is the mod's
+                // statement of what that generator strips.
+                bool worthShowing = TextShaping.RichTextIndexMap.Build(field, out _) != null;
                 row.PreviewLabel.Visible = worthShowing;
                 if (worthShowing)
                 {
@@ -1096,7 +1256,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             foreach (var row in rows)
             {
                 // The row may have been destroyed since (another element was clicked)
-                if (row.Input == null || row.KeyLabel == null) continue;
+                if (row.Input == null || row.SourceField == null) continue;
 
                 if (proposed)
                 {

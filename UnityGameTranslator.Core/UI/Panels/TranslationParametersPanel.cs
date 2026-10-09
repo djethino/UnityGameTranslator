@@ -64,6 +64,14 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         // Fonts section
         private ScrollList _fontsList;
+
+        /// <summary>
+        /// Each listed font's « Mirror alignment » box, for All / None above the list: on a
+        /// game where the mirror goes wrong, unticking forty-seven boxes one by one was the
+        /// complaint (2026-10-09). The bulk verbs go through the boxes, so what they change is
+        /// pending like a click on each, and Apply (N) counts it.
+        /// </summary>
+        private readonly List<KeyValuePair<string, ToggleHandle>> _rtlToggles = new List<KeyValuePair<string, ToggleHandle>>();
         private LabelHandle _fontsStatus;
         private ToggleHandle _enableFontReplacementToggle;
         private string[] _systemFonts;
@@ -396,6 +404,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // Explicit user request: this is the one place the ranking is allowed to re-rank —
                 // and the fonts folder is read again, so a file dropped in it while the game runs is offered.
                 case "refreshFonts": return () => { CustomFontLoader.Rescan(); InvalidateFontOrder(); RefreshFontsList(); };
+                case "rtlAll": return () => SetEveryRtlMirror(true);
+                case "rtlNone": return () => SetEveryRtlMirror(false);
                 case "overrideInspector": return OnStartFontOverrideInspector;
                 case "findOverride": return OnFindForFontOverride;
                 case "addOverride": return OnAddManualFontOverride;
@@ -1867,6 +1877,8 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             _fontsList.Clear();
             _identifyByFont.Clear();
+            _rtlToggles.Clear();
+            _screen.Host("RtlAllRow").Visible = false;
             // Its row has just been destroyed: dressing that "?" back threw on every later reset —
             // closing this window, clicking another "?", starting the override inspector (which
             // then never opened). The font stays shown; its new "?" is found below.
@@ -1897,6 +1909,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 CreateFontRow(fontInfo);
             }
             RebindHighlight();
+            _screen.Host("RtlAllRow").Visible = _rtlToggles.Count > 0;
 
             _fontsList.Filled();
 
@@ -2068,6 +2081,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                     var rtlToggle = row.Toggle("RtlMirrorToggle");
                     rtlToggle.IsOn = GetEffectiveFontSettings(capturedFontName).mirrorRtl;
                     Pending.Track(rtlToggle, () => FontFieldChanged(capturedFontName, (p, i) => p.mirrorRtl != i.mirrorRtl), "fonts");
+                    _rtlToggles.Add(new KeyValuePair<string, ToggleHandle>(capturedFontName, rtlToggle));
                 }
 
                 if (fontInfo.SupportsFallback)
@@ -2319,6 +2333,21 @@ namespace UnityGameTranslator.Core.UI.Panels
                     FontManager.GetFontSizePercent(fontName),  // deliberate percent (not the effective)
                     settings?.scale_auto ?? false,
                     !string.Equals(settings?.rtl_alignment, "keep", StringComparison.OrdinalIgnoreCase));
+        }
+
+        /// <summary>
+        /// All / None: every listed font's box set the same way, as if each had been clicked —
+        /// the box's own answer (OnFontRtlAlignChanged) is called for it, so nothing reaches the
+        /// file before Apply.
+        /// </summary>
+        private void SetEveryRtlMirror(bool mirror)
+        {
+            foreach (var entry in _rtlToggles)
+            {
+                if (entry.Value == null) continue;
+                entry.Value.IsOn = mirror;
+                OnFontRtlAlignChanged(entry.Key, mirror);
+            }
         }
 
         private void OnFontRtlAlignChanged(string fontName, bool mirror)

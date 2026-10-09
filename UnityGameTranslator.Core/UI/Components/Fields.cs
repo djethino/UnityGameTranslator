@@ -155,6 +155,13 @@ namespace UnityGameTranslator.Core.UI.Components
                 if (_box == null) return;
                 UIFactory.SetLayoutElement(_box, minHeight: height, preferredHeight: height,
                                            flexibleHeight: fill ? 9999 : 0, flexibleWidth: 9999);
+
+                // 🔴 A field given room for all it holds does not scroll — so it must not take the
+                // wheel either. An enabled ScrollRect answers the wheel even with nothing to move,
+                // and the list around it stopped scrolling wherever the pointer sat on a field
+                // (2026-10-09, the in-game text editor). Disabled, the wheel goes to the parent.
+                var scroll = _box.GetComponent<ScrollRect>();
+                if (scroll != null) scroll.enabled = height < ContentHeight - 0.5f;
             }
         }
 

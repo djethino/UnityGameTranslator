@@ -205,6 +205,9 @@ namespace UnityGameTranslator.Core.UI
             if (_camerasCache != null) return _camerasCache;
 
             var list = new List<Camera>();
+            // ⚠ One entry per camera: the lookup can hand the same one back more than once — the
+            // list showed « FirstPersonCharacter » three times for two cameras.
+            var ids = new HashSet<int>();
             try
             {
                 var all = TypeHelper.FindAllObjectsOfType(typeof(Camera));
@@ -212,7 +215,7 @@ namespace UnityGameTranslator.Core.UI
                     foreach (var obj in all)
                     {
                         Camera cam = obj as Camera ?? TypeHelper.Il2CppCast(obj, typeof(Camera)) as Camera;
-                        if (cam != null) list.Add(cam);
+                        if (cam != null && ids.Add(cam.GetInstanceID())) list.Add(cam);
                     }
             }
             catch (Exception ex)
@@ -658,6 +661,22 @@ namespace UnityGameTranslator.Core.UI
         /// </summary>
         internal static bool AnyPicking => _picking > 0;
 
+        private static bool _textAppeared;
+
+        /// <summary>
+        /// A text component came on screen (its OnEnable) while somebody is picking.
+        ///
+        /// 🔴 **The lists the picker answers from are taken once, at the start** (2026-10-09): a
+        /// letter opened while picking showed its pages, and the picker kept finding the envelope —
+        /// the only text it had listed there — because nothing it was answering from had the pages
+        /// in it. Only a miss refreshed them, and the envelope was never a miss. What appears is now
+        /// the event that refreshes them, at the next frame of picking.
+        /// </summary>
+        internal static void NoteTextAppeared()
+        {
+            if (_picking > 0) _textAppeared = true;
+        }
+
         /// <summary>Begin picking. Rebuilds the camera list; call before reading <see cref="CameraNames"/>.</summary>
         public void Start(InspectorMode mode, object panelRect)
         {
@@ -747,16 +766,41 @@ namespace UnityGameTranslator.Core.UI
             var cameraList = new System.Collections.Generic.List<Camera>();
 
             // The one enumeration of the scene's cameras — the dropdown offers the active ones.
+            // A camera switched off draws nothing: nothing can be picked through it.
             foreach (var cam in Cameras())
-                if (cam != null && cam.gameObject.activeInHierarchy)
+                if (cam != null && cam.enabled && cam.gameObject.activeInHierarchy)
                     cameraList.Add(cam);
 
             _sceneCameras = cameraList.ToArray();
+
+            // ⚠ Several cameras can share a name — three « FirstPersonCharacter » on one game, read as
+            // one camera listed three times. A shared name is told apart by where it sits (its
+            // parent), then by its rank among those still alike.
+            var byName = new Dictionary<string, int>(StringComparer.Ordinal);
+            foreach (var cam in _sceneCameras) byName[cam.name] = byName.TryGetValue(cam.name, out int n) ? n + 1 : 1;
+            var labels = new List<string>();
             foreach (var cam in _sceneCameras)
             {
                 string type = cam.orthographic ? "ortho" : "persp";
-                options.Add($"{cam.name} ({type})");
-                DescribeCameraSpace(cam);
+                string label = cam.name;
+                if (byName[cam.name] > 1 && cam.transform.parent != null)
+                    label += " in " + cam.transform.parent.name;
+                labels.Add($"{label} ({type})");
+            }
+            var seenLabel = new Dictionary<string, int>(StringComparer.Ordinal);
+            var counted = new Dictionary<string, int>(StringComparer.Ordinal);
+            foreach (var l in labels) counted[l] = counted.TryGetValue(l, out int c) ? c + 1 : 1;
+            for (int i = 0; i < _sceneCameras.Length; i++)
+            {
+                string l = labels[i];
+                if (counted[l] > 1)
+                {
+                    int rank = seenLabel.TryGetValue(l, out int r) ? r + 1 : 1;
+                    seenLabel[l] = rank;
+                    l = $"{l} #{rank}";
+                }
+                options.Add(l);
+                DescribeCameraSpace(_sceneCameras[i]);
             }
 
             _cameraNames = options.ToArray();
@@ -823,6 +867,14 @@ namespace UnityGameTranslator.Core.UI
         public void Tick()
         {
             if (!_isInspecting) return;
+
+            // A text came on screen since the lists were taken: they are taken again before
+            // anything is answered from them (NoteTextAppeared).
+            if (_textAppeared)
+            {
+                _textAppeared = false;
+                DropSceneCaches();
+            }
 
             // 🔴 **Off the window, nothing is under the pointer** (2026-09-19). Reported: objects
             // were being selected while the mouse was outside the game entirely. Every picking

@@ -17,11 +17,14 @@ namespace UnityGameTranslator.Core.UI.Components
         private readonly GameObject _rows;
         private readonly LabelHandle _empty;
 
-        private ScrollList(GameObject scroll, GameObject rows, LabelHandle empty)
+        private readonly int _padding;
+
+        private ScrollList(GameObject scroll, GameObject rows, LabelHandle empty, int padding)
         {
             _scroll = scroll;
             _rows = rows;
             _empty = empty;
+            _padding = padding;
         }
 
         /// <param name="minHeight">The least room it takes — its floor, never squeezed below it.</param>
@@ -59,7 +62,7 @@ namespace UnityGameTranslator.Core.UI.Components
             if (emptyText != null)
                 empty = Labels.Create(new Host(rows), name + "Empty", emptyText, TextRole.Hint, centred: true);
 
-            return new ScrollList(scroll, rows, empty);
+            return new ScrollList(scroll, rows, empty, padding);
         }
 
         /// <summary>Where rows go.</summary>
@@ -202,6 +205,22 @@ namespace UnityGameTranslator.Core.UI.Components
             if (_scroll == null) return;
             UIFactory.SetLayoutElement(_scroll, minHeight: height, preferredHeight: height,
                                        flexibleHeight: fill ? 9999 : 0, flexibleWidth: 9999);
+        }
+
+        /// <summary>
+        /// The height one row can be shown in whole in this list held at <paramref name="height"/>:
+        /// that height less the padding around its rows.
+        /// </summary>
+        public float RowRoomAt(int height) => Mathf.Max(0f, height - 2 * _padding);
+
+        /// <summary>
+        /// What a row asks for, laid out at the list's width — read after <see cref="ContentHeight"/>,
+        /// which brings the rows' layout up to date.
+        /// </summary>
+        public static float HeightOf(Host row)
+        {
+            var rect = row.Object != null ? row.Object.GetComponent<RectTransform>() : null;
+            return rect != null ? LayoutUtility.GetPreferredHeight(rect) : 0f;
         }
 
         public bool Visible

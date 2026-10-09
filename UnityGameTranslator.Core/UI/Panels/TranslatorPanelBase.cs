@@ -286,7 +286,10 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// </summary>
         private void UpdateDraggerCache()
         {
-            if (Dragger != null)
+            // 🔴 Never while the grip is held: OnEndResize ENDS the resize in progress — the
+            // cursor turned back to an arrow at the click and nothing was grabbed (2026-10-09).
+            // The user's own release refreshes the cache.
+            if (Dragger != null && !UserIsResizing)
             {
                 // Scoped, not one-shot: OnEndResize raises OnFinishResize synchronously, so the
                 // handler sees the flag while it runs. Clearing it here rather than in the handler
@@ -771,11 +774,17 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// band of nothing. Both were reported, and both are answered by putting the window back
         /// between the two the moment they are known.
         /// </summary>
+        /// <summary>Whether somebody is dragging this window's edge right now.</summary>
+        protected bool UserIsResizing => Dragger != null && Dragger.WasResizing;
+
         protected void ResizeTo(int height)
         {
             // What the screen can hold bounds every height this panel gives itself.
             height = Math.Min(height, TallestOnThisScreen);
             if (Rect == null || Math.Abs(Rect.rect.height - height) < 0.5f) return;
+            // 🔴 The hand on the grip wins: the dragger already holds the window between MinHeight
+            // and MaxHeight, and a size set under it made the grip jump and let go (2026-10-09).
+            if (UserIsResizing) return;
 
             _isProgrammaticResize = true;
             try
@@ -1320,6 +1329,9 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// </summary>
         protected void CalculateAndApplyOptimalSize()
         {
+            // The hand on the grip wins — see ResizeTo. Its release decides the size.
+            if (UserIsResizing) return;
+
             if (!UseDynamicSizing)
             {
                 Rect.sizeDelta = new Vector2(PanelWidth, PanelHeight);

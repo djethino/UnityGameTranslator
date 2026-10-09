@@ -2635,6 +2635,7 @@ namespace UnityGameTranslator.Core
                 // A refresh walk still running and not there yet: this one first — on the way
                 // out as much as on the way in.
                 if (!ownUi) TranslatorScanner.ShownDuringSpread(__instance);
+                if (!ownUi) UI.InspectorPicker.NoteTextAppeared();
                 if (!TranslatorCore.TranslationsActive) return;
 
                 // Defense-in-depth: never re-apply game fonts to our own UI.
@@ -3810,6 +3811,7 @@ namespace UnityGameTranslator.Core
                     if (!ownUi || TranslatorCore.ShouldTranslateOwnUI) TranslatorScanner.Appeared(TypeHelper.TMP_TextType);
                     // A refresh walk still running and not there yet: this one first.
                     if (!ownUi) TranslatorScanner.ShownDuringSpread(__instance);
+                    if (!ownUi) UI.InspectorPicker.NoteTextAppeared();
                     // A copy of a template still wearing the template's right-to-left form:
                     // presented on its own at the next pass (written then, not here).
                     if (TranslatorCore.TranslationsActive && !ownUi)

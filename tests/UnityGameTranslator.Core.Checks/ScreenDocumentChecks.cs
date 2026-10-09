@@ -237,8 +237,11 @@ namespace UnityGameTranslator.Core.Checks
                   && inspector.Nodes["ImageActionRow"].StartsVisible == false && inspector.Nodes["TextEditRow"].StartsVisible == false && inspector.Nodes["ExclusionActionRow"].StartsVisible,
                 "inspector.json: eight acts (Select Parent climbs from a refined text to its group), the camera list the code's, the exclusion row up and the two other modes' rows down",
                 "which row shows is the mode's, decided by the code");
-            check(inspector.Nodes["TextEditScroll"].Int("minHeight") == 260,
-                "the text-edit list's floor is stated once, in the document", "the code reads it there and revises the box once the list is filled");
+            check(inspector.Nodes["TextEditScroll"].Int("minHeight") == 120
+                  && inspector.Nodes["TextEditScroll"].Int("preferredHeight") > 120
+                  && inspector.Footer.Select(f => f.Name).SequenceEqual(new[] { "ParentBtn", "CancelBtn", "StopBtn" }),
+                "the text-edit list's floor is stated once, in the document, under what it asks for; the buttons sit in the footer",
+                "the window opens tall enough for the rows and can be made smaller — the list scrolls inside, never the window, and the buttons never leave it");
             // The picture an element draws, and the strip of them when it carries several: both
             // start hidden — most elements have one picture, and a strip of one is not a choice.
             check(inspector.Nodes["ImagePreview"].Kind == "image" && inspector.Nodes["ImagePreview"].Int("height") > 0
@@ -280,9 +283,9 @@ namespace UnityGameTranslator.Core.Checks
                 // the Asset Packs card lists the packs folder and what a pack would add.
                 "every one of the thirteen lists states its preferred height, and the hidden find lists take no spare height",
                 "ScrollingListHeightRule: a list weighed at its minimum leaves the panel no slack");
-            check(tools.Acts.Count == 34 && tools.Nodes["FontSharpness"].Word("options") == "code"
+            check(tools.Acts.Count == 36 && tools.Nodes["FontSharpness"].Word("options") == "code"
                   && (bool)tools.Nodes["TextEditorBtn"].Props["scope"]["onThisMachine"] && !(bool)tools.Nodes["TextEditorBtn"].Props["scope"]["yourPublishedCopy"],
-                "tools.json asks for 34 acts (eight of them settle a failed line, three turning its pages, four open, refresh, add or clear packs, three export one); the sharpness choices are the GPU's; the editors write locally", $"got {tools.Acts.Count} acts");
+                "tools.json asks for 36 acts (eight of them settle a failed line, three turning its pages, four open, refresh, add or clear packs, three export one, two tick or untick every font's RTL mirror); the sharpness choices are the GPU's; the editors write locally", $"got {tools.Acts.Count} acts");
 
             var options = ScreenDocument.FromFile(Path.Combine(folder, "options.json"));
             check(options.Header.Count == 1 && options.Header[0].Kind == "tabs" && options.Header[0].Children.Count == 6 && options.Body.Count == 0,

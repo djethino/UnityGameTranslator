@@ -79,10 +79,23 @@ namespace UnityGameTranslator.Core
         /// Everything reachable, with its text. Pass a filter to stop building strings for texts
         /// nobody asked about — on a large scene that is most of them.
         /// </summary>
+        /// <summary>What the last <see cref="All"/> met and why each one it left out was left out —
+        /// for a diagnostic saying why a text the person points at is not listed.</summary>
+        public sealed class Walk
+        {
+            public int Met, Twice, Empty, NoObject, Skipped;
+            public override string ToString()
+                => $"{Met} met: {Twice} already listed under another type, {Empty} with no text, "
+                   + $"{NoObject} not readable as a component, {Skipped} our own interface or excluded";
+        }
+
+        public static Walk LastWalk { get; private set; } = new Walk();
+
         public static List<TextTarget> All(Func<string, bool> keep = null)
         {
             var found = new List<TextTarget>();
             var seen = new HashSet<long>();
+            LastWalk = new Walk();
 
             CollectRegistered(found, seen, keep);
             CollectPatchedOnly(found, seen, keep);
@@ -105,10 +118,13 @@ namespace UnityGameTranslator.Core
                 var objects = TypeHelper.FindAllObjectsOfType(type.ComponentType);
                 if (objects == null) continue;
 
-                foreach (var obj in objects)
+                foreach (var candidate in objects)
+                {
+                    var obj = AsType(candidate, type.ComponentType);
                     Consider(found, seen, keep, obj,
                              type.FontTypeName ?? type.Category,
                              () => TranslatorScanner.GetTextForTypePublic(obj, type));
+                }
             }
         }
 
@@ -134,9 +150,24 @@ namespace UnityGameTranslator.Core
             var objects = TypeHelper.FindAllObjectsOfType(type);
             if (objects == null) return;
 
-            foreach (var obj in objects)
+            foreach (var candidate in objects)
+            {
+                var obj = AsType(candidate, type);
                 Consider(found, seen, keep, obj, engine, () => TypeHelper.GetText(obj));
+            }
         }
+
+        /// <summary>
+        /// The object as the type it was looked up by.
+        ///
+        /// 🔴 **On IL2CPP the lookup hands back proxies of the BASE type** (UnityEngine.Object),
+        /// and a text read through them asks a TMP_Text question of an Object: no text. The list
+        /// then held 87 texts out of 22 509 met in one game, and the in-game editor answered « No
+        /// text components found » on a letter it was showing (2026-10-09). The scanner and the
+        /// font audit cast before reading (TranslatorScanner.ResolveComponent); this is the same
+        /// question, asked of the same lookup. Under Mono the object already is that type.
+        /// </summary>
+        private static object AsType(object obj, Type type) => TypeHelper.Il2CppCast(obj, type) ?? obj;
 
         /// <summary>
         /// UI Toolkit, which no FindObjects call can return — see UIToolkitSupport for why the way
@@ -161,22 +192,23 @@ namespace UnityGameTranslator.Core
                                      Func<string> readText)
         {
             if (obj == null) return;
+            LastWalk.Met++;
 
             try
             {
                 long id = TypeHelper.GetInstanceID(obj);
-                if (id == -1 || !seen.Add(id)) return;
+                if (id == -1 || !seen.Add(id)) { LastWalk.Twice++; return; }
 
                 string text = readText();
-                if (string.IsNullOrEmpty(text)) return;
+                if (string.IsNullOrEmpty(text)) { LastWalk.Empty++; return; }
                 if (keep != null && !keep(text)) return;
 
                 var comp = obj as Component;
                 if (comp == null) comp = TypeHelper.Il2CppCast(obj, typeof(Component)) as Component;
-                if (comp == null || comp.gameObject == null) return;
+                if (comp == null || comp.gameObject == null) { LastWalk.NoObject++; return; }
 
                 // Our own interface is not part of the game's text.
-                if (TranslatorCore.ShouldSkipTranslation(comp)) return;
+                if (TranslatorCore.ShouldSkipTranslation(comp)) { LastWalk.Skipped++; return; }
 
                 found.Add(new TextTarget
                 {

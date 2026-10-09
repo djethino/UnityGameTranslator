@@ -49,7 +49,7 @@ namespace UnityGameTranslator.Core
         {
             // The keys.
             "settings_hotkey", "toggle_translations_hotkey", "toggle_ai_hotkey",
-            "toggle_images_hotkey", "toggle_fonts_hotkey", "toggle_overlay_hotkey",
+            "toggle_images_hotkey", "toggle_fonts_hotkey", "toggle_overlay_hotkey", "toggle_cursor_hotkey",
             "open_inspector_hotkey", "open_upload_hotkey", "open_exclusion_mode_hotkey",
             "open_text_editor_hotkey", "force_scan_hotkey",
 

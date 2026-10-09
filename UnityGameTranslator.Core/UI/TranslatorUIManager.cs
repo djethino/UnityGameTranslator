@@ -1197,10 +1197,19 @@ namespace UnityGameTranslator.Core.UI
                 + $"absorber={(_clickAbsorber != null && _clickAbsorber.activeSelf)} eventSystem={es}");
         }
 
+        // Whether a window showed at the last tick — for the focus a window gets when it opens,
+        // which is not the same moment as the input being taken: the cursor shortcut may hold it.
+        private static bool _panelsWereVisible;
+
         private static void TickInputOwnership()
         {
             bool panelsVisible = AnyPanelVisible();
-            LogOwnershipState(panelsVisible);
+            // The interface holds the input while a window shows OR while the cursor shortcut took
+            // it (ToggleCursorHotkey): one holding, so the capture options, the EventSystem and the
+            // handover are the same for both. What is a WINDOW's — its focus, its appearance, the
+            // help bar — still follows the windows alone.
+            bool interfaceHolds = panelsVisible || _cursorFreed;
+            LogOwnershipState(interfaceHolds);
             // ONE state for "the interface holds the input", used by the EventSystem handover AND
             // by the capture. Two separate notions would drift, and the drift would show up as the
             // half-captured frame that let a click through.
@@ -1219,23 +1228,30 @@ namespace UnityGameTranslator.Core.UI
             ReconcileEventSystem();
             UpdateInterfaceFocus(panelsVisible);
 
-            if (!panelsVisible && _lastPanelVisibleState)
+            // Opening a window means wanting to use it, whether it was opened by clicking or by
+            // the hotkey — so it starts with the focus rather than waiting for a click that
+            // someone opening it with the keyboard is not going to make.
+            // ⚠ On the WINDOW's arrival, not on the input being taken: with the cursor shortcut
+            // already holding it, there is no taking left to hang this on.
+            if (panelsVisible && !_panelsWereVisible)
+            {
+                _focusedPanel = TopmostVisiblePanel();
+                _interfaceHasFocus = _focusedPanel != null;
+            }
+            _panelsWereVisible = panelsVisible;
+
+            if (!interfaceHolds && _lastPanelVisibleState)
             {
                 SetClickAbsorber(true);
                 DeselectGameObject();
             }
 
-            if (panelsVisible != _lastPanelVisibleState)
+            if (interfaceHolds != _lastPanelVisibleState)
             {
-                if (panelsVisible)
+                if (interfaceHolds)
                 {
                     _lastPanelVisibleState = true;
                     _uiHoldsInput = true;
-                    // Opening a window means wanting to use it, whether it was opened by clicking
-                    // or by the hotkey — so it starts with the focus rather than waiting for a
-                    // click that someone opening it with the keyboard is not going to make.
-                    _focusedPanel = TopmostVisiblePanel();
-                    _interfaceHasFocus = _focusedPanel != null;
                     _closedAt = 0f;
                     _absorberUntil = 0f;
                     SetClickAbsorber(false);
@@ -5921,6 +5937,12 @@ namespace UnityGameTranslator.Core.UI
                 return;
             }
 
+            if (IsHotkeyPressed(config.toggle_cursor_hotkey))
+            {
+                ToggleCursorHotkey();
+                return;
+            }
+
             if (IsHotkeyPressed(config.open_inspector_hotkey))
             {
                 OpenInspectorHotkey();
@@ -6091,6 +6113,43 @@ namespace UnityGameTranslator.Core.UI
             bool newState = !StatusOverlay.Enabled;
             StatusOverlay.SetActive(newState);
             ShowHotkeyFeedback(newState ? "Notifications: ON" : "Notifications: OFF", newState);
+        }
+
+        /// <summary>
+        /// The cursor taken from the game by its shortcut, with no window open — see
+        /// <see cref="ToggleCursorHotkey"/>. Read by <see cref="TickInputOwnership"/> beside the
+        /// panels: the interface holds the input while either is true.
+        /// </summary>
+        private static bool _cursorFreed;
+
+        /// <summary>
+        /// Takes the cursor from the game, or gives it back (decided 2026-10-09).
+        ///
+        /// 🔴 **It never hides anything.** Taking it is what an open window does — the state the
+        /// game had is read from the engine at that moment (UniverseLib's CursorUnlocker) — and
+        /// giving it back restores exactly that: a game with a cursor of its own keeps it, and
+        /// pressing twice changes nothing on its screen. It exists for the games that show no
+        /// cursor outside their pause menu, where the notifications' buttons could not be clicked
+        /// (they leave the screen when a window opens, so opening one was no way round).
+        ///
+        /// ⚠ The same holding as a window, so the same Adaptation options: without the mouse axes
+        /// captured, moving to a notification still turns the camera — as it would under a panel.
+        /// </summary>
+        /// <remarks>
+        /// ⚠ **Refused while a window is open**, and said. The window already holds the cursor, so
+        /// flipping the shortcut's state there would change nothing visible — and decide, unseen,
+        /// whether the cursor stays free once the window closes. A cursor freed BEFORE a window
+        /// opened stays free after it closes: that is the state somebody asked for.
+        /// </remarks>
+        private static void ToggleCursorHotkey()
+        {
+            if (AnyPanelVisible())
+            {
+                ShowHotkeyFeedback("Free cursor: a window is open", _cursorFreed);
+                return;
+            }
+            _cursorFreed = !_cursorFreed;
+            ShowHotkeyFeedback(_cursorFreed ? "Free cursor: ON" : "Free cursor: OFF", _cursorFreed);
         }
 
         /// <summary>

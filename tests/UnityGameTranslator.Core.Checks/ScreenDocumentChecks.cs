@@ -295,9 +295,9 @@ namespace UnityGameTranslator.Core.Checks
             check(options.Nodes.Values.Count(n => n.Kind == "field" && n.Word("caption") != null) == 7
                   && options.Nodes["MaxAttempts"].Word("input") == null,
                 "the seven advanced numbers are captioned Text fields", "Decimal is locale-aware and refuses the dot these values are written with; validation happens at Apply");
-            check(options.Nodes.Values.Count(n => n.Kind == "stack" && n.Name.EndsWith("Host")) == 11
+            check(options.Nodes.Values.Count(n => n.Kind == "stack" && n.Name.EndsWith("Host")) == 12
                   && options.Nodes.Values.Where(n => n.Kind == "stack" && n.Name.EndsWith("Host")).All(n => n.Children.Count == 0),
-                "eleven empty hosts, one per hotkey capture", "the capture control is the code's");
+                "twelve empty hosts, one per hotkey capture (Free cursor the twelfth)", "the capture control is the code's");
             check(options.Nodes["CaptureKeyboardWhy"].Bind != null && !options.Nodes["CaptureKeyboardWhy"].StartsVisible
                   && !options.Nodes["PauseWhy"].StartsVisible && !options.Nodes["PauseBlocked"].StartsVisible,
                 "each capture box has a hidden line for the runtime's own reason; freezing has its three", "whether an intention can be honoured is the game's to say");

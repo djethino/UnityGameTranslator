@@ -76,6 +76,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         private HotkeyCapture _hotkeyToggleImages;
         private HotkeyCapture _hotkeyToggleFonts;
         private HotkeyCapture _hotkeyToggleOverlay;
+        private HotkeyCapture _hotkeyToggleCursor;
         private HotkeyCapture _hotkeyOpenInspector;
         private HotkeyCapture _hotkeyOpenUpload;
         private HotkeyCapture _hotkeyOpenExclusion;
@@ -223,6 +224,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             public string toggle_images_hotkey;
             public string toggle_fonts_hotkey;
             public string toggle_overlay_hotkey;
+            public string toggle_cursor_hotkey;
             public string open_inspector_hotkey;
             public string open_upload_hotkey;
             public string open_exclusion_mode_hotkey;
@@ -297,6 +299,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                     toggle_images_hotkey = TranslatorCore.Config.toggle_images_hotkey ?? "",
                     toggle_fonts_hotkey = TranslatorCore.Config.toggle_fonts_hotkey ?? "",
                     toggle_overlay_hotkey = TranslatorCore.Config.toggle_overlay_hotkey ?? "",
+                    toggle_cursor_hotkey = TranslatorCore.Config.toggle_cursor_hotkey ?? "",
                     open_inspector_hotkey = TranslatorCore.Config.open_inspector_hotkey ?? "",
                     open_upload_hotkey = TranslatorCore.Config.open_upload_hotkey ?? "",
                     open_exclusion_mode_hotkey = TranslatorCore.Config.open_exclusion_mode_hotkey ?? "",
@@ -394,6 +397,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _hotkeyToggleImages = new HotkeyCapture("");
             _hotkeyToggleFonts = new HotkeyCapture("");
             _hotkeyToggleOverlay = new HotkeyCapture("");
+            _hotkeyToggleCursor = new HotkeyCapture("");
             _hotkeyOpenInspector = new HotkeyCapture("");
             _hotkeyOpenUpload = new HotkeyCapture("");
             _hotkeyOpenExclusion = new HotkeyCapture("");
@@ -450,6 +454,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                 "Shortcut to switch between the game's original fonts and the mod's replacement fonts.");
             PlaceHotkey(_hotkeyToggleOverlay, "HkToggleOverlayHost",
                 "Shortcut to show or hide the corner notification overlay, handy for clean screenshots.");
+            PlaceHotkey(_hotkeyToggleCursor, "HkToggleCursorHost",
+                "Shortcut to show the cursor and click the notifications, in a game that hides it while playing. "
+                + "Press again to give it back. The capture options in Adaptation apply, as with an open window.");
             PlaceHotkey(_hotkeyOpenInspector, "HkOpenInspectorHost",
                 "Shortcut to open or close the element inspector panel.");
             PlaceHotkey(_hotkeyOpenUpload, "HkOpenUploadHost",
@@ -862,6 +869,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _hotkeyToggleImages?.Update();
             _hotkeyToggleFonts?.Update();
             _hotkeyToggleOverlay?.Update();
+            _hotkeyToggleCursor?.Update();
             _hotkeyOpenInspector?.Update();
             _hotkeyOpenUpload?.Update();
             _hotkeyOpenExclusion?.Update();
@@ -974,6 +982,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _hotkeyToggleImages.SetHotkey(TranslatorCore.Config.toggle_images_hotkey ?? "");
             _hotkeyToggleFonts.SetHotkey(TranslatorCore.Config.toggle_fonts_hotkey ?? "");
             _hotkeyToggleOverlay.SetHotkey(TranslatorCore.Config.toggle_overlay_hotkey ?? "");
+            _hotkeyToggleCursor.SetHotkey(TranslatorCore.Config.toggle_cursor_hotkey ?? "");
             _hotkeyOpenInspector.SetHotkey(TranslatorCore.Config.open_inspector_hotkey ?? "");
             _hotkeyOpenUpload.SetHotkey(TranslatorCore.Config.open_upload_hotkey ?? "");
             _hotkeyOpenExclusion.SetHotkey(TranslatorCore.Config.open_exclusion_mode_hotkey ?? "");
@@ -1618,6 +1627,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 TranslatorCore.Config.toggle_images_hotkey = _hotkeyToggleImages.HotkeyString;
                 TranslatorCore.Config.toggle_fonts_hotkey = _hotkeyToggleFonts.HotkeyString;
                 TranslatorCore.Config.toggle_overlay_hotkey = _hotkeyToggleOverlay.HotkeyString;
+                TranslatorCore.Config.toggle_cursor_hotkey = _hotkeyToggleCursor.HotkeyString;
                 TranslatorCore.Config.open_inspector_hotkey = _hotkeyOpenInspector.HotkeyString;
                 TranslatorCore.Config.open_upload_hotkey = _hotkeyOpenUpload.HotkeyString;
                 TranslatorCore.Config.open_exclusion_mode_hotkey = _hotkeyOpenExclusion.HotkeyString;
@@ -1965,6 +1975,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _hotkeyToggleImages.OnHotkeyChanged += _ => UpdateApplyButtonText();
             _hotkeyToggleFonts.OnHotkeyChanged += _ => UpdateApplyButtonText();
             _hotkeyToggleOverlay.OnHotkeyChanged += _ => UpdateApplyButtonText();
+            _hotkeyToggleCursor.OnHotkeyChanged += _ => UpdateApplyButtonText();
             _hotkeyOpenInspector.OnHotkeyChanged += _ => UpdateApplyButtonText();
             _hotkeyOpenUpload.OnHotkeyChanged += _ => UpdateApplyButtonText();
             _hotkeyOpenExclusion.OnHotkeyChanged += _ => UpdateApplyButtonText();
@@ -2014,6 +2025,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             P.Track(_hotkeyToggleImages.Handle, () => _hotkeyToggleImages.HotkeyString != S().toggle_images_hotkey);
             P.Track(_hotkeyToggleFonts.Handle, () => _hotkeyToggleFonts.HotkeyString != S().toggle_fonts_hotkey);
             P.Track(_hotkeyToggleOverlay.Handle, () => _hotkeyToggleOverlay.HotkeyString != S().toggle_overlay_hotkey);
+            P.Track(_hotkeyToggleCursor.Handle, () => _hotkeyToggleCursor.HotkeyString != S().toggle_cursor_hotkey);
             P.Track(_hotkeyOpenInspector.Handle, () => _hotkeyOpenInspector.HotkeyString != S().open_inspector_hotkey);
             P.Track(_hotkeyOpenUpload.Handle, () => _hotkeyOpenUpload.HotkeyString != S().open_upload_hotkey);
             P.Track(_hotkeyOpenExclusion.Handle, () => _hotkeyOpenExclusion.HotkeyString != S().open_exclusion_mode_hotkey);

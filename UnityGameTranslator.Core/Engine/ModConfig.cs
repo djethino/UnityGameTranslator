@@ -507,6 +507,9 @@ namespace UnityGameTranslator.Core
         public string toggle_images_hotkey { get; set; } = "";
         public string toggle_fonts_hotkey { get; set; } = "";
         public string toggle_overlay_hotkey { get; set; } = "";
+        // Takes the cursor from the game, as an open window does, and gives it back — see
+        // TranslatorUIManager.ToggleCursorHotkey.
+        public string toggle_cursor_hotkey { get; set; } = "";
         public string open_inspector_hotkey { get; set; } = "";
         public string open_upload_hotkey { get; set; } = "";
         public string open_exclusion_mode_hotkey { get; set; } = "";

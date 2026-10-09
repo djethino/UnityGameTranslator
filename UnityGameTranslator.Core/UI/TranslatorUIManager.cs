@@ -1471,6 +1471,10 @@ namespace UnityGameTranslator.Core.UI
                     // A game must never stay held because the mod was not configured yet.
                     TickInputOwnership();
 
+                    // Our own pointer over a game that hides the system cursor, once the holding of
+                    // this frame is known (SoftwareCursor).
+                    SoftwareCursor.Tick();
+
                     // A window that has just appeared takes the focus, however many were open.
                     TickNewlyOpenedPanels();
 

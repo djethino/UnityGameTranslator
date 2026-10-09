@@ -2760,7 +2760,7 @@ namespace UnityGameTranslator.Core
             float factor = SizeTagFactor(instance, compId, unityCloneFont, unityCloneName, fontName, cloneComing);
             string before = textValue;
             textValue = _sizeTagWrites.Fit(compId, textValue, factor);
-            NoteSizeTags(compId, fontName, factor, before, textValue);
+            NoteSizeTags(instance, compId, fontName, factor, before, textValue);
         }
 
         /// <summary>
@@ -2770,7 +2770,7 @@ namespace UnityGameTranslator.Core
         /// ⚠ Under Debug logging only: a game full of sized text wrote some 600 of these a session
         /// (2026-10-09), which is what proved the rule — and noise for anybody just playing.
         /// </summary>
-        private static void NoteSizeTags(int compId, string fontName, float factor, string before, string after)
+        private static void NoteSizeTags(object instance, int compId, string fontName, float factor, string before, string after)
         {
             if (!TranslatorCore.DebugMode) return;
             if (before == null || before.IndexOf("<size", StringComparison.OrdinalIgnoreCase) < 0) return;
@@ -2778,9 +2778,38 @@ namespace UnityGameTranslator.Core
             int at = before.IndexOf("<size", StringComparison.OrdinalIgnoreCase);
             int end = before.IndexOf('>', at);
             string tag = end > at ? before.Substring(at, end - at + 1) : before.Substring(at);
+            string head = before.Length > 40 ? before.Substring(0, 40) + "…" : before;
             TranslatorCore.LogInfo($"[SizeTags] comp={compId} font '{fontName ?? "none"}' factor {factor:F3} first tag {tag} — "
                 + (!SizeTags.HasAbsolute(before) ? "not an absolute size, left as it is"
-                   : string.Equals(before, after, StringComparison.Ordinal) ? "unchanged" : "fitted"));
+                   : string.Equals(before, after, StringComparison.Ordinal) ? "unchanged" : "fitted")
+                + $" | {AutoSizeFacts(instance)} | '{head.Replace("\n", "\\n")}'");
+        }
+
+        /// <summary>
+        /// A TMP text's auto-sizing as it stands: on or off, the size it is drawn at now, its bounds.
+        /// TMP shrinks the base size to fit and leaves an absolute size tag where it was — what this
+        /// line exists to show (2026-10-09, a word staying big once its line was refitted).
+        /// </summary>
+        private static string AutoSizeFacts(object instance)
+        {
+            if (instance == null) return "no component";
+            var type = instance.GetType();
+            var auto = type.GetProperty("enableAutoSizing", BindingFlags.Public | BindingFlags.Instance);
+            if (auto == null) return "no auto-size (not TMP)";
+            try
+            {
+                bool on = (bool)auto.GetValue(instance, null);
+                float size = TypeHelper.GetFontSize(instance);
+                if (!on) return $"auto-size off, size {size:F2}";
+                object max = type.GetProperty("fontSizeMax", BindingFlags.Public | BindingFlags.Instance)?.GetValue(instance, null);
+                object min = type.GetProperty("fontSizeMin", BindingFlags.Public | BindingFlags.Instance)?.GetValue(instance, null);
+                return $"auto-size ON, size {size:F2} in [{min}..{max}]";
+            }
+            catch (Exception ex)
+            {
+                // A diagnostic that cannot read the component says so instead of the facts.
+                return $"auto-size unreadable: {ex.GetType().Name}";
+            }
         }
 
         /// <summary>

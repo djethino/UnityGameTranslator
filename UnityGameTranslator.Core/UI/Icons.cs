@@ -211,6 +211,11 @@ namespace UnityGameTranslator.Core.UI
                         case "cloud": distance = Cloud(px, py); break;
                         case "display": distance = Display(px, py); break;
                         case "link": distance = Link(px, py); break;
+                        // The pointer drawn while the game hides the system cursor (SoftwareCursor):
+                        // the arrow, and the same arrow one stroke wider for its dark rim. Mod-only —
+                        // the manager has the system's own cursor and no use for these.
+                        case "cursor": distance = Arrow(px, py); break;
+                        case "cursor-rim": distance = Arrow(px, py) - CursorRim; break;
                         default: return null;
                     }
 
@@ -260,6 +265,65 @@ namespace UnityGameTranslator.Core.UI
                            -Capsule(x, y, 9.4, 8, 12.1, 8, 1.1));
 
             return Min(left, right);
+        }
+
+        // ── The pointer ───────────────────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Where the pointer's tip sits in the box, top-left origin: the hotspot. The cursor is
+        /// placed by this point, so the tip is exactly where the mouse is.
+        /// </summary>
+        public const double CursorTipX = 1.2, CursorTipY = 1.2;
+
+        /// <summary>The dark rim's width around the arrow, in box units (0.9 is just under two texels).</summary>
+        private const double CursorRim = 0.9;
+
+        /// <summary>The box the pointer marks are drawn in, in texels — what SoftwareCursor sizes them by.</summary>
+        public const int CursorTexels = (int)(Box * Scale);
+
+        // The system arrow's outline: tip, down the left edge, the notch, the tail and back up.
+        private static readonly double[] ArrowPoints =
+        {
+            CursorTipX, CursorTipY,
+            1.2, 13.4,
+            4.3, 10.6,
+            6.5, 15.0,
+            8.4, 14.1,
+            6.3, 9.8,
+            10.2, 9.8,
+        };
+
+        /// <summary>The system's arrow, as a polygon.</summary>
+        private static double Arrow(double x, double y) => Polygon(x, y, ArrowPoints);
+
+        /// <summary>
+        /// Distance to a closed polygon given as x,y pairs: to its nearest edge, negative inside
+        /// (crossing count) — the same convention as the other shapes.
+        /// </summary>
+        private static double Polygon(double x, double y, double[] points)
+        {
+            int n = points.Length / 2;
+            double nearest = double.MaxValue;
+            bool inside = false;
+            for (int i = 0, j = n - 1; i < n; j = i++)
+            {
+                double ax = points[2 * i], ay = points[2 * i + 1];
+                double bx = points[2 * j], by = points[2 * j + 1];
+
+                double ex = bx - ax, ey = by - ay;
+                double length = ex * ex + ey * ey;
+                double t = length <= 0 ? 0 : ((x - ax) * ex + (y - ay) * ey) / length;
+                if (t < 0) t = 0;
+                else if (t > 1) t = 1;
+                double dx = x - (ax + ex * t), dy = y - (ay + ey * t);
+                double d = dx * dx + dy * dy;
+                if (d < nearest) nearest = d;
+
+                if ((ay > y) != (by > y) && x < ax + (bx - ax) * (y - ay) / (by - ay))
+                    inside = !inside;
+            }
+            double distance = Math.Sqrt(nearest);
+            return inside ? -distance : distance;
         }
 
         // ── Distances ─────────────────────────────────────────────────────────────────────────

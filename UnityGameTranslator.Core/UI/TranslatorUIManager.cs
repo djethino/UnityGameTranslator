@@ -639,7 +639,12 @@ namespace UnityGameTranslator.Core.UI
                 case UniverseLib.Input.InputCapture.CaptureKind.GameMenus:
                     return TranslatorCore.CaptureGameMenus;
                 case UniverseLib.Input.InputCapture.CaptureKind.GameClicks:
-                    return TranslatorCore.CaptureGameClicks;
+                    // 🔴 A click ON one of our windows is ours, whatever the option says — the option
+                    // decides only for the rest of the screen, as its help has always promised
+                    // ("Without it, clicking beside this window still acts in the game"). A game
+                    // reading the mouse button itself, rather than through its menus' raycasts, got
+                    // every click aimed at our buttons as well (2026-10-09).
+                    return TranslatorCore.CaptureGameClicks || _pointerOverInterface;
                 case UniverseLib.Input.InputCapture.CaptureKind.MouseAxes:
                     return TranslatorCore.CaptureMouseAxes;
                 default:
@@ -1035,6 +1040,22 @@ namespace UnityGameTranslator.Core.UI
             return null;
         }
 
+        /// <summary>The pointer is over one of our windows or the corner notifications, this frame.</summary>
+        private static bool _pointerOverInterface;
+
+        /// <summary>
+        /// Is the pointer over something of ours a click is meant for — a window, or the corner
+        /// notifications, whose buttons the cursor shortcut makes clickable?
+        /// </summary>
+        private static bool PointerOverInterface()
+        {
+            if (PanelUnderPointer() != null) return true;
+            var overlay = StatusOverlay;
+            if (overlay == null || !overlay.Enabled || overlay.Rect == null) return false;
+            Vector3 local = overlay.Rect.InverseTransformPoint(InputManager.MousePosition);
+            return overlay.Rect.rect.Contains(local);
+        }
+
         /// <summary>The panel the pointer is inside, or null.</summary>
         private static Panels.TranslatorPanelBase PanelUnderPointer()
         {
@@ -1210,6 +1231,10 @@ namespace UnityGameTranslator.Core.UI
             // help bar — still follows the windows alone.
             bool interfaceHolds = panelsVisible || _cursorFreed;
             LogOwnershipState(interfaceHolds);
+
+            // Once per frame, here — never inside the capture's answer, which runs at each of the
+            // game's reads and must not read the mouse through the strategies it is deciding for.
+            _pointerOverInterface = interfaceHolds && PointerOverInterface();
             // ONE state for "the interface holds the input", used by the EventSystem handover AND
             // by the capture. Two separate notions would drift, and the drift would show up as the
             // half-captured frame that let a click through.

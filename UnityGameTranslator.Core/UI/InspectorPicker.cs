@@ -188,12 +188,68 @@ namespace UnityGameTranslator.Core.UI
         /// </summary>
         private static Component[] _textsCache;
 
+        /// <summary>Every camera of the scene, as cameras — kept like the lists above.</summary>
+        private static Camera[] _camerasCache;
+
         private static void DropSceneCaches()
         {
             _raycastersCache = null;
             _renderersCache = null;
             _textsCache = null;
+            _camerasCache = null;
         }
+
+        private static Camera[] Cameras()
+        {
+            DropIfSceneChanged();
+            if (_camerasCache != null) return _camerasCache;
+
+            var list = new List<Camera>();
+            try
+            {
+                var all = TypeHelper.FindAllObjectsOfType(typeof(Camera));
+                if (all != null)
+                    foreach (var obj in all)
+                    {
+                        Camera cam = obj as Camera ?? TypeHelper.Il2CppCast(obj, typeof(Camera)) as Camera;
+                        if (cam != null) list.Add(cam);
+                    }
+            }
+            catch (Exception ex)
+            {
+                // Picking then projects through the camera being picked through, or the main one: said.
+                Faults.Say("InspectorPicker.Cameras", ex);
+            }
+            _camerasCache = list.ToArray();
+            return _camerasCache;
+        }
+
+        /// <summary>
+        /// The camera that draws this object on the screen: the one being picked through when it
+        /// draws the object's layer, otherwise the deepest enabled camera that does (drawn last,
+        /// so on top), otherwise the picking camera, otherwise the main one.
+        ///
+        /// 🔴 **Never Camera.main by default** (2026-10-08). A text with no canvas — a 3D text, a
+        /// menu laid out in the world — was projected through the main camera whatever drew it: a
+        /// game drawing its pause menu with a camera of its own got every marker, and every text
+        /// found by its rectangle, somewhere else than the words.
+        /// </summary>
+        private static Camera DrawingCamera(GameObject go, Camera preferred)
+        {
+            if (go == null) return preferred ?? Camera.main;
+            int layer = 1 << go.layer;
+            if (preferred != null && DrawsOnScreen(preferred, layer)) return preferred;
+
+            Camera best = null;
+            foreach (var cam in Cameras())
+                if (cam != null && DrawsOnScreen(cam, layer) && (best == null || cam.depth > best.depth))
+                    best = cam;
+            return best ?? preferred ?? Camera.main;
+        }
+
+        private static bool DrawsOnScreen(Camera cam, int layer)
+            => cam.enabled && cam.gameObject.activeInHierarchy && cam.targetTexture == null
+               && (cam.cullingMask & layer) != 0;
 
         /// <summary>
         /// Drop the lists when the active scene is no longer the one they were taken from.
@@ -676,35 +732,74 @@ namespace UnityGameTranslator.Core.UI
             var options = new System.Collections.Generic.List<string> { "UI Only" };
             var cameraList = new System.Collections.Generic.List<Camera>();
 
-            try
-            {
-                var allCams = TypeHelper.FindAllObjectsOfType(typeof(Camera));
-                if (allCams != null)
-                {
-                    foreach (var obj in allCams)
-                    {
-                        Camera cam = obj as Camera;
-                        if (cam == null)
-                            cam = TypeHelper.Il2CppCast(obj, typeof(Camera)) as Camera;
-                        if (cam != null && cam.gameObject.activeInHierarchy)
-                            cameraList.Add(cam);
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                // The picker then aims through the cameras it already knew: said.
-                Faults.Say("InspectorPicker.RefreshCameraList", ex);
-            }
+            // The one enumeration of the scene's cameras — the dropdown offers the active ones.
+            foreach (var cam in Cameras())
+                if (cam != null && cam.gameObject.activeInHierarchy)
+                    cameraList.Add(cam);
 
             _sceneCameras = cameraList.ToArray();
             foreach (var cam in _sceneCameras)
             {
                 string type = cam.orthographic ? "ortho" : "persp";
                 options.Add($"{cam.name} ({type})");
+                DescribeCameraSpace(cam);
             }
 
             _cameraNames = options.ToArray();
+        }
+
+        /// <summary>
+        /// One line per selecting click: where the pointer was, what the picked thing sits in, and
+        /// where its marker was put — the three numbers that say which conversion is off when the
+        /// marker lands elsewhere than what is drawn. A click is the person's act, so one line each.
+        /// </summary>
+        private void DescribePick(GameObject picked, Vector3 pointer)
+        {
+            try
+            {
+                var rect = picked.GetComponent<RectTransform>();
+                Canvas canvas = rect != null ? rect.GetComponentInParent<Canvas>() : null;
+                if (canvas != null) canvas = canvas.rootCanvas;
+                string within = canvas == null
+                    ? (rect != null ? "a rectangle with no canvas" : "no rectangle (a renderer in the world)")
+                    : $"canvas '{canvas.name}' {canvas.renderMode}, its camera "
+                      + (canvas.worldCamera != null ? $"'{canvas.worldCamera.name}'" : "none")
+                      + $", scale {canvas.scaleFactor:F2}";
+                string marker = _selectedHighlightRect != null && _selectedHighlight != null && _selectedHighlight.gameObject.activeSelf
+                    ? $"marker at {_selectedHighlightRect.anchoredPosition.x:F0},{_selectedHighlightRect.anchoredPosition.y:F0} "
+                      + $"{_selectedHighlightRect.sizeDelta.x:F0}x{_selectedHighlightRect.sizeDelta.y:F0}"
+                    : "no marker shown";
+                var drawing = DrawingCamera(picked, _selectedCamera);
+                TranslatorCore.LogInfo($"[Inspector] pick '{picked.name}' (layer {picked.layer}) at pointer {pointer.x:F0},{pointer.y:F0} | {within} | "
+                                       + $"picking through {(_selectedCamera != null ? $"'{_selectedCamera.name}'" : "UI Only")}, "
+                                       + $"drawn by {(drawing != null ? $"'{drawing.name}'" : "no camera")} | {marker}");
+            }
+            catch (Exception ex) { Faults.Say("InspectorPicker.DescribePick", ex, picked != null ? picked.name : "null"); }
+        }
+
+        /// <summary>
+        /// Where a camera draws, against the window the pointer moves in — once per distinct answer.
+        ///
+        /// ⚠ Every pick and every marker goes through the camera's own space (ScreenPointToRay,
+        /// WorldToScreenPoint). A camera drawing into a texture, or into part of the window, has a
+        /// space that is not the window's: the pick and its marker then agree with each other and
+        /// sit somewhere else than what is drawn (2026-10-08, a game showing 16:9 inside a 21:9
+        /// window). Said here so the conversion is chosen from what the game does, not guessed.
+        /// </summary>
+        private static void DescribeCameraSpace(Camera cam)
+        {
+            try
+            {
+                var texture = cam.targetTexture;
+                Rect pixels = cam.pixelRect, viewport = cam.rect;
+                string space = $"pixelRect {pixels.x:F0},{pixels.y:F0} {pixels.width:F0}x{pixels.height:F0}, "
+                               + $"rect {viewport.x:F2},{viewport.y:F2} {viewport.width:F2}x{viewport.height:F2}, "
+                               + (texture != null ? $"draws into a texture {texture.width}x{texture.height}" : "draws on screen")
+                               + $", depth {cam.depth:F0}, enabled {cam.enabled}";
+                if (!DiagnosticOnce.First("Inspector.cameraSpace", cam.name + "|" + space)) return;
+                TranslatorCore.LogInfo($"[Inspector] camera '{cam.name}': {space} | window {Screen.width}x{Screen.height}");
+            }
+            catch (Exception ex) { Faults.Say("InspectorPicker.DescribeCameraSpace", ex, cam.name); }
         }
 
         /// <summary>
@@ -771,13 +866,15 @@ namespace UnityGameTranslator.Core.UI
 
                 // And when neither answer is a text, in a mode that is about text: the text under the
                 // pointer by its rectangle (see TextUnderPointer — after the game's answer, never
-                // instead of it).
+                // instead of it). An answer holding texts is refined to the one under the pointer.
                 bool byRectangle = false;
                 if (uiToolkitElement == null && WantsText && (hoveredObject == null || !CarriesText(hoveredObject)))
                 {
                     var text = TextUnderPointer(mousePos);
                     if (text != null) { hoveredObject = text; byRectangle = true; }
                 }
+                else if (uiToolkitElement == null)
+                    hoveredObject = RefineToText(hoveredObject, mousePos, out byRectangle);
 
                 NoteProbe(System.Diagnostics.Stopwatch.GetTimestamp() - t0);
 
@@ -863,65 +960,11 @@ namespace UnityGameTranslator.Core.UI
                     var text = TextUnderPointer(mousePos);
                     if (text != null) { hitObject = text; clickedByRectangle = true; }
                 }
+                else
+                    hitObject = RefineToText(hitObject, mousePos, out clickedByRectangle);
 
                 if (hitObject != null && !IsOwnUI(hitObject))
                 {
-                    string path = TranslatorCore.GetGameObjectPath(hitObject);
-                    _lastSelectedPath = path;
-                    _lastSelectedObject = hitObject;
-                    _lastSelectedSpriteObj = null;
-
-                    var target = new PickedTarget
-                    {
-                        Path = path,
-                        Name = hitObject.name,
-                        Engine = _selectedCamera != null ? "World" : "uGUI",
-                        Owner = hitObject,
-                        IsOwnUi = false,
-                    };
-
-                    if (_currentMode == InspectorMode.BitmapReplace)
-                    {
-                        try
-                        {
-                            _lastSelectedSpriteObj = ImageReplacer.GetSpriteFromComponent(hitObject);
-                            var spriteName = ImageReplacer.GetSpriteName(_lastSelectedSpriteObj) ?? "(unnamed)";
-                            var size = ImageReplacer.GetSpriteSize(_lastSelectedSpriteObj);
-                            var compType = ImageReplacer.GetComponentTypeName(hitObject);
-
-                            // ⚠ Always filled, even when _lastSelectedSpriteObj is null (an Image
-                            // component with no sprite assigned): the panel still names what kind of
-                            // component was hit. HasSprite governs the export/mark buttons instead.
-                            target.HasSprite = _lastSelectedSpriteObj != null;
-                            target.SpriteObject = _lastSelectedSpriteObj;
-                            target.SpriteName = spriteName;
-                            target.SpriteWidth = size.x;
-                            target.SpriteHeight = size.y;
-                            target.SpriteComponentType = compType;
-
-                            // Everything the object's material carries, so the panel can offer a
-                            // choice when there is more than one. The first is the one already
-                            // described above — GetSpriteFromComponent returns exactly that.
-                            foreach (var carried in ImageReplacer.TexturesOnObject(hitObject))
-                            {
-                                var each = ImageReplacer.GetSpriteSize(carried.Texture);
-                                target.Images.Add(new PickedImage
-                                {
-                                    Slot = carried.Slot.TrimStart('_'),
-                                    Image = carried.Texture,
-                                    Name = ImageReplacer.GetSpriteName(carried.Texture) ?? "(unnamed)",
-                                    Width = each.x,
-                                    Height = each.y,
-                                });
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            // A click the person made that did nothing: said.
-                            Faults.Say("InspectorPicker.BitmapReplace click", ex);
-                        }
-                    }
-
                     // Which of the two passes answered, and what it landed on. One line per click,
                     // because reading the code cannot tell you: both are wired, and they differ
                     // exactly on the picks that look wrong.
@@ -932,10 +975,7 @@ namespace UnityGameTranslator.Core.UI
                                                 + (_lastPathWasRay ? $"the ray, which struck the collider '{_lastColliderName}'"
                                                                    : "a box in front of what the ray struck"));
 
-                    // Position selected highlight
-                    PositionHighlight(_selectedHighlightRect, _selectedHighlight, _selectedEdges, _selectedEdgeImages, hitObject);
-
-                    Picked?.Invoke(target);
+                    Select(hitObject, mousePos);
                 }
             }
 
@@ -948,6 +988,104 @@ namespace UnityGameTranslator.Core.UI
                 if (_frameSkip % 10 == 0)
                     PositionHighlight(_selectedHighlightRect, _selectedHighlight, _selectedEdges, _selectedEdgeImages, _lastSelectedObject);
             }
+        }
+
+        /// <summary>
+        /// The selected element has one that contains it, outside this mod's own interface: what
+        /// the Parent button may climb to.
+        /// </summary>
+        public bool CanSelectParent
+        {
+            get
+            {
+                var parent = _lastSelectedObject != null ? _lastSelectedObject.transform.parent : null;
+                return parent != null && !IsOwnUI(parent.gameObject);
+            }
+        }
+
+        /// <summary>
+        /// Select the element containing the selected one — the group a text was refined out of,
+        /// for a rule that covers all of its texts (decided 2026-10-09). The same selection a click
+        /// makes, through the same door.
+        /// </summary>
+        public void SelectParent()
+        {
+            if (!CanSelectParent) return;
+            Select(_lastSelectedObject.transform.parent.gameObject, _lastSelectionPointer);
+        }
+
+        /// <summary>Where the pointer was at the last selection — said again when Parent climbs from it.</summary>
+        private Vector3 _lastSelectionPointer;
+
+        /// <summary>
+        /// Make <paramref name="hitObject"/> the selection: its path, what the mode needs to know of
+        /// it, its marker, and the Picked event. The one door into a selection — the click and the
+        /// Parent button both come through here.
+        /// </summary>
+        private void Select(GameObject hitObject, Vector3 pointer)
+        {
+            _lastSelectionPointer = pointer;
+            string path = TranslatorCore.GetGameObjectPath(hitObject);
+            _lastSelectedPath = path;
+            _lastSelectedObject = hitObject;
+            _lastSelectedSpriteObj = null;
+
+            var target = new PickedTarget
+            {
+                Path = path,
+                Name = hitObject.name,
+                Engine = _selectedCamera != null ? "World" : "uGUI",
+                Owner = hitObject,
+                IsOwnUi = false,
+            };
+
+            if (_currentMode == InspectorMode.BitmapReplace)
+            {
+                try
+                {
+                    _lastSelectedSpriteObj = ImageReplacer.GetSpriteFromComponent(hitObject);
+                    var spriteName = ImageReplacer.GetSpriteName(_lastSelectedSpriteObj) ?? "(unnamed)";
+                    var size = ImageReplacer.GetSpriteSize(_lastSelectedSpriteObj);
+                    var compType = ImageReplacer.GetComponentTypeName(hitObject);
+
+                    // ⚠ Always filled, even when _lastSelectedSpriteObj is null (an Image
+                    // component with no sprite assigned): the panel still names what kind of
+                    // component was hit. HasSprite governs the export/mark buttons instead.
+                    target.HasSprite = _lastSelectedSpriteObj != null;
+                    target.SpriteObject = _lastSelectedSpriteObj;
+                    target.SpriteName = spriteName;
+                    target.SpriteWidth = size.x;
+                    target.SpriteHeight = size.y;
+                    target.SpriteComponentType = compType;
+
+                    // Everything the object's material carries, so the panel can offer a
+                    // choice when there is more than one. The first is the one already
+                    // described above — GetSpriteFromComponent returns exactly that.
+                    foreach (var carried in ImageReplacer.TexturesOnObject(hitObject))
+                    {
+                        var each = ImageReplacer.GetSpriteSize(carried.Texture);
+                        target.Images.Add(new PickedImage
+                        {
+                            Slot = carried.Slot.TrimStart('_'),
+                            Image = carried.Texture,
+                            Name = ImageReplacer.GetSpriteName(carried.Texture) ?? "(unnamed)",
+                            Width = each.x,
+                            Height = each.y,
+                        });
+                    }
+                }
+                catch (Exception ex)
+                {
+                    // A click the person made that did nothing: said.
+                    Faults.Say("InspectorPicker.BitmapReplace click", ex);
+                }
+            }
+
+            // Position selected highlight
+            PositionHighlight(_selectedHighlightRect, _selectedHighlight, _selectedEdges, _selectedEdgeImages, hitObject);
+            DescribePick(hitObject, pointer);
+
+            Picked?.Invoke(target);
         }
 
         #region IL2CPP-safe Raycast Infrastructure
@@ -1383,29 +1521,59 @@ namespace UnityGameTranslator.Core.UI
         /// a bubble opens with its line — is found by looking once more with a fresh list, and only
         /// once per run of empty answers, the rule the other lists follow.
         /// </summary>
-        private GameObject TextUnderPointer(Vector3 screenPosition)
+        /// <param name="within">Only a text inside this object — the game's own answer, refined to the
+        /// text under the pointer among those it holds. Null: any text.</param>
+        private GameObject TextUnderPointer(Vector3 screenPosition, GameObject within = null)
         {
-            var found = PickTextByRectangle(screenPosition);
+            var found = PickTextByRectangle(screenPosition, within);
             if (found == null && !_textsRebuiltOnMiss)
             {
                 _textsRebuiltOnMiss = true;
                 _textsCache = null;
-                found = PickTextByRectangle(screenPosition);
+                found = PickTextByRectangle(screenPosition, within);
             }
             if (found != null) _textsRebuiltOnMiss = false;
             return found;
         }
 
-        private GameObject PickTextByRectangle(Vector3 screenPosition)
+        /// <summary>Is <paramref name="child"/> this object, or something under it?</summary>
+        private static bool IsWithin(Transform child, Transform root)
         {
-            Camera worldCamera = _selectedCamera ?? Camera.main;
+            for (var t = child; t != null; t = t.parent)
+                if (t == root) return true;
+            return false;
+        }
+
+        /// <summary>
+        /// The game's answer, or the text under the pointer among the texts it holds: a group that
+        /// answered the ray (a menu, a bubble with its background) is not the line somebody points
+        /// at (decided 2026-10-09; the group stays one Parent click away). A hit that is itself
+        /// the text, or holds none under the pointer, is kept as it is.
+        /// ⚠ Asked only of a hit already known to carry a text (the callers' CarriesText): asking
+        /// again would walk every text of the scene twice per hover.
+        /// </summary>
+        private GameObject RefineToText(GameObject hit, Vector3 screenPosition, out bool byRectangle)
+        {
+            byRectangle = false;
+            if (hit == null || !WantsText) return hit;
+            var text = TextUnderPointer(screenPosition, hit);
+            if (text == null || text == hit) return hit;
+            byRectangle = true;
+            return text;
+        }
+
+        private GameObject PickTextByRectangle(Vector3 screenPosition, GameObject within = null)
+        {
+            // How far the first solid thing sits, per camera: texts drawn by different cameras are
+            // blocked by what each of them sees.
+            var blockedAtByCamera = new Dictionary<int, float>();
             float blockedAt = float.MaxValue;
-            bool blockedKnown = false;
+            Transform withinRoot = within != null ? within.transform : null;
 
             Component bestOnScreen = null;
             int bestOverlay = -1, bestOrder = int.MinValue, bestDepth = int.MinValue;
             Component bestInWorld = null;
-            float bestReach = float.MaxValue;
+            float bestReach = float.MaxValue, bestBlockedAt = float.MaxValue;
 
             foreach (var comp in Texts())
             {
@@ -1414,6 +1582,7 @@ namespace UnityGameTranslator.Core.UI
 
                 try
                 {
+                    if (withinRoot != null && !IsWithin(comp.transform, withinRoot)) continue;
                     var go = comp.gameObject;
                     if (go == null || !go.activeInHierarchy) continue;
                     // Hidden, disabled, under a disabled canvas or clipped away by a mask: not drawn,
@@ -1443,7 +1612,7 @@ namespace UnityGameTranslator.Core.UI
                     bool overlay = canvas != null && canvas.renderMode == RenderMode.ScreenSpaceOverlay;
                     // The camera GetScreenBounds converts through, so the pick and its marker agree.
                     Camera camera = overlay ? null
-                        : (canvas != null ? canvas.worldCamera : null) ?? worldCamera;
+                        : (canvas != null ? canvas.worldCamera : null) ?? DrawingCamera(go, _selectedCamera);
 
                     Vector3 s0 = w0, s1 = w1, s2 = w2, s3 = w3;
                     if (!overlay)
@@ -1481,13 +1650,14 @@ namespace UnityGameTranslator.Core.UI
                     float reach = Vector3.Dot(normal, w0 - ray.origin) / facing;
                     if (reach < 0f) continue;
 
-                    if (!blockedKnown)
+                    int cameraId = camera.GetInstanceID();
+                    if (!blockedAtByCamera.TryGetValue(cameraId, out blockedAt))
                     {
-                        blockedKnown = true;
                         blockedAt = BlockerDistance(camera, screenPosition);
+                        blockedAtByCamera[cameraId] = blockedAt;
                     }
                     if (reach >= blockedAt) continue;   // behind the first solid thing
-                    if (reach < bestReach) { bestReach = reach; bestInWorld = comp; }
+                    if (reach < bestReach) { bestReach = reach; bestInWorld = comp; bestBlockedAt = blockedAt; }
                 }
                 catch (Exception ex)
                 {
@@ -1511,7 +1681,7 @@ namespace UnityGameTranslator.Core.UI
             if (bestInWorld != null)
             {
                 _lastTextWhy = $"in the world at {bestReach:F2}"
-                               + (blockedAt < float.MaxValue ? $", ahead of a collider at {blockedAt:F2}" : "");
+                               + (bestBlockedAt < float.MaxValue ? $", ahead of a collider at {bestBlockedAt:F2}" : "");
                 return bestInWorld.gameObject;
             }
             return null;
@@ -1946,10 +2116,10 @@ namespace UnityGameTranslator.Core.UI
             }
 
             // A renderer in the world: the eight corners of its bounds, projected through the
-            // camera being picked through — never Camera.main, which is what used to draw the
-            // marker somewhere else entirely.
+            // camera that draws it — the one being picked through when it does, never Camera.main
+            // by default, which is what used to draw the marker somewhere else entirely.
             var renderer = target.GetComponent<Renderer>();
-            var camera = _selectedCamera ?? Camera.main;
+            var camera = DrawingCamera(target, _selectedCamera);
 
             // Nothing drawn on it, but something solid: frame what the ray could hit. Better than
             // no marker at all, and it says plainly that the pick landed on a collision volume.
@@ -2147,9 +2317,9 @@ namespace UnityGameTranslator.Core.UI
                     // ScreenSpaceCamera canvas whose camera is assigned at runtime.
                     //
                     // Order: the canvas's own camera is the truth when it has one; otherwise the
-                    // camera the person is picking through; otherwise the main one. Out of all
-                    // three, the honest answer is to refuse — out loud.
-                    var cam = (rootCanvas != null ? rootCanvas.worldCamera : null) ?? picking ?? Camera.main;
+                    // camera that draws the object (DrawingCamera: the picking one first when it
+                    // does). Out of all of them, the honest answer is to refuse — out loud.
+                    var cam = (rootCanvas != null ? rootCanvas.worldCamera : null) ?? DrawingCamera(rect.gameObject, picking);
                     if (cam == null)
                     {
                         TranslatorCore.LogDebug(rootCanvas != null

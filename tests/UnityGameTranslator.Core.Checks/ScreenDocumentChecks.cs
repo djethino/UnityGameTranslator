@@ -232,10 +232,10 @@ namespace UnityGameTranslator.Core.Checks
                 "the merge's title and Apply both say Local", "the whole merge settles this machine's file and publishes nothing");
 
             var inspector = ScreenDocument.FromFile(Path.Combine(folder, "inspector.json"));
-            check(inspector.Acts.Keys.OrderBy(k => k).SequenceEqual(new[] { "cameraChanged", "clearSelection", "excludePattern", "excludeThis", "exportOriginal", "markReplace", "stop" })
+            check(inspector.Acts.Keys.OrderBy(k => k).SequenceEqual(new[] { "cameraChanged", "clearSelection", "excludePattern", "excludeThis", "exportOriginal", "markReplace", "selectParent", "stop" })
                   && inspector.Nodes["CameraTarget"].Word("options") == "code"
                   && inspector.Nodes["ImageActionRow"].StartsVisible == false && inspector.Nodes["TextEditRow"].StartsVisible == false && inspector.Nodes["ExclusionActionRow"].StartsVisible,
-                "inspector.json: seven acts, the camera list the code's, the exclusion row up and the two other modes' rows down",
+                "inspector.json: eight acts (Select Parent climbs from a refined text to its group), the camera list the code's, the exclusion row up and the two other modes' rows down",
                 "which row shows is the mode's, decided by the code");
             check(inspector.Nodes["TextEditScroll"].Int("minHeight") == 260,
                 "the text-edit list's floor is stated once, in the document", "the code reads it there and revises the box once the list is filled");

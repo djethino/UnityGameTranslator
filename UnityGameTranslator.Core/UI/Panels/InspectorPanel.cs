@@ -62,6 +62,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         private LabelHandle _selectedPathLabel;
         private LabelHandle _statusLabel;
         private ButtonHandle _cancelBtn;
+        private ButtonHandle _parentBtn;
         private LabelHandle _titleLabel;
         private Components.HelpZone _helpZone;
 
@@ -207,6 +208,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _textEditList = _screen.List("TextEditScroll");
             _textFontNoticeLabel = _screen.Label("TextFontNotice");
             _cancelBtn = _screen.Button("CancelBtn");
+            _parentBtn = _screen.Button("ParentBtn");
             _statusLabel = _screen.Label("Status");
 
             // Nothing is hovered or selected yet: the sentences that say so, and the acts closed
@@ -218,6 +220,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _exportOriginalBtn.Enabled = false;
             _markReplaceBtn.Enabled = false;
             _cancelBtn.Enabled = false;
+            _parentBtn.Enabled = false;
 
             // The picker's list arrives at show time; until then the one choice every mode has.
             _cameraDropdown.SetOptions(new[] { "UI Only" });
@@ -235,6 +238,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 case "exportOriginal": return OnExportOriginalClicked;
                 case "markReplace": return OnMarkReplaceClicked;
                 case "clearSelection": return OnCancelClicked;
+                case "selectParent": return OnParentClicked;
                 case "stop": return OnStopClicked;
                 default: return null;
             }
@@ -378,6 +382,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _selectedPathLabel.Tone = Tone.Plain;
             _selectedPathLabel.Italic = false;
             _cancelBtn.Enabled = true;
+            _parentBtn.Enabled = _picker.CanSelectParent;
 
             bool isCanvasOrWorld = target.Engine != "UI Toolkit";
 
@@ -465,6 +470,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _exportOriginalBtn.Enabled = false;
             _markReplaceBtn.Enabled = false;
             _cancelBtn.Enabled = false;
+            _parentBtn.Enabled = false;
             _spriteInfoLabel.Show("");
             _imagePreview.Clear();
             _slotStrip.Clear();
@@ -510,6 +516,12 @@ namespace UnityGameTranslator.Core.UI.Panels
             ClearSelection();
             _statusLabel.Show("");
         }
+
+        /// <summary>
+        /// Climb to the element holding the selected one. The picker makes the new selection the way
+        /// a click does, and reports it through Picked — so every mode reacts exactly as to a click.
+        /// </summary>
+        private void OnParentClicked() => _picker.SelectParent();
 
         #region BitmapReplace Actions
 

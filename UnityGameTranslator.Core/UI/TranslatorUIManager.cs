@@ -494,6 +494,10 @@ namespace UnityGameTranslator.Core.UI
             UniverseLib.Utility.UnityHelpers.FindChild = TransformFind.Path;
             UniverseLib.Utility.UnityHelpers.NewGameObject = EngineStrings.NewGameObject;
 
+            // What the input strategies find (actions read, controllers switched) is said under
+            // Debug logging only, like the mod's own diagnostics.
+            UniverseLib.Input.InputCapture.Verbosity = () => TranslatorCore.DebugMode;
+
             // Use per-game setting for EventSystem override (stored in translations.json as _settings.disable_eventsystem_override)
             // Default is false (UniverseLib CAN override). Set to true in translations.json if the game's UI animations break.
             Universe.Init(1f, OnUniverseLibInitialized, LogHandler, new UniverseLib.Config.UniverseLibConfig
@@ -1776,6 +1780,9 @@ namespace UnityGameTranslator.Core.UI
         /// (BadgeStrip chips, scope strips) compares it with the count it was measured at.
         /// </summary>
         public static int WindowFontEpoch { get; private set; }
+
+        /// <summary>The engine's frame number, for a panel that must tell one frame from the next (panels name nothing of the engine).</summary>
+        public static int Frame => Time.frameCount;
 
         /// <summary>
         /// The window's font has changed what its words measure. Chips keep the width their word had

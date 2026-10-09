@@ -939,6 +939,9 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// </summary>
         private static void NoteNoText(string path)
         {
+            // Debug logging only, asked before marking the path as said (marked while off, it would
+            // stay unsaid once turned on) - and before walking every text of the scene again.
+            if (!TranslatorCore.DebugMode) return;
             if (string.IsNullOrEmpty(path) || !DiagnosticOnce.First("Inspector.noText", path)) return;
             var all = TextTargets.All();
             int cut = path.LastIndexOf('/');
@@ -947,7 +950,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             foreach (var t in all)
                 if (t.Path != null && t.Path.StartsWith(parent, StringComparison.Ordinal))
                     near.Add($"'{t.Path}' ({t.Engine})");
-            TranslatorCore.LogInfo($"[Inspector] no text under '{path}': {all.Count} text(s) listed in the scene ({TextTargets.LastWalk}); "
+            TranslatorCore.LogDebug($"[Inspector] no text under '{path}': {all.Count} text(s) listed in the scene ({TextTargets.LastWalk}); "
                                    + (near.Count == 0 ? $"none under '{parent}'"
                                       : $"{near.Count} under its parent: " + string.Join(", ", near.ToArray())));
         }

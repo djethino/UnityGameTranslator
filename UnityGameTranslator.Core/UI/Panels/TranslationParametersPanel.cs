@@ -2680,9 +2680,12 @@ namespace UnityGameTranslator.Core.UI.Panels
         public override void SetActive(bool active)
         {
             bool wasActive = Enabled;
+            bool opening = active && !wasActive;
+            if (opening) StartOpenTiming();
             base.SetActive(active);
-            if (active && !wasActive)
+            if (opening)
             {
+                Lap("show");
                 LoadCurrentState();
 
                 // The seams between the Failures tab's areas go back to the rule's division: a
@@ -2693,6 +2696,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // them, since the font settings carry their own
                 KeepPanelHeightAcrossTabs(_tabBar);
                 KeepPanelHeightAcrossTabs(_fontsSubTabBar);
+                Lap("tabs");
             }
             else if (!active && wasActive)
             {
@@ -2711,6 +2715,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         public override void Update()
         {
             base.Update();
+            ReportOpenTiming();
 
             // Poll state changes to update Apply button text (IL2CPP-safe, no AddListener)
             if (Enabled)
@@ -2786,12 +2791,57 @@ namespace UnityGameTranslator.Core.UI.Panels
             UpdateApplyButtonText();
         }
 
+        /// <summary>
+        /// Where opening this window goes, under Debug logging: one line per opening, each step's
+        /// milliseconds, and the frame after — where Unity lays out and draws what was built.
+        /// An opening was measured at 450-800 ms only from the gap between two log lines
+        /// (2026-10-09), which says how long, never where.
+        /// </summary>
+        private readonly System.Diagnostics.Stopwatch _openWatch = new System.Diagnostics.Stopwatch();
+        private List<string> _openLaps;
+        private long _lastLapMs;
+        private int _openFrame;
+
+        private void StartOpenTiming()
+        {
+            if (!TranslatorCore.DebugMode) { _openLaps = null; return; }
+            _openLaps = new List<string>();
+            _lastLapMs = 0;
+            _openFrame = TranslatorUIManager.Frame;
+            _openWatch.Reset();
+            _openWatch.Start();
+        }
+
+        private void Lap(string step)
+        {
+            if (_openLaps == null) return;
+            long now = _openWatch.ElapsedMilliseconds;
+            _openLaps.Add($"{step} {now - _lastLapMs}");
+            _lastLapMs = now;
+        }
+
+        /// <summary>
+        /// The first Update of a LATER frame than the opening's: what that frame cost — layout and
+        /// drawing of everything just built — said with the steps. An Update of the same frame
+        /// would close the count before Unity has laid anything out.
+        /// </summary>
+        private void ReportOpenTiming()
+        {
+            if (_openLaps == null || TranslatorUIManager.Frame <= _openFrame) return;
+            Lap("until next frame");
+            TranslatorCore.LogDebug($"[TranslationParametersPanel] opened in {_openWatch.ElapsedMilliseconds} ms: "
+                                    + string.Join(", ", _openLaps.ToArray()) + " (ms each)");
+            _openLaps = null;
+            _openWatch.Stop();
+        }
+
         private void LoadCurrentState()
         {
             // A pack added and not applied does not survive the window closing — like every other
             // answer here. The packs folder is read again: a file may have been dropped in meanwhile.
             ForgetPacks();
             RefreshPacksFolder();
+            Lap("packs");
 
             // The Export card read again, its System fonts choice made again (never remembered), and
             // the last export's outcome gone with the window it belonged to.
@@ -2799,6 +2849,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _lastExport = null;
             if (_exportShowBtn != null) _exportShowBtn.Visible = false;
             RefreshExport();
+            Lap("export");
 
             // Debug toggles
             if (_enableFontReplacementToggle != null)
@@ -2828,6 +2879,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 }
             }
             catch (Exception ex) { TranslatorCore.LogWarning($"[TranslationParametersPanel] Font settings capture failed: {ex.Message}"); }
+            Lap("font settings");
 
             // Capture initial exclusions for change tracking
             _initialExclusions.Clear();
@@ -2841,20 +2893,24 @@ namespace UnityGameTranslator.Core.UI.Panels
             // A removal not applied does not survive the window closing.
             _pendingHeadForgets.Clear();
             RefreshHeldList();
+            Lap("held");
 
             // Capture initial font overrides for change tracking
             InitPendingFontOverrides();
 
             try { RefreshExclusionsList(); }
             catch (Exception ex) { TranslatorCore.LogWarning($"[TranslationParametersPanel] RefreshExclusionsList failed: {ex.Message}"); }
+            Lap("exclusions");
 
             // Opening the panel is the other moment a fresh ranking is expected.
             InvalidateFontOrder();
             try { RefreshFontsList(); }
             catch (Exception ex) { TranslatorCore.LogWarning($"[TranslationParametersPanel] RefreshFontsList failed: {ex.Message}"); }
+            Lap("fonts list");
 
             try { RefreshFontOverridesList(); }
             catch (Exception ex) { TranslatorCore.LogWarning($"[TranslationParametersPanel] RefreshFontOverridesList failed: {ex.Message}"); }
+            Lap("override rules");
 
             // Every pending answer was just dropped: so are the lines that announced them.
             WithdrawAwaitingApply();

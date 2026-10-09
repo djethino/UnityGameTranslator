@@ -813,6 +813,7 @@ namespace UnityGameTranslator.Core.UI
         /// </summary>
         private void DescribePick(GameObject picked, Vector3 pointer)
         {
+            if (!TranslatorCore.DebugMode) return;
             try
             {
                 var rect = picked.GetComponent<RectTransform>();
@@ -828,7 +829,7 @@ namespace UnityGameTranslator.Core.UI
                       + $"{_selectedHighlightRect.sizeDelta.x:F0}x{_selectedHighlightRect.sizeDelta.y:F0}"
                     : "no marker shown";
                 var drawing = DrawingCamera(picked, _selectedCamera);
-                TranslatorCore.LogInfo($"[Inspector] pick '{picked.name}' (layer {picked.layer}) at pointer {pointer.x:F0},{pointer.y:F0} | {within} | "
+                TranslatorCore.LogDebug($"[Inspector] pick '{picked.name}' (layer {picked.layer}) at pointer {pointer.x:F0},{pointer.y:F0} | {within} | "
                                        + $"picking through {(_selectedCamera != null ? $"'{_selectedCamera.name}'" : "UI Only")}, "
                                        + $"drawn by {(drawing != null ? $"'{drawing.name}'" : "no camera")} | {marker}");
             }
@@ -846,6 +847,9 @@ namespace UnityGameTranslator.Core.UI
         /// </summary>
         private static void DescribeCameraSpace(Camera cam)
         {
+            // Debug logging only, asked BEFORE the event is marked as said: marked while it was off,
+            // it would never be said once it is turned on.
+            if (!TranslatorCore.DebugMode) return;
             try
             {
                 var texture = cam.targetTexture;
@@ -855,7 +859,7 @@ namespace UnityGameTranslator.Core.UI
                                + (texture != null ? $"draws into a texture {texture.width}x{texture.height}" : "draws on screen")
                                + $", depth {cam.depth:F0}, enabled {cam.enabled}";
                 if (!DiagnosticOnce.First("Inspector.cameraSpace", cam.name + "|" + space)) return;
-                TranslatorCore.LogInfo($"[Inspector] camera '{cam.name}': {space} | window {Screen.width}x{Screen.height}");
+                TranslatorCore.LogDebug($"[Inspector] camera '{cam.name}': {space} | window {Screen.width}x{Screen.height}");
             }
             catch (Exception ex) { Faults.Say("InspectorPicker.DescribeCameraSpace", ex, cam.name); }
         }
@@ -2204,13 +2208,14 @@ namespace UnityGameTranslator.Core.UI
         /// </summary>
         private static void NoteMarker(GameObject target, Renderer worldRenderer, Camera drawing, bool framed)
         {
+            if (!TranslatorCore.DebugMode) return;   // asked before marking: see DescribeCameraSpace
             if (target == null || !DiagnosticOnce.First("Inspector.marker", target.GetInstanceID().ToString())) return;
             string why = framed ? "by its renderer's box"
                 : worldRenderer == null ? "by its rectangle (no renderer of its own)"
                 : drawing == null ? "by its rectangle (no camera draws its layer)"
                 : "by its rectangle (its renderer's box could not be projected)";
             string box = worldRenderer != null ? $" | renderer bounds {worldRenderer.bounds.center} ± {worldRenderer.bounds.extents}" : "";
-            TranslatorCore.LogInfo($"[Inspector] marker for '{target.name}' {why}{box}"
+            TranslatorCore.LogDebug($"[Inspector] marker for '{target.name}' {why}{box}"
                                    + (drawing != null ? $" | through '{drawing.name}'" : ""));
         }
 

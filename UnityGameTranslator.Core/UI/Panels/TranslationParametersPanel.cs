@@ -1860,32 +1860,68 @@ namespace UnityGameTranslator.Core.UI.Panels
             row.Button("SizeDefaultBtn").Visible = Math.Abs(shown - 1f) > 0.001f;
         }
 
-        private void RefreshFontsList()
+        /// <summary>
+        /// The font cards built, in the order shown, each with the font it was built for. Kept from
+        /// one opening to the next: building one costs some 6 ms under IL2CPP (301 ms for 47 fonts,
+        /// measured 2026-10-09), filling it again 0.6.
+        /// </summary>
+        private readonly List<KeyValuePair<string, BuiltScreen>> _fontRows = new List<KeyValuePair<string, BuiltScreen>>();
+
+        /// <summary>
+        /// The fonts still to be built into cards, from <see cref="_fontsBuilt"/> on — built a few
+        /// per frame from Update, inside <see cref="TranslatorScanner.DeliberateBudgetMs"/>: the
+        /// window opens at once and the list fills while the person reaches the Fonts tab (user,
+        /// 2026-10-09: « ça finira en quelques frames »). Null when nothing is being built.
+        /// </summary>
+        private List<FontDisplayInfo> _fontsToBuild;
+        private int _fontsBuilt;
+
+        /// <summary>
+        /// 🔴 **The fonts are read again in full every time**, and the cards are reused only when
+        /// they are EXACTLY the same fonts in the same order: one font appeared, left or moved, and
+        /// the list is built again from nothing, as it always was. A font found since the last
+        /// opening can therefore never be missed (user, 2026-10-09) — at worst the build is paid.
+        /// A reused card is filled in full: everything it shows is set again, shown or hidden.
+        /// Cards to build are built a few per frame (<see cref="BuildSomeFontRows"/>); a refresh
+        /// asked meanwhile starts over from what is detected then.
+        /// </summary>
+        /// <param name="detected">The fonts as just read by the caller, so one opening reads them
+        /// once (36 ms each time, measured); null reads them here.</param>
+        private void RefreshFontsList(List<FontDisplayInfo> detected = null)
         {
             if (_fontsList == null) return;
+            _fontsToBuild = null;
 
             _rtlControlsVisible = TranslatorCore.TargetIsRightToLeft || FontManager.AnyFontCrossesDirection;
-            TranslatorCore.LogInfo($"[TranslationParametersPanel] RefreshFontsList called");
+            TranslatorCore.LogDebug($"[TranslationParametersPanel] RefreshFontsList called");
             Pending.ClearGroup("fonts");
-
-            // Clean up searchable dropdowns first
-            foreach (var dropdown in _fallbackDropdowns)
-            {
-                dropdown.Destroy();
-            }
-            _fallbackDropdowns.Clear();
-
-            _fontsList.Clear();
-            _identifyByFont.Clear();
             _rtlToggles.Clear();
             _screen.Host("RtlAllRow").Visible = false;
-            // Its row has just been destroyed: dressing that "?" back threw on every later reset —
-            // closing this window, clicking another "?", starting the override inspector (which
-            // then never opened). The font stays shown; its new "?" is found below.
-            _highlightedButton = null;
 
-            var fonts = FontManager.GetDetectedFontsInfo();
+            long at = SpentFrom;
+            var fonts = detected ?? FontManager.GetDetectedFontsInfo();
+            at = Spent("detected fonts", at);
             fonts = ApplyStableFontOrder(fonts);
+            Spent("font order", at);
+
+            bool reuse = SameFontRows(fonts);
+            if (!reuse)
+            {
+                // Clean up searchable dropdowns first
+                foreach (var dropdown in _fallbackDropdowns)
+                {
+                    dropdown.Destroy();
+                }
+                _fallbackDropdowns.Clear();
+
+                _fontsList.Clear();
+                _fontRows.Clear();
+                _identifyByFont.Clear();
+                // Its row has just been destroyed: dressing that "?" back threw on every later reset —
+                // closing this window, clicking another "?", starting the override inspector (which
+                // then never opened). The font stays shown; its new "?" is found below.
+                _highlightedButton = null;
+            }
 
             if (fonts.Count == 0)
             {
@@ -1904,20 +1940,78 @@ namespace UnityGameTranslator.Core.UI.Panels
                 _systemFonts = FontManager.SystemFonts;
             }
 
-            foreach (var fontInfo in fonts)
-            {
-                CreateFontRow(fontInfo);
-            }
-            RebindHighlight();
-            _screen.Host("RtlAllRow").Visible = _rtlToggles.Count > 0;
-
             _fontsList.Filled();
 
+            if (reuse)
+            {
+                for (int i = 0; i < fonts.Count; i++)
+                    FillFontRow(_fontRows[i].Value, fonts[i]);
+                FinishFontsList(fonts.Count);
+                return;
+            }
+
+            _fontsToBuild = fonts;
+            _fontsBuilt = 0;
             if (_fontsStatus != null)
             {
                 _fontsStatus.Say($"{fonts.Count} font(s) detected");
+                _fontsStatus.Tone = Tone.Secondary;
+            }
+            BuildSomeFontRows();
+        }
+
+        /// <summary>
+        /// The next cards, at least one, then more while this frame's budget lasts. Asked from
+        /// Update, which runs while the window is open: a window closed before the end leaves a
+        /// list shorter than the fonts, which the next opening sees and builds again.
+        /// </summary>
+        private void BuildSomeFontRows()
+        {
+            var fonts = _fontsToBuild;
+            if (fonts == null) return;
+
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            float budgetMs = TranslatorScanner.DeliberateBudgetMs();
+            do
+            {
+                var info = fonts[_fontsBuilt++];
+                var row = BuildFontRow(info);
+                _fontRows.Add(new KeyValuePair<string, BuiltScreen>(info.Name, row));
+                FillFontRow(row, info);
+            }
+            while (_fontsBuilt < fonts.Count && watch.Elapsed.TotalMilliseconds < budgetMs);
+
+            // The bulk verbs act on the boxes built so far; shown from the first one.
+            _screen.Host("RtlAllRow").Visible = _rtlToggles.Count > 0;
+
+            if (_fontsBuilt < fonts.Count) return;
+            _fontsToBuild = null;
+            FinishFontsList(fonts.Count);
+        }
+
+        private void FinishFontsList(int count)
+        {
+            RebindHighlight();
+            _screen.Host("RtlAllRow").Visible = _rtlToggles.Count > 0;
+
+            if (_fontsStatus != null)
+            {
+                _fontsStatus.Say($"{count} font(s) detected");
                 _fontsStatus.Tone = Tone.Success;
             }
+        }
+
+        /// <summary>The cards built are these fonts, in this order, and still exist.</summary>
+        private bool SameFontRows(List<FontDisplayInfo> fonts)
+        {
+            if (fonts == null || fonts.Count != _fontRows.Count || fonts.Count == 0) return false;
+            for (int i = 0; i < fonts.Count; i++)
+            {
+                if (!string.Equals(fonts[i].Name, _fontRows[i].Key, StringComparison.Ordinal)) return false;
+                var built = _fontRows[i].Value;
+                if (built == null || built.Root == null || built.Root.Object == null) return false;
+            }
+            return true;
         }
 
         // Row order held for the whole editing session. Rebuilt only when the user opens the panel
@@ -1974,11 +2068,12 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// right-to-left text; the fallback picker for fonts that support one; the size slider
         /// with its Auto box for the font types whose design-scale means something.
         /// </summary>
-        private void CreateFontRow(FontDisplayInfo fontInfo)
+        private BuiltScreen BuildFontRow(FontDisplayInfo fontInfo)
         {
-            // Capture values for closure
+            // Capture values for closure — a card is reused only for the font it was built for
             string capturedFontName = fontInfo.Name;
 
+            long at = SpentFrom;
             BuiltScreen row = null;
             row = _screen.Instantiate("FontRow", _fontsList.Rows, act =>
             {
@@ -2029,6 +2124,18 @@ namespace UnityGameTranslator.Core.UI.Panels
                 }
             });
             _identifyByFont[capturedFontName] = row.Button("IdentifyBtn");
+            Spent("card build", at);
+            return row;
+        }
+
+        /// <summary>
+        /// What one card shows, set in full — a reused card must not keep anything from the
+        /// opening before: every optional part is shown or hidden here, never only shown.
+        /// </summary>
+        private void FillFontRow(BuiltScreen row, FontDisplayInfo fontInfo)
+        {
+            string capturedFontName = fontInfo.Name;
+            long at = SpentFrom;
 
             _fillingRows = true;
             try
@@ -2039,12 +2146,12 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // How present this font is on the screen right now — the figure that tells the user
                 // whether a font is worth configuring. -1 means the count couldn't be taken; say
                 // nothing rather than show a misleading zero.
+                var count = row.Label("SceneCount");
+                count.Visible = fontInfo.SceneCount >= 0;
                 if (fontInfo.SceneCount >= 0)
                 {
-                    var count = row.Label("SceneCount");
                     row.Say("sceneCount", $"{fontInfo.SceneCount} " + Tr("in scene"));
                     count.Tone = fontInfo.SceneCount > 0 ? Tone.Secondary : Tone.Muted;
-                    count.Visible = true;
                 }
 
                 // What the translation wrote with this font and the font cannot display — characters it
@@ -2052,20 +2159,17 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // corner's own sentence while no fallback is chosen (the way out is this row's picker);
                 // once one is, what that fallback still lacks — the corner no longer asks (FontNotices).
                 var problem = FontManager.ProblemOf(capturedFontName);
+                row.Label("MissingChars").Visible = problem != null;
                 if (problem != null)
-                {
                     row.Say("missingChars", FontNotices.ForFont(problem.Value));
-                    row.Label("MissingChars").Visible = true;
-                }
 
                 // Its fallback cannot draw the underlines, strikethroughs or highlights the translation
                 // uses. Said here even once the translator kept it (the corner's Ignore): this row is
                 // where the fallback is chosen, so where it is weighed.
-                if (FontManager.DecorationProblemOf(capturedFontName) != null)
-                {
+                bool noDecorations = FontManager.DecorationProblemOf(capturedFontName) != null;
+                row.Label("NoDecorations").Visible = noDecorations;
+                if (noDecorations)
                     row.Say("noDecorations", FontNotices.DecorationsOnRow());
-                    row.Label("NoDecorations").Visible = true;
-                }
 
                 // Enable toggle
                 var enableToggle = row.Toggle("EnableToggle");
@@ -2075,25 +2179,23 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // RTL alignment (only when this translation involves right-to-left text): mirror the
                 // component's alignment to follow the reading direction, or keep the game's own —
                 // per font and shared with the translation, refinable per rule below.
-                if (RtlControlsFor(capturedFontName))
+                bool rtl = RtlControlsFor(capturedFontName);
+                row.Host("RtlRow").Visible = rtl;
+                if (rtl)
                 {
-                    row.Host("RtlRow").Visible = true;
                     var rtlToggle = row.Toggle("RtlMirrorToggle");
                     rtlToggle.IsOn = GetEffectiveFontSettings(capturedFontName).mirrorRtl;
                     Pending.Track(rtlToggle, () => FontFieldChanged(capturedFontName, (p, i) => p.mirrorRtl != i.mirrorRtl), "fonts");
                     _rtlToggles.Add(new KeyValuePair<string, ToggleHandle>(capturedFontName, rtlToggle));
                 }
 
+                at = Spent("card fill", at);
+                row.Host("FallbackRow").Visible = fontInfo.SupportsFallback;
+                // The hint for fonts that take no fallback
+                row.Label("NoFallbackLabel").Visible = !fontInfo.SupportsFallback;
                 if (fontInfo.SupportsFallback)
-                {
-                    row.Host("FallbackRow").Visible = true;
                     FillFallback(row, fontInfo, capturedFontName);
-                }
-                else
-                {
-                    // Show hint for non-TMP fonts
-                    row.Label("NoFallbackLabel").Visible = true;
-                }
+                at = Spent("fallback menu", at);
 
                 // Size — the DELIBERATE size percent (fit/readability, e.g. a longer cross-script
                 // translation vs the HUD). Orthogonal to the auto design-scale: the two combine
@@ -2109,13 +2211,15 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // slider % still applies. Default ON for freshly detected TMP fonts. HIDDEN for font
                 // types where the design-scale has no meaning (UI.Text / non-TMP clone-atlas preserves
                 // the game's metrics). Commits on Apply only (UX rule: no immediate application).
-                if (FontManager.SupportsDesignScale(fontInfo.Type))
+                bool designScale = FontManager.SupportsDesignScale(fontInfo.Type);
+                row.Toggle("AutoScale").Visible = designScale;
+                if (designScale)
                 {
                     var autoToggle = row.Toggle("AutoScale");
-                    autoToggle.Visible = true;
                     autoToggle.IsOn = FontManager.GetFontSettings(capturedFontName)?.scale_auto ?? false;
                     Pending.Track(autoToggle, () => FontFieldChanged(capturedFontName, (p, i) => p.scaleAuto != i.scaleAuto), "fonts");
                 }
+                Spent("card fill", at);
             }
             finally { _fillingRows = false; }
         }
@@ -2129,18 +2233,18 @@ namespace UnityGameTranslator.Core.UI.Panels
             // The same list wherever a font is chosen to draw text (FontOptions): the Options
             // window's fonts for the mod's own window take the legacy one.
             bool isTMPFont = fontInfo.Type == "TMP" || fontInfo.Type == "TextMeshPro" || fontInfo.Type == "TMP (alt)";
+            long at = SpentFrom;
             var options = FontOptions.For(fontInfo.Type == "TMP (alt)" ? FontOptionKind.AltTmp : isTMPFont ? FontOptionKind.Tmp : FontOptionKind.Legacy,
                                           _systemFonts);
+            at = Spent("fallback: option list", at);
 
             var dropdown = row.Dropdown("Fallback");
 
-            // If no fonts available at all
-            if (options.Count <= 1)
-            {
-                dropdown.Handle.Visible = false;
-                row.Label("NoFontsLabel").Visible = true;
-                return;
-            }
+            // Both states set: a reused card may have shown the other one.
+            bool none = options.Count <= 1;
+            dropdown.Handle.Visible = !none;
+            row.Label("NoFontsLabel").Visible = none;
+            if (none) return;
 
             // Determine initial value.
             // Matched against the options AS DISPLAYED but marker-insensitive: the same font
@@ -2180,11 +2284,13 @@ namespace UnityGameTranslator.Core.UI.Panels
                 initialValue = match;
             }
 
+            at = Spent("fallback: current choice", at);
             dropdown.CategoryProvider = FontManager.GetFontOrigin;
             dropdown.SetOptions(options.ToArray());
             dropdown.SelectedValue = initialValue;
+            Spent("fallback: menu filled", at);
 
-            _fallbackDropdowns.Add(dropdown);
+            if (!_fallbackDropdowns.Contains(dropdown)) _fallbackDropdowns.Add(dropdown);
             Pending.Track(dropdown.Handle, () => FontFieldChanged(capturedFontName, (p, i) => p.fallback != i.fallback), "fonts");
         }
 
@@ -2342,6 +2448,10 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// </summary>
         private void SetEveryRtlMirror(bool mirror)
         {
+            // "Every font" means every font, not the cards built so far: a list still being built
+            // is finished first.
+            while (_fontsToBuild != null) BuildSomeFontRows();
+
             foreach (var entry in _rtlToggles)
             {
                 if (entry.Value == null) continue;
@@ -2716,6 +2826,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             base.Update();
             ReportOpenTiming();
+            BuildSomeFontRows();
 
             // Poll state changes to update Apply button text (IL2CPP-safe, no AddListener)
             if (Enabled)
@@ -2806,11 +2917,29 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             if (!TranslatorCore.DebugMode) { _openLaps = null; return; }
             _openLaps = new List<string>();
+            _openSpent.Clear();
             _lastLapMs = 0;
             _openFrame = TranslatorUIManager.Frame;
             _openWatch.Reset();
             _openWatch.Start();
         }
+
+        /// <summary>
+        /// Time spent in a step that repeats — one per font card — added up for the opening's line.
+        /// Returns the moment to measure the next one from; nothing is kept while not timing.
+        /// </summary>
+        private readonly Dictionary<string, long> _openSpent = new Dictionary<string, long>(StringComparer.Ordinal);
+
+        private long Spent(string step, long since)
+        {
+            if (_openLaps == null) return 0;
+            long now = _openWatch.ElapsedTicks;
+            _openSpent.TryGetValue(step, out var sum);
+            _openSpent[step] = sum + (now - since);
+            return now;
+        }
+
+        private long SpentFrom => _openLaps != null ? _openWatch.ElapsedTicks : 0;
 
         private void Lap(string step)
         {
@@ -2829,8 +2958,12 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             if (_openLaps == null || TranslatorUIManager.Frame <= _openFrame) return;
             Lap("until next frame");
+            var inside = new List<string>();
+            foreach (var kv in _openSpent)
+                inside.Add($"{kv.Key} {kv.Value * 1000 / System.Diagnostics.Stopwatch.Frequency}");
             TranslatorCore.LogDebug($"[TranslationParametersPanel] opened in {_openWatch.ElapsedMilliseconds} ms: "
-                                    + string.Join(", ", _openLaps.ToArray()) + " (ms each)");
+                                    + string.Join(", ", _openLaps.ToArray()) + " (ms each)"
+                                    + (inside.Count > 0 ? " | of which, added up: " + string.Join(", ", inside.ToArray()) : ""));
             _openLaps = null;
             _openWatch.Stop();
         }
@@ -2865,9 +2998,11 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Capture initial font settings for change tracking
             _initialFontSettings.Clear();
             _pendingFontSettings.Clear();
+            List<FontDisplayInfo> detected = null;
             try
             {
-                foreach (var fontInfo in FontManager.GetDetectedFontsInfo())
+                detected = FontManager.GetDetectedFontsInfo();
+                foreach (var fontInfo in detected)
                 {
                     var settings = FontManager.GetFontSettings(fontInfo.Name);
                     var enabled = settings?.enabled ?? true;
@@ -2904,7 +3039,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // Opening the panel is the other moment a fresh ranking is expected.
             InvalidateFontOrder();
-            try { RefreshFontsList(); }
+            try { RefreshFontsList(detected); }
             catch (Exception ex) { TranslatorCore.LogWarning($"[TranslationParametersPanel] RefreshFontsList failed: {ex.Message}"); }
             Lap("fonts list");
 

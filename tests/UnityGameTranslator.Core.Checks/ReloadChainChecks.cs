@@ -127,7 +127,7 @@ namespace UnityGameTranslator.Core.Checks
             // them AFTER building the list shows the previous file's values.
             foreach (var (drop, build) in new[]
             {
-                ("_pendingFontSettings.Clear();", "RefreshFontsList();"),
+                ("_pendingFontSettings.Clear();", "RefreshFontsList("),
                 ("InitPendingFontOverrides();", "RefreshFontOverridesList();"),
                 ("_pendingExclusionAdds.Clear();", "RefreshExclusionsList();"),
             })

@@ -108,6 +108,9 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// </summary>
         private readonly List<TextEditRowState> _pendingRetranslateRows = new List<TextEditRowState>();
 
+        /// <summary>Every edit row on the list now — what SizeTextEditList adds the grown fields from.</summary>
+        private readonly List<TextEditRowState> _textEditRowStates = new List<TextEditRowState>();
+
         /// <summary>
         /// The keys THIS panel asked about. The end of a retranslation is announced to everyone
         /// who listens — the Failures tab asks too — so an answer with no row here is only "lost"
@@ -148,6 +151,34 @@ namespace UnityGameTranslator.Core.UI.Panels
             /// can be filed as "A" — the machine wrote it — instead of claiming a human did.
             /// </summary>
             public string AiProposal;
+
+            /// <summary>The height its translation field was last given (FitTranslationField).</summary>
+            public int FieldHeight;
+        }
+
+        /// <summary>The translation field's own floor, as the document writes it.</summary>
+        private static int TranslationFieldFloor =>
+            Doc.Templates["TextEditEntry"].Pieces.Nodes["TranslationInput"].Int("minHeight") ?? 40;
+
+        /// <summary>
+        /// The translation field as tall as its text, up to what one row may take of the list.
+        ///
+        /// 🔴 **Not a one-line box over a paragraph** (2026-10-09, user: « j'ai de la place et tu me
+        /// mets une box où je ne vois qu'une ligne »). The field keeps its floor and scrolls inside
+        /// (scroll: true, decided for the value that looked empty) — but it grows first, so a line
+        /// is read whole wherever the window has the room, and it scrolls only past that.
+        /// </summary>
+        private void FitTranslationField(TextEditRowState row)
+        {
+            var area = row?.Input?.Area;
+            if (area == null) return;
+            int floor = TranslationFieldFloor;
+            // One row may take the whole list but for the rest of its own chrome.
+            int ceiling = Math.Max(floor, TextEditListMaxHeight - (TextEditRowHeight - floor));
+            int wanted = (int)Math.Ceiling(Math.Min(ceiling, Math.Max(floor, area.ContentHeight)));
+            if (wanted == row.FieldHeight) return;
+            row.FieldHeight = wanted;
+            area.SetHeight(wanted, fill: false);
         }
 
         // Camera selection — the dropdown lives here (it is UI); which camera is picked lives in
@@ -481,6 +512,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _pendingRetranslateRows.Clear();
             _textEditRow.Visible = false;
             _textEditList.Clear();
+            _textEditRowStates.Clear();
             _textEditIds.Clear();
         }
 
@@ -684,6 +716,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             // that is about to be destroyed
             _pendingRetranslateRows.Clear();
             _textEditList.Clear();
+            _textEditRowStates.Clear();
 
             // Show the edit UI
             _textEditRow.Visible = true;
@@ -701,6 +734,11 @@ namespace UnityGameTranslator.Core.UI.Panels
             {
                 CreateTextEditRow(textEntries[i]);
             }
+
+            // Each field as tall as its text — measured once the rows are laid out at their width:
+            // measured before, a field of no width wraps every character onto a line of its own.
+            TypeHelper.ForceUpdateCanvases();
+            foreach (var row in _textEditRowStates) FitTranslationField(row);
 
             SizeTextEditList(textEntries.Count);
 
@@ -721,7 +759,10 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             if (_textEditList == null) return;
 
-            int wanted = Math.Max(TextEditListMinHeight, Math.Min(TextEditListMaxHeight, rowCount * TextEditRowHeight));
+            // Each row's field may have grown with its text (FitTranslationField): that room counts.
+            int grown = 0;
+            foreach (var r in _textEditRowStates) grown += Math.Max(0, r.FieldHeight - TranslationFieldFloor);
+            int wanted = Math.Max(TextEditListMinHeight, Math.Min(TextEditListMaxHeight, rowCount * TextEditRowHeight + grown));
             _textEditList.SetHeight(wanted);
 
             RecalculateSize();
@@ -909,7 +950,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             };
 
             // FieldHandle.Changed, never a raw InputField event — see UIHelpers.
-            input.Changed += _ => RefreshRow(rowState);
+            _textEditRowStates.Add(rowState);
+            input.Changed += _ => { RefreshRow(rowState); FitTranslationField(rowState); };
             RefreshRow(rowState);
         }
 

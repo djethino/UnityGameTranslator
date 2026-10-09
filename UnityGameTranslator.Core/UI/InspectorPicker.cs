@@ -646,6 +646,18 @@ namespace UnityGameTranslator.Core.UI
             InitializeRaycast();
         }
 
+        private static int _picking;
+
+        /// <summary>
+        /// Some picker is choosing an element: a click in the game is aimed at the inspector.
+        ///
+        /// 🔴 **And so it is taken from the game** (2026-10-09): a game reading its mouse itself
+        /// (Rewired) acted on the very click meant to pick one of its menu lines — clicking the
+        /// pause menu's « JOUR 3 » to edit it resumed the game. The marker over a canvas element
+        /// blocks the game's raycast; nothing blocked a read of the button.
+        /// </summary>
+        internal static bool AnyPicking => _picking > 0;
+
         /// <summary>Begin picking. Rebuilds the camera list; call before reading <see cref="CameraNames"/>.</summary>
         public void Start(InspectorMode mode, object panelRect)
         {
@@ -664,12 +676,14 @@ namespace UnityGameTranslator.Core.UI
 
             if (_highlightCanvas == null) CreateHighlightOverlay();
             _highlightCanvas.SetActive(true);
+            if (!_isInspecting) _picking++;
             _isInspecting = true;
         }
 
         /// <summary>Stop picking and hide the overlay. Safe to call more than once.</summary>
         public void Stop()
         {
+            if (_isInspecting) _picking--;
             _isInspecting = false;
             HideAllHighlights();
             if (_highlightCanvas != null)
@@ -1603,6 +1617,29 @@ namespace UnityGameTranslator.Core.UI
                     }
                     catch (Exception ex) { Faults.Say("InspectorPicker.PickTextByRectangle", ex); }
 
+                    // In the world with a renderer: by what it draws (WorldTextRenderer).
+                    var worldRenderer = WorldTextRenderer(comp);
+                    if (worldRenderer != null)
+                    {
+                        var drawing = DrawingCamera(go, _selectedCamera);
+                        var box = worldRenderer.bounds;
+                        if (drawing == null || !ScreenRectOfBox(box, drawing, out var drawn) || !drawn.Contains(screenPosition)) continue;
+                        var sight = drawing.ScreenPointToRay(screenPosition);
+                        float along = RayReachesBox(sight.origin, sight.direction, box);
+                        // A flat box the ray passes at its edge: its centre's distance stands in.
+                        if (along < 0f) along = Vector3.Dot(box.center - sight.origin, sight.direction);
+                        if (along < 0f) continue;
+                        int drawingId = drawing.GetInstanceID();
+                        if (!blockedAtByCamera.TryGetValue(drawingId, out blockedAt))
+                        {
+                            blockedAt = BlockerDistance(drawing, screenPosition);
+                            blockedAtByCamera[drawingId] = blockedAt;
+                        }
+                        if (along >= blockedAt) continue;
+                        if (along < bestReach) { bestReach = along; bestInWorld = comp; bestBlockedAt = blockedAt; }
+                        continue;
+                    }
+
                     Rect local = DrawnLocalRect(comp, rect);
                     Vector3 w0 = rect.TransformPoint(new Vector3(local.xMin, local.yMin, 0));
                     Vector3 w1 = rect.TransformPoint(new Vector3(local.xMin, local.yMax, 0));
@@ -2067,6 +2104,64 @@ namespace UnityGameTranslator.Core.UI
             return true;
         }
 
+        /// <summary>The screen rectangle a world box covers, through this camera; false when it cannot be projected.</summary>
+        private bool ScreenRectOfBox(Bounds bounds, Camera camera, out Rect screen)
+        {
+            screen = default(Rect);
+            if (!ProjectBox(bounds, camera)) return false;
+            float minX = _corners[0].x, maxX = minX, minY = _corners[0].y, maxY = minY;
+            for (int i = 1; i < 8; i++)
+            {
+                if (_corners[i].x < minX) minX = _corners[i].x;
+                if (_corners[i].x > maxX) maxX = _corners[i].x;
+                if (_corners[i].y < minY) minY = _corners[i].y;
+                if (_corners[i].y > maxY) maxY = _corners[i].y;
+            }
+            screen = Rect.MinMaxRect(minX, minY, maxX, maxY);
+            return screen.width >= 1f && screen.height >= 1f;
+        }
+
+        /// <summary>
+        /// A text drawn by a renderer of its own — a TextMeshPro in the world, canvas above it or
+        /// not — and that renderer.
+        ///
+        /// 🔴 **Framed and picked by what its renderer draws, never by its rectangle** (2026-10-09).
+        /// A 3D menu's lines carried rectangles that, converted, landed far from their words — the
+        /// hover marker covered a third of the screen beside the menu and the pointer on a word found
+        /// no text inside the group it struck. The renderer's box is the one the camera pass already
+        /// uses for everything else in the world, and it was right on the very same screen.
+        /// </summary>
+        private static Renderer WorldTextRenderer(Component text)
+        {
+            if (text == null) return null;
+            try
+            {
+                // ⚠ Not "no canvas above it": the same menu parents its 3D texts under a canvas
+                // object, and a canvas text (TextMeshProUGUI, UI.Text) draws through a
+                // CanvasRenderer, which is no Renderer — so having one IS the test.
+                var rend = text.GetComponent<Renderer>();
+                return rend != null && rend.enabled ? rend : null;
+            }
+            catch (Exception ex) { Faults.Say("InspectorPicker.WorldTextRenderer", ex, text.GetType().Name); return null; }
+        }
+
+        /// <summary>
+        /// Which road framed an element with a rectangle, once per element: by its renderer, or by
+        /// its rectangle — and why not the first. Two corrections of this marker were judged on a
+        /// screenshot alone and both missed; the next one reads this.
+        /// </summary>
+        private static void NoteMarker(GameObject target, Renderer worldRenderer, Camera drawing, bool framed)
+        {
+            if (target == null || !DiagnosticOnce.First("Inspector.marker", target.GetInstanceID().ToString())) return;
+            string why = framed ? "by its renderer's box"
+                : worldRenderer == null ? "by its rectangle (no renderer of its own)"
+                : drawing == null ? "by its rectangle (no camera draws its layer)"
+                : "by its rectangle (its renderer's box could not be projected)";
+            string box = worldRenderer != null ? $" | renderer bounds {worldRenderer.bounds.center} ± {worldRenderer.bounds.extents}" : "";
+            TranslatorCore.LogInfo($"[Inspector] marker for '{target.name}' {why}{box}"
+                                   + (drawing != null ? $" | through '{drawing.name}'" : ""));
+        }
+
         /// <summary>Draw the box: twelve strips between the projected corners.</summary>
         private void ShowBox(RectTransform[] rects, Image[] images)
         {
@@ -2147,9 +2242,26 @@ namespace UnityGameTranslator.Core.UI
                 HideEdges(edgeImages);
                 // Back to a blocking marker: a Canvas element's rectangle is the element itself.
                 highlightImage.raycastTarget = true;
-                // A text is framed by what it draws, as it is picked (DrawnLocalRect).
+                // A text is framed by what it draws, as it is picked: in the world, its renderer's
+                // box (WorldTextRenderer); on a canvas, its glyphs (DrawnLocalRect).
                 var tmp = TypeHelper.TMP_TextType;
                 var textComp = tmp != null ? TypeHelper.GetComponentByType(target, tmp) : null;
+                // ⚠ Asked of the object, not of its text component: on IL2CPP the component lookup
+                // by type can come back empty, and the renderer alone says it draws in the world.
+                var worldRenderer = WorldTextRenderer(targetRect);
+                var drawing = worldRenderer != null ? DrawingCamera(target, _selectedCamera) : null;
+                bool framed = drawing != null && ScreenRectOfBox(worldRenderer.bounds, drawing, out var onScreen)
+                              && Frame(onScreen);
+                NoteMarker(target, worldRenderer, drawing, framed);
+                if (framed) return;
+
+                bool Frame(Rect screen)
+                {
+                    PositionHighlightRect(highlightRect, highlightImage, screen);
+                    if (ReferenceEquals(edges, _selectedEdges) && highlightImage.gameObject.activeSelf)
+                        ShowFrame(edges, edgeImages, screen);
+                    return true;
+                }
                 Rect drawn = textComp != null ? DrawnLocalRect(textComp, targetRect) : targetRect.rect;
                 if (!GetScreenBounds(targetRect, _selectedCamera, out var screenMin, out var screenMax, drawn))
                 {

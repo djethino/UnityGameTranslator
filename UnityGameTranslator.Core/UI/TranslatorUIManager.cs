@@ -644,7 +644,8 @@ namespace UnityGameTranslator.Core.UI
                     // ("Without it, clicking beside this window still acts in the game"). A game
                     // reading the mouse button itself, rather than through its menus' raycasts, got
                     // every click aimed at our buttons as well (2026-10-09).
-                    return TranslatorCore.CaptureGameClicks || _pointerOverInterface;
+                    // And while the inspector is choosing, the click is its own (InspectorPicker.AnyPicking).
+                    return TranslatorCore.CaptureGameClicks || _pointerOverInterface || InspectorPicker.AnyPicking;
                 case UniverseLib.Input.InputCapture.CaptureKind.MouseAxes:
                     return TranslatorCore.CaptureMouseAxes;
                 default:

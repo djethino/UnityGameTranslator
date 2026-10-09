@@ -3243,7 +3243,14 @@ namespace UnityGameTranslator.Core
             if (shared == null) return;
             // What the component wears: the replacement with THIS component's own font behind it
             // (BackupHead) — or, where no head can be made, the shared replacement as before.
-            var replacementFont = BackupHead(shared, originalFontObj, originalFontName) ?? shared;
+            var replacementFont = BackupHead(shared, originalFontObj, originalFontName);
+            if (replacementFont == null)
+            {
+                // No head on this TMP (TMProOld): as before, the original goes behind the shared
+                // replacement — the first one there answers for every game font that picked it.
+                replacementFont = shared;
+                AddBehindShared(shared, originalFontObj);
+            }
 
             // Don't re-apply if already replaced with the right font.
             // Liveness guard: GetTMPReplacementFont evicts dead cache entries, but if the
@@ -3344,9 +3351,35 @@ namespace UnityGameTranslator.Core
                 }
             }
 
-            // ⚠ No original is added behind the SHARED replacement any more (issue #33): one asset
-            // serves every game font that picks it, so the first original in its list answered for
-            // all of them. Each component's own font is behind its head (BackupHead).
+            // ⚠ The original is behind the component's head (BackupHead), not behind the SHARED
+            // replacement (issue #33): one asset serves every game font that picks it, so the first
+            // original in its list answered for all of them. Where no head can be made, see
+            // AddBehindShared.
+        }
+
+        /// <summary>
+        /// The game font behind the shared replacement — only where no head can be made (TMProOld).
+        /// The first original added then answers for every game font sharing the replacement: the
+        /// defect BackupHead removes on modern TMP, kept here rather than leaving no backup at all.
+        /// </summary>
+        private static void AddBehindShared(object shared, object originalFontObj)
+        {
+            if (shared == null || originalFontObj == null) return;
+            var fallbackList = GetFallbackListReflection(shared);
+            var addMethod = fallbackList?.GetType().GetMethod("Add");
+            if (addMethod == null) return;
+            try
+            {
+                // Cast original font for IL2CPP compatibility
+                var castedOriginal = TypeHelper.Il2CppCast(originalFontObj, TypeHelper.TMP_FontAssetType ?? originalFontObj.GetType());
+                var containsMethod = fallbackList.GetType().GetMethod("Contains");
+                bool alreadyThere = containsMethod != null && (bool)containsMethod.Invoke(fallbackList, new[] { castedOriginal });
+                if (alreadyThere) return;
+                addMethod.Invoke(fallbackList, new[] { castedOriginal });
+                ForgetBorrowedLetters();
+            }
+            // Letters the replacement lacks then have no game font to come from: said.
+            catch (Exception ex) { Faults.Say("FontManager.AddBehindShared", ex); }
         }
 
         // Guard: our restore paths assign original fonts through the same TMP setter the

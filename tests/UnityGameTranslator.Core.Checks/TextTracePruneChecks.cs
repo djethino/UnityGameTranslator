@@ -78,14 +78,36 @@ namespace UnityGameTranslator.Core.Checks
             File.WriteAllText(Path.Combine(folder, "translations.json"), "{}");
             File.WriteAllText(Path.Combine(folder, "text-trace-notes.txt"), "mine");
             File.WriteAllText(Path.Combine(folder, "text-trace-20200101-000000.jsonl.bak"), "mine");
+            // Close to ours and older-looking, yet not a name Start writes: each would sort first.
+            File.WriteAllText(Path.Combine(folder, "text-trace-#.jsonl"), "mine");
+            File.WriteAllText(Path.Combine(folder, "text-trace-2020010-1000000.jsonl"), "mine");
+            File.WriteAllText(Path.Combine(folder, "text-trace-20200101-00000.translations.json"), "mine");
+            File.WriteAllText(Path.Combine(folder, "TEXT-TRACE-20200101-000000.JSONL"), "mine");
+            File.WriteAllText(Path.Combine(folder, "text-trace-20200101-000000.jsonl.txt"), "mine");
+            File.WriteAllText(Path.Combine(folder, "my-text-trace-20200101-000000.jsonl"), "mine");
+            // A folder by a trace's name is listed by nobody and deleted by nobody.
+            // (Another moment than the names above: Windows names are case-blind.)
+            Directory.CreateDirectory(Path.Combine(folder, "text-trace-20190101-000000.jsonl"));
+            File.WriteAllText(Path.Combine(folder, "text-trace-20190101-000000.jsonl", "inside.txt"), "mine");
             Trace(folder, "20260101-100000");
 
             int gone = TextTrace.Prune(folder, 0);
 
-            check(gone == 1 && Names(folder).SequenceEqual(new[]
-                  { "text-trace-20200101-000000.jsonl.bak", "text-trace-notes.txt", "translations.json" }),
-                "only a trace and its copy are ever deleted",
-                "the translation itself, and anything somebody put there by a name close to ours, are not the mod's to remove");
+            string[] left = Names(folder);
+            check(gone == 1 && left.SequenceEqual(new[]
+                  {
+                      "TEXT-TRACE-20200101-000000.JSONL", "my-text-trace-20200101-000000.jsonl",
+                      "text-trace-#.jsonl", "text-trace-2020010-1000000.jsonl",
+                      "text-trace-20200101-00000.translations.json",
+                      "text-trace-20200101-000000.jsonl.bak", "text-trace-20200101-000000.jsonl.txt",
+                      "text-trace-notes.txt", "translations.json",
+                  }, StringComparer.Ordinal),
+                "only a name the mod writes is ever deleted",
+                "prefix, moment as Start spells it, suffix, exact case; anything else in the folder is somebody's. Left: " + string.Join(", ", left));
+
+            check(File.Exists(Path.Combine(folder, "text-trace-20190101-000000.jsonl", "inside.txt")),
+                "a folder named like a trace is not entered",
+                "the listing is one level, files only");
         }
 
         private static void FewerThanKeptIsLeftAlone(Action<bool, string, string> check, string folder)

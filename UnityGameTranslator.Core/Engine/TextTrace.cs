@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Text;
 using Newtonsoft.Json.Linq;
@@ -75,7 +76,9 @@ namespace UnityGameTranslator.Core
                 if (On) return;
 
                 Prune(folder, Kept - 1);
-                string stem = Prefix + DateTime.Now.ToString("yyyyMMdd-HHmmss");
+                // Invariant: under a Thai or Hijri calendar the player's culture writes another
+                // year, and name order — which Prune takes for age — would stop being time order.
+                string stem = Prefix + DateTime.Now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture);
                 string path = System.IO.Path.Combine(folder, stem + ".jsonl");
                 string copy = null;
                 if (!string.IsNullOrEmpty(translationsPath) && File.Exists(translationsPath))
@@ -130,14 +133,31 @@ namespace UnityGameTranslator.Core
             return gone;
         }
 
-        /// <summary>The trace a file belongs to, or null when the file is not one of ours.</summary>
+        /// <summary>
+        /// The trace a file belongs to, or null when the file is not one of ours.
+        ///
+        /// 🔴 Only a name this class writes is ours: the prefix, the moment as <c>Start</c> spells
+        /// it, a suffix — nothing else. The folder also holds what the person or a download put
+        /// there, and a name merely starting with the prefix is not enough to delete it. The
+        /// listing's own pattern is no filter either: on Windows it is case-blind and matches
+        /// short 8.3 names too, so every name is checked here, whole and case-sensitive.
+        /// </summary>
         private static string StemOf(string name)
         {
+            string stem;
             // The copy's suffix ends in ".json", not ".jsonl": tested first all the same, so the
             // two can never be read as each other.
-            if (name.EndsWith(CopySuffix, StringComparison.Ordinal)) return name.Substring(0, name.Length - CopySuffix.Length);
-            if (name.EndsWith(TraceSuffix, StringComparison.Ordinal)) return name.Substring(0, name.Length - TraceSuffix.Length);
-            return null;
+            if (name.EndsWith(CopySuffix, StringComparison.Ordinal)) stem = name.Substring(0, name.Length - CopySuffix.Length);
+            else if (name.EndsWith(TraceSuffix, StringComparison.Ordinal)) stem = name.Substring(0, name.Length - TraceSuffix.Length);
+            else return null;
+
+            if (!stem.StartsWith(Prefix, StringComparison.Ordinal)) return null;
+            string moment = stem.Substring(Prefix.Length);
+            // yyyyMMdd-HHmmss
+            if (moment.Length != 15 || moment[8] != '-') return null;
+            for (int i = 0; i < moment.Length; i++)
+                if (i != 8 && (moment[i] < '0' || moment[i] > '9')) return null;
+            return stem;
         }
 
         private static void Delete(string path)

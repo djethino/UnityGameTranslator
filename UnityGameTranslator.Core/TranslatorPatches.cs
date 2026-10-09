@@ -2144,7 +2144,15 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// Clear the InputField cache (call on scene change).
+        /// Clear what the patches worked out per component, so every text is evaluated again
+        /// (scene change, and every Apply through TranslatorCore.ClearProcessingCaches).
+        ///
+        /// 🔴 **The components themselves are kept** (<see cref="PatchedComponentRefs"/>; 2026-10-09).
+        /// This is called right before the passes that walk them — the refresh's pass 2, the sizes
+        /// put back — and with translations off the set_text prefix returns before recording them
+        /// again: the switch found an empty list (« 0 patch refs »), put no size back and left the
+        /// texts only the setter knew in their translation. A reference goes when its component
+        /// does (<see cref="CleanDeadRefs"/>, at every scene unload), never in bulk.
         /// </summary>
         public static void ClearCache()
         {
@@ -2152,7 +2160,6 @@ namespace UnityGameTranslator.Core
             _parentInputFieldCache.Clear();
             _altTMPFontReplacedIds.Clear();
             _fontNameCache.Clear();
-            _patchedComponentRefs.Clear();
             PatchRefDrawn.Clear();
             TranslatorCore.Router.Clear();
         }
@@ -2254,8 +2261,8 @@ namespace UnityGameTranslator.Core
                     // items…) only picked a runtime scale change up after a game restart
                     // (issue #21). ApplyTMPAutoSizeScale reads/tracks its own original
                     // bounds and no-ops on non-auto-sized components.
-                    if (_fontNameCache.TryGetValue(kvp.Key, out string cachedFontName) &&
-                        !string.IsNullOrEmpty(cachedFontName))
+                    string cachedFontName = FontNameOfTracked(kvp.Key, kvp.Value);
+                    if (!string.IsNullOrEmpty(cachedFontName))
                     {
                         string settingsName = FontManager.GetSettingsFontName(kvp.Key, cachedFontName);
                         float scale = FontManager.GetFontScale(settingsName, kvp.Key);
@@ -2288,9 +2295,8 @@ namespace UnityGameTranslator.Core
                 if (kvp.Value == null || (kvp.Value is UnityEngine.Object gone && gone == null)) continue;
                 try
                 {
-                    if (!_fontNameCache.TryGetValue(kvp.Key, out string cachedFontName) ||
-                        string.IsNullOrEmpty(cachedFontName))
-                        continue;
+                    string cachedFontName = FontNameOfTracked(kvp.Key, kvp.Value);
+                    if (string.IsNullOrEmpty(cachedFontName)) continue;
 
                     string settingsName = FontManager.GetSettingsFontName(kvp.Key, cachedFontName);
                     if (!string.Equals(settingsName, fontName, StringComparison.OrdinalIgnoreCase))
@@ -2326,9 +2332,8 @@ namespace UnityGameTranslator.Core
                 if (kvp.Value == null || (kvp.Value is UnityEngine.Object gone && gone == null)) continue;
                 try
                 {
-                    if (!_fontNameCache.TryGetValue(kvp.Key, out string cachedFontName) ||
-                        string.IsNullOrEmpty(cachedFontName))
-                        continue;
+                    string cachedFontName = FontNameOfTracked(kvp.Key, kvp.Value);
+                    if (string.IsNullOrEmpty(cachedFontName)) continue;
 
                     string settingsName = FontManager.GetSettingsFontName(kvp.Key, cachedFontName);
                     // Only re-apply when the resolved name is a REAL settings font. When a component's
@@ -3326,40 +3331,7 @@ namespace UnityGameTranslator.Core
                 }
                 else
                 {
-                    fontObj = TypeHelper.GetFont(__instance);
-                    if (fontObj != null)
-                        fontName = TypeHelper.FontNameOf(fontObj);
-
-                    // If the component already has a clone font (inherited from template/pool),
-                    // resolve back to the ORIGINAL font name so tracking stays correct. A TMP text
-                    // never carries a Font — its font asset is another kind — and asking cost a
-                    // runtime cast per TMP text.
-                    Font f = fontObj as Font;
-                    if (f == null && fontObj != null && componentType != "TMP")
-                        f = TypeHelper.Il2CppCast(fontObj, typeof(Font)) as Font;
-                    if (f != null)
-                    {
-                        string resolvedOriginal = FontManager.GetOriginalForClone(f);
-                        if (resolvedOriginal != null)
-                        {
-                            // Clone resolved to original by instance ID
-                            fontName = resolvedOriginal;
-                            if (compId != -1)
-                                _inheritedCloneComponents.Add(compId);
-                        }
-                        else
-                        {
-                            // Not a clone — check if we already tracked an original for this component.
-                            // This handles external fonts (Unity built-in, system fontNames fallback)
-                            // that replaced the original game font on the component.
-                            string trackedOriginal = FontManager.GetOriginalFontName(compId);
-                            if (trackedOriginal != null)
-                                fontName = trackedOriginal;
-                            // Otherwise keep fontName as-is — it's either a game font we haven't
-                            // seen yet (first pass), or an external we can't resolve.
-                            // RegisterUnityFontObject will categorize it.
-                        }
-                    }
+                    fontName = ResolveOriginalFontName(__instance, compId, componentType == "TMP", out fontObj);
                     if (compId != -1)
                     {
                         _fontNameCache[compId] = fontName;
@@ -3847,6 +3819,72 @@ namespace UnityGameTranslator.Core
         /// makes it order-independent; the scale==1 test below still shorts out every font the user
         /// never configured, so unrelated components cost one reflection call, once.
         /// </summary>
+        /// <summary>
+        /// The game's own font name for a component — the key its settings live under — read off
+        /// the font it wears: a clone of ours resolves back to the original it was made from, an
+        /// external font to the original tracked for the component. The set_text prefix's
+        /// resolution, shared with the passes that walk the tracked components and meet one whose
+        /// name is no longer cached (<see cref="FontNameOfTracked"/>).
+        /// </summary>
+        /// <param name="isTmp">A TMP text never carries a Font — its font asset is another kind —
+        /// and asking cost a runtime cast per TMP text.</param>
+        private static string ResolveOriginalFontName(object instance, int compId, bool isTmp, out object fontObj)
+        {
+            string fontName = null;
+            fontObj = TypeHelper.GetFont(instance);
+            if (fontObj != null)
+                fontName = TypeHelper.FontNameOf(fontObj);
+
+            // If the component already has a clone font (inherited from template/pool),
+            // resolve back to the ORIGINAL font name so tracking stays correct.
+            Font f = fontObj as Font;
+            if (f == null && fontObj != null && !isTmp)
+                f = TypeHelper.Il2CppCast(fontObj, typeof(Font)) as Font;
+            if (f != null)
+            {
+                string resolvedOriginal = FontManager.GetOriginalForClone(f);
+                if (resolvedOriginal != null)
+                {
+                    // Clone resolved to original by instance ID
+                    fontName = resolvedOriginal;
+                    if (compId != -1)
+                        _inheritedCloneComponents.Add(compId);
+                }
+                else
+                {
+                    // Not a clone — check if we already tracked an original for this component.
+                    // This handles external fonts (Unity built-in, system fontNames fallback)
+                    // that replaced the original game font on the component.
+                    string trackedOriginal = FontManager.GetOriginalFontName(compId);
+                    if (trackedOriginal != null)
+                        fontName = trackedOriginal;
+                    // Otherwise keep fontName as-is — it's either a game font we haven't
+                    // seen yet (first pass), or an external we can't resolve.
+                    // RegisterUnityFontObject will categorize it.
+                }
+            }
+            return fontName;
+        }
+
+        /// <summary>
+        /// The font name of a tracked component, for the passes that walk them all (sizes after a
+        /// toggle, an Auto change, override rules): the cached one, or resolved and cached again.
+        ///
+        /// 🔴 **Never "not cached = skip"** (2026-10-09). The name cache is emptied with the
+        /// processing caches on every Apply and on the translations switch — and with translations
+        /// off the set_text prefix returns before refilling it. Switching translations off then
+        /// found every component nameless, put no size back, and a text sized to 80 % stayed at
+        /// 80 % in the game's own font until the size was set back by hand with translations on.
+        /// </summary>
+        private static string FontNameOfTracked(int compId, object instance)
+        {
+            if (_fontNameCache.TryGetValue(compId, out string cached)) return cached;
+            bool isTmp = TypeHelper.TMP_TextType != null && TypeHelper.TMP_TextType.IsInstanceOfType(instance);
+            string resolved = ResolveOriginalFontName(instance, compId, isTmp, out _);
+            _fontNameCache[compId] = resolved;
+            return resolved;
+        }
+
         private static string ResolveFontNameForSizePrefix(object instance, int instanceId)
         {
             if (_fontNameCache.TryGetValue(instanceId, out string cached))

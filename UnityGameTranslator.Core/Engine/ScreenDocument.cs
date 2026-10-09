@@ -25,6 +25,8 @@ namespace UnityGameTranslator.Core
 
         /// <summary>Hidden at first when the document says so; the code shows it when its moment comes.</summary>
         public bool StartsVisible => Flag("visible") ?? true;
+        /// <summary>Hidden keeps its room (the schema's <c>reserve</c>) — Handle.ReservesRoom.</summary>
+        public bool ReservesRoom => Flag("reserve") ?? false;
 
         public int? Int(string prop) => Props[prop] is JValue v && v.Type == JTokenType.Integer ? (int?)(int)v : null;
         public float? Number(string prop) => Props[prop] is JValue v && (v.Type == JTokenType.Float || v.Type == JTokenType.Integer) ? (float?)(float)v : null;

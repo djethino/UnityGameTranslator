@@ -151,6 +151,8 @@ namespace UnityGameTranslator.Core.UI.Components
             {
                 var go = Object;
                 if (go == null || !go.activeInHierarchy) return false;
+                // Hidden but holding its room (ReservesRoom): not there for the pointer either.
+                if (ReservesRoom && !Visible) return false;
                 var rect = go.GetComponent<RectTransform>();
                 if (rect == null) return false;
                 var canvas = rect.GetComponentInParent<Canvas>();
@@ -179,17 +181,42 @@ namespace UnityGameTranslator.Core.UI.Components
         /// </summary>
         public bool Visible
         {
-            get => Object != null && Object.activeSelf;
+            get => Object != null && Object.activeSelf && (_veil == null || _veil.alpha > 0f);
             set
             {
                 if (Object == null) return;
 
-                bool was = Object.activeSelf;
-                Object.SetActive(value);
+                bool was = Visible;
+                if (ReservesRoom)
+                {
+                    // Kept in the layout, only not drawn and not reachable (the document's
+                    // "reserve"): its neighbours do not move when it comes and goes.
+                    if (!Object.activeSelf) Object.SetActive(true);
+                    if (_veil == null)
+                        _veil = UIHelpers.GetComponentSafe<CanvasGroup>(Object) ?? Object.AddComponent<CanvasGroup>();
+                    _veil.alpha = value ? 1f : 0f;
+                    _veil.interactable = value;
+                    _veil.blocksRaycasts = value;
+                }
+                else
+                    Object.SetActive(value);
 
                 if (value && !was) Appearances.Block(Object);
             }
         }
+
+        /// <summary>
+        /// Hidden keeps its room — set by the builder from the document's <c>reserve</c>.
+        ///
+        /// 🔴 **For a control that comes and goes beside another one the pointer is ON** (2026-10-09):
+        /// the Undo and 100% buttons beside a Size slider appeared at the first touch, the slider
+        /// shrank under the pointer, and a click meant for 100% landed on 150%. Hidden takes no
+        /// room everywhere else, and must: a reserved gap is only right where a neighbour would
+        /// otherwise move while being used.
+        /// </summary>
+        internal bool ReservesRoom;
+
+        private CanvasGroup _veil;
 
         /// <summary>Its name in the hierarchy — the name it was created with.</summary>
         public string Name => Object != null ? Object.name : "";

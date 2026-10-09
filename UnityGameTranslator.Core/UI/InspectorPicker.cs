@@ -1603,7 +1603,7 @@ namespace UnityGameTranslator.Core.UI
                     }
                     catch (Exception ex) { Faults.Say("InspectorPicker.PickTextByRectangle", ex); }
 
-                    Rect local = rect.rect;
+                    Rect local = DrawnLocalRect(comp, rect);
                     Vector3 w0 = rect.TransformPoint(new Vector3(local.xMin, local.yMin, 0));
                     Vector3 w1 = rect.TransformPoint(new Vector3(local.xMin, local.yMax, 0));
                     Vector3 w2 = rect.TransformPoint(new Vector3(local.xMax, local.yMax, 0));
@@ -1685,6 +1685,52 @@ namespace UnityGameTranslator.Core.UI
                 return bestInWorld.gameObject;
             }
             return null;
+        }
+
+        private static PropertyInfo _textBoundsProp;
+        private static bool _textBoundsResolved;
+
+        /// <summary>
+        /// What a text DRAWS, in its own space: a TMP text's glyph bounds (<c>textBounds</c>), else
+        /// its rectangle.
+        ///
+        /// 🔴 **Not the rectangle when the glyphs are known** (2026-10-09). A menu laid out in 3D gave
+        /// each line a rectangle many times wider than its words, right-aligned: the marker ran from
+        /// the edge of the screen to the end of the word, rectangles of neighbouring lines overlapped,
+        /// and the pointer on a word picked another line or the group around them. The glyphs are
+        /// what anybody points at.
+        /// ⚠ An IL2CPP list hands the component typed as declared: asked of the TMP type through
+        /// TryCast, the way every other read of a scan result is (TypeHelper.ReadInScene).
+        /// </summary>
+        private static Rect DrawnLocalRect(Component comp, RectTransform rect)
+        {
+            var tmp = TypeHelper.TMP_TextType;
+            if (tmp == null || comp == null) return rect.rect;
+            if (!_textBoundsResolved)
+            {
+                _textBoundsResolved = true;
+                _textBoundsProp = Members.Property(tmp, "textBounds", BindingFlags.Public | BindingFlags.Instance);
+            }
+            if (_textBoundsProp == null || _textBoundsProp.PropertyType != typeof(Bounds)) return rect.rect;
+
+            object text = comp;
+            if (!tmp.IsInstanceOfType(text))
+            {
+                text = TypeHelper.Il2CppCast(comp, tmp);
+                if (text == null || !tmp.IsInstanceOfType(text)) return rect.rect;   // not a TMP text: UI.Text
+            }
+            try
+            {
+                var b = (Bounds)_textBoundsProp.GetValue(text, null);
+                // Never drawn yet (or nothing to draw): its rectangle stands in.
+                if (b.size.x <= 0f || b.size.y <= 0f) return rect.rect;
+                return Rect.MinMaxRect(b.min.x, b.min.y, b.max.x, b.max.y);
+            }
+            catch (Exception ex)
+            {
+                Faults.Say("InspectorPicker.DrawnLocalRect", ex, comp.GetType().Name);
+                return rect.rect;
+            }
         }
 
         /// <summary>
@@ -2101,7 +2147,11 @@ namespace UnityGameTranslator.Core.UI
                 HideEdges(edgeImages);
                 // Back to a blocking marker: a Canvas element's rectangle is the element itself.
                 highlightImage.raycastTarget = true;
-                if (!GetScreenBounds(targetRect, _selectedCamera, out var screenMin, out var screenMax))
+                // A text is framed by what it draws, as it is picked (DrawnLocalRect).
+                var tmp = TypeHelper.TMP_TextType;
+                var textComp = tmp != null ? TypeHelper.GetComponentByType(target, tmp) : null;
+                Rect drawn = textComp != null ? DrawnLocalRect(textComp, targetRect) : targetRect.rect;
+                if (!GetScreenBounds(targetRect, _selectedCamera, out var screenMin, out var screenMax, drawn))
                 {
                     highlightImage.gameObject.SetActive(false);
                     return;
@@ -2267,7 +2317,10 @@ namespace UnityGameTranslator.Core.UI
         /// GetWorldCorners(Vector3[]) crashes on IL2CPP because the array param becomes
         /// Il2CppStructArray — using TransformPoint(Vector3) avoids this entirely.
         /// </summary>
-        private static bool GetScreenBounds(RectTransform rect, Camera picking, out Vector2 screenMin, out Vector2 screenMax)
+        /// <param name="local">The part of the rectangle to convert, in its own space — what a text draws
+        /// (DrawnLocalRect). Null: the whole rectangle.</param>
+        private static bool GetScreenBounds(RectTransform rect, Camera picking, out Vector2 screenMin, out Vector2 screenMax,
+                                            Rect? local = null)
         {
             screenMin = Vector2.zero;
             screenMax = Vector2.zero;
@@ -2277,7 +2330,7 @@ namespace UnityGameTranslator.Core.UI
             try
             {
                 // Get the local rect (x, y, width, height in local space)
-                Rect localRect = rect.rect;
+                Rect localRect = local ?? rect.rect;
 
                 // Transform the 4 corners from local to world space
                 // TransformPoint takes a Vector3 value type — no IL2CPP array issues

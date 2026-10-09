@@ -216,6 +216,16 @@ namespace UnityGameTranslator.Core.UI
                || node.Props["padLeft"] != null || node.Props["padRight"] != null
                || node.Props["padTop"] != null || node.Props["padBottom"] != null;
 
+        /// <summary>
+        /// Shown or hidden at first, as the document says — and whether hidden keeps its room
+        /// (<c>reserve</c>, Handle.ReservesRoom). Set before the first Visible, which it changes.
+        /// </summary>
+        private static void Place(Handle handle, ScreenNode node)
+        {
+            handle.ReservesRoom = node.ReservesRoom;
+            handle.Visible = node.StartsVisible;
+        }
+
         /// <summary>The help sentence the document gives a piece, attached to what was built for it.</summary>
         private static void Describe(Site site, ScreenNode node, Handle handle)
         {
@@ -238,7 +248,7 @@ namespace UnityGameTranslator.Core.UI
                     var host = Stacks.Card(parent, node.Name, node.Int("width") ?? doc.CardWidth,
                                            stretchVertically: node.Flag("stretch") ?? false,
                                            surface: Enum(node.Word("surface"), Surface.Card));
-                    host.Visible = node.StartsVisible;
+                    Place(host, node);
                     built.Add(node.Name, host);
                     Describe(site, node, host);
                     foreach (var child in node.Children) Place(site, child, host);
@@ -270,7 +280,7 @@ namespace UnityGameTranslator.Core.UI
                         ? Callout.Box(parent, node.Name, tone, Spacing(node) ?? 5, pad, MinHeight(node) ?? 0)
                         : Callout.HorizontalBox(parent, node.Name, tone, Spacing(node) ?? 8, pad,
                                                 Enum(node.Word("placement"), Placement.MiddleLeft), MinHeight(node) ?? 0);
-                    host.Visible = node.StartsVisible;
+                    Place(host, node);
                     built.Add(node.Name, host);
                     Describe(site, node, host);
                     foreach (var child in node.Children) Place(site, child, host);
@@ -309,7 +319,7 @@ namespace UnityGameTranslator.Core.UI
                     // Pressed as a whole, like a row: a block whose pieces are stacked and which is
                     // itself one choice among several.
                     if (node.Act != null) host.Pressed(Act(site, node));
-                    host.Visible = node.StartsVisible;
+                    Place(host, node);
                     built.Add(node.Name, host);
                     Describe(site, node, host);
                     foreach (var child in node.Children) Place(site, child, host);
@@ -336,7 +346,7 @@ namespace UnityGameTranslator.Core.UI
                     }
                     // Pressed as a whole: the row answers a click anywhere its own controls do not take.
                     if (node.Act != null) host.Pressed(Act(site, node));
-                    host.Visible = node.StartsVisible;
+                    Place(host, node);
                     built.Add(node.Name, host);
                     Describe(site, node, host);
                     foreach (var child in node.Children) Place(site, child, host);
@@ -363,7 +373,7 @@ namespace UnityGameTranslator.Core.UI
                     // Built empty: what it shows belongs to whatever the screen is shown for, and
                     // the box keeps the room the document gives it either way.
                     var picture = Images.Create(parent, node.Name, node.Int("height") ?? 0);
-                    picture.Visible = node.StartsVisible;
+                    Place(picture, node);
                     built.Add(node.Name, picture);
                     Describe(site, node, picture);
                     break;
@@ -372,7 +382,7 @@ namespace UnityGameTranslator.Core.UI
                 {
                     // The share is written by the code (Value); built empty.
                     var progress = ProgressBars.Create(parent, node.Name, Enum(node.Word("tone"), Tone.Info));
-                    progress.Visible = node.StartsVisible;
+                    Place(progress, node);
                     built.Add(node.Name, progress);
                     break;
                 }
@@ -380,7 +390,7 @@ namespace UnityGameTranslator.Core.UI
                 {
                     // The tag is data, written by the code (Retag); built blank and hidden.
                     var chip = TagChips.Create(parent, "");
-                    chip.Visible = node.StartsVisible;
+                    Place(chip, node);
                     built.Add(node.Name, chip);
                     break;
                 }
@@ -449,7 +459,7 @@ namespace UnityGameTranslator.Core.UI
                                             policy: Enum(node.Word("policy"), TextPolicy.UiText),
                                             tone: Enum(node.Word("tone"), Tone.Plain),
                                             fill: Enum(node.Word("fill"), Fill.Content));
-                    toggle.Visible = node.StartsVisible;
+                    Place(toggle, node);
                     built.Add(node.Name, toggle);
                     Describe(site, node, toggle);
                     break;
@@ -476,7 +486,7 @@ namespace UnityGameTranslator.Core.UI
                         var changed = Act(site, node);
                         field.Changed += _ => changed();
                     }
-                    field.Visible = node.StartsVisible;
+                    Place(field, node);
                     if (GameTextOf(node) is GameTextSide fieldSide && field.Ref?.Component != null)
                     {
                         ModWindowText.Mark(field.Ref.Component, field.Ref.Component.textComponent, fieldSide);
@@ -520,7 +530,7 @@ namespace UnityGameTranslator.Core.UI
                     var host = dropdown.CreateUI(parent, _ => changed(), node.Int("width") ?? 200,
                                                  stretch: node.Flag("stretch") ?? false,
                                                  minHeight: MinHeight(node));
-                    host.Visible = node.StartsVisible;
+                    Place(host, node);
                     built.Add(node.Name, dropdown);
                     Describe(site, node, host);
                     break;
@@ -534,7 +544,7 @@ namespace UnityGameTranslator.Core.UI
                                                  emptyText: node.Word("empty"),
                                                  spacing: node.Int("spacing") ?? 5,
                                                  padding: node.Int("padding") ?? 5);
-                    list.Visible = node.StartsVisible;
+                    list.Visible = node.StartsVisible;   // a list is not a Handle: it never reserves its room
                     built.Add(node.Name, list);
                     Describe(site, node, list.Handle);
                     break;
@@ -562,7 +572,7 @@ namespace UnityGameTranslator.Core.UI
                     // Said only to override the role's own choice — a Hint is italic unless told otherwise.
                     if (node.Flag("italic") is bool italic) label.Italic = italic;
                     if (node.Flag("bold") is bool bold) label.Bold = bold;
-                    label.Visible = node.StartsVisible;
+                    Place(label, node);
                     if (GameTextOf(node) is GameTextSide labelSide)
                     {
                         ModWindowText.Mark(label.Text, labelSide);
@@ -586,7 +596,7 @@ namespace UnityGameTranslator.Core.UI
                                                 minWidth: node.Int("minWidth"), fill: Enum(node.Word("fill"), Fill.Content),
                                                 scope: ScopeOf(node), policy: policy);
                     button.Clicked += Act(site, node);
-                    button.Visible = node.StartsVisible;
+                    Place(button, node);
                     built.Add(node.Name, button);
                     Describe(site, node, button);
                     break;

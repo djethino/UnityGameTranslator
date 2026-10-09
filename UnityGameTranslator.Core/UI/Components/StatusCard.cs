@@ -905,7 +905,7 @@ namespace UnityGameTranslator.Core.UI.Components
             foreach (var kvp in TranslatorCore.TranslationCache)
             {
                 // Skip metadata keys
-                if (kvp.Key.StartsWith("_")) continue;
+                if (Common.TranslationFileKeys.IsMetadataKey(kvp.Key)) continue;
 
                 stats.TotalLines++;
                 var entry = kvp.Value;

@@ -56,8 +56,8 @@ namespace UnityGameTranslator.Core
         public bool NeedsRewrite { get; private set; }
 
         /// <summary>
-        /// Read every line of a parsed translation file. Metadata keys — anything starting with an
-        /// underscore — are left to whoever asked; this only takes the lines.
+        /// Read every line of a parsed translation file. Metadata, and whatever else is not a line,
+        /// is left to whoever asked (<see cref="IsLine"/>); this only takes the lines.
         /// </summary>
         public static TranslationFileEntries ReadAll(JObject file)
         {
@@ -66,12 +66,23 @@ namespace UnityGameTranslator.Core
 
             foreach (var property in file.Properties())
             {
-                if (property.Name.StartsWith("_")) continue;
+                if (!IsLine(property.Name, property.Value)) continue;
                 read.Read(property.Name, property.Value);
             }
 
             return read;
         }
+
+        /// <summary>
+        /// Is this entry of a parsed file a line of the game's text — the socle's rule
+        /// (<see cref="TranslationFileKeys.IsLine"/>), its value's shape read here.
+        ///
+        /// 🔴 Every reader of a raw translation file in the mod asks THIS, never « starts with an
+        /// underscore » (2026-10-09): a game's text can begin with one, and the prefix rule wrote the
+        /// line, dropped it at the next load and sent it to the model again at every launch.
+        /// </summary>
+        public static bool IsLine(string name, JToken value)
+            => TranslationFileKeys.IsLine(name, value is JObject line && line["v"] != null);
 
         /// <summary>
         /// Read one line: its key, its value, and where it belongs.

@@ -38,9 +38,9 @@ namespace UnityGameTranslator.Core
 
             // Get all keys from all three sources
             var allKeys = new HashSet<string>();
-            if (local != null) allKeys.UnionWith(local.Keys.Where(k => !k.StartsWith("_")));
-            if (remote != null) allKeys.UnionWith(remote.Keys.Where(k => !k.StartsWith("_")));
-            if (ancestor != null) allKeys.UnionWith(ancestor.Keys.Where(k => !k.StartsWith("_")));
+            if (local != null) allKeys.UnionWith(local.Keys.Where(k => !Common.TranslationFileKeys.IsMetadataKey(k)));
+            if (remote != null) allKeys.UnionWith(remote.Keys.Where(k => !Common.TranslationFileKeys.IsMetadataKey(k)));
+            if (ancestor != null) allKeys.UnionWith(ancestor.Keys.Where(k => !Common.TranslationFileKeys.IsMetadataKey(k)));
 
             int interfaceLinesDropped = 0;
 

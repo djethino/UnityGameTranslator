@@ -177,7 +177,7 @@ namespace UnityGameTranslator.Core
 
                 foreach (var property in root.Properties())
                 {
-                    if (!property.Name.StartsWith("_", StringComparison.Ordinal)) count++;
+                    if (TranslationFileEntries.IsLine(property.Name, property.Value)) count++;
                 }
 
                 return count;

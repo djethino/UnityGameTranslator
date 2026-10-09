@@ -132,7 +132,7 @@ namespace UnityGameTranslator.Core
                     {
                         Font = (prop.Value as JObject)?["ui_font"]?.Value<string>();
                     }
-                    else if (!prop.Name.StartsWith("_"))
+                    else if (TranslationFileEntries.IsLine(prop.Name, prop.Value))
                     {
                         string key = Normalize(prop.Name);
                         if (prop.Value.Type == JTokenType.Object)

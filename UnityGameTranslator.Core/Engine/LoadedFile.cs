@@ -178,14 +178,15 @@ namespace UnityGameTranslator.Core
 
                     file.Sections.Add(new KeyValuePair<string, JToken>(section, prop.Value));
                 }
-                else if (!prop.Name.StartsWith("_"))
+                else if (TranslationFileEntries.IsLine(prop.Name, prop.Value))
                 {
                     // Which line wins a collision, which one has no business in this file, and
                     // whether reading changed what the file should hold — see
                     // Engine/TranslationFileEntries, where it can be replayed without a game.
                     file.Entries.Read(prop.Name, prop.Value);
                 }
-                // Any other `_` key is unknown to this version and left alone.
+                // Anything else — an underscore name this version does not know, holding no line —
+                // is a newer writer's metadata, left alone (TranslationFileKeys).
             }
 
             return file;

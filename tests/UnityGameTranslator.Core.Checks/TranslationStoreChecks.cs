@@ -212,7 +212,7 @@ namespace UnityGameTranslator.Core.Checks
             var parsed = JObject.Parse(File.ReadAllText(path));
             var actual = new JObject();
             foreach (var p in parsed.Properties())
-                if (!p.Name.StartsWith("_")) actual[p.Name] = p.Value;
+                if (TranslationFileEntries.IsLine(p.Name, p.Value)) actual[p.Name] = p.Value;
             if (!JToken.DeepEquals(actual, expected))
                 failures.Add($"{fact}: expected {expected.ToString(Newtonsoft.Json.Formatting.None)}, got {actual.ToString(Newtonsoft.Json.Formatting.None)}");
         }

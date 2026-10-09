@@ -264,7 +264,7 @@ namespace UnityGameTranslator.Core
             int changes = 0;
             foreach (var kvp in lines)
             {
-                if (kvp.Key.StartsWith("_")) continue;
+                if (Common.TranslationFileKeys.IsMetadataKey(kvp.Key)) continue;
                 if (!Ancestor.TryGetValue(kvp.Key, out var ancestorEntry)
                     || ancestorEntry.Value != kvp.Value.Value
                     || ancestorEntry.Tag != kvp.Value.Tag)
@@ -276,7 +276,7 @@ namespace UnityGameTranslator.Core
             int removed = 0;
             foreach (var kvp in Ancestor)
             {
-                if (kvp.Key.StartsWith("_")) continue;
+                if (Common.TranslationFileKeys.IsMetadataKey(kvp.Key)) continue;
                 if (!Common.Merge.IsGameLine(kvp.Value?.Tag)) continue;
                 if (!lines.ContainsKey(kvp.Key)) removed++;
             }
@@ -333,7 +333,7 @@ namespace UnityGameTranslator.Core
             var output = new JObject();
             foreach (var kvp in lines)
             {
-                if (kvp.Key.StartsWith("_")) continue;
+                if (Common.TranslationFileKeys.IsMetadataKey(kvp.Key)) continue;
                 output[kvp.Key] = new JObject
                 {
                     ["v"] = kvp.Value.Value,
@@ -359,7 +359,7 @@ namespace UnityGameTranslator.Core
             var result = new Dictionary<string, TranslationEntry>();
             foreach (var prop in parsed.Properties())
             {
-                if (prop.Name.StartsWith("_")) continue;
+                if (!TranslationFileEntries.IsLine(prop.Name, prop.Value)) continue;
                 string key = TextNormalization.NormalizeLineEndings(prop.Name);
 
                 if (prop.Value.Type == JTokenType.Object)
@@ -383,13 +383,13 @@ namespace UnityGameTranslator.Core
             return result;
         }
 
-        /// <summary>The `_` sections of a file, or null when it carries none.</summary>
+        /// <summary>What a file carries besides its lines (TranslationFileEntries.IsLine), or null when nothing.</summary>
         private static JObject SectionsOf(JObject parsed)
         {
             JObject sections = null;
             foreach (var prop in parsed.Properties())
             {
-                if (!prop.Name.StartsWith("_")) continue;
+                if (TranslationFileEntries.IsLine(prop.Name, prop.Value)) continue;
                 if (sections == null) sections = new JObject();
                 sections[prop.Name] = prop.Value.DeepClone();
             }
@@ -401,7 +401,7 @@ namespace UnityGameTranslator.Core
             var copy = new Dictionary<string, TranslationEntry>();
             foreach (var kvp in lines)
             {
-                if (kvp.Key.StartsWith("_")) continue;
+                if (Common.TranslationFileKeys.IsMetadataKey(kvp.Key)) continue;
                 copy[kvp.Key] = new TranslationEntry { Value = kvp.Value.Value, Tag = kvp.Value.Tag };
             }
             return copy;

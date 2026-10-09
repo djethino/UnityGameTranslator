@@ -645,7 +645,7 @@ namespace UnityGameTranslator.Core
             int before = entry.Namer.Added.Count, lines = 0;
             foreach (var property in file.Properties())
             {
-                if (property.Name.StartsWith("_")) continue;
+                if (!TranslationFileEntries.IsLine(property.Name, property.Value)) continue;
                 string value = property.Value.Type == Newtonsoft.Json.Linq.JTokenType.Object
                     ? (string)property.Value["v"]
                     : property.Value.Type == Newtonsoft.Json.Linq.JTokenType.String ? (string)property.Value : null;

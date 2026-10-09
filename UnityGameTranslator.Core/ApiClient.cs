@@ -1238,8 +1238,8 @@ namespace UnityGameTranslator.Core
                 // Validate all non-metadata entries are valid translation values
                 foreach (var prop in parsed.Properties())
                 {
-                    // Skip metadata fields
-                    if (prop.Name.StartsWith("_"))
+                    // Skip what is not a line: metadata, and a newer writer's metadata
+                    if (!TranslationFileEntries.IsLine(prop.Name, prop.Value))
                         continue;
 
                     // Each translation entry can be:

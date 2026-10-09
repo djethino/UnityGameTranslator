@@ -4969,7 +4969,7 @@ namespace UnityGameTranslator.Core.UI
             if (src == null) return copy;
             foreach (var kvp in src)
             {
-                if (kvp.Key.StartsWith("_") || kvp.Value == null) continue;
+                if (Common.TranslationFileKeys.IsMetadataKey(kvp.Key) || kvp.Value == null) continue;
                 copy[kvp.Key] = new TranslationEntry
                 {
                     Value = kvp.Value.Value,

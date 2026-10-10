@@ -2839,7 +2839,10 @@ namespace UnityGameTranslator.Core
                         TranslatorCore.LogWarning($"[FontManager] '{name}': its atlas mode cannot be read — no second asset, a letter of it inside a <font> tag is drawn on the tag font's atlas");
                     return asset;
                 }
-                bool dynamic = mode != null && Convert.ToInt32(mode) == 1; // AtlasPopulationMode.Dynamic
+                // Anything but Static (0) writes its atlas: Dynamic (1), and Unity 6's DynamicOS (2, a
+                // font of the system read from its path), which TMP fills the same way
+                // (TMP_FontAssetUtilities, ugui 2.x). A DynamicOS asset keeps no Font: no twin, said.
+                bool dynamic = mode != null && Convert.ToInt32(mode) != 0;
                 if (dynamic)
                 {
                     var file = type.GetProperty("sourceFontFile", BindingFlags.Public | BindingFlags.Instance)?.GetValue(asset, null) as Font;
@@ -4916,8 +4919,7 @@ namespace UnityGameTranslator.Core
                     ClearList(glyphs);
                     KeepUnderline(shared, type, characters, glyphs);
                     // And it never adds one: static, it never writes into the atlas it shares.
-                    var mode = type.GetProperty("atlasPopulationMode", BindingFlags.Public | BindingFlags.Instance);
-                    if (mode != null && mode.CanWrite) mode.SetValue(head, Enum.ToObject(mode.PropertyType, 0), null);
+                    CustomFontLoader.MakeStatic(head, type, shared.name + " + " + originalFontName);
                 }
                 else if (!KeepOldSpecialGlyphs(shared, type, head)) return null;
 

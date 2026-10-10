@@ -1606,6 +1606,38 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// Puts a TMP asset of ours in the static atlas mode: TMP then never adds a letter to it.
+        /// True when it is static (or its TMP has no atlas mode at all: TMProOld, always static).
+        ///
+        /// 🔴 **A copy of a game font keeps that font's mode and file** (Instantiate). Left DYNAMIC,
+        /// a letter our font lacks is looked up in the GAME font's file (TMP_FontAsset.
+        /// TryAddCharacterInternal, the same in TMP 1.4, 3.0 and Unity 6): its glyph NUMBER there,
+        /// found among ours (numbered 0..N), names one of OUR glyphs — the letter is taken by the
+        /// replacement and drawn as another letter of it. Every Latin letter of an untranslated line
+        /// came out in Hebrew on the bench (2026-10-10, analyse/copie-police-tmp-source-2026-10-10.md),
+        /// and never reached the component's own font behind it (issue #33). Static, the letter goes
+        /// on to the fallbacks. Our own later additions (FontShaping variants) do not go through
+        /// TMP's adding, so they are unaffected.
+        /// </summary>
+        internal static bool MakeStatic(object asset, Type type, string name)
+        {
+            var mode = type.GetProperty("atlasPopulationMode", BindingFlags.Public | BindingFlags.Instance);
+            if (mode == null) return true;
+            try
+            {
+                if (!mode.CanWrite)
+                {
+                    if (DiagnosticOnce.First("CustomFontLoader.staticUnwritable", name))
+                        TranslatorCore.LogWarning($"[CustomFontLoader] '{name}': its atlas mode cannot be written — a letter it lacks may be drawn as another letter of it");
+                    return false;
+                }
+                mode.SetValue(asset, Enum.ToObject(mode.PropertyType, 0), null);   // AtlasPopulationMode.Static
+                return true;
+            }
+            catch (Exception ex) { Faults.Say("CustomFontLoader.MakeStatic", ex, name); return false; }
+        }
+
+        /// <summary>
         /// Empties the weight table (the bold and italic typefaces) a copy of a game font brought
         /// along. TMP draws a &lt;b&gt; or &lt;i&gt; letter with the WORN font's typeface for that
         /// weight before anything else: left as copied, the source game font's bold drew every bold
@@ -1791,6 +1823,8 @@ namespace UnityGameTranslator.Core
                         ForgetInheritedFallbacks(fontAsset, existingFont.name);
                         // Nor its bold and italic typefaces, searched before our own letters.
                         ForgetInheritedWeights(fontAsset, _tmpFontAssetType, existingFont.name);
+                        // Nor its atlas mode: our letters are all written by us (MakeStatic).
+                        MakeStatic(fontAsset, _tmpFontAssetType, fontInfo.Name);
 
                         break;
                     }
@@ -2000,12 +2034,6 @@ namespace UnityGameTranslator.Core
                 // index sampling on modern versions. If multi-atlas rendering misbehaves on
                 // older TMP builds we will need to spawn additional materials here.
                 SetupMaterial(fontAsset, firstTex, fontInfo.AtlasData.atlas.distanceRange);
-
-                // NOTE: previously this block force-set AtlasPopulationMode=Static plus
-                // related flags. It caused regressions (text not translated, FontOps spike)
-                // so we leave the clone's atlas mode untouched. ReadFontAssetDefinition does
-                // the right thing on healthy clones and we accept the suboptimal behaviour
-                // on the edge cases until we can isolate exactly which clones need it.
 
                 // Set face info / font info — use existing clone's faceInfo and modify it
                 SetupFaceInfo(fontAsset, fontInfo, pointSize);

@@ -1322,6 +1322,10 @@ namespace UnityGameTranslator.Core
             return name;
         }
 
+        /// <summary>The loaded TextMesh Pro asset a detected font of that type is — what Extract traces when it has no file.</summary>
+        internal static object TraceableAssetOf(string fontName, string type) =>
+            type == "TextMeshPro" ? LoadedTmpFontNamed(fontName) : null;
+
         private static object LoadedTmpFontNamed(string name)
         {
             // An asset, not a scene object: the asset scan (the scene one misses it on Mono).

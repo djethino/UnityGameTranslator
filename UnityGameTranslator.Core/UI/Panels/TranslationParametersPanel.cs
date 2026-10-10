@@ -2129,6 +2129,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             // The game's Font this one is drawn from, looked up once (a TMP asset's source file
             // means a scan of the loaded assets).
             _extractSource[capturedFontName] = FontManager.SourceFontNameOf(capturedFontName, fontInfo.Type);
+            _extractType[capturedFontName] = fontInfo.Type;
             ShowExtract(capturedFontName);
             Spent("card build", at);
             return row;
@@ -2139,7 +2140,12 @@ namespace UnityGameTranslator.Core.UI.Panels
         private const string ExtractHelp = "Saves this font's file from the game into the fonts folder. It then appears among the Custom fonts.";
         private readonly Dictionary<string, ButtonHandle> _extractByFont = new Dictionary<string, ButtonHandle>(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, string> _extractSource = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, string> _extractType = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         private int _extractSeen = -1;
+
+        /// <summary>The asset name to trace when the font has no file (a TMP asset: its atlas), or null.</summary>
+        private string TraceNameOf(string fontName) =>
+            _extractType.TryGetValue(fontName, out var type) && type == "TextMeshPro" ? fontName : null;
 
         private static string FontsFolder => System.IO.Path.Combine(TranslatorCore.ModFolder, UnityGameTranslator.Common.AssetPacks.FontsFolder);
 
@@ -2148,7 +2154,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             if (!_extractByFont.TryGetValue(fontName, out var button) || button == null) return;
             _extractSource.TryGetValue(fontName, out var source);
-            string why = GameFontFiles.WhyNotExtract(source, FontsFolder, out _);
+            string why = GameFontFiles.WhyNotExtract(source, TraceNameOf(fontName), FontsFolder, out _);
             button.Enabled = why == null;
             _helpZone?.Describe(button, why ?? ExtractHelp);
         }
@@ -2164,18 +2170,23 @@ namespace UnityGameTranslator.Core.UI.Panels
         private void ExtractFont(string fontName)
         {
             _extractSource.TryGetValue(fontName, out var source);
-            if (GameFontFiles.WhyNotExtract(source, FontsFolder, out var font) != null) return;
-            GameFontFiles.Extract(font, FontsFolder, written =>
+            string traceName = TraceNameOf(fontName);
+            if (GameFontFiles.WhyNotExtract(source, traceName, FontsFolder, out var font) != null) return;
+            string shown = font?.Name ?? traceName;
+            Action<string> done = written =>
             {
                 if (_fontsStatus != null)
                 {
                     _fontsStatus.Show(written != null
-                        ? $"{font.Name} extracted into the fonts folder. It is now a Custom font."
-                        : $"Could not extract {font.Name}. See the log.");
+                        ? $"{shown} extracted into the fonts folder. It is now a Custom font."
+                        : $"Could not extract {shown}. See the log.");
                     _fontsStatus.Tone = written != null ? Tone.Success : Tone.Warning;
                 }
                 if (written != null) { CustomFontLoader.Rescan(); InvalidateFontOrder(); RefreshFontsList(); }
-            });
+            };
+            // The game's file when it has one (exact); otherwise the letters traced from the atlas.
+            if (font != null) GameFontFiles.Extract(font, FontsFolder, done);
+            else GameFontFiles.ExtractTraced(FontManager.TraceableAssetOf(fontName, _extractType[fontName]), traceName, FontsFolder, done);
             ShowExtract(fontName);
         }
 

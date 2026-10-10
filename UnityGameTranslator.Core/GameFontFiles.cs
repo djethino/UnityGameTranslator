@@ -242,25 +242,83 @@ namespace UnityGameTranslator.Core
         /// FontManager.SourceFontNameOf) cannot be extracted now — the tooltip of a greyed Extract —
         /// or null when it can; <paramref name="font"/> is then the one to extract.
         /// </summary>
-        internal static string WhyNotExtract(string sourceFontName, string fontsFolder, out GameFonts.Font font)
+        internal static string WhyNotExtract(string sourceFontName, string fontsFolder, out GameFonts.Font font) =>
+            WhyNotExtract(sourceFontName, null, fontsFolder, out font);
+
+        /// <summary>
+        /// As above, for a detected font that may also be TRACED from its atlas (<paramref name="traceName"/>:
+        /// the asset's name, null when it has no atlas to trace). The game's file wins when there is one
+        /// — exact; otherwise null with <paramref name="font"/> null means "trace it".
+        /// </summary>
+        internal static string WhyNotExtract(string sourceFontName, string traceName, string fontsFolder, out GameFonts.Font font)
         {
             font = null;
-            if (string.IsNullOrEmpty(sourceFontName)) return "No font file in the game: this font is drawn from its atlas only.";
             if (_index == null)
             {
                 EnsureIndex("the Fonts tab shows the game's fonts");
                 return Indexing ? "Reading the game's fonts..." : "The game's fonts could not be read. See the log.";
             }
-            font = Find(sourceFontName);
-            if (font == null) return "No font file in the game: this font is drawn from its atlas only, or is a system font.";
-            if (_extractingToFonts.Contains(sourceFontName)) return "Extracting...";
-            if (File.Exists(ExtractedPath(fontsFolder, font, ".ttf")) || File.Exists(ExtractedPath(fontsFolder, font, ".otf")) || File.Exists(ExtractedPath(fontsFolder, font, ".ttc")))
-                return "Already in the fonts folder.";
+            if (!string.IsNullOrEmpty(sourceFontName)) font = Find(sourceFontName);
+            string name = font?.Name ?? traceName;
+            if (name == null)
+                return "No font file in the game, and no atlas this mod can trace: a system font, or a font drawn another way.";
+            if (_extractingToFonts.Contains(name)) return font != null ? "Extracting..." : "Tracing the letters...";
+            foreach (var extension in new[] { ".ttf", ".otf", ".ttc" })
+                if (File.Exists(ExtractedPath(fontsFolder, name, extension))) return "Already in the fonts folder.";
             return null;
         }
 
-        private static string ExtractedPath(string fontsFolder, GameFonts.Font font, string extension) =>
-            Path.Combine(fontsFolder, DerivedFonts.Sanitized(font.Name) + extension);
+        private static string ExtractedPath(string fontsFolder, GameFonts.Font font, string extension) => ExtractedPath(fontsFolder, font.Name, extension);
+
+        private static string ExtractedPath(string fontsFolder, string name, string extension) =>
+            Path.Combine(fontsFolder, DerivedFonts.Sanitized(name) + extension);
+
+        /// <summary>
+        /// A font the game keeps as an atlas only, traced into fonts/ (AtlasFontExport): its letters
+        /// read now, on the main thread, then traced and written in the background; <paramref name="done"/>
+        /// on the main thread with the file, or null (said in the log).
+        /// </summary>
+        internal static void ExtractTraced(object asset, string assetName, string fontsFolder, Action<string> done)
+        {
+            if (asset == null || !_extractingToFonts.Add(assetName)) return;
+            _changes++;
+            var captured = AtlasFontExport.Capture(asset, out string refusal);
+            if (captured == null)
+            {
+                TranslatorCore.LogWarning($"[GameFonts] '{assetName}' could not be traced from its atlas: {refusal}");
+                _extractingToFonts.Remove(assetName);
+                _changes++;
+                done?.Invoke(null);
+                return;
+            }
+            System.Threading.Tasks.Task.Run(() =>
+            {
+                string written = null;
+                try
+                {
+                    var clock = System.Diagnostics.Stopwatch.StartNew();
+                    var data = AtlasFontExport.Write(captured);
+                    Directory.CreateDirectory(fontsFolder);
+                    written = ExtractedPath(fontsFolder, assetName, ".ttf");
+                    if (File.Exists(written)) throw new IOException($"{Path.GetFileName(written)} is already in the fonts folder");
+                    File.WriteAllBytes(written, data);
+                    TranslatorCore.LogInfo($"[GameFonts] '{assetName}' traced from its atlas ({captured.Letters.Count} letters at {captured.PointSize:0} px per em, {clock.ElapsedMilliseconds} ms) into fonts/{Path.GetFileName(written)}");
+                }
+                catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
+                {
+                    TranslatorCore.LogWarning($"[GameFonts] '{assetName}' could not be written after tracing: {ex.GetType().Name}: {ex.Message}");
+                    written = null;
+                }
+                catch (Exception ex)
+                {
+                    // The boundary of a background thread: a tracing or writing defect, said whole; the
+                    // button is given back rather than left "Tracing" for ever.
+                    TranslatorCore.LogError($"[GameFonts] '{assetName}': tracing failed: {ex}");
+                    written = null;
+                }
+                _onMain.Enqueue(() => { _extractingToFonts.Remove(assetName); _changes++; done?.Invoke(written); });
+            });
+        }
 
         /// <summary>
         /// Writes one game font's file into fonts/ (it becomes a Custom font), in the background;

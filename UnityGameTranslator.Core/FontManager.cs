@@ -1383,6 +1383,7 @@ namespace UnityGameTranslator.Core
 
             string fontName = TypeHelper.FontNameOf(fontObj);
             if (string.IsNullOrEmpty(fontName)) return;
+            if (IsMadeByUs(fontObj)) return;
 
             // Don't register fonts we created (a fallback, a derived copy "UGT …" drawing the mod's own
             // window) — unless it's also a real game font
@@ -1436,7 +1437,7 @@ namespace UnityGameTranslator.Core
             // 🔴 Never one of ours: the mod's window drawn with a System font wears a derived copy
             // ("UGT Sys X"), its texts pass through the same setter, and the copy was then offered as
             // a [Game] font and listed in the Fonts tab as a font of the game (2026-10-02).
-            if (IsOurFont(fontName)) return;
+            if (IsOurFont(fontName) || IsMadeByUs(fontObj)) return;
             var font = fontObj as Font;
             if (font == null) font = TypeHelper.Il2CppCast(fontObj, typeof(Font)) as Font;
 
@@ -1685,10 +1686,26 @@ namespace UnityGameTranslator.Core
         /// </summary>
         private static Font Kept(Font font)
         {
-            if (font != null) font.hideFlags |= HideFlags.DontUnloadUnusedAsset;
+            if (font != null)
+            {
+                font.hideFlags |= HideFlags.DontUnloadUnusedAsset;
+                _madeByUs.Add(ObjectNumbers.Of(font));
+            }
             FontWitness.Watch(font);
             return font;
         }
+
+        // Every Font the mod made (Kept), by object number: never a font of the game.
+        private static readonly HashSet<int> _madeByUs = ForgetByNumber.Tracked(new HashSet<int>());
+
+        /// <summary>
+        /// Whether this font OBJECT is one the mod made — by name from the system, for its own window or
+        /// as the source of a TMP replacement. By the object, never by its name: a font made as "Arial"
+        /// must not hide the game's own "arial". 🔴 A font made this way had been listed as a game font
+        /// and saved into the translation's _fonts ("Adobe Arabic Italic", type Unity — 2026-10-10).
+        /// </summary>
+        internal static bool IsMadeByUs(object fontObj) =>
+            fontObj is UnityEngine.Object o && o != null && _madeByUs.Contains(ObjectNumbers.Of(o));
 
         // The game's build stripped Font.CreateDynamicFontFromOSFont: fonts by name are made by the two
         // engine calls it stands for (TypeHelper.NewDynamicFont).
@@ -4776,7 +4793,7 @@ namespace UnityGameTranslator.Core
         {
             if (_gameUnityFonts.TryGetValue(originalFontName, out var known) && known != null) return known;
             foreach (var f in TypeHelper.FindAllObjectsOfType(typeof(Font)))
-                if (f is Font font && font != null && font.name == originalFontName && !IsExternalFont(font))
+                if (f is Font font && font != null && font.name == originalFontName && !IsExternalFont(font) && !IsMadeByUs(font))
                     return font;
             return null;
         }
@@ -5133,7 +5150,7 @@ namespace UnityGameTranslator.Core
             {
                 var font = obj as Font ?? TypeHelper.Il2CppCast(obj, typeof(Font)) as Font;
                 if (font == null || !string.Equals(font.name, name, StringComparison.OrdinalIgnoreCase)) continue;
-                if (IsClonedFont(font) || IsOurFont(font.name)) continue;
+                if (IsClonedFont(font) || IsOurFont(font.name) || IsMadeByUs(font)) continue;
 
                 _gameUnityFonts[font.name] = font;
                 TranslatorCore.LogDebug($"[FontManager] Found game Unity font by name: {font.name}");

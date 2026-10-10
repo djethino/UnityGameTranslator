@@ -66,6 +66,11 @@ foreach ($urlName in @('ApiBaseUrl', 'WebsiteBaseUrl', 'SseBaseUrl')) {
 & "$PSScriptRoot/check-il2cpp-safety.ps1"
 if ($LASTEXITCODE -ne 0) { exit 1 }
 
+# The Font layouts the mod reads a game's own fonts with (common/UnityFiles) come from AssetRipper's
+# type tree dumps, which follow each Unity release: a release is the moment to take the new ones.
+& "$PSScriptRoot/common/tools/release-font-layouts.ps1"
+if ($LASTEXITCODE -ne 0) { exit 1 }
+
 # Build UniverseLib first (our fork with custom changes)
 Write-Host "`nBuilding UniverseLib..." -ForegroundColor Yellow
 

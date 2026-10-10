@@ -1254,10 +1254,11 @@ namespace UnityGameTranslator.Core
         /// Get the InstanceID from a component (any Unity Object).
         /// Returns -1 if not a Unity Object.
         /// </summary>
+        /// <summary>The number the mod files an engine object under (ObjectNumbers: the one place that asks); -1 for anything else.</summary>
         public static int GetInstanceID(object component)
         {
             if (component is UnityEngine.Object unityObj)
-                return unityObj.GetInstanceID();
+                return ObjectNumbers.Of(unityObj);
             return -1;
         }
 
@@ -1993,9 +1994,10 @@ namespace UnityGameTranslator.Core
         }
 
         // Instance id → whether that object lives in a loaded scene. An object never changes side:
-        // an asset stays an asset, and instantiating one makes a new object with a new id. Emptied
-        // when a scene unloads (ForgetSceneMembership) so it does not grow with every scene.
-        private static readonly Dictionary<int, bool> _inScene = new Dictionary<int, bool>();
+        // an asset stays an asset. A number may stand for another object later (Unity 6.4+ gives a
+        // destroyed object's number to the next one): forgotten then (ObjectNumbers). Emptied when a
+        // scene unloads (ForgetSceneMembership) so it does not grow with every scene.
+        private static readonly Dictionary<int, bool> _inScene = ForgetByNumber.Tracked(new Dictionary<int, bool>());
         private static bool _sceneMembershipRefused;
 
         /// <summary>
@@ -2027,7 +2029,7 @@ namespace UnityGameTranslator.Core
         private static bool InScene(UnityEngine.Object obj)
         {
             if (_sceneMembershipRefused) return true;
-            int id = obj.GetInstanceID();
+            int id = ObjectNumbers.Of(obj);
             if (_inScene.TryGetValue(id, out bool inScene)) return inScene;
             long t = Perf.Start();
             try { inScene = ReadInScene(obj); }

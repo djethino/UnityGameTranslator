@@ -42,7 +42,7 @@ namespace UnityGameTranslator.Core
         // Clone instance ID → original game font name (populated at clone creation)
         // This is THE authoritative mapping for clone → original resolution.
         // Instance IDs don't change for DontDestroyOnLoad objects we control.
-        private static readonly Dictionary<int, string> _cloneToOriginal = new Dictionary<int, string>();
+        private static readonly Dictionary<int, string> _cloneToOriginal = ForgetByNumber.Tracked(new Dictionary<int, string>());
 
         /// <summary>
         /// Check if a Font is one of our clones (by instance ID).
@@ -50,7 +50,7 @@ namespace UnityGameTranslator.Core
         public static bool IsClonedFont(Font font)
         {
             if (font == null) return false;
-            return _cloneToOriginal.ContainsKey(font.GetInstanceID());
+            return _cloneToOriginal.ContainsKey(ObjectNumbers.Of(font));
         }
 
         /// <summary>
@@ -60,7 +60,7 @@ namespace UnityGameTranslator.Core
         public static string GetOriginalForClone(Font font)
         {
             if (font == null) return null;
-            _cloneToOriginal.TryGetValue(font.GetInstanceID(), out string original);
+            _cloneToOriginal.TryGetValue(ObjectNumbers.Of(font), out string original);
             return original;
         }
 
@@ -755,7 +755,7 @@ namespace UnityGameTranslator.Core
             // a dictionary keyed by the object never matched — the fill went on for 300 frames, the
             // atlas rebuilt at each, the window's letters flickering (2026-10-02).
             if (rebuilt == null) return;
-            int id = rebuilt.GetInstanceID();
+            int id = ObjectNumbers.Of(rebuilt);
             if (!_atlasRebuilds.TryGetValue(id, out var rebuild)) return;
             _atlasRebuilds.Remove(id);
             TranslatorCore.LogInfo($"[FontManager] '{rebuilt.name}': atlas rebuilt with its new names ({rebuild.Frames} frame(s))");
@@ -770,7 +770,7 @@ namespace UnityGameTranslator.Core
         {
             // Remove old clone from _cloneToOriginal before discarding
             if (!string.IsNullOrEmpty(originalFontName) && _unityFallbackFonts.TryGetValue(originalFontName, out var oldClone) && oldClone != null)
-                _cloneToOriginal.Remove(oldClone.GetInstanceID());
+                _cloneToOriginal.Remove(ObjectNumbers.Of(oldClone));
 
             // _unityFallbackFonts is keyed by original font name
             if (!string.IsNullOrEmpty(originalFontName))
@@ -856,11 +856,11 @@ namespace UnityGameTranslator.Core
         // it, which it can draw) and the size asked next.
         private sealed class AtlasRebuild { internal Font Font; internal string Letters; internal int Size, From, Frames; }
         // By instance id, never by the Font object: see OnFontTextureRebuilt.
-        private static readonly Dictionary<int, AtlasRebuild> _atlasRebuilds = new Dictionary<int, AtlasRebuild>();
+        private static readonly Dictionary<int, AtlasRebuild> _atlasRebuilds = ForgetByNumber.Tracked(new Dictionary<int, AtlasRebuild>());
 
         // Per font: the size its last rebuild asked, kept in the atlas after the rebuild — the next one
         // starts past it, every size it asks being one the atlas does not hold.
-        private static readonly Dictionary<int, int> _lastFillSize = new Dictionary<int, int>();
+        private static readonly Dictionary<int, int> _lastFillSize = ForgetByNumber.Tracked(new Dictionary<int, int>());
 
         // Unity's dynamic font atlas stops at 4096² — said by the engine itself when a request cannot
         // fit ("max size 4096"). One frame's letters at one size must fit an EMPTY atlas of that size,
@@ -898,7 +898,7 @@ namespace UnityGameTranslator.Core
             }
             if (letters.Length == 0) return;
 
-            int id = font.GetInstanceID();
+            int id = ObjectNumbers.Of(font);
             int past = (int)Math.Ceiling(largest) + 1;
             int size = _lastFillSize.TryGetValue(id, out int last) ? Math.Max(past, last + 1) : past;
             _atlasRebuilds[id] = new AtlasRebuild { Font = font, Letters = letters.ToString(), Size = size, From = size };
@@ -1787,7 +1787,7 @@ namespace UnityGameTranslator.Core
         }
 
         // Per-component scale overrides from font override rules
-        private static Dictionary<int, float> _componentScaleOverrides = new Dictionary<int, float>();
+        private static readonly Dictionary<int, float> _componentScaleOverrides = ForgetByNumber.Tracked(new Dictionary<int, float>());
 
         /// <summary>
         /// Get the font scale factor for a font.
@@ -2155,7 +2155,7 @@ namespace UnityGameTranslator.Core
                 // _unityFallbackFonts is keyed by original font name (fontName).
                 // Also remove old clone from _cloneToOriginal before discarding.
                 if (_unityFallbackFonts.TryGetValue(fontName, out var oldClone) && oldClone != null)
-                    _cloneToOriginal.Remove(oldClone.GetInstanceID());
+                    _cloneToOriginal.Remove(ObjectNumbers.Of(oldClone));
                 _unityFallbackFonts.Remove(fontName);
                 if (!string.IsNullOrEmpty(oldFallback))
                     _failedFallbackFontNames.Remove(oldFallback);
@@ -2291,15 +2291,31 @@ namespace UnityGameTranslator.Core
         // (both atlases share the layout, so the swap was invisible and read as "no effect"),
         // and a font-override rule redirecting part of a font to another replacement hit the
         // same stale clone.
-        private static readonly Dictionary<long, Material> _adaptedMaterials = new Dictionary<long, Material>();
+        private static readonly Dictionary<long, Material> _adaptedMaterials = ForgetPairs(new Dictionary<long, Material>());
 
         /// <summary>Composite cache key for an (original material, replacement font) pair.</summary>
         private static long AdaptedMaterialKey(int originalMaterialId, int replacementFontId)
         {
             return ((long)originalMaterialId << 32) ^ (uint)replacementFontId;
         }
+
+        /// <summary>
+        /// The pairs of a number that now stands for another object — as the material, or as the
+        /// font (AdaptedMaterialKey: material high, font low) — forgotten (ObjectNumbers).
+        /// </summary>
+        private static Dictionary<long, Material> ForgetPairs(Dictionary<long, Material> table)
+        {
+            ForgetByNumber.OnForget(id =>
+            {
+                List<long> stale = null;
+                foreach (long key in table.Keys)
+                    if ((int)(key >> 32) == id || (int)(uint)key == id) (stale ?? (stale = new List<long>())).Add(key);
+                if (stale != null) foreach (long key in stale) table.Remove(key);
+            });
+            return table;
+        }
         // Original shared material per component (for faithful restore)
-        private static readonly Dictionary<int, object> _originalMaterialsPerComponent = new Dictionary<int, object>();
+        private static readonly Dictionary<int, object> _originalMaterialsPerComponent = ForgetByNumber.Tracked(new Dictionary<int, object>());
 
         /// <summary>
         /// Read the material of a TMP_FontAsset (property on modern TMP, field on TMProOld).
@@ -2369,7 +2385,7 @@ namespace UnityGameTranslator.Core
                 if (fontId == -1)
                     fontId = ((replacementFont as UnityEngine.Object)?.name ?? string.Empty).GetHashCode();
 
-                long key = AdaptedMaterialKey(origMat.GetInstanceID(), fontId);
+                long key = AdaptedMaterialKey(ObjectNumbers.Of(origMat), fontId);
                 if (!_adaptedMaterials.TryGetValue(key, out var adapted) || !TypeHelper.IsUnityObjectAlive(adapted))
                 {
                     adapted = new Material(origMat);
@@ -2530,7 +2546,7 @@ namespace UnityGameTranslator.Core
 
         // Stroke width of an atlas, in its own pixels, per texture — measured once (a GPU
         // read-back of the whole atlas), then reused by every material drawn from it.
-        private static readonly Dictionary<int, float> _strokeWidthPx = new Dictionary<int, float>();
+        private static readonly Dictionary<int, float> _strokeWidthPx = ForgetByNumber.Tracked(new Dictionary<int, float>());
 
         /// <summary>
         /// Typical stroke width of the glyphs on an SDF atlas, in atlas pixels: the inside of the
@@ -2543,7 +2559,7 @@ namespace UnityGameTranslator.Core
         private static float StrokeWidthPx(Texture texture)
         {
             if (texture == null) return float.NaN;
-            int id = texture.GetInstanceID();
+            int id = ObjectNumbers.Of(texture);
             if (_strokeWidthPx.TryGetValue(id, out float cached)) return cached;
 
             float result = float.NaN;
@@ -2687,7 +2703,7 @@ namespace UnityGameTranslator.Core
 
         // Second assets of fonts that are not ours (a game font, an asset built by Unity), by the
         // instance id of the asset they stand for — see FallbackListAsset.
-        private static readonly Dictionary<int, object> _fallbackTwins = new Dictionary<int, object>();
+        private static readonly Dictionary<int, object> _fallbackTwins = ForgetByNumber.Tracked(new Dictionary<int, object>());
 
         /// <summary>
         /// What goes into ANOTHER font's fallback list for a fallback asset: the same font as a
@@ -3144,8 +3160,8 @@ namespace UnityGameTranslator.Core
         /// for characters not found in the primary font.
         /// </summary>
         // Track original fonts per component instance ID (for restore on toggle)
-        private static readonly Dictionary<int, object> _originalFontsPerComponent = new Dictionary<int, object>();
-        private static readonly Dictionary<int, object> _replacedComponentRefs = new Dictionary<int, object>();
+        private static readonly Dictionary<int, object> _originalFontsPerComponent = ForgetByNumber.Tracked(new Dictionary<int, object>());
+        private static readonly Dictionary<int, object> _replacedComponentRefs = ForgetByNumber.Tracked(new Dictionary<int, object>());
 
         /// <summary>
         /// Components wearing one of our replacements, and the settings font name it was put on
@@ -3157,7 +3173,7 @@ namespace UnityGameTranslator.Core
         /// the session, and nothing ever gave it its own font back. Comparing the name costs the
         /// same lookup plus one string comparison, and a different name is the signal to change.
         /// </summary>
-        private static readonly Dictionary<int, string> _replacedFor = new Dictionary<int, string>();
+        private static readonly Dictionary<int, string> _replacedFor = ForgetByNumber.Tracked(new Dictionary<int, string>());
 
         // Fonts for which the one-shot replacement diagnostic was already logged (issue #21)
         private static readonly HashSet<string> _replacementDiagLogged = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -3400,7 +3416,7 @@ namespace UnityGameTranslator.Core
         // exists because the game's font LACKS the target language's glyphs: giving up meant
         // boxes. A component shown again (OnComponentEnabled) starts a new count; one fought every
         // frame is never re-enabled in between and still runs out.
-        private static readonly Dictionary<int, int> _fontRevertCounts = new Dictionary<int, int>();
+        private static readonly Dictionary<int, int> _fontRevertCounts = ForgetByNumber.Tracked(new Dictionary<int, int>());
         private const int MaxFontRevertsPerComponent = 3;
 
         /// <summary>
@@ -3411,10 +3427,10 @@ namespace UnityGameTranslator.Core
         /// (TranslatorScanner) — resetting it on each appearance would bring back the empty
         /// dialogue bubbles of issue #21, once per opening.
         /// </summary>
-        private static readonly HashSet<int> _gameManagedFontComponents = new HashSet<int>();
+        private static readonly HashSet<int> _gameManagedFontComponents = ForgetByNumber.Tracked(new HashSet<int>());
 
         /// <summary>Components already announced as given up, so the line is said once each.</summary>
-        private static readonly HashSet<int> _giveUpAnnounced = new HashSet<int>();
+        private static readonly HashSet<int> _giveUpAnnounced = ForgetByNumber.Tracked(new HashSet<int>());
 
         /// <summary>
         /// True when the game keeps re-assigning its own font on this component after our
@@ -3683,7 +3699,7 @@ namespace UnityGameTranslator.Core
 
                     var c = comps[_sceneTmpAt];
                     if (c == null) continue;
-                    int id = c.GetInstanceID();
+                    int id = ObjectNumbers.Of(c);
                     if (_replacedFor.ContainsKey(id)) continue; // already ours
 
                     // The game actively re-asserts its font on this one — don't fight it
@@ -3933,7 +3949,7 @@ namespace UnityGameTranslator.Core
         /// </summary>
         private static bool PutUnityClone(UnityEngine.Object c)
         {
-            int id = c.GetInstanceID();
+            int id = ObjectNumbers.Of(c);
 
             var comp = c as Component;
             if (comp != null && TranslatorCore.ShouldSkipTranslation(comp)) return false;
@@ -4129,7 +4145,7 @@ namespace UnityGameTranslator.Core
             foreach (var clone in _unityFallbackFonts.Values)
             {
                 if (clone != null)
-                    _cloneToOriginal.Remove(clone.GetInstanceID());
+                    _cloneToOriginal.Remove(ObjectNumbers.Of(clone));
             }
             _unityFallbackFonts.Clear();
             _failedFallbackFontNames.Clear();
@@ -4232,7 +4248,7 @@ namespace UnityGameTranslator.Core
         // replacement font name → design-scale collapsed to 1.0 → shrank, with a delayed periodic
         // re-resolution). Only consulted when live tracking is absent AND the current name isn't a
         // known settings font, so a reused instance id showing a real game font still resolves fresh.
-        private static readonly Dictionary<int, string> _settingsFontNamePerComponent = new Dictionary<int, string>();
+        private static readonly Dictionary<int, string> _settingsFontNamePerComponent = ForgetByNumber.Tracked(new Dictionary<int, string>());
 
         /// <summary>Drop a component's cached settings-font resolution (dead/destroyed component).</summary>
         public static void ClearComponentSettingsFontName(int instanceId)
@@ -4753,7 +4769,7 @@ namespace UnityGameTranslator.Core
             // The game font that IS the replacement (a "[Game]" fallback) is its own backup.
             if (originalFontObj is UnityEngine.Object originalObj && originalObj == shared) return null;
 
-            string key = shared.GetInstanceID() + "\u0001" + originalFontName;
+            string key = ObjectNumbers.Of(shared) + "\u0001" + originalFontName;
             if (_backupHeads.TryGetValue(key, out var known))
             {
                 if (TypeHelper.IsUnityObjectAlive(known)) return known;
@@ -4887,7 +4903,21 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>The heads made, by replacement instance and game font name (BackupHead).</summary>
-        private static readonly Dictionary<string, object> _backupHeads = new Dictionary<string, object>(StringComparer.Ordinal);
+        private static readonly Dictionary<string, object> _backupHeads = ForgetHeadsOf(new Dictionary<string, object>(StringComparer.Ordinal));
+
+        /// <summary>The heads made for a replacement whose number now stands for another object, forgotten (ObjectNumbers).</summary>
+        private static Dictionary<string, object> ForgetHeadsOf(Dictionary<string, object> table)
+        {
+            ForgetByNumber.OnForget(id =>
+            {
+                string prefix = id + "\u0001";
+                List<string> stale = null;
+                foreach (string key in table.Keys)
+                    if (key.StartsWith(prefix, StringComparison.Ordinal)) (stale ?? (stale = new List<string>())).Add(key);
+                if (stale != null) foreach (string key in stale) table.Remove(key);
+            });
+            return table;
+        }
 
         private static void ClearList(object list)
         {
@@ -6093,7 +6123,7 @@ namespace UnityGameTranslator.Core
                     foreach (var c in comps)
                     {
                         if (c == null) continue;
-                        int id = c.GetInstanceID();
+                        int id = ObjectNumbers.Of(c);
                         string fontName = WornFontName(id, TypeHelper.GetFont(c));
                         if (string.IsNullOrEmpty(fontName)) continue;
 

@@ -290,6 +290,7 @@ namespace UnityGameTranslator.Core.Checks
             Section("Screen router (which screen is up after which act)", ScreenRouterChecks.Run);
             Section("Engine frontier (the engine names nothing of the interface)", EngineFrontierChecks.Run);
             Section("Silent catches", SilentCatchChecks.Run);
+            Section("Object numbers asked in one place, forgotten everywhere", ObjectNumberChecks.Run);
             Section("Font atlases filled through FontAtlas only", FontAtlasChecks.Run);
             Section("Strings handed to the engine through their doors only", TransformFindChecks.Run);
             Section("NGUI's [codes] kept as markup in right-to-left lines", NguiMarkupChecks.Run);

@@ -50,13 +50,13 @@ namespace UnityGameTranslator.Core.TextShaping
 
         // Components whose flag/alignment we set, with the value they had before: a reused
         // component that moves on to non-RTL text gets its own state back, not our leftovers.
-        private static readonly Dictionary<long, bool> _flaggedOriginal = new Dictionary<long, bool>();
-        private static readonly Dictionary<long, object> _alignedOriginal = new Dictionary<long, object>();
-        private static readonly Dictionary<long, object> _wrapOriginal = new Dictionary<long, object>();
+        private static readonly Dictionary<long, bool> _flaggedOriginal = ForgetByNumber.Tracked(new Dictionary<long, bool>());
+        private static readonly Dictionary<long, object> _alignedOriginal = ForgetByNumber.Tracked(new Dictionary<long, object>());
+        private static readonly Dictionary<long, object> _wrapOriginal = ForgetByNumber.Tracked(new Dictionary<long, object>());
 
         // Components whose text went through Present, and those just enabled still wearing a
         // template's presented form without having done so (NoteEnabled → AdoptCopies).
-        private static readonly HashSet<long> _presented = new HashSet<long>();
+        private static readonly HashSet<long> _presented = ForgetByNumber.Tracked(new HashSet<long>());
         private static readonly List<object> _appeared = new List<object>();
         private static readonly List<object> _adoptScratch = new List<object>();
 
@@ -548,7 +548,7 @@ namespace UnityGameTranslator.Core.TextShaping
 
         // The font each component's shaped text was made for (DrawnFor), by component — what tells
         // an echo still right from one made for a font the component no longer draws with.
-        private static readonly Dictionary<long, string> _shapedFor = new Dictionary<long, string>();
+        private static readonly Dictionary<long, string> _shapedFor = ForgetByNumber.Tracked(new Dictionary<long, string>());
 
         /// <summary>
         /// The route a component's text is shaped by, and a key naming the font behind it: our TMP
@@ -740,9 +740,9 @@ namespace UnityGameTranslator.Core.TextShaping
         // TMP: the lines last cut per component — what it is given again when the game writes the same
         // text into a box of the same width (see Present).
         private sealed class TmpCut { public string Logical; public float Width; public string Final; }
-        private static readonly Dictionary<long, TmpCut> _tmpLines = new Dictionary<long, TmpCut>();
+        private static readonly Dictionary<long, TmpCut> _tmpLines = ForgetByNumber.Tracked(new Dictionary<long, TmpCut>());
 
-        private static readonly Dictionary<long, Reflow> _reflows = new Dictionary<long, Reflow>();
+        private static readonly Dictionary<long, Reflow> _reflows = ForgetByNumber.Tracked(new Dictionary<long, Reflow>());
         private static readonly List<long> _reflowScratch = new List<long>();
 
         /// <param name="logicalForRecord">
@@ -1064,7 +1064,7 @@ namespace UnityGameTranslator.Core.TextShaping
         private static readonly HashSet<string> _waitReasons = new HashSet<string>();
         // Reflows waiting on an inactive uGUI text, skipped until a graphic is enabled (see
         // ProcessPendingReflows), and the count of enabled graphics they were parked at.
-        private static readonly HashSet<long> _parked = new HashSet<long>();
+        private static readonly HashSet<long> _parked = ForgetByNumber.Tracked(new HashSet<long>());
         private static int _parkedAt;
 
         /// <summary>
@@ -1989,7 +1989,7 @@ namespace UnityGameTranslator.Core.TextShaping
         }
 
         // Components already described, so a text refreshed every frame costs one line, once.
-        private static readonly HashSet<long> _fontDescribed = new HashSet<long>();
+        private static readonly HashSet<long> _fontDescribed = ForgetByNumber.Tracked(new HashSet<long>());
 
         /// <summary>
         /// Debug only: which font draws a right-to-left text, and where the component sits — the

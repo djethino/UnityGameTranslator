@@ -166,14 +166,14 @@ namespace UnityGameTranslator.Core
         #region Component Detection (IL2CPP-safe)
 
         // Cache of image component instanceIDs for fast lookup (rebuilt periodically)
-        private static HashSet<int> _imageComponentGOIds = new HashSet<int>();
+        private static readonly HashSet<int> _imageComponentGOIds = ForgetByNumber.Tracked(new HashSet<int>());
 
         /// <summary>
         /// Whether a material carries a picture on any slot, by material — the answer to the one
         /// question that costs something in <see cref="HasImageComponent"/>, kept because renderers
         /// share materials by the thousand. Emptied with the cache beside it.
         /// </summary>
-        private static readonly Dictionary<int, bool> _materialCarriesImage = new Dictionary<int, bool>();
+        private static readonly Dictionary<int, bool> _materialCarriesImage = ForgetByNumber.Tracked(new Dictionary<int, bool>());
 
         /// <summary>
         /// Set when the cache describes a scene that is gone, or none yet.
@@ -209,7 +209,7 @@ namespace UnityGameTranslator.Core
                 _imageCacheStale = false;
             }
 
-            if (_imageComponentGOIds.Contains(go.GetInstanceID())) return true;
+            if (_imageComponentGOIds.Contains(ObjectNumbers.Of(go))) return true;
 
             // 🔴 A texture painted on a 3D material counts too (2026-09-19). It is asked directly
             // rather than cached: the cache is built from three whole-scene sweeps, and adding a
@@ -246,7 +246,7 @@ namespace UnityGameTranslator.Core
 
             // A lit sign carries its artwork on the emissive slot and has no main texture at all,
             // so without this question it could not even be picked.
-            int id = material.GetInstanceID();
+            int id = ObjectNumbers.Of(material);
             if (_materialCarriesImage.TryGetValue(id, out bool carries)) return carries;
             carries = TexturesOf(material).Count > 0;
             _materialCarriesImage[id] = carries;
@@ -289,7 +289,7 @@ namespace UnityGameTranslator.Core
                     }
                     if (comp != null && comp.gameObject != null)
                     {
-                        _imageComponentGOIds.Add(comp.gameObject.GetInstanceID());
+                        _imageComponentGOIds.Add(ObjectNumbers.Of(comp.gameObject));
                     }
                 }
             }
@@ -322,7 +322,7 @@ namespace UnityGameTranslator.Core
         {
             if (go == null) return null;
             ResolveTypes();
-            int goId = go.GetInstanceID();
+            int goId = ObjectNumbers.Of(go);
             object originalObj;
 
             if (_imageType != null)
@@ -393,7 +393,7 @@ namespace UnityGameTranslator.Core
             var seen = new HashSet<int>();
             foreach (var material in worn)
                 foreach (var carried in TexturesOf(material))
-                    if (seen.Add(carried.Texture.GetInstanceID()))
+                    if (seen.Add(ObjectNumbers.Of(carried.Texture)))
                         found.Add(carried);
             return found;
         }
@@ -427,7 +427,7 @@ namespace UnityGameTranslator.Core
                     if (comp == null)
                         comp = TypeHelper.Il2CppCast(obj, typeof(Component)) as Component;
                     if (comp == null) continue;
-                    if (comp.gameObject != null && comp.gameObject.GetInstanceID() == goInstanceId)
+                    if (comp.gameObject != null && ObjectNumbers.Of(comp.gameObject) == goInstanceId)
                     {
                         // On IL2CPP, the object's runtime type may be a base proxy (e.g. Graphic
                         // instead of Image). Cast to the target type so PropertyInfo.GetValue works.
@@ -451,7 +451,7 @@ namespace UnityGameTranslator.Core
         {
             if (go == null) return "Unknown";
             ResolveTypes();
-            int goId = go.GetInstanceID();
+            int goId = ObjectNumbers.Of(go);
 
             if (_imageType != null && FindComponentOnGO(_imageType, goId) != null) return "Image";
             if (_rawImageType != null && FindComponentOnGO(_rawImageType, goId) != null) return "RawImage";
@@ -1098,7 +1098,7 @@ namespace UnityGameTranslator.Core
             try
             {
                 var main = material.mainTexture;
-                if (main != null && seen.Add(main.GetInstanceID()))
+                if (main != null && seen.Add(ObjectNumbers.Of(main)))
                     found.Add(new MaterialTexture { Slot = "_MainTex", Texture = main, IsMain = true });
             }
             catch (Exception ex) { Faults.Say("ImageReplacer.TexturesOf", ex); }
@@ -1118,7 +1118,7 @@ namespace UnityGameTranslator.Core
                         if (string.IsNullOrEmpty(slotName)) continue;
                         var carried = SlotTexture(material, slotName);
                         if (carried == null) continue;
-                        if (!seen.Add(carried.GetInstanceID())) continue;
+                        if (!seen.Add(ObjectNumbers.Of(carried))) continue;
                         found.Add(new MaterialTexture { Slot = slotName, Texture = carried });
                     }
                     return found;
@@ -1158,7 +1158,7 @@ namespace UnityGameTranslator.Core
                     return found;
                 }
                 if (texture == null) continue;
-                if (!seen.Add(texture.GetInstanceID())) continue;
+                if (!seen.Add(ObjectNumbers.Of(texture))) continue;
                 found.Add(new MaterialTexture { Slot = slot, Texture = texture });
             }
 
@@ -1205,7 +1205,7 @@ namespace UnityGameTranslator.Core
                     EachMaterial(rend, worn);
                     foreach (var material in worn)
                     {
-                    if (!seenMaterials.Add(material.GetInstanceID())) continue;
+                    if (!seenMaterials.Add(ObjectNumbers.Of(material))) continue;
 
                     // Every picture the material carries, not only its main one: a lit sign paints
                     // its artwork on the emissive slot (2026-09-19).
@@ -1300,7 +1300,7 @@ namespace UnityGameTranslator.Core
         /// <summary>What was written, and on what — the pair, so two slots of one material are two entries.</summary>
         private static string KeyOf(object target, string what)
         {
-            int id = target is UnityEngine.Object uObj ? uObj.GetInstanceID() : target.GetHashCode();
+            int id = target is UnityEngine.Object uObj ? ObjectNumbers.Of(uObj) : target.GetHashCode();
             return id.ToString(System.Globalization.CultureInfo.InvariantCulture) + "|" + what;
         }
 
@@ -1401,7 +1401,7 @@ namespace UnityGameTranslator.Core
             if (sprite != null && sprite.texture != null)
                 size = $" {sprite.texture.width}x{sprite.texture.height}";
 
-            return $"'{obj.name}'#{obj.GetInstanceID()}{size}";
+            return $"'{obj.name}'#{ObjectNumbers.Of(obj)}{size}";
         }
 
         /// <inheritdoc cref="Describe"/>
@@ -1505,7 +1505,7 @@ namespace UnityGameTranslator.Core
                     // Try Image.sprite
                     if (_imageType != null)
                     {
-                        var comp = FindComponentOnGO(_imageType, go.GetInstanceID(), out var typed);
+                        var comp = FindComponentOnGO(_imageType, ObjectNumbers.Of(go), out var typed);
                         if (typed != null)
                         {
                             var prop = typed.GetType().GetProperty("sprite", BindingFlags.Public | BindingFlags.Instance);
@@ -1522,7 +1522,7 @@ namespace UnityGameTranslator.Core
                     // Try SpriteRenderer.sprite
                     if (_spriteRendererType != null)
                     {
-                        var comp = FindComponentOnGO(_spriteRendererType, go.GetInstanceID(), out var typed);
+                        var comp = FindComponentOnGO(_spriteRendererType, ObjectNumbers.Of(go), out var typed);
                         if (typed != null)
                         {
                             var prop = typed.GetType().GetProperty("sprite", BindingFlags.Public | BindingFlags.Instance);
@@ -1539,7 +1539,7 @@ namespace UnityGameTranslator.Core
                     // Try RawImage.texture
                     if (_rawImageType != null && replacement.texture != null)
                     {
-                        var comp = FindComponentOnGO(_rawImageType, go.GetInstanceID(), out var typed);
+                        var comp = FindComponentOnGO(_rawImageType, ObjectNumbers.Of(go), out var typed);
                         if (typed != null)
                         {
                             var prop = typed.GetType().GetProperty("texture", BindingFlags.Public | BindingFlags.Instance);

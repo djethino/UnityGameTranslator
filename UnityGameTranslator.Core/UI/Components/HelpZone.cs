@@ -44,7 +44,7 @@ namespace UnityGameTranslator.Core.UI.Components
 
         // Static registry: panels live for the whole session (SetActive toggling, never destroyed),
         // so entries persist. Keyed by the control's instance ID.
-        private static readonly Dictionary<int, Entry> entries = new Dictionary<int, Entry>();
+        private static readonly Dictionary<int, Entry> entries = ForgetByNumber.Tracked(new Dictionary<int, Entry>());
         private static int _currentId;
 
         /// <summary>Keys whose control has been destroyed, gathered during a poll and removed after
@@ -128,7 +128,7 @@ namespace UnityGameTranslator.Core.UI.Components
             Canvas canvas = rect.GetComponentInParent<Canvas>();
             if (canvas != null) canvas = canvas.rootCanvas;
 
-            int id = control.GetInstanceID();
+            int id = ObjectNumbers.Of(control);
             entries[id] = new Entry
             {
                 Rect = rect,

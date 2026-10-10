@@ -77,6 +77,7 @@
       check can read what was said and how often — "once" is half that rule.
     -->
     <Compile Include="../../UnityGameTranslator.Core/Engine/FontRules.cs" />
+    <Compile Include="../../UnityGameTranslator.Core/Engine/ForgetByNumber.cs" />
     <!--
       Where a line of sight meets a box — the arithmetic the inspector picks with. Pure numbers on
       purpose: a sign error in it throws nothing and logs nothing, and shows up in a game only as

@@ -89,8 +89,8 @@ namespace UnityGameTranslator.Core.TextShaping
             public readonly List<float> GLineTop = new List<float>(), GLineHeight = new List<float>();
         }
 
-        private static readonly Dictionary<int, FieldState> _states = new Dictionary<int, FieldState>();
-        private static readonly Dictionary<int, FieldState> _byTmpLabel = new Dictionary<int, FieldState>();
+        private static readonly Dictionary<int, FieldState> _states = ForgetByNumber.Tracked(new Dictionary<int, FieldState>());
+        private static readonly Dictionary<int, FieldState> _byTmpLabel = ForgetByNumber.Tracked(new Dictionary<int, FieldState>());
         private static readonly List<int> _scratch = new List<int>();
 
         // ══ Presenting a label ═══════════════════════════════════════════════════════════════
@@ -134,7 +134,7 @@ namespace UnityGameTranslator.Core.TextShaping
             var label = TypeHelper.Il2CppCast(labelObj, typeof(Text)) as Text;
             if (field == null || label == null) return;
 
-            int id = field.GetInstanceID();
+            int id = ObjectNumbers.Of(field);
             // The mod's own field draws in the font of the part it shows: the game's source text or
             // its translation (ModWindowText), else the interface's.
             var side = ownUi ? ModWindowText.SideOf(field) ?? ModWindowText.SideOf(label) : null;
@@ -147,7 +147,7 @@ namespace UnityGameTranslator.Core.TextShaping
             if (prep == null) { Release(id); return; }
 
             List<int> wraps = null;
-            long labelId = label.GetInstanceID();
+            long labelId = ObjectNumbers.Of(label);
             if (field.lineType != InputField.LineType.SingleLine)
             {
                 // Measured under the label's OWN wrapping: the Overflow held for the previous text
@@ -269,7 +269,7 @@ namespace UnityGameTranslator.Core.TextShaping
             s.Shown = shown + tail;
             s.DrawStart = 0;
             s.BoxesFromReorder = false;
-            _byTmpLabel[label.GetInstanceID()] = s;
+            _byTmpLabel[ObjectNumbers.Of(label)] = s;
             HideNative(s);
 
             TranslatorCore.RegisterPresentedText(s.Shown, value);
@@ -294,8 +294,8 @@ namespace UnityGameTranslator.Core.TextShaping
         {
             if (!_states.TryGetValue(id, out var s)) return;
             _states.Remove(id);
-            if (s.Label != null) _byTmpLabel.Remove(s.Label.GetInstanceID());
-            if (s.Label is Text uLabel && Alive(s)) RtlPresenter.RestoreRewrap(uLabel, uLabel.GetInstanceID());
+            if (s.Label != null) _byTmpLabel.Remove(ObjectNumbers.Of(s.Label));
+            if (s.Label is Text uLabel && Alive(s)) RtlPresenter.RestoreRewrap(uLabel, ObjectNumbers.Of(uLabel));
             RestoreNative(s);
             if (s.Overlay != null) UnityEngine.Object.Destroy(s.Overlay);
         }
@@ -370,7 +370,7 @@ namespace UnityGameTranslator.Core.TextShaping
         private static void Forget(int id, FieldState s)
         {
             _states.Remove(id);
-            if (s.Label != null) _byTmpLabel.Remove(s.Label.GetInstanceID());
+            if (s.Label != null) _byTmpLabel.Remove(ObjectNumbers.Of(s.Label));
             if (s.Overlay != null) UnityEngine.Object.Destroy(s.Overlay);
         }
 

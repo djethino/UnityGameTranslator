@@ -43,7 +43,7 @@ namespace UnityGameTranslator.Core.TextShaping
         }
 
         // By the label's instance id: the overlay and the click are asked of the label.
-        private static readonly Dictionary<int, NguiState> _ngui = new Dictionary<int, NguiState>();
+        private static readonly Dictionary<int, NguiState> _ngui = ForgetByNumber.Tracked(new Dictionary<int, NguiState>());
         [ThreadStatic] private static bool _nguiOverlayInside;
 
         /// <summary>

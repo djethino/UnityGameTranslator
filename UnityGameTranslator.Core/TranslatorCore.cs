@@ -808,7 +808,7 @@ namespace UnityGameTranslator.Core
         private static int translatedCount = 0;
         private static int aiTranslationCount = 0;
         private static int cacheHitCount = 0;
-        private static Dictionary<int, string> lastSeenText = new Dictionary<int, string>();
+        private static readonly Dictionary<int, string> lastSeenText = ForgetByNumber.Tracked(new Dictionary<int, string>());
         // The texts waiting for a backend. ⚠ It carries its OWN lock — it used to share lockObj
         // with the caches, the order counter and the retranslation requests; no critical section
         // ever spanned both sides, so the split changes no ordering and lets the queue be replayed
@@ -1009,14 +1009,14 @@ namespace UnityGameTranslator.Core
         private static bool currentTextIsOwnUI = false;
 
         // Own UI component tracking (mod interface)
-        private static HashSet<int> ownUIExcluded = new HashSet<int>();      // Never translate (title, lang codes, config values)
-        private static HashSet<int> ownUITranslatable = new HashSet<int>();  // Translate with UI-specific prompt
-        private static HashSet<int> ownUIPanelRoots = new HashSet<int>();    // Root GameObjects of our panels (for hierarchy check)
+        private static readonly HashSet<int> ownUIExcluded = ForgetByNumber.Tracked(new HashSet<int>());      // Never translate (title, lang codes, config values)
+        private static readonly HashSet<int> ownUITranslatable = ForgetByNumber.Tracked(new HashSet<int>());  // Translate with UI-specific prompt
+        private static readonly HashSet<int> ownUIPanelRoots = ForgetByNumber.Tracked(new HashSet<int>());    // Root GameObjects of our panels (for hierarchy check)
 
         // User exclusions (chat windows, player names, etc.) - stored in translations.json as _exclusions.
         // ⚠ The patterns AND what has already been decided for each target — see ExclusionRules for
         // why the memory travels with them rather than sitting here beside them.
-        private static readonly ExclusionRules userExclusions = new ExclusionRules();
+        private static readonly ExclusionRules userExclusions = ForgetByNumber.Tracked(new ExclusionRules(), (rules, id) => rules.Forget(id));
 
         /// <summary>
         /// Current user exclusion patterns. Read-only access for UI.
@@ -1027,7 +1027,7 @@ namespace UnityGameTranslator.Core
         // ⚠ The rules, what has been decided per target, AND the per-session verdicts on a pattern
         // that will not compile or will not finish — see FontRules for why they travel together.
         // The log is handed in rather than reached for, so a whole sequence replays without a game.
-        private static readonly FontRules fontOverrides = new FontRules { Warn = LogWarning };
+        private static readonly FontRules fontOverrides = ForgetByNumber.Tracked(new FontRules { Warn = LogWarning }, (rules, id) => rules.Forget(id));
 
         /// <summary>
         /// Current font override rules. Read-only access for UI.
@@ -1597,7 +1597,7 @@ namespace UnityGameTranslator.Core
         public static void RegisterExcluded(UnityEngine.Object component)
         {
             if (component != null)
-                ownUIExcluded.Add(component.GetInstanceID());
+                ownUIExcluded.Add(ObjectNumbers.Of(component));
         }
 
         /// <summary>
@@ -1606,7 +1606,7 @@ namespace UnityGameTranslator.Core
         public static void RegisterUIText(UnityEngine.Object component)
         {
             if (component != null)
-                ownUITranslatable.Add(component.GetInstanceID());
+                ownUITranslatable.Add(ObjectNumbers.Of(component));
         }
 
         /// <summary>
@@ -1617,7 +1617,7 @@ namespace UnityGameTranslator.Core
         {
             if (panelRoot != null)
             {
-                ownUIPanelRoots.Add(panelRoot.GetInstanceID());
+                ownUIPanelRoots.Add(ObjectNumbers.Of(panelRoot));
                 // Clear hierarchy cache — components checked before this registration
                 // may have been cached as "not own UI" and need re-evaluation
                 _ownUIHierarchyCache.Clear();
@@ -1627,7 +1627,7 @@ namespace UnityGameTranslator.Core
         // Cache for IsOwnUIByHierarchy results (avoids repeated hierarchy traversal)
         // Key: component instanceId, Value: is own UI
         // Cleared on scene change (components become invalid)
-        private static readonly Dictionary<int, bool> _ownUIHierarchyCache = new Dictionary<int, bool>();
+        private static readonly Dictionary<int, bool> _ownUIHierarchyCache = ForgetByNumber.Tracked(new Dictionary<int, bool>());
 
         /// <summary>
         /// Check if a component is part of our UI by traversing up the hierarchy.
@@ -1638,7 +1638,7 @@ namespace UnityGameTranslator.Core
         {
             if (component == null) return false;
 
-            int id = component.GetInstanceID();
+            int id = ObjectNumbers.Of(component);
             if (_ownUIHierarchyCache.TryGetValue(id, out bool cached))
                 return cached;
 
@@ -1646,7 +1646,7 @@ namespace UnityGameTranslator.Core
             Transform current = component.transform;
             while (current != null)
             {
-                if (ownUIPanelRoots.Contains(current.gameObject.GetInstanceID()))
+                if (ownUIPanelRoots.Contains(ObjectNumbers.Of(current.gameObject)))
                 {
                     result = true;
                     break;
@@ -1735,7 +1735,7 @@ namespace UnityGameTranslator.Core
             // IL2CPP proxy is not free when nobody has written a single pattern.
             if (component == null || !userExclusions.Any) return false;
 
-            long id = component.GetInstanceID();
+            long id = ObjectNumbers.Of(component);
             if (TryCachedExclusion(id, out bool cached)) return cached;
 
             return RememberExclusion(id, GetGameObjectPath(component.gameObject));
@@ -1854,7 +1854,7 @@ namespace UnityGameTranslator.Core
         public static bool IsOwnUI(Component component)
         {
             if (component == null) return false;
-            int instanceId = component.GetInstanceID();
+            int instanceId = ObjectNumbers.Of(component);
             return IsOwnUI(instanceId) || IsOwnUIByHierarchy(component);
         }
 
@@ -1996,7 +1996,7 @@ namespace UnityGameTranslator.Core
         {
             if (!ShouldTranslateOwnUI) return false;
             if (component == null) return false;
-            int instanceId = component.GetInstanceID();
+            int instanceId = ObjectNumbers.Of(component);
             // Check explicit registration first, then hierarchy
             if (ownUITranslatable.Contains(instanceId)) return true;
             // If in hierarchy and NOT explicitly excluded, it's translatable
@@ -2037,7 +2037,7 @@ namespace UnityGameTranslator.Core
             if (IsUserExcluded(component))
                 return true;
 
-            int instanceId = component.GetInstanceID();
+            int instanceId = ObjectNumbers.Of(component);
             // Explicitly excluded - always skip
             if (ownUIExcluded.Contains(instanceId))
                 return true;
@@ -2246,6 +2246,8 @@ namespace UnityGameTranslator.Core
 
         public static void OnSceneChanged(string sceneName)
         {
+            // The objects gone with the old scene: their numbers forgotten everywhere (ObjectNumbers).
+            ObjectNumbers.Sweep();
             lastSeenText.Clear();
             _ownUIHierarchyCache.Clear();
             TranslatorScanner.OnSceneChange();
@@ -6697,7 +6699,7 @@ namespace UnityGameTranslator.Core
         /// The routing of every text a component shows — lookup, reveals held until they settle,
         /// texts built in parts, read-backs, late translations put back (Engine/TextRouter).
         /// </summary>
-        internal static readonly TextRouter Router = new TextRouter(new RouterHost());
+        internal static readonly TextRouter Router = ForgetByNumber.Tracked(new TextRouter(new RouterHost()), (router, id) => router.Forget(id));
 
         /// <summary>The facts TextAdmission reads, as this mod holds them.</summary>
         private static readonly IAdmissionFacts _admissionFacts = new AdmissionFacts();

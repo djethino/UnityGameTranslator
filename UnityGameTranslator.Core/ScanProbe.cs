@@ -27,7 +27,7 @@ namespace UnityGameTranslator.Core
         /// <summary>Components tracked at once, so a game spawning text without end cannot leak.</summary>
         private const int Components = 3000;
 
-        private static readonly Dictionary<int, int> _said = new Dictionary<int, int>();
+        private static readonly Dictionary<int, int> _said = ForgetByNumber.Tracked(new Dictionary<int, int>());
 
         /// <summary>Whether this component still has something to say. Cheap: one lookup.</summary>
         internal static bool Wants(int instanceId)

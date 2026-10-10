@@ -50,8 +50,8 @@ namespace UnityGameTranslator.Core
         }
 
         private static Type _dataType, _charType;
-        private static readonly Dictionary<int, Replacement> _byOriginal = new Dictionary<int, Replacement>();
-        private static readonly Dictionary<int, Replacement> _byData = new Dictionary<int, Replacement>();
+        private static readonly Dictionary<int, Replacement> _byOriginal = ForgetByNumber.Tracked(new Dictionary<int, Replacement>());
+        private static readonly Dictionary<int, Replacement> _byData = ForgetByNumber.Tracked(new Dictionary<int, Replacement>());
         private static bool _rebuiltHooked;
         private static object _rebuiltHandler;
 

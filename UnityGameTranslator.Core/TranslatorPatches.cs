@@ -95,11 +95,11 @@ namespace UnityGameTranslator.Core
 
         // Cache for original font sizes (instance ID -> original fontSize)
         // Used to apply scale without cumulative errors
-        private static readonly Dictionary<int, float> _originalFontSizes = new Dictionary<int, float>();
+        private static readonly Dictionary<int, float> _originalFontSizes = ForgetByNumber.Tracked(new Dictionary<int, float>());
         // Anti-cumulation reference: survives ClearFontSizeCache, which _originalFontSizes does not.
         // Dropped per dead id in CleanDeadRefs only — a destroyed component can no longer cumulate.
         // (This said "never cleared", which CleanDeadRefs has always contradicted.)
-        private static readonly Dictionary<int, float> _trueOriginalFontSizes = new Dictionary<int, float>();
+        private static readonly Dictionary<int, float> _trueOriginalFontSizes = ForgetByNumber.Tracked(new Dictionary<int, float>());
         public static Dictionary<int, float> TrueOriginalFontSizes => _trueOriginalFontSizes;
 
         // Generically detected text component types (NGUI UILabel, SuperTextMesh, etc.)
@@ -1055,7 +1055,7 @@ namespace UnityGameTranslator.Core
                         if (fontObj is UnityEngine.Object uobj && !string.IsNullOrEmpty(uobj.name))
                         {
                             fontName = uobj.name;
-                            int compId = component.GetInstanceID();
+                            int compId = ObjectNumbers.Of(component);
                             settingsFontName = FontManager.GetSettingsFontName(compId, fontName);
 
                             FontManager.RegisterFontByName(settingsFontName, typeInfo.FontTypeName);
@@ -1152,7 +1152,7 @@ namespace UnityGameTranslator.Core
                         var fontObj = typeInfo.FontProp.GetValue(__instance, null);
                         if (fontObj is UnityEngine.Object uobj && !string.IsNullOrEmpty(uobj.name))
                         {
-                            int compId = component.GetInstanceID();
+                            int compId = ObjectNumbers.Of(component);
                             string settingsFontName = FontManager.GetSettingsFontName(compId, uobj.name);
                             FontManager.RegisterFontByName(settingsFontName, typeInfo.FontTypeName);
                             if (!FontManager.IsTranslationEnabled(settingsFontName))
@@ -1972,12 +1972,12 @@ namespace UnityGameTranslator.Core
         // Cache for InputField textComponent exclusion (avoids repeated parent walks)
         // Key: instanceId, Value: true if this is an InputField's textComponent (should be excluded)
         private static readonly System.Collections.Generic.Dictionary<int, bool> inputFieldTextCache =
-            new System.Collections.Generic.Dictionary<int, bool>();
+            ForgetByNumber.Tracked(new System.Collections.Generic.Dictionary<int, bool>());
 
         // Parent InputField per text component (walk once per component).
         // Value null = no InputField ancestor (stable: hierarchies almost never reparent).
         private static readonly System.Collections.Generic.Dictionary<int, object> _parentInputFieldCache =
-            new System.Collections.Generic.Dictionary<int, object>();
+            ForgetByNumber.Tracked(new System.Collections.Generic.Dictionary<int, object>());
 
         internal static object GetParentInputFieldCached(object textComponent)
         {
@@ -2613,7 +2613,7 @@ namespace UnityGameTranslator.Core
                 if (!TypeHelper.UI_TextType.IsInstanceOfType(__instance))
                 {
                     if (!TranslatorCore.Adapter.IsIL2CPP || !(__instance is UnityEngine.Object graphic)) return;
-                    int graphicId = graphic.GetInstanceID();
+                    int graphicId = ObjectNumbers.Of(graphic);
                     if (_notTextGraphics.Contains(graphicId)) return;
                     asText = TypeHelper.Il2CppCast(__instance, TypeHelper.UI_TextType);
                     if (asText == null || !TypeHelper.UI_TextType.IsInstanceOfType(asText))
@@ -2693,7 +2693,7 @@ namespace UnityGameTranslator.Core
         }
 
         // Graphics the game enabled that are no UI.Text (IL2CPP, asked once each — see above).
-        private static readonly HashSet<int> _notTextGraphics = new HashSet<int>();
+        private static readonly HashSet<int> _notTextGraphics = ForgetByNumber.Tracked(new HashSet<int>());
 
         // Graphic.SetVerticesDirty / SetLayoutDirty / SetMaterialDirty, resolved once.
         private static bool _dirtyResolved;
@@ -2752,7 +2752,7 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>The memory that keeps a text read back by the game from being scaled twice.</summary>
-        private static readonly SizeTagWrites _sizeTagWrites = new SizeTagWrites();
+        private static readonly SizeTagWrites _sizeTagWrites = ForgetByNumber.Tracked(new SizeTagWrites(), (writes, id) => { if (id >= int.MinValue && id <= int.MaxValue) writes.Forget((int)id); });
 
         /// <summary>
         /// The factor this component's font is sized by — what its text's own absolute sizes must
@@ -2943,8 +2943,8 @@ namespace UnityGameTranslator.Core
         }
 
         // Cache original TMP auto-size bounds per component (for restore at scale 1.0)
-        private static readonly Dictionary<int, float> _originalAutoSizeMax = new Dictionary<int, float>();
-        private static readonly Dictionary<int, float> _originalAutoSizeMin = new Dictionary<int, float>();
+        private static readonly Dictionary<int, float> _originalAutoSizeMax = ForgetByNumber.Tracked(new Dictionary<int, float>());
+        private static readonly Dictionary<int, float> _originalAutoSizeMin = ForgetByNumber.Tracked(new Dictionary<int, float>());
 
         /// <summary>
         /// True when the component is a TMP text with enableAutoSizing on. Used to skip the direct
@@ -3052,7 +3052,7 @@ namespace UnityGameTranslator.Core
         // 🔴 Never Clear() this on a live component: the scaled max would then be read back as the
         // original and every pass would grow it again. It is deliberately absent from
         // ClearFontSizeCache for that reason; CleanDeadRefs drops it per dead id, which is safe.
-        private static readonly Dictionary<int, int> _originalMaxFontSizes = new Dictionary<int, int>();
+        private static readonly Dictionary<int, int> _originalMaxFontSizes = ForgetByNumber.Tracked(new Dictionary<int, int>());
 
         public static void ApplyBestFitScalePublic(object instance, int instanceId, float scale)
             => ApplyBestFitScale(instance, instanceId, scale);
@@ -3099,9 +3099,9 @@ namespace UnityGameTranslator.Core
         /// </summary>
         // Cache font name per component instanceId (avoids GetFont reflection on every set_text)
         // Key: instanceId, Value: font name (null if no font). Cleared on scene change.
-        private static readonly Dictionary<int, string> _fontNameCache = new Dictionary<int, string>();
+        private static readonly Dictionary<int, string> _fontNameCache = ForgetByNumber.Tracked(new Dictionary<int, string>());
         // Component refs seen by the patch (for highlight — scanner cache misses some)
-        private static readonly Dictionary<int, object> _patchedComponentRefs = new Dictionary<int, object>();
+        private static readonly Dictionary<int, object> _patchedComponentRefs = ForgetByNumber.Tracked(new Dictionary<int, object>());
         /// <summary>
         /// Expose font name cache and component refs for highlight/size operations.
         /// The scanner cache may not contain all components reached by the patch.
@@ -3114,7 +3114,7 @@ namespace UnityGameTranslator.Core
         /// mesh only when the text changed since, not every time the text is one of ours. See
         /// TranslatorScanner.RefreshPatchRef. Forgotten with the component it describes.
         /// </summary>
-        internal static readonly Dictionary<int, string> PatchRefDrawn = new Dictionary<int, string>();
+        internal static readonly Dictionary<int, string> PatchRefDrawn = ForgetByNumber.Tracked(new Dictionary<int, string>());
 
         /// <summary>
         /// What an id points at when the router kept no target for it, whichever framework it came
@@ -3731,7 +3731,7 @@ namespace UnityGameTranslator.Core
         /// </summary>
         [ThreadStatic] private static bool _bypassFontSizePrefix;
         // Components that inherited a clone font from template — skip ApplyFontScale (already scaled)
-        private static readonly HashSet<int> _inheritedCloneComponents = new HashSet<int>();
+        private static readonly HashSet<int> _inheritedCloneComponents = ForgetByNumber.Tracked(new HashSet<int>());
         /// <summary>
         /// Say that this component wrote text — once per component, whenever that is.
         ///
@@ -3929,9 +3929,9 @@ namespace UnityGameTranslator.Core
         // Components whose game counts its reveal on the text SHOWN: left alone from then on
         // (RevealScale.Verdict.CountsOnShown). And the visible lengths of the pair each component
         // shows, measured once per pair rather than on every step of a reveal.
-        private static readonly HashSet<long> _revealCountsOnShown = new HashSet<long>();
+        private static readonly HashSet<long> _revealCountsOnShown = ForgetByNumber.Tracked(new HashSet<long>());
         private static readonly Dictionary<long, (string Source, string Shown, int SourceLength, int ShownLength)> _revealLengths =
-            new Dictionary<long, (string, string, int, int)>();
+            ForgetByNumber.Tracked(new Dictionary<long, (string, string, int, int)>());
 
         /// <summary>
         /// TMP_Text.maxVisibleCharacters setter: a typewriter reveal counted on the original,
@@ -4196,7 +4196,7 @@ namespace UnityGameTranslator.Core
         // We store the English text so we can replay the full set_text flow after init
         // Drained once and for all by OnUIInitialized (Clear right after collecting), so it holds
         // entries only during the window before the UI exists — nothing to clean elsewhere.
-        private static Dictionary<int, (WeakReference instance, string fontName, string originalText)> _pendingFontReplacements = new Dictionary<int, (WeakReference, string, string)>();
+        private static readonly Dictionary<int, (WeakReference instance, string fontName, string originalText)> _pendingFontReplacements = ForgetByNumber.Tracked(new Dictionary<int, (WeakReference, string, string)>());
 
         /// <summary>
         /// Register a callback for when UI is initialized.
@@ -4292,7 +4292,7 @@ namespace UnityGameTranslator.Core
         /// NOTE: This should only be called when UI is initialized (caller must check).
         /// </summary>
         // Cache of components already font-replaced (avoids redundant reflection per set_text)
-        private static readonly HashSet<int> _altTMPFontReplacedIds = new HashSet<int>();
+        private static readonly HashSet<int> _altTMPFontReplacedIds = ForgetByNumber.Tracked(new HashSet<int>());
 
         private static void TryApplyAlternateTMPReplacementFont(object instance, string originalFontName)
         {
@@ -4479,7 +4479,7 @@ namespace UnityGameTranslator.Core
         // Track fonts that already have our custom fallback added.
         // Keyed by FONT, not by component: bounded by how many fonts the game ships, so it is not
         // cleaned anywhere and does not need to be.
-        private static HashSet<int> _fontsWithFallbackAdded = new HashSet<int>();
+        private static readonly HashSet<int> _fontsWithFallbackAdded = ForgetByNumber.Tracked(new HashSet<int>());
 
         /// <summary>
         /// Try to add a custom font as a fallback font to the original font.

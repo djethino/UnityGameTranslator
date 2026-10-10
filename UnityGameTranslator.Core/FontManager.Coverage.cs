@@ -102,7 +102,7 @@ namespace UnityGameTranslator.Core
 
         // The game font each component last drew a text with, by component: what the inspector asks
         // for the texts it found (FontOfComponent).
-        private static readonly Dictionary<long, string> _fontOfComponent = new Dictionary<long, string>();
+        private static readonly Dictionary<long, string> _fontOfComponent = ForgetByNumber.Tracked(new Dictionary<long, string>());
 
         /// <summary>The game font (its name in the font settings) a component last drew a text with; null when unknown.</summary>
         internal static string FontOfComponent(long compId) =>
@@ -136,7 +136,7 @@ namespace UnityGameTranslator.Core
                     h = h * 31 + (kv.Key.GetHashCode() ^ (kv.Value?.fallback ?? "").GetHashCode());
                 // The objects legacy text is drawn with (DrawingGameFont): made as texts need them.
                 foreach (var kv in _unityFallbackFonts)
-                    h = h * 31 + (kv.Key.GetHashCode() ^ (kv.Value != null ? kv.Value.GetInstanceID() : 0));
+                    h = h * 31 + (kv.Key.GetHashCode() ^ (kv.Value != null ? ObjectNumbers.Of(kv.Value) : 0));
                 return h;
             }
         }

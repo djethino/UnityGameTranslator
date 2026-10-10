@@ -1874,7 +1874,7 @@ namespace UnityGameTranslator.Core.UI
             // font names, hotkeys, tags: those are data/identifiers/user input and translating them
             // corrupts the UI. IsOwnUITranslatable(int) checks explicit registration only (no hierarchy).
             if (text != null && !string.IsNullOrEmpty(text.text)
-                && TranslatorCore.IsOwnUITranslatable(text.GetInstanceID()))
+                && TranslatorCore.IsOwnUITranslatable(ObjectNumbers.Of(text)))
             {
                 // Enqueue directly (not via a text re-assignment): re-setting the same value does
                 // not fire the set_text patch (the setter short-circuits on equal values), so the
@@ -1934,7 +1934,7 @@ namespace UnityGameTranslator.Core.UI
             var text = node.GetComponent<UnityEngine.UI.Text>();
             if (text != null)
             {
-                int id = text.GetInstanceID();
+                int id = ObjectNumbers.Of(text);
                 string original = TranslatorScanner.GetOriginalText(id);
                 if (original != null && text.text != original)
                 {

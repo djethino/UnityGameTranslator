@@ -48,13 +48,13 @@ namespace UnityGameTranslator.Core
             public Component Field;
         }
 
-        private static readonly Dictionary<int, Entry> _byId = new Dictionary<int, Entry>();
+        private static readonly Dictionary<int, Entry> _byId = ForgetByNumber.Tracked(new Dictionary<int, Entry>());
 
         /// <summary>A label of the window that shows the game's text.</summary>
         public static void Mark(UnityEngine.UI.Text text, GameTextSide side)
         {
             if (text == null) return;
-            _byId[text.GetInstanceID()] = new Entry { Side = side, Text = text };
+            _byId[ObjectNumbers.Of(text)] = new Entry { Side = side, Text = text };
         }
 
         /// <summary>A field of the window that holds the game's text: the field and the text that draws it.</summary>
@@ -62,15 +62,15 @@ namespace UnityGameTranslator.Core
         {
             if (drawnBy == null) return;
             var entry = new Entry { Side = side, Text = drawnBy, Field = field };
-            _byId[drawnBy.GetInstanceID()] = entry;
-            if (field != null) _byId[field.GetInstanceID()] = entry;
+            _byId[ObjectNumbers.Of(drawnBy)] = entry;
+            if (field != null) _byId[ObjectNumbers.Of(field)] = entry;
         }
 
         /// <summary>The side a component of the window shows, or null when it is the interface (or not ours).</summary>
         public static GameTextSide? SideOf(object component)
         {
             if (!(component is Object unityObject) || unityObject == null) return null;
-            return _byId.TryGetValue(unityObject.GetInstanceID(), out var entry) ? entry.Side : (GameTextSide?)null;
+            return _byId.TryGetValue(ObjectNumbers.Of(unityObject), out var entry) ? entry.Side : (GameTextSide?)null;
         }
 
         /// <summary>Every live text of the window showing the game's text, with its side; the destroyed ones let go.</summary>
@@ -82,7 +82,7 @@ namespace UnityGameTranslator.Core
             foreach (var kv in _byId)
             {
                 if (kv.Value.Text == null) { gone.Add(kv.Key); continue; }
-                if (seen.Add(kv.Value.Text.GetInstanceID()))
+                if (seen.Add(ObjectNumbers.Of(kv.Value.Text)))
                     live.Add(new Piece { Text = kv.Value.Text, Side = kv.Value.Side, Field = kv.Value.Field });
             }
             foreach (int id in gone) _byId.Remove(id);

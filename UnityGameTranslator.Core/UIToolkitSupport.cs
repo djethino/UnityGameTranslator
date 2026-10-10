@@ -1719,7 +1719,7 @@ namespace UnityGameTranslator.Core
         // the collector takes while the document is still on screen — and a wrapper read twice is
         // two objects, so only the id says "the same document". Holding a wrapper keeps nothing of
         // the engine's alive.
-        private static readonly Dictionary<int, object> _documents = new Dictionary<int, object>();
+        private static readonly Dictionary<int, object> _documents = ForgetByNumber.Tracked(new Dictionary<int, object>());
         private static readonly List<int> _deadDocuments = new List<int>();
         private static bool _documentsFromEvents;   // OnEnable patched: no per-cycle lookup needed
         private static bool _documentsPrimed;       // the one initial lookup has been done
@@ -2556,7 +2556,7 @@ namespace UnityGameTranslator.Core
         }
 
         // A document's default font, read once (the panel settings of a document do not change under it).
-        private static readonly Dictionary<int, UnityEngine.Object> _documentDefaultFont = new Dictionary<int, UnityEngine.Object>();
+        private static readonly Dictionary<int, UnityEngine.Object> _documentDefaultFont = ForgetByNumber.Tracked(new Dictionary<int, UnityEngine.Object>());
 
         private static UnityEngine.Object DefaultFontOfDocument(int documentId)
         {
@@ -2615,7 +2615,7 @@ namespace UnityGameTranslator.Core
             new Dictionary<string, object>();
 
         /// <summary>SDF assets made from a game's LEGACY Font, to stand behind a replacement (OriginalAsset), by instance id.</summary>
-        private static readonly Dictionary<int, object> _originalAssets = new Dictionary<int, object>();
+        private static readonly Dictionary<int, object> _originalAssets = ForgetByNumber.Tracked(new Dictionary<int, object>());
 
         /// <summary>
         /// Keeps a font asset we made — and its atlas textures and material — out of the game's
@@ -2778,7 +2778,7 @@ namespace UnityGameTranslator.Core
         /// </summary>
         private static object OriginalAsset(Font legacy)
         {
-            int id = legacy.GetInstanceID();
+            int id = ObjectNumbers.Of(legacy);
             if (_originalAssets.TryGetValue(id, out var known) && TypeHelper.IsUnityObjectAlive(known)) return known;
             // The creators the replacement goes through, in their order (BuildDefinition).
             var made = FontManager.CreateSdfFontAsset(legacy, _textCoreFontAssetType)

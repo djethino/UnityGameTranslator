@@ -244,7 +244,7 @@ namespace UnityGameTranslator.Core.UI
                 try
                 {
                     for (var tr = comp.transform; tr != null; tr = tr.parent)
-                        if (!holders.Add(tr.GetInstanceID())) break;
+                        if (!holders.Add(ObjectNumbers.Of(tr))) break;
                 }
                 catch (Exception ex) { Faults.Say("InspectorPicker.TextHolders", ex); }
             }
@@ -275,7 +275,7 @@ namespace UnityGameTranslator.Core.UI
                     foreach (var obj in all)
                     {
                         Camera cam = obj as Camera ?? TypeHelper.Il2CppCast(obj, typeof(Camera)) as Camera;
-                        if (cam != null && ids.Add(cam.GetInstanceID())) list.Add(cam);
+                        if (cam != null && ids.Add(ObjectNumbers.Of(cam))) list.Add(cam);
                     }
             }
             catch (Exception ex)
@@ -1849,7 +1849,7 @@ namespace UnityGameTranslator.Core.UI
         private static bool CarriesText(GameObject go)
         {
             if (go == null) return false;
-            return TextHolders().Contains(go.transform.GetInstanceID());
+            return TextHolders().Contains(ObjectNumbers.Of(go.transform));
         }
 
         /// <summary>
@@ -1951,7 +1951,7 @@ namespace UnityGameTranslator.Core.UI
                         // A flat box the ray passes at its edge: its centre's distance stands in.
                         if (along < 0f) along = Vector3.Dot(box.center - sight.origin, sight.direction);
                         if (along < 0f) continue;
-                        int drawingId = drawing.GetInstanceID();
+                        int drawingId = ObjectNumbers.Of(drawing);
                         if (!blockedAtByCamera.TryGetValue(drawingId, out blockedAt))
                         {
                             blockedAt = BlockerDistance(drawing, screenPosition);
@@ -2009,7 +2009,7 @@ namespace UnityGameTranslator.Core.UI
                     float reach = Vector3.Dot(normal, w0 - ray.origin) / facing;
                     if (reach < 0f) continue;
 
-                    int cameraId = camera.GetInstanceID();
+                    int cameraId = ObjectNumbers.Of(camera);
                     if (!blockedAtByCamera.TryGetValue(cameraId, out blockedAt))
                     {
                         blockedAt = BlockerDistance(camera, screenPosition);
@@ -2620,7 +2620,7 @@ namespace UnityGameTranslator.Core.UI
         private static void NoteMarker(GameObject target, Renderer worldRenderer, Camera drawing, bool framed)
         {
             if (!TranslatorCore.DebugMode) return;   // asked before marking: see DescribeCameraSpace
-            if (target == null || !DiagnosticOnce.First("Inspector.marker", target.GetInstanceID().ToString())) return;
+            if (target == null || !DiagnosticOnce.First("Inspector.marker", ObjectNumbers.Of(target).ToString())) return;
             string why = framed ? "by its renderer's box"
                 : worldRenderer == null ? "by its rectangle (no renderer of its own)"
                 : drawing == null ? "by its rectangle (no camera draws its layer)"

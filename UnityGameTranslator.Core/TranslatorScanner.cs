@@ -42,7 +42,7 @@ namespace UnityGameTranslator.Core
                 if (type.CachedComponents == null) continue;
                 foreach (var obj in type.CachedComponents)
                 {
-                    if (obj != null && obj.GetInstanceID() == instanceId)
+                    if (obj != null && ObjectNumbers.Of(obj) == instanceId)
                         return obj;
                 }
             }
@@ -238,7 +238,7 @@ namespace UnityGameTranslator.Core
 
         // Track objects that have been processed and haven't changed
         // Key: instanceId, Value: last processed text hash
-        private static Dictionary<int, int> processedTextHashes = new Dictionary<int, int>();
+        private static readonly Dictionary<int, int> processedTextHashes = ForgetByNumber.Tracked(new Dictionary<int, int>());
 
         // Per-cycle dedup: prevents processing same component through overlapping types
         // (e.g. TMP_Text scan returns TextMeshProUGUI components, which also have their own type entry)
@@ -246,7 +246,7 @@ namespace UnityGameTranslator.Core
         private static readonly HashSet<int> _processedThisCycle = new HashSet<int>();
 
         // Track InputField text components (user input, not placeholder) - never translate these
-        private static HashSet<int> inputFieldTextIds = new HashSet<int>();
+        private static readonly HashSet<int> inputFieldTextIds = ForgetByNumber.Tracked(new HashSet<int>());
 
         // Track original text per component (before translation was applied)
         // Key: component InstanceID, Value: original text before translation, and the component
@@ -257,7 +257,7 @@ namespace UnityGameTranslator.Core
             public object Component;
             public string Text;
         }
-        private static Dictionary<int, OriginalText> componentOriginals = new Dictionary<int, OriginalText>();
+        private static readonly Dictionary<int, OriginalText> componentOriginals = ForgetByNumber.Tracked(new Dictionary<int, OriginalText>());
 
         #endregion
 
@@ -1224,7 +1224,7 @@ namespace UnityGameTranslator.Core
                 {
                     foreach (var obj in type.CachedComponents)
                     {
-                        if (obj != null) seen.Add(obj.GetInstanceID());
+                        if (obj != null) seen.Add(ObjectNumbers.Of(obj));
                     }
                 }
                 _phase2SeenIds[type] = seen;
@@ -1284,7 +1284,7 @@ namespace UnityGameTranslator.Core
 
                         if (matches)
                         {
-                            int id = obj.GetInstanceID();
+                            int id = ObjectNumbers.Of(obj);
                             if (_phase2SeenIds[type].Add(id))
                                 _phase2Results[type].Add(obj);
                         }
@@ -1410,7 +1410,7 @@ namespace UnityGameTranslator.Core
                 foreach (var obj in items)
                 {
                     if (obj == null) continue;
-                    int id = obj.GetInstanceID();
+                    int id = ObjectNumbers.Of(obj);
                     if (seenIds.Add(id))
                         results.Add(obj);
                 }
@@ -1438,7 +1438,7 @@ namespace UnityGameTranslator.Core
                     // Try IsInstanceOfType first (works on Mono)
                     if (type.ComponentType.IsInstanceOfType(obj))
                     {
-                        int id = obj.GetInstanceID();
+                        int id = ObjectNumbers.Of(obj);
                         if (seenIds.Add(id))
                             results.Add(obj);
                         continue;
@@ -1453,7 +1453,7 @@ namespace UnityGameTranslator.Core
                         if (name.StartsWith("Il2Cpp")) name = name.Substring(6);
                         if (name == targetName)
                         {
-                            int id = obj.GetInstanceID();
+                            int id = ObjectNumbers.Of(obj);
                             if (seenIds.Add(id))
                                 results.Add(obj);
                             break;
@@ -1631,7 +1631,7 @@ namespace UnityGameTranslator.Core
                 var comp = component as Component;
                 if (comp == null) return;
 
-                int instanceId = comp.GetInstanceID();
+                int instanceId = ObjectNumbers.Of(comp);
 
                 // Per-cycle dedup: skip if already processed through another overlapping type
                 // (e.g. TMP_Text scan includes TextMeshProUGUI components)
@@ -3484,7 +3484,7 @@ namespace UnityGameTranslator.Core
             public bool Nudged;        // space-nudge already tried once for this line
             public bool NudgePending;  // watchdog asked; the Update pass applies the set_text
         }
-        private static readonly Dictionary<int, RenderWatchEntry> _renderWatch = new Dictionary<int, RenderWatchEntry>();
+        private static readonly Dictionary<int, RenderWatchEntry> _renderWatch = ForgetByNumber.Tracked(new Dictionary<int, RenderWatchEntry>());
         private const float RenderWatchSeconds = 2.5f;
         private const float RenderSettleSeconds = 0.3f;  // hidden unchanged this long = reveal stopped
 

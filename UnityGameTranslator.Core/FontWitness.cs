@@ -16,20 +16,28 @@ namespace UnityGameTranslator.Core
     /// </summary>
     internal static class FontWitness
     {
-        private static readonly HashSet<int> _ours = new HashSet<int>();
+        private static readonly HashSet<int> _ours = WatchedByNumber(new HashSet<int>());
+
+        // A number now standing for another object is no font of ours any more (ObjectNumbers) —
+        // forgotten under the same lock as every other use of the set.
+        private static HashSet<int> WatchedByNumber(HashSet<int> set)
+        {
+            ForgetByNumber.OnForget(id => { if (id >= int.MinValue && id <= int.MaxValue) lock (set) set.Remove((int)id); });
+            return set;
+        }
 
         /// <summary>A font the mod made, from now on watched.</summary>
         internal static void Watch(Font font)
         {
             if (font == null || !TranslatorCore.DebugMode) return;
-            lock (_ours) _ours.Add(font.GetInstanceID());
+            lock (_ours) _ours.Add(ObjectNumbers.Of(font));
         }
 
         /// <summary>A font the mod destroys itself (a probe): not the game's doing.</summary>
         internal static void Forget(Font font)
         {
             if (font == null) return;
-            lock (_ours) _ours.Remove(font.GetInstanceID());
+            lock (_ours) _ours.Remove(ObjectNumbers.Of(font));
         }
 
         public static int Patch(Action<MethodInfo, MethodInfo, MethodInfo> patcher)
@@ -62,7 +70,7 @@ namespace UnityGameTranslator.Core
             {
                 if (!(obj is Font font) || font == null) return;
                 bool ours;
-                lock (_ours) ours = _ours.Contains(font.GetInstanceID());
+                lock (_ours) ours = _ours.Contains(ObjectNumbers.Of(font));
                 if (!ours) return;
                 TranslatorCore.LogWarning($"[FontWitness] frame {Time.frameCount}: the game destroys the mod's font '{font.name}'\n{Environment.StackTrace}");
             }

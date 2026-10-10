@@ -754,6 +754,7 @@ namespace UnityGameTranslator.Core
                     // text: rule is written against the game's words (FontRules.Find).
                     uitkOverride = TranslatorCore.FindFontOverride(IdFor(__instance), PathOf(__instance), uitkFont, before);
                 TextShaping.RtlPresenter.Present(__instance, IdFor(__instance), ref value, uitkFont, uitkOverride);
+                value = AtgSafeText(__instance, value);
                 if (!string.Equals(before, value, StringComparison.Ordinal))
                 {
                     RememberOriginal(__instance, before);
@@ -1481,7 +1482,7 @@ namespace UnityGameTranslator.Core
                         && !string.IsNullOrEmpty(original))
                     {
                         _writingBack = true;
-                        try { _textProp.SetValue(element, original, null); }
+                        try { _textProp.SetValue(element, AtgSafeText(element, original), null); }
                         finally { _writingBack = false; }
 
                         _originalText.Remove(element);
@@ -1563,6 +1564,7 @@ namespace UnityGameTranslator.Core
         public static void WriteBack(object element, string text)
         {
             if (_textProp == null || element == null || text == null) return;
+            text = AtgSafeText(element, text);
 
             try
             {
@@ -2002,6 +2004,7 @@ namespace UnityGameTranslator.Core
                 if (TranslatorCore.FontOverrides.Count > 0)
                     scanOverride = TranslatorCore.FindFontOverride(IdFor(element), PathOf(element), scanFont, current);  // the game's text, not ours
                 TextShaping.RtlPresenter.Present(element, IdFor(element), ref translated, scanFont, scanOverride);
+                translated = AtgSafeText(element, translated);
                 if (string.IsNullOrEmpty(translated) || translated == current) return;
 
                 RememberOriginal(element, current);
@@ -3190,9 +3193,38 @@ namespace UnityGameTranslator.Core
         /// scan compares an element's text against what we last wrote, and a reflow that bypassed
         /// that table would make our own final form look like fresh game text one frame later.
         /// </summary>
+        /// <summary>
+        /// 🔴 **Unity 6.0's Advanced Text Generator kills the game on a text that ENDS with a zero
+        /// width joiner** (U+200D) — a native crash in TextLib.MeasureText, the process gone. Measured
+        /// WITHOUT the mod at the bench (`banc-unity/run-uitk-pieces.ps1`, 2026-10-10): crashes on
+        /// 6000.0.84f1, holds on 6000.1.17f1, 6000.3.6f1 and 6000.6.3f1, with the engine confirming the
+        /// Advanced generator drew each; a joiner followed by anything holds. No Unity note names the
+        /// fix, so the condition is the measured branch, 6000.0. Real ways to get there: a text revealed
+        /// letter by letter stopping right after the joiner of a Devanagari half form or of a composed
+        /// emoji, a translation ending with one. A final joiner joins nothing, so it is taken off what
+        /// the mod writes — nothing on screen changes, except a half form at the very end of a text,
+        /// shown with its virama for that one step of a reveal (decided with the user, 2026-10-10).
+        /// </summary>
+        internal static string AtgSafeText(object element, string text)
+        {
+            if (string.IsNullOrEmpty(text) || text[text.Length - 1] != (char)0x200D) return text;
+            if (_atgDiesOnFinalJoiner == null)
+                _atgDiesOnFinalJoiner = (Application.unityVersion ?? "").StartsWith("6000.0.", StringComparison.Ordinal);
+            if (_atgDiesOnFinalJoiner != true || !IsAtgActive(element)) return text;
+            int end = text.Length;
+            while (end > 0 && text[end - 1] == (char)0x200D) end--;
+            if (DiagnosticOnce.First("UIToolkit.finalJoiner", "taken"))
+                TranslatorCore.LogInfo("[UIToolkit] a text ending with a zero width joiner: the joiner is taken off — this engine's Advanced Text Generator crashes on it (Unity 6.0)");
+            return text.Substring(0, end);
+        }
+
+        // The branch the crash was measured on (AtgSafeText); read at the first text ending with a joiner.
+        private static bool? _atgDiesOnFinalJoiner;
+
         internal static void SetElementTextSilently(object element, string text)
         {
             if (_textProp == null) return;
+            text = AtgSafeText(element, text);
             _writingBack = true;
             try { _textProp.SetValue(element, text, null); }
             finally { _writingBack = false; }

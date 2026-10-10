@@ -4718,15 +4718,48 @@ namespace UnityGameTranslator.Core
         /// </summary>
         private static void FollowGameFontNames(Font ours, Font gameFont)
         {
-            var gameNames = gameFont != null ? FontNamesOf(gameFont) : null;
-            if (gameNames == null || gameNames.Length == 0) return;
+            if (gameFont == null) return;
             var names = new List<string>(FontNamesOf(ours) ?? new string[0]);
             int before = names.Count;
-            foreach (var name in gameNames)
-                if (!string.IsNullOrEmpty(name) && !names.Contains(name)) names.Add(name);
+            AddBackupNames(names, gameFont);
             if (names.Count == before) return;
             PinFontNames(ours, names);
             TranslatorCore.LogDebug($"[FontManager] '{ours.name}' draws from [{string.Join(", ", names)}] — '{gameFont.name}''s own names behind ours");
+        }
+
+        /// <summary>
+        /// The names behind ours for what ours lacks: the game font's own (its family, installed or
+        /// not), then the game font's FILE extracted from the game's data (GameFontFiles) — by the names
+        /// in its name table when the engine was shown it at start, by its pool family when it was lent
+        /// one this session. Not extracted yet: asked for, and <see cref="OnGameFontBackupReady"/> follows.
+        /// </summary>
+        private static void AddBackupNames(List<string> names, Font gameFont)
+        {
+            foreach (var name in FontNamesOf(gameFont) ?? new string[0])
+                if (!string.IsNullOrEmpty(name) && !names.Contains(name)) names.Add(name);
+            GameFontFiles.BackupOf(gameFont.name, out string fileShownAtStart, out string lentFamily);
+            if (fileShownAtStart != null)
+                foreach (var name in NamesInFile(fileShownAtStart))
+                    if (!string.IsNullOrEmpty(name) && !names.Contains(name)) names.Add(name);
+            if (lentFamily != null && !names.Contains(lentFamily)) names.Add(lentFamily);
+        }
+
+        /// <summary>
+        /// The game font's file was extracted during the session (GameFontFiles): the replacement that
+        /// stands for it, already drawing, takes its name behind its own — RewriteFontNames redraws its
+        /// letters with the names of now.
+        /// </summary>
+        internal static void OnGameFontBackupReady(string gameFontName)
+        {
+            if (!_unityFallbackFonts.TryGetValue(gameFontName, out var ours) || ours == null || IsLoadedGameUnityFont(ours)) return;
+            var gameFont = LoadedGameFont(gameFontName);
+            if (gameFont == null) return;
+            var names = new List<string>(FontNamesOf(ours) ?? new string[0]);
+            int before = names.Count;
+            AddBackupNames(names, gameFont);
+            if (names.Count == before) return;
+            if (RewriteFontNames(ours, names.ToArray()))
+                TranslatorCore.LogInfo($"[FontManager] '{ours.name}' now draws what it lacks from '{gameFontName}' itself, extracted from the game");
         }
 
         /// <summary>

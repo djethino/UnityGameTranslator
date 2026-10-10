@@ -686,7 +686,8 @@ namespace UnityGameTranslator.Core
             return false;
         }
 
-        private static string Sanitized(string name)
+        /// <summary>A name as a file name: letters, digits, '-' and '_' kept, anything else '_' (also GameFontFiles).</summary>
+        internal static string Sanitized(string name)
         {
             var chars = name.ToCharArray();
             for (int i = 0; i < chars.Length; i++)

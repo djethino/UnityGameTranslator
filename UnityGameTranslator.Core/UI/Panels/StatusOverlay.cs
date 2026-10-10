@@ -312,7 +312,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             bool aiEnabled = TranslatorCore.Config.IsTranslationEnabled;
             bool live = aiEnabled && (TranslatorCore.QueueCount > 0 || TranslatorCore.IsTranslating
                                       || TranslatorCore.BackendUnreachable != ConnectionProblem.None)
-                        || FontConversions.Current().Count > 0;
+                        || FontJobs.Current().Count > 0;
             if (live || ShowsWindowFont()) return true;
             if (panelsOpen) return false;
 
@@ -899,19 +899,19 @@ namespace UnityGameTranslator.Core.UI.Panels
                 _windowFontLabel?.Show(FontNotices.ForWindow(FontManager.WindowPartsUnshaped()));
             }
 
-            // 2c. A font being converted in the background: the game keeps running, and this says
-            // why the text has not changed font yet — and that it is moving.
-            var conversions = FontConversions.Current();
-            if (_fontBox != null) _fontBox.Visible = conversions.Count > 0;
-            if (conversions.Count > 0)
+            // 2c. Font work in the background (a font converted, the game's fonts read): the game
+            // keeps running, and this says why the text has not changed font yet — and that it is moving.
+            var jobs = FontJobs.Current();
+            if (_fontBox != null) _fontBox.Visible = jobs.Count > 0;
+            if (jobs.Count > 0)
             {
-                var c = conversions[0];
-                string more = conversions.Count > 1 ? $" (+{conversions.Count - 1})" : "";
-                _fontLabel?.Say($"Converting font: {c.FontName}{more}");
+                var c = jobs[0];
+                string more = jobs.Count > 1 ? $" (+{jobs.Count - 1})" : "";
+                _fontLabel?.Say($"{c.Title}{more}");
                 if (_fontLabel != null) _fontLabel.Waiting = true;
 
                 string where = c.Total > 0 && c.Done < c.Total
-                    ? $"{c.Done:N0} / {c.Total:N0} characters"
+                    ? $"{c.Done:N0} / {c.Total:N0} {c.Unit}"
                     : c.Step + "...";
                 _fontProgress?.Say($"{where} · {(int)c.Seconds} s");
                 // Full once the letters are drawn: packing and saving follow, said in words.

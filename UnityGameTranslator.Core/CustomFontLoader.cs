@@ -822,14 +822,14 @@ namespace UnityGameTranslator.Core
         /// <summary>
         /// Prepares a TTF font's atlas pixels on a background thread: from its cache when one is
         /// usable, otherwise drawn from the TTF (and cached for next time). Reports how far it has
-        /// got (FontConversions — what the corner notification shows). When it ends, the scanner's
+        /// got (FontJobs — what the corner notification shows). When it ends, the scanner's
         /// tick applies the font (FontManager.ApplyReadyCustomFonts); the next LoadCustomFont finds
         /// the pixels ready and only uploads them.
         /// </summary>
         private static void PrepareInBackground(CustomFontInfo fontInfo, string fontName, string cacheDir, int maxAtlasSize, int atlasBudget)
         {
             fontInfo.Converting = true;
-            var progress = FontConversions.Start(fontName);
+            var progress = FontJobs.Start($"Converting font: {fontName}", "characters");
 
             System.Threading.Tasks.Task.Run(() =>
             {
@@ -925,7 +925,7 @@ namespace UnityGameTranslator.Core
                 finally
                 {
                     fontInfo.Converting = false;
-                    FontConversions.Finish(progress);
+                    FontJobs.Finish(progress);
                     // Picked up by the scanner's tick, on the main thread — the engine's own loop,
                     // so it works with no interface at all.
                     ReadyFonts.Enqueue(fontName);

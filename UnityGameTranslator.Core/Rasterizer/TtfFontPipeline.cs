@@ -68,7 +68,7 @@ namespace UnityGameTranslator.Core.Rasterizer
         /// <param name="progress">Where the letters drawn so far are reported, when a screen shows it.</param>
         public static PipelineResult ProcessTtfFont(string ttfPath,
             float renderSize = DefaultRenderSize, float distanceRange = DefaultDistanceRange,
-            int maxAtlasSize = 8192, int atlasBudget = 0, FontConversions.Conversion progress = null)
+            int maxAtlasSize = 8192, int atlasBudget = 0, FontJobs.Job progress = null)
         {
             if (!File.Exists(ttfPath))
             {

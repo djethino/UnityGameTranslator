@@ -3281,6 +3281,9 @@ namespace UnityGameTranslator.Core
             // which raises the pending refresh below. The event itself, not a clock.
             FontManager.ApplyReadyCustomFonts();
 
+            // The game's fonts read, a backup extracted in the background: applied here (GameFontFiles).
+            GameFontFiles.Tick();
+
             // Shaped text handed out new glyph names since the last pass: the derived copy is
             // rewritten and its game fonts take it (DerivedFonts) — the naming is the event.
             FontManager.ApplyDerivedFontRewrites();

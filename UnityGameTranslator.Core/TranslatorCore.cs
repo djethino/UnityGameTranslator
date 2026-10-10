@@ -2141,9 +2141,14 @@ namespace UnityGameTranslator.Core
             // must already be in that list for legacy text to find its files by name — the derived
             // copies too (DerivedFonts: complex scripts in the engines that draw by codepoint).
             string fontsFolder = Path.Combine(ModFolder, UnityGameTranslator.Common.AssetPacks.FontsFolder);
-            FontFolderRedirect.Install(fontsFolder, DerivedFonts.Prepare(fontsFolder, adapter.IsIL2CPP,
+            var shownAtStart = DerivedFonts.Prepare(fontsFolder, adapter.IsIL2CPP,
                 Path.Combine(ModFolder, "translations.json"), Path.Combine(ModFolder, "config.json"),
-                Path.Combine(ModFolder, ModUi.FileName)), DerivedFonts.Pool);
+                Path.Combine(ModFolder, ModUi.FileName));
+            // The game's own fonts extracted by an earlier launch, behind the replacements of legacy
+            // text (GameFontFiles, issue #33).
+            shownAtStart.AddRange(GameFontFiles.Prepare(fontsFolder));
+            GameFontFiles.Locate(UnityEngine.Application.dataPath, UnityEngine.Application.unityVersion);
+            FontFolderRedirect.Install(fontsFolder, shownAtStart, DerivedFonts.Pool);
 
             CachePath = Path.Combine(ModFolder, "translations.json");
             ModUiCachePath = Path.Combine(ModFolder, ModUi.FileName);

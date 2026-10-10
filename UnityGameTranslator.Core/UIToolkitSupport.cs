@@ -345,6 +345,9 @@ namespace UnityGameTranslator.Core
         /// ⚠ That distinction is the whole reason fonts looked absent here: the game reports
         /// "No game TMP fonts found" and it is telling the truth — its fonts are TextCore assets.
         /// </summary>
+        /// <summary>UI Toolkit's SDF font type once UI Toolkit is found in the game; null otherwise (Extract traces such an asset).</summary>
+        internal static Type TextCoreFontAssetType => _textCoreFontAssetType;
+
         private static Type FindTextCoreFontAssetType()
         {
             var direct = FindTypeAnywhere("UnityEngine.TextCore.Text.FontAsset");

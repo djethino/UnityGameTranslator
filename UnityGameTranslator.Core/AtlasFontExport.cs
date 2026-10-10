@@ -52,7 +52,10 @@ namespace UnityGameTranslator.Core
             var characters = type.GetProperty("characterTable", Pub)?.GetValue(asset, null);
             if (shape == null || characters == null)
             {
-                refusal = "its letters are not in a table this mod reads (an old TextMesh Pro asset?)";
+                // The old TextMesh Pro (TMProOld): its letters in m_glyphInfoList, its sizes in m_fontInfo.
+                var old = CaptureOld(asset, type, out refusal);
+                if (old != null || refusal != null) return old;
+                refusal = "its letters are not in a table this mod reads";
                 return null;
             }
             object face = type.GetProperty("faceInfo", Pub)?.GetValue(asset, null);
@@ -112,6 +115,69 @@ namespace UnityGameTranslator.Core
                     // fractional bearings, an unhinted atlas came back a pixel off (bench, 2026-10-10).
                     letter.OriginX = Math.Floor(Number(metrics, "horizontalBearingX")) - padding;
                     letter.OriginY = Math.Ceiling(Number(metrics, "horizontalBearingY")) + padding;
+                }
+                captured.Letters.Add(letter);
+            }
+            if (captured.Letters.Count == 0) { refusal = "it holds no letter"; return null; }
+            return captured;
+        }
+
+        /// <summary>
+        /// The old TextMesh Pro's asset: public fields, a glyph's y counted from the atlas's TOP (as the
+        /// mod writes them itself, CustomFontLoader.CreateGlyph), xOffset / yOffset its left and top
+        /// bearings, its box without the padding. Null and no refusal when the asset is not one.
+        /// </summary>
+        private static Captured CaptureOld(object asset, Type type, out string refusal)
+        {
+            refusal = null;
+            const BindingFlags any = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
+            object Member(object o, Type t, string name) =>
+                o == null ? null : (t.GetField(name, any)?.GetValue(o) ?? t.GetProperty(name, any)?.GetValue(o, null));
+            var glyphs = Member(asset, type, "m_glyphInfoList");
+            var info = Member(asset, type, "m_fontInfo") ?? Member(asset, type, "fontInfo");
+            if (glyphs == null || info == null) return null;
+            double Num(object o, string name) { var v = Member(o, o.GetType(), name); return v == null ? 0 : Convert.ToDouble(v); }
+
+            var captured = new Captured
+            {
+                Family = Member(info, info.GetType(), "Name") as string ?? TypeHelper.FontNameOf(asset) ?? "Game font",
+                PointSize = Num(info, "PointSize"),
+                Ascent = Num(info, "Ascender"),
+                Descent = Num(info, "Descender"),
+            };
+            if (captured.PointSize <= 0) { refusal = "its atlas names no drawing size"; return null; }
+            int padding = (int)Math.Round(Num(info, "Padding"));
+            var raw = ReadBack(Member(asset, type, "atlas"), out var tex);
+            if (raw == null) { refusal = "its atlas cannot be read back"; return null; }
+
+            foreach (var glyph in Items(glyphs))
+            {
+                if (glyph == null) continue;
+                int unicode = (int)Num(glyph, "id");
+                if (unicode <= 0) continue;
+                var letter = new Letter { Unicode = unicode, Advance = Num(glyph, "xAdvance") };
+                int gw = (int)Math.Round(Num(glyph, "width")), gh = (int)Math.Round(Num(glyph, "height"));
+                if (gw > 0 && gh > 0)
+                {
+                    int x0 = (int)Math.Round(Num(glyph, "x")) - padding, top = (int)Math.Round(Num(glyph, "y")) - padding;
+                    int w = gw + 2 * padding, h = gh + 2 * padding;
+                    var grid = new float[w * h];
+                    for (int gy = 0; gy < h; gy++)
+                    {
+                        int ty = tex.y - 1 - (top + gy);                          // rows counted from the top
+                        if (ty < 0 || ty >= tex.y) continue;
+                        for (int gx = 0; gx < w; gx++)
+                        {
+                            int tx = x0 + gx;
+                            if (tx < 0 || tx >= tex.x) continue;
+                            grid[gy * w + gx] = raw[(ty * tex.x + tx) * 4 + 3] / 255f;
+                        }
+                    }
+                    letter.Grid = grid;
+                    letter.Width = w;
+                    letter.Height = h;
+                    letter.OriginX = Math.Floor(Num(glyph, "xOffset")) - padding;
+                    letter.OriginY = Math.Ceiling(Num(glyph, "yOffset")) + padding;
                 }
                 captured.Letters.Add(letter);
             }

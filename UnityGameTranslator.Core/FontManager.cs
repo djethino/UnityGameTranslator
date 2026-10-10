@@ -1329,9 +1329,22 @@ namespace UnityGameTranslator.Core
             return name;
         }
 
-        /// <summary>The loaded TextMesh Pro asset a detected font of that type is — what Extract traces when it has no file.</summary>
-        internal static object TraceableAssetOf(string fontName, string type) =>
-            IsTmpType(type) ? LoadedTmpFontNamed(fontName) : null;
+        /// <summary>
+        /// The loaded SDF asset a detected font is — what Extract traces when the game holds no file of
+        /// it: a TextMesh Pro asset, or a UI Toolkit FontAsset (registered as a "Unity" font, the type
+        /// UI Toolkit's legacy fonts share). Null when the font is no such asset.
+        /// </summary>
+        internal static object TraceableAssetOf(string fontName, string type)
+        {
+            if (IsTmpType(type)) return LoadedTmpFontNamed(fontName);
+            var textCore = UIToolkitSupport.TextCoreFontAssetType;
+            if (textCore == null) return null;
+            var loaded = TypeHelper.FindAllAssetsOfType(textCore);
+            if (loaded != null)
+                foreach (var asset in loaded)
+                    if (TypeHelper.FontNameOf(asset) == fontName) return TypeHelper.Il2CppCast(asset, textCore);
+            return null;
+        }
 
         private static object LoadedTmpFontNamed(string name)
         {

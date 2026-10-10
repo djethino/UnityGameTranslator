@@ -2130,6 +2130,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             // means a scan of the loaded assets).
             _extractSource[capturedFontName] = FontManager.SourceFontNameOf(capturedFontName, fontInfo.Type);
             _extractType[capturedFontName] = fontInfo.Type;
+            if (FontManager.TraceableAssetOf(capturedFontName, fontInfo.Type) != null) _extractTraceable.Add(capturedFontName);
+            else _extractTraceable.Remove(capturedFontName);
             ShowExtract(capturedFontName);
             Spent("card build", at);
             return row;
@@ -2143,9 +2145,11 @@ namespace UnityGameTranslator.Core.UI.Panels
         private readonly Dictionary<string, string> _extractType = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         private int _extractSeen = -1;
 
-        /// <summary>The asset name to trace when the font has no file (a TMP asset: its atlas), or null.</summary>
-        private string TraceNameOf(string fontName) =>
-            _extractType.TryGetValue(fontName, out var type) && FontManager.IsTmpType(type) ? fontName : null;
+        // Fonts that are an SDF asset Extract can trace (TMP, UI Toolkit), looked up once per card.
+        private readonly HashSet<string> _extractTraceable = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>The asset name to trace when the font has no file (an SDF asset: its atlas), or null.</summary>
+        private string TraceNameOf(string fontName) => _extractTraceable.Contains(fontName) ? fontName : null;
 
         private static string FontsFolder => System.IO.Path.Combine(TranslatorCore.ModFolder, UnityGameTranslator.Common.AssetPacks.FontsFolder);
 

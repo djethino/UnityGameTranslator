@@ -383,8 +383,12 @@ namespace UnityGameTranslator.Core.TextShaping
                 {
                     if (UIToolkitSupport.IsAtgActive(instance))
                     {
-                        UIToolkitSupport.RestoreRtlAdjustments(instance, keepDirection: true);
+                        // The alignment stays as mirrored: the deferred pass decides it (keeping it
+                        // here and re-mirroring it a frame later would re-lay the element out twice
+                        // at every text).
+                        UIToolkitSupport.RestoreRtlAdjustments(instance, keepDirection: true, keepAlignment: true);
                         UIToolkitSupport.SetRtlDirection(instance);
+                        UIToolkitSupport.DeferAlignment(instance, mirror);
                         Log(compId, "native/atg", value, value);
                         return;
                     }

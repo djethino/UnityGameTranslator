@@ -1810,6 +1810,7 @@ namespace UnityGameTranslator.Core
         {
             internal string LogicalSource, Logical, Measure, Assigned;
             internal bool Mirror;
+            internal bool AlignOnly;   // an ATG element: the engine lays its lines out, only the alignment is ours
             internal int Frame;   // when the text was assigned — its layout comes at that frame's end
         }
 
@@ -1839,6 +1840,19 @@ namespace UnityGameTranslator.Core
                 LogicalSource = logicalSource, Logical = logical, Measure = measure,
                 Assigned = assigned, Mirror = mirror, Frame = Time.frameCount,
             });
+            if (IndexOfElement(_pendingLane, element) < 0) _pendingLane.Add(element);
+        }
+
+        /// <summary>
+        /// An element the Advanced Text Generator draws: its lines are the engine's, but the
+        /// alignment choice (mirror or keep the game's) is the mod's on every generator — mirrored
+        /// once the panel has styled the element, by the same fast lane (TryFinishPending). It was
+        /// never mirrored at all on this generator: Unity 6.5+ draws runtime UI Toolkit with it by
+        /// default, and right-to-left text stayed left-aligned there (bench, 6000.6, 2026-10-10).
+        /// </summary>
+        internal static void DeferAlignment(object element, bool mirror)
+        {
+            _pendingRtl.Set(element, new PendingRtl { Mirror = mirror, AlignOnly = true, Frame = Time.frameCount });
             if (IndexOfElement(_pendingLane, element) < 0) _pendingLane.Add(element);
         }
 
@@ -1934,6 +1948,7 @@ namespace UnityGameTranslator.Core
             // RESOLVED style, which only exists once the panel has styled the element — read
             // earlier it is the default UpperLeft, and every centred label ended top-right.
             MirrorAlign(element, pending.Mirror);
+            if (pending.AlignOnly) { _pendingRtl.Remove(element); return; }
             bool done = TextShaping.RtlPresenter.FinishUiToolkitPending(element, pending.LogicalSource,
                             pending.Logical, pending.Measure, pending.Assigned);
             if (TranslatorCore.DebugMode && DiagnosticOnce.First("UITK.finish", PathOf(element) + "\u0001" + done + "\u0001" + pending.Logical))

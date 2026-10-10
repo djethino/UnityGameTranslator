@@ -327,6 +327,7 @@ namespace UnityGameTranslator.Core.Checks
             Section("OpenType layout (GSUB/GPOS/GDEF on a real font)", OpenTypeLayoutChecks.Run);
 
             Section("Derived font (added glyphs vs the source font)", DerivedFontChecks.Run);
+            Section("A letter traced from its atlas, written into a font", AtlasTracerChecks.Run);
 
             Section("Font pool (names listed at start, filled during the session)", FontPoolChecks.Run);
             Section("Atlas sampling (the size Auto draws a font at)", AtlasSamplingChecks.Run);

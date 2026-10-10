@@ -195,15 +195,69 @@ namespace UnityGameTranslator.Core.Rasterizer
         /// needed under it. Proven on the probe bench: listed empty, filled later, drawn (Unity 2018.4,
         /// 2021.3, 6000.6; Mono and IL2CPP paths — analyse/ecritures-complexes-etat-reel.md, the pool).
         /// </summary>
-        internal static byte[] Placeholder(string family)
+        internal static byte[] Placeholder(string family) =>
+            FromOutlines(family, 1000, 800, -200, new List<Outline>(), new SortedDictionary<int, int>());
+
+        /// <summary>One glyph of a font written from outlines: its contours (TrueType points), its advance.</summary>
+        internal sealed class Outline
         {
-            const int upem = 1000, ascent = 800, descent = -200, advance = 500;
+            public List<List<QuadPoint>> Contours = new List<List<QuadPoint>>();
+            public int Advance;
+        }
+
+        /// <summary>
+        /// A TrueType font written from outlines — the fonts a game keeps as an atlas only, traced back
+        /// (AtlasTracer, GameFontFiles), and the pool's empty font (<see cref="Placeholder"/>). Glyph 0 is
+        /// an empty .notdef; <paramref name="glyphs"/> are glyphs 1…N; <paramref name="cmap"/> maps a
+        /// character to its glyph number. A glyph's left side bearing is its own left edge (FreeType
+        /// places a TrueType outline by it).
+        /// </summary>
+        internal static byte[] FromOutlines(string family, int upem, int ascent, int descent, IList<Outline> glyphs, SortedDictionary<int, int> cmap)
+        {
+            int numGlyphs = glyphs.Count + 1;
+            var glyf = new MemoryStream();
+            var loca = new MemoryStream();
+            var hmtx = new MemoryStream();
+            int advanceMax = 0, xMinAll = 0, yMinAll = 0, xMaxAll = 0, yMaxAll = 0, maxPoints = 0, maxContours = 0;
+            bool any = false;
+            long total = 0;
+            int notdefAdvance = upem / 2;
+            WriteUInt32(loca, 0);
+            WriteUInt32(loca, 0);                                              // .notdef: empty
+            WriteUInt16(hmtx, notdefAdvance); WriteInt16(hmtx, 0);
+            advanceMax = notdefAdvance;
+            foreach (var g in glyphs)
+            {
+                int lsb = 0;
+                if (g.Contours.Count > 0)
+                {
+                    lsb = WriteSimpleGlyph(glyf, g.Contours, out int points);
+                    maxPoints = Math.Max(maxPoints, points);
+                    maxContours = Math.Max(maxContours, g.Contours.Count);
+                    foreach (var c in g.Contours)
+                        foreach (var p in c)
+                        {
+                            if (!any) { xMinAll = xMaxAll = p.X; yMinAll = yMaxAll = p.Y; any = true; }
+                            xMinAll = Math.Min(xMinAll, p.X); xMaxAll = Math.Max(xMaxAll, p.X);
+                            yMinAll = Math.Min(yMinAll, p.Y); yMaxAll = Math.Max(yMaxAll, p.Y);
+                        }
+                }
+                total = glyf.Length;
+                WriteUInt32(loca, (uint)total);
+                WriteUInt16(hmtx, Math.Max(0, g.Advance)); WriteInt16(hmtx, lsb);
+                advanceMax = Math.Max(advanceMax, g.Advance);
+            }
+
             var head = new byte[54];
             WriteUInt32At(head, 0, 0x00010000);                                // version
             WriteUInt32At(head, 4, 0x00010000);                                // fontRevision
             WriteUInt32At(head, 12, 0x5F0F3CF5);                               // magicNumber
             WriteUInt16At(head, 16, 0x000B);                                   // flags: baseline at 0, lsb at 0, integer ppem
             WriteUInt16At(head, 18, upem);
+            WriteUInt16At(head, 36, xMinAll & 0xFFFF);
+            WriteUInt16At(head, 38, yMinAll & 0xFFFF);
+            WriteUInt16At(head, 40, xMaxAll & 0xFFFF);
+            WriteUInt16At(head, 42, yMaxAll & 0xFFFF);
             WriteUInt16At(head, 46, 8);                                        // lowestRecPPEM
             WriteUInt16At(head, 48, 2);                                        // fontDirectionHint
             WriteUInt16At(head, 50, 1);                                        // indexToLocFormat: long
@@ -212,32 +266,36 @@ namespace UnityGameTranslator.Core.Rasterizer
             WriteUInt32At(hhea, 0, 0x00010000);
             WriteUInt16At(hhea, 4, ascent);
             WriteUInt16At(hhea, 6, descent & 0xFFFF);
-            WriteUInt16At(hhea, 10, advance);                                  // advanceWidthMax
+            WriteUInt16At(hhea, 10, advanceMax);                               // advanceWidthMax
             WriteUInt16At(hhea, 18, 1);                                        // caretSlopeRise
-            WriteUInt16At(hhea, 34, 1);                                        // numberOfHMetrics
+            WriteUInt16At(hhea, 34, numGlyphs);                                // numberOfHMetrics: every glyph
 
             var maxp = new byte[32];                                           // version 1.0: TrueType outlines
             WriteUInt32At(maxp, 0, 0x00010000);
-            WriteUInt16At(maxp, 4, 1);                                         // numGlyphs
+            WriteUInt16At(maxp, 4, numGlyphs);
+            WriteUInt16At(maxp, 6, maxPoints);
+            WriteUInt16At(maxp, 8, maxContours);
             WriteUInt16At(maxp, 14, 2);                                        // maxZones
 
+            int first = 0xFFFF, last = 0;
+            foreach (var cp in cmap.Keys) { first = Math.Min(first, cp); last = Math.Max(last, cp); }
             var os2 = new byte[96];                                            // version 4
             WriteUInt16At(os2, 0, 4);
-            WriteUInt16At(os2, 2, advance);                                    // xAvgCharWidth
+            long advances = notdefAdvance;
+            foreach (var g in glyphs) advances += Math.Max(0, g.Advance);
+            WriteUInt16At(os2, 2, (int)(advances / numGlyphs));                // xAvgCharWidth (an empty font: .notdef's, as before)
             WriteUInt16At(os2, 4, 400);                                        // usWeightClass: regular
             WriteUInt16At(os2, 6, 5);                                          // usWidthClass: medium
             Encoding.ASCII.GetBytes("UGT ", 0, 4, os2, 58);                    // achVendID
             WriteUInt16At(os2, 62, 0x0040);                                    // fsSelection: REGULAR
-            WriteUInt16At(os2, 64, 0xFFFF);                                    // usFirstCharIndex: no character
+            WriteUInt16At(os2, 64, Math.Min(first, 0xFFFF));                   // usFirstCharIndex
+            WriteUInt16At(os2, 66, Math.Min(last, 0xFFFF));                    // usLastCharIndex
             WriteUInt16At(os2, 68, ascent);
             WriteUInt16At(os2, 70, descent & 0xFFFF);
-            WriteUInt16At(os2, 74, ascent);                                    // usWinAscent
-            WriteUInt16At(os2, 76, -descent);                                  // usWinDescent
+            WriteUInt16At(os2, 74, Math.Max(ascent, yMaxAll));                 // usWinAscent
+            WriteUInt16At(os2, 76, Math.Max(-descent, -yMinAll));              // usWinDescent
             WriteUInt32At(os2, 78, 1);                                         // ulCodePageRange1: Latin 1
             WriteUInt16At(os2, 92, 32);                                        // usBreakChar
-
-            var hmtx = new byte[4];
-            WriteUInt16At(hmtx, 0, advance);
 
             var post = new byte[32];
             WriteUInt32At(post, 0, 0x00030000);                                // format 3: no glyph names
@@ -253,10 +311,10 @@ namespace UnityGameTranslator.Core.Rasterizer
                 ["hhea"] = hhea,
                 ["maxp"] = maxp,
                 ["OS/2"] = os2,
-                ["hmtx"] = hmtx,
-                ["cmap"] = BuildCmap(new SortedDictionary<int, int>()),
-                ["loca"] = new byte[8],                                        // .notdef starts and ends at 0: empty
-                ["glyf"] = new byte[0],
+                ["hmtx"] = hmtx.ToArray(),
+                ["cmap"] = BuildCmap(cmap),
+                ["loca"] = loca.ToArray(),
+                ["glyf"] = glyf.ToArray(),
                 ["name"] = BuildNameTable(records),
                 ["post"] = post,
             });

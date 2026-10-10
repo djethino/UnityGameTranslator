@@ -38,8 +38,10 @@ A mod that players install into any Unity game to play it in their language — 
 - **Private AI retranslation from the browser** — the website only *calls your mod*, which translates with your own locally-configured backend. No API key or LLM configuration ever reaches the website
 
 ### Font System
-- Automatic font detection (TextMeshPro, Unity UI.Text)
+- Automatic font detection (TextMeshPro, Unity UI.Text, UI Toolkit)
 - Fallback fonts for any writing system — Latin, CJK, Arabic, Devanagari, Cyrillic, Thai, Hebrew, and more
+- **Each text keeps its own font behind the replacement** — a letter the replacement lacks is drawn by that text's original game font, so the untranslated text keeps the game's look
+- **Extract a game's font** — copy a font out of the game's files into `fonts/` (a font the game keeps only as a texture is traced back into a font file), edit it — for example to add the letters your language needs — and use it as a Custom font. Game fonts have their own licences: the copy is for your own use
 - Right-to-left scripts (Arabic, Hebrew, Persian…) — joined letters and right-to-left order in the game's texts, and in what is typed into input fields (UI Text and TextMesh Pro): caret, clicks, selection and arrow keys follow the screen
 - Per-font scaling and enable/disable
 - **Font overrides by pattern** — override size for specific UI elements (tables, titles, tooltips)
@@ -129,6 +131,7 @@ The full set of measures, and who sees each, is published at `/docs`.
 
 - **First-run wizard** — guided setup on first launch
 - **Settings hotkey** — Shift+F10 (configurable) opens the full settings panel
+- **Free cursor hotkey** (unset by default, Options › Hotkeys) — takes the cursor in games that hide it, so the corner notifications can be clicked; press again to give it back
 - **Translation info** — H/V/A/S distribution, review stage, lines left to review, sync status
 - **Translation Tools** — tabs for Tools (editors), Exclusions, Fonts (Global + Overrides), Images, Variables
 - **Merge panel** — resolve conflicts with per-entry Keep Mine / Take Server choices
@@ -275,7 +278,7 @@ UnityGameTranslator can use custom fonts and replacement images to improve trans
 | BepInEx | `<Game>/BepInEx/plugins/UnityGameTranslator/fonts/` | `<Game>/BepInEx/plugins/UnityGameTranslator/images/` |
 | MelonLoader | `<Game>/UserData/UnityGameTranslator/fonts/` | `<Game>/UserData/UnityGameTranslator/images/` |
 
-**Custom fonts** — drop `.ttf` or `.otf` files into the `fonts/` folder. The filename (without extension) becomes the font name shown in the Translation Parameters panel. Assign per UI element or globally.
+**Custom fonts** — drop `.ttf` or `.otf` files into the `fonts/` folder, or use **Extract** on a game font in the Fonts tab (its **Open folder** button opens `fonts/`). The filename (without extension) becomes the font name shown in the Translation Parameters panel. Assign per UI element or globally.
 
 **Replacement images** — drop `.png` files (with transparency) into the `images/` folder. Use the in-game image capture feature to export existing sprites, edit them externally, then save the modified versions back.
 
@@ -385,6 +388,7 @@ Five repositories, one product — [see it live][live].
 - **[MelonLoader](https://github.com/LavaGang/MelonLoader)** by LavaGang — Universal Unity mod loader
 - **[Harmony](https://github.com/pardeike/Harmony)** by Andreas Pardeike — Runtime method patching
 - **[Newtonsoft.Json](https://github.com/JamesNK/Newtonsoft.Json)** by James Newton-King — JSON framework
+- **[AssetRipper/Tpk](https://github.com/AssetRipper/Tpk)** and the **[LZMA SDK](https://www.7-zip.org/sdk.html)** by Igor Pavlov — Unity's class layouts and the decompression a game's own fonts are read with
 
 See [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) for full license details.
 

@@ -183,3 +183,14 @@ Word lists used to find word boundaries in scripts written without spaces
 - **Source:** https://www.unicode.org/Public/UCD/latest/ucd/
 - **License:** Unicode License v3 (https://www.unicode.org/copyright.html)
 - **Copyright:** Unicode, Inc.
+
+## AssetRipper/Tpk (Unity type trees) and the LZMA SDK
+
+How the mod reads a game's own fonts from its data files (Extract, and the backup of a replaced
+classic UI font). Both reach the mod through `common` (`UnityFiles/`), merged into its assembly.
+
+- **AssetRipper/Tpk** — https://github.com/AssetRipper/Tpk — **License:** MIT. Its dump of Unity's
+  class layouts is the source of the generated table `UnityFiles/FontLayouts.Tables.g.cs` (the
+  layout of Unity's Font object per Unity version). No code of theirs is shipped.
+- **LZMA SDK** — https://www.7-zip.org/sdk.html — Igor Pavlov, **public domain**. The decoder in
+  `UnityFiles/LzmaDecoder.cs` is written after its reference decoder (`LzmaSpec.cpp`).

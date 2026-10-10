@@ -31,8 +31,9 @@ namespace UnityGameTranslator.Core
     /// </summary>
     internal static class GameFontFiles
     {
-        internal const string Folder = ".ugt-game-fonts";
-        private const string IndexFile = "index.txt";
+        // Shared with the Manager, which reads and writes the same index (common's GameFonts).
+        internal const string Folder = GameFonts.CacheFolder;
+        private const string IndexFile = GameFonts.IndexFile;
 
         private static string _cache, _dataFolder, _unityVersion;
         private static volatile GameFonts.Reading _index;
@@ -270,8 +271,9 @@ namespace UnityGameTranslator.Core
 
         private static string ExtractedPath(string fontsFolder, GameFonts.Font font, string extension) => ExtractedPath(fontsFolder, font.Name, extension);
 
+        // The socle's name: the Manager's Extract writes the same file under the same name.
         private static string ExtractedPath(string fontsFolder, string name, string extension) =>
-            Path.Combine(fontsFolder, DerivedFonts.Sanitized(name) + extension);
+            Path.Combine(fontsFolder, GameFonts.FileNameFor(name, extension));
 
         /// <summary>
         /// A font the game keeps as an atlas only, traced into fonts/ (AtlasFontExport): its letters

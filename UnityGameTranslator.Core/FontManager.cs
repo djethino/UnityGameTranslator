@@ -1346,6 +1346,27 @@ namespace UnityGameTranslator.Core
             return null;
         }
 
+        /// <summary>
+        /// The family a TextMesh Pro asset says it was made from (faceInfo.familyName; TMProOld:
+        /// m_fontInfo.Name) — what finds its file in the game's data when a built player kept no link to
+        /// it (sourceFontFile empty: TMP keeps it for the editor only on most assets). Null when unknown.
+        /// </summary>
+        internal static string FaceFamilyOf(string fontName, string type)
+        {
+            if (!IsTmpType(type)) return null;
+            var asset = LoadedTmpFontNamed(fontName);
+            if (asset == null) return null;
+            const BindingFlags any = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
+            var t = asset.GetType();
+            var face = t.GetProperty("faceInfo", BindingFlags.Public | BindingFlags.Instance)?.GetValue(asset, null)
+                       ?? t.GetField("m_fontInfo", any)?.GetValue(asset);
+            if (face == null) return null;
+            var ft = face.GetType();
+            var family = ft.GetProperty("familyName", BindingFlags.Public | BindingFlags.Instance)?.GetValue(face, null)
+                         ?? ft.GetField("Name", BindingFlags.Public | BindingFlags.Instance)?.GetValue(face);
+            return family as string ?? family?.ToString();
+        }
+
         private static object LoadedTmpFontNamed(string name)
         {
             // An asset, not a scene object: the asset scan (the scene one misses it on Mono).

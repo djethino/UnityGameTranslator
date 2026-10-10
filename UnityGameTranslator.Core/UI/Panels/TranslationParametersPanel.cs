@@ -2131,6 +2131,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             // means a scan of the loaded assets).
             _extractSource[capturedFontName] = FontManager.SourceFontNameOf(capturedFontName, fontInfo.Type);
             _extractType[capturedFontName] = fontInfo.Type;
+            _extractFamily[capturedFontName] = _extractSource[capturedFontName] == null ? FontManager.FaceFamilyOf(capturedFontName, fontInfo.Type) : null;
             if (FontManager.TraceableAssetOf(capturedFontName, fontInfo.Type) != null) _extractTraceable.Add(capturedFontName);
             else _extractTraceable.Remove(capturedFontName);
             ShowExtract(capturedFontName);
@@ -2144,6 +2145,10 @@ namespace UnityGameTranslator.Core.UI.Panels
         private readonly Dictionary<string, ButtonHandle> _extractByFont = new Dictionary<string, ButtonHandle>(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, string> _extractSource = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, string> _extractType = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        // The family a TMP asset was made from, when no link to its file survived the build (FaceFamilyOf).
+        private readonly Dictionary<string, string> _extractFamily = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        private string FamilyOf(string fontName) => _extractFamily.TryGetValue(fontName, out var f) ? f : null;
         private int _extractSeen = -1;
 
         // Fonts that are an SDF asset Extract can trace (TMP, UI Toolkit), looked up once per card.
@@ -2159,7 +2164,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             if (!_extractByFont.TryGetValue(fontName, out var button) || button == null) return;
             _extractSource.TryGetValue(fontName, out var source);
-            string why = GameFontFiles.WhyNotExtract(source, TraceNameOf(fontName), FontsFolder, out _);
+            string why = GameFontFiles.WhyNotExtract(source, FamilyOf(fontName), TraceNameOf(fontName), FontsFolder, out _);
             button.Enabled = why == null;
             // Said once per font and reason: a greyed Extract read only on hover left nothing to diagnose by.
             if (why != null && DiagnosticOnce.First("extract-greyed", fontName + "\u0001" + why))
@@ -2193,7 +2198,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         private void ExtractFont(string fontName)
         {
             _extractSource.TryGetValue(fontName, out var source);
-            if (GameFontFiles.WhyNotExtract(source, TraceNameOf(fontName), FontsFolder, out var font) != null) return;
+            if (GameFontFiles.WhyNotExtract(source, FamilyOf(fontName), TraceNameOf(fontName), FontsFolder, out var font) != null) return;
             string shown = font?.Name ?? TraceNameOf(fontName);
             Intents.Confirm("Extract font",
                 $"{UnityGameTranslator.Common.UnityFiles.GameFonts.ExportNotice}\n\n{shown} is saved in the fonts folder, where it becomes a Custom font.",
@@ -2204,7 +2209,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             _extractSource.TryGetValue(fontName, out var source);
             string traceName = TraceNameOf(fontName);
-            if (GameFontFiles.WhyNotExtract(source, traceName, FontsFolder, out var font) != null) return;
+            if (GameFontFiles.WhyNotExtract(source, FamilyOf(fontName), traceName, FontsFolder, out var font) != null) return;
             string shown = font?.Name ?? traceName;
             Action<string> done = written =>
             {

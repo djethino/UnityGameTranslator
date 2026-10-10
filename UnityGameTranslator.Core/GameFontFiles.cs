@@ -154,6 +154,24 @@ namespace UnityGameTranslator.Core
             return null;
         }
 
+        /// <summary>The one game font with a file whose family (m_FontNames) is <paramref name="family"/>; null when none or several.</summary>
+        private static GameFonts.Font FindOnlyOfFamily(string family)
+        {
+            var index = _index;
+            if (index == null) return null;
+            GameFonts.Font found = null;
+            foreach (var f in GameFonts.Distinct(index.Fonts))
+            {
+                if (!f.HasFile) continue;
+                bool named = false;
+                foreach (var n in f.FontNames) if (string.Equals(n, family, StringComparison.OrdinalIgnoreCase)) { named = true; break; }
+                if (!named) continue;
+                if (found != null) return null;   // several: which one is not ours to guess
+                found = f;
+            }
+            return found;
+        }
+
         /// <summary>
         /// What the engine knows the backup of <paramref name="gameFontName"/> by, for a replacement's
         /// fontNames: the FILE shown at start (its names are in its name table), or the pool FAMILY it
@@ -239,19 +257,17 @@ namespace UnityGameTranslator.Core
         private static readonly HashSet<string> _extractingToFonts = new HashSet<string>(StringComparer.Ordinal);
 
         /// <summary>
-        /// Why <paramref name="sourceFontName"/> (the game's Font a detected font is drawn from, see
-        /// FontManager.SourceFontNameOf) cannot be extracted now — the tooltip of a greyed Extract —
-        /// or null when it can; <paramref name="font"/> is then the one to extract.
+        /// Why a detected font cannot be extracted now — the tooltip of a greyed Extract — or null when
+        /// it can, <paramref name="font"/> then the game's file to copy, or null meaning "trace it".
+        /// - <paramref name="sourceFontName"/>: the game's Font it is drawn from (FontManager.SourceFontNameOf);
+        /// - <paramref name="family"/>: the family the asset was made from, when no link to its file survived
+        ///   the build — the game font carrying exactly that family, one and only one (never a guess between
+        ///   a Regular and a Bold), is its file (2026-10-10: LiberationSans SDF was traced while
+        ///   LiberationSans was in the game's data);
+        /// - <paramref name="traceName"/>: the asset's name when its atlas can be traced, else null.
+        /// The game's file wins when there is one: it is exact.
         /// </summary>
-        internal static string WhyNotExtract(string sourceFontName, string fontsFolder, out GameFonts.Font font) =>
-            WhyNotExtract(sourceFontName, null, fontsFolder, out font);
-
-        /// <summary>
-        /// As above, for a detected font that may also be TRACED from its atlas (<paramref name="traceName"/>:
-        /// the asset's name, null when it has no atlas to trace). The game's file wins when there is one
-        /// — exact; otherwise null with <paramref name="font"/> null means "trace it".
-        /// </summary>
-        internal static string WhyNotExtract(string sourceFontName, string traceName, string fontsFolder, out GameFonts.Font font)
+        internal static string WhyNotExtract(string sourceFontName, string family, string traceName, string fontsFolder, out GameFonts.Font font)
         {
             font = null;
             if (_index == null)
@@ -260,6 +276,7 @@ namespace UnityGameTranslator.Core
                 return Indexing ? "Reading the game's fonts..." : "The game's fonts could not be read. See the log.";
             }
             if (!string.IsNullOrEmpty(sourceFontName)) font = Find(sourceFontName);
+            if (font == null && !string.IsNullOrEmpty(family)) font = FindOnlyOfFamily(family);
             string name = font?.Name ?? traceName;
             if (name == null)
                 return "No font file in the game, and no atlas this mod can trace: a system font, or a font drawn another way.";

@@ -70,11 +70,24 @@ namespace UnityGameTranslator.Core.UI.Components
             _entries.Add(new Entry { Target = target, State = state, Group = group });
         }
 
-        /// <summary>Forget every element registered under a group — before its list is rebuilt.</summary>
+        /// <summary>
+        /// Forget every element registered under a group — before its list is rebuilt — and take its
+        /// mark off with it.
+        ///
+        /// 🔴 **A list may be rebuilt on the SAME rows** (the fonts list reuses its cards when the
+        /// fonts are unchanged). An element forgotten with its bar still drawn and registered again
+        /// starts as unmarked, so the next Refresh saw nothing to change and the amber bar of an
+        /// applied change stayed (user, 2026-10-10).
+        /// </summary>
         public void ClearGroup(string group)
         {
             for (int i = _entries.Count - 1; i >= 0; i--)
-                if (_entries[i].Group == group) _entries.RemoveAt(i);
+            {
+                var e = _entries[i];
+                if (e.Group != group) continue;
+                if (e.Target != null && e.Shown != PendingState.None) Draw(e.Target, PendingState.None);
+                _entries.RemoveAt(i);
+            }
         }
 
         /// <summary>

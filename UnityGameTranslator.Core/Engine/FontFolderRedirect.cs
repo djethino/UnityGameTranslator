@@ -13,7 +13,9 @@ namespace UnityGameTranslator.Core
     /// 🔴 Why (user, 2026-09-28): legacy text (UI.Text) finds a font by NAME, and the engine builds
     /// its name → file list by walking a folder written into UnityPlayer.dll: "C:\Windows\Fonts"
     /// (measured on 16 engines, Unity 2018.4 → 6000.5: FindFirstFile(Ex)W / FindNextFileW /
-    /// CreateFileW, all imported from KERNEL32 by UnityPlayer.dll itself; no registry, no GDI).
+    /// CreateFileW, all imported from KERNEL32 by UnityPlayer.dll itself; no registry, no GDI). From
+    /// 6000.7 the engine opens and reads what it listed through the C library as a DLL — answered in
+    /// FontFolderRedirect.Crt.
     /// Registering a font with Windows for this process, or loading it as a Font, is not seen —
     /// both tried and measured the same day. So the engine's own questions are answered here:
     ///
@@ -253,7 +255,9 @@ namespace UnityGameTranslator.Core
                     return 0;
                 }
 
-                return Patch(module, "kernel32.dll", new Dictionary<string, Func<IntPtr, IntPtr>>
+                // Engines linked to the C library as a DLL (Unity 6000.7) open and read fonts through
+                // it: its calls are answered too (FontFolderRedirect.Crt).
+                return PatchCrt(module) + Patch(module, "kernel32.dll", new Dictionary<string, Func<IntPtr, IntPtr>>
                 {
                     ["FindFirstFileExW"] = real => { _realFindFirstEx = Marshal.GetDelegateForFunctionPointer<FindFirstFileExW_>(real); return Marshal.GetFunctionPointerForDelegate(OurFindFirstEx); },
                     ["FindFirstFileW"] = real => { _realFindFirst = Marshal.GetDelegateForFunctionPointer<FindFirstFileW_>(real); return Marshal.GetFunctionPointerForDelegate(OurFindFirst); },
@@ -552,6 +556,12 @@ namespace UnityGameTranslator.Core
             if ((flags & FILE_FLAG_OVERLAPPED) != 0 && System.Threading.Interlocked.Exchange(ref _asyncSaid, 1) == 0)
                 TranslatorCore.LogWarning("[FontFolder] The engine opens a pool name for asynchronous reads — what it reads there is not replaced");
             Served[handle] = new ServedFile { Content = content, Name = virtualName };
+            NoteOpened(virtualName);
+        }
+
+        /// <summary>A pool name the engine opened — through Windows or the C library (FontFolderRedirect.Crt).</summary>
+        private static void NoteOpened(string virtualName)
+        {
             lock (Gate)
             {
                 if (_poolSize < 0) { _poolSize = 0; foreach (var _ in _virtual.Names()) _poolSize++; }
@@ -560,6 +570,21 @@ namespace UnityGameTranslator.Core
                     ReadsOfName.TryGetValue(_firstName, out _readsPerName);   // the first name is read in full by now
                 OpenedNames.Add(virtualName);
                 _lastName = virtualName;
+            }
+        }
+
+        /// <summary>
+        /// One read of a pool name served its slot's empty font; true when it completes the pool:
+        /// every name opened, and the last one read as many times as the first.
+        /// </summary>
+        private static bool CountServedRead(string name)
+        {
+            System.Threading.Interlocked.Increment(ref _servedReads);
+            lock (Gate)
+            {
+                ReadsOfName.TryGetValue(name, out int reads);
+                ReadsOfName[name] = ++reads;
+                return OpenedNames.Count == _poolSize && _readsPerName > 0 && name == _lastName && reads >= _readsPerName;
             }
         }
 
@@ -592,18 +617,9 @@ namespace UnityGameTranslator.Core
                         int n = Marshal.ReadInt32(read);
                         int count = (int)Math.Max(0, Math.Min(n, content.Length - position));
                         if (count > 0) Marshal.Copy(content, (int)position, buffer, count);
-                        System.Threading.Interlocked.Increment(ref _servedReads);
-                        bool done;
-                        lock (Gate)
-                        {
-                            ReadsOfName.TryGetValue(served.Name, out int reads);
-                            ReadsOfName[served.Name] = ++reads;
-                            done = OpenedNames.Count == _poolSize && _readsPerName > 0
-                                   && served.Name == _lastName && reads >= _readsPerName;
-                        }
                         // The whole pool read: no empty name is opened again (a name is filled before
                         // the mod hands out its family), so the engine gets its own ReadFile back.
-                        if (done) GiveReadFileBack();
+                        if (CountServedRead(served.Name)) GiveReadFileBack();
                     }
                     else Served.TryRemove(file, out _);   // the value now names another file
                 }

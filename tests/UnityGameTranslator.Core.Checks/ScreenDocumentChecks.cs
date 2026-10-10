@@ -478,7 +478,20 @@ namespace UnityGameTranslator.Core.Checks
                     // two reaches its pieces from either half. ActOf itself stays in the main file,
                     // read above — one table of verbs, never two.
                     var partials = Directory.GetFiles(panels, Path.GetFileNameWithoutExtension(file) + ".*.cs");
-                    Wiring(check, panel, source + string.Concat(partials.Select(File.ReadAllText)), doc);
+                    string whole = source + string.Concat(partials.Select(File.ReadAllText));
+                    Wiring(check, panel, whole, doc);
+
+                    // 🔴 And every act a TEMPLATE asks for (a row of a list) has its case in the panel —
+                    // answered in the lambda handed to Instantiate, not in ActOf, so the check above
+                    // never saw them: an Extract button whose case was renamed passed every check
+                    // (2026-10-10), and a row refuses only when it is built, inside a game.
+                    // A row with one act answers it as `act == "x"`, one with several in a switch.
+                    var anyCase = new HashSet<string>(System.Text.RegularExpressions.Regex.Matches(whole, @"(?:case ""([A-Za-z0-9]+)"":|\bact == ""([A-Za-z0-9]+)"")")
+                        .Cast<System.Text.RegularExpressions.Match>().Select(m => m.Groups[1].Success ? m.Groups[1].Value : m.Groups[2].Value));
+                    var unanswered = doc.Templates.Values.SelectMany(t => t.Pieces.Acts.Keys.Select(a => t.Name + "/" + a))
+                        .Where(ta => !anyCase.Contains(ta.Substring(ta.IndexOf('/') + 1))).ToList();
+                    check(unanswered.Count == 0, $"{panel} answers every act its templates ask for",
+                        unanswered.Count == 0 ? "a row refuses at construction otherwise, inside a game" : $"no case for: {string.Join(", ", unanswered)}");
                 }
             }
 

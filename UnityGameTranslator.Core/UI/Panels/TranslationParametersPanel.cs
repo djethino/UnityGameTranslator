@@ -2080,6 +2080,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 switch (act)
                 {
                     case "identify": return () => ToggleFontHighlight(capturedFontName, row.Button("IdentifyBtn"));
+                    case "extract": return () => ExtractFont(capturedFontName);
                     case "enabledChanged": return () => { if (!_fillingRows) OnFontEnableChanged(capturedFontName, row.Toggle("EnableToggle").IsOn); };
                     case "rtlChanged": return () => { if (!_fillingRows) OnFontRtlAlignChanged(capturedFontName, row.Toggle("RtlMirrorToggle").IsOn); };
                     case "fallbackChanged": return () =>
@@ -2124,8 +2125,58 @@ namespace UnityGameTranslator.Core.UI.Panels
                 }
             });
             _identifyByFont[capturedFontName] = row.Button("IdentifyBtn");
+            _extractByFont[capturedFontName] = row.Button("ExtractBtn");
+            // The game's Font this one is drawn from, looked up once (a TMP asset's source file
+            // means a scan of the loaded assets).
+            _extractSource[capturedFontName] = FontManager.SourceFontNameOf(capturedFontName, fontInfo.Type);
+            ShowExtract(capturedFontName);
             Spent("card build", at);
             return row;
+        }
+
+        // ── Extract: one game font's file into fonts/ (GameFontFiles) ───────────────────────────
+
+        private const string ExtractHelp = "Saves this font's file from the game into the fonts folder. It then appears among the Custom fonts.";
+        private readonly Dictionary<string, ButtonHandle> _extractByFont = new Dictionary<string, ButtonHandle>(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, string> _extractSource = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        private int _extractSeen = -1;
+
+        private static string FontsFolder => System.IO.Path.Combine(TranslatorCore.ModFolder, UnityGameTranslator.Common.AssetPacks.FontsFolder);
+
+        /// <summary>Extract on one card: offered when the game holds the font's file, greyed with the reason otherwise.</summary>
+        private void ShowExtract(string fontName)
+        {
+            if (!_extractByFont.TryGetValue(fontName, out var button) || button == null) return;
+            _extractSource.TryGetValue(fontName, out var source);
+            string why = GameFontFiles.WhyNotExtract(source, FontsFolder, out _);
+            button.Enabled = why == null;
+            _helpZone?.Describe(button, why ?? ExtractHelp);
+        }
+
+        /// <summary>The cards' Extract, drawn again when the index or an extraction changed what they answer.</summary>
+        private void ShowExtractChanges()
+        {
+            if (_extractSeen == GameFontFiles.Changes) return;
+            _extractSeen = GameFontFiles.Changes;
+            foreach (var name in new List<string>(_extractByFont.Keys)) ShowExtract(name);
+        }
+
+        private void ExtractFont(string fontName)
+        {
+            _extractSource.TryGetValue(fontName, out var source);
+            if (GameFontFiles.WhyNotExtract(source, FontsFolder, out var font) != null) return;
+            GameFontFiles.Extract(font, FontsFolder, written =>
+            {
+                if (_fontsStatus != null)
+                {
+                    _fontsStatus.Show(written != null
+                        ? $"{font.Name} extracted into the fonts folder. It is now a Custom font."
+                        : $"Could not extract {font.Name}. See the log.");
+                    _fontsStatus.Tone = written != null ? Tone.Success : Tone.Warning;
+                }
+                if (written != null) { CustomFontLoader.Rescan(); InvalidateFontOrder(); RefreshFontsList(); }
+            });
+            ShowExtract(fontName);
         }
 
         /// <summary>
@@ -2827,6 +2878,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             base.Update();
             ReportOpenTiming();
             BuildSomeFontRows();
+            ShowExtractChanges();
 
             // Poll state changes to update Apply button text (IL2CPP-safe, no AddListener)
             if (Enabled)

@@ -44,6 +44,14 @@ namespace UnityGameTranslator.Core
         // Game fonts whose backup was asked for: tried once a session (said when it cannot be).
         private static readonly HashSet<string> _wanted = new HashSet<string>(StringComparer.Ordinal);
         private static readonly ConcurrentQueue<Action> _onMain = new ConcurrentQueue<Action>();
+        private static int _changes;
+
+        /// <summary>
+        /// Bumped, on the main thread, each time what <see cref="WhyNotExtract"/> answers may have
+        /// changed (the index read, an extraction ended): a window showing Extract compares it to the
+        /// value it last drew with — the event, not a clock.
+        /// </summary>
+        internal static int Changes => _changes;
 
         /// <summary>
         /// Before FontFolderRedirect is installed: where the cache is, and the backups extracted by an
@@ -171,6 +179,7 @@ namespace UnityGameTranslator.Core
 
         private static void RetryWanted()
         {
+            _changes++;
             if (_index == null) return;
             foreach (var name in new List<string>(_wanted)) ExtractBackup(name);
         }
@@ -222,6 +231,68 @@ namespace UnityGameTranslator.Core
             _lent[gameFontName] = slot.Value.Family;
             TranslatorCore.LogInfo($"[GameFonts] '{gameFontName}': extracted as the backup of its replacement, shown as '{slot.Value.Family}'");
             FontManager.OnGameFontBackupReady(gameFontName);
+        }
+
+        // ── Extract: one font, a person's choice ────────────────────────────────────────────────
+
+        private static readonly HashSet<string> _extractingToFonts = new HashSet<string>(StringComparer.Ordinal);
+
+        /// <summary>
+        /// Why <paramref name="sourceFontName"/> (the game's Font a detected font is drawn from, see
+        /// FontManager.SourceFontNameOf) cannot be extracted now — the tooltip of a greyed Extract —
+        /// or null when it can; <paramref name="font"/> is then the one to extract.
+        /// </summary>
+        internal static string WhyNotExtract(string sourceFontName, string fontsFolder, out GameFonts.Font font)
+        {
+            font = null;
+            if (string.IsNullOrEmpty(sourceFontName)) return "No font file in the game: this font is drawn from its atlas only.";
+            if (_index == null)
+            {
+                EnsureIndex("the Fonts tab shows the game's fonts");
+                return Indexing ? "Reading the game's fonts..." : "The game's fonts could not be read. See the log.";
+            }
+            font = Find(sourceFontName);
+            if (font == null) return "No font file in the game: this font is drawn from its atlas only, or is a system font.";
+            if (_extractingToFonts.Contains(sourceFontName)) return "Extracting...";
+            if (File.Exists(ExtractedPath(fontsFolder, font, ".ttf")) || File.Exists(ExtractedPath(fontsFolder, font, ".otf")) || File.Exists(ExtractedPath(fontsFolder, font, ".ttc")))
+                return "Already in the fonts folder.";
+            return null;
+        }
+
+        private static string ExtractedPath(string fontsFolder, GameFonts.Font font, string extension) =>
+            Path.Combine(fontsFolder, DerivedFonts.Sanitized(font.Name) + extension);
+
+        /// <summary>
+        /// Writes one game font's file into fonts/ (it becomes a Custom font), in the background;
+        /// <paramref name="done"/> runs on the main thread with the file written, or null (said in the log).
+        /// </summary>
+        internal static void Extract(GameFonts.Font font, string fontsFolder, Action<string> done)
+        {
+            if (font == null || !_extractingToFonts.Add(font.Name)) return;
+            _changes++;
+            string dataFolder = _dataFolder, version = _unityVersion;
+            System.Threading.Tasks.Task.Run(() =>
+            {
+                string written = null;
+                try
+                {
+                    var data = GameFonts.ReadData(dataFolder, font, version);
+                    if (data != null)
+                    {
+                        Directory.CreateDirectory(fontsFolder);
+                        written = ExtractedPath(fontsFolder, font, GameFonts.ExtensionOf(data));
+                        if (File.Exists(written)) throw new IOException($"{Path.GetFileName(written)} is already in the fonts folder");
+                        File.WriteAllBytes(written, data);
+                        TranslatorCore.LogInfo($"[GameFonts] '{font.Name}' extracted from the game into fonts/{Path.GetFileName(written)}");
+                    }
+                }
+                catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException || ex is UnityFileFormatException)
+                {
+                    TranslatorCore.LogWarning($"[GameFonts] '{font.Name}' could not be extracted: {ex.GetType().Name}: {ex.Message}");
+                    written = null;
+                }
+                _onMain.Enqueue(() => { _extractingToFonts.Remove(font.Name); _changes++; done?.Invoke(written); });
+            });
         }
 
         /// <summary>Main thread, the scanner's tick: what the background reading gave back.</summary>

@@ -1298,6 +1298,20 @@ namespace UnityGameTranslator.Core
             return LoadedTmpFontNamed(name);
         }
 
+        /// <summary>
+        /// The game's Font (a font FILE in its data) a detected font is drawn from: the font itself for
+        /// legacy text, a TextMesh Pro asset's source file — null when the asset has none (a static
+        /// asset: its letters exist only in its atlas). What Extract looks for (GameFontFiles).
+        /// </summary>
+        internal static string SourceFontNameOf(string fontName, string type)
+        {
+            if (type != "TextMeshPro") return fontName;
+            var asset = LoadedTmpFontNamed(fontName);
+            if (asset == null) return null;
+            var file = TypeHelper.TMP_FontAssetType.GetProperty("sourceFontFile", BindingFlags.Public | BindingFlags.Instance)?.GetValue(asset, null) as Font;
+            return file != null ? file.name : null;
+        }
+
         private static object LoadedTmpFontNamed(string name)
         {
             // An asset, not a scene object: the asset scan (the scene one misses it on Mono).

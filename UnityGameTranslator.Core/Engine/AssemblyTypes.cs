@@ -16,6 +16,11 @@ namespace UnityGameTranslator.Core
     /// </summary>
     public static class AssemblyTypes
     {
+        /// <summary>The mod's debug log, handed in at start (TranslatorCore): this file names no engine, so the checks replay it.</summary>
+        public static Action<string> DebugSink;
+
+        private static void LogDebug(string line) => DebugSink?.Invoke(line);
+
         /// <summary>
         /// The type of that exact full name, in whichever loaded assembly holds it; null when none does.
         ///
@@ -72,9 +77,12 @@ namespace UnityGameTranslator.Core
                 foreach (var type in ex.Types)
                     if (type != null) loaded.Add(type);
 
+                // 🔴 At debug level: an expected answer, not a fault (decided with the user, 2026-10-10).
+                // Every IL2CPP game has such types in the interop assemblies BepInEx generates — seven
+                // yellow lines at each start, read as errors by whoever opens the console — and every
+                // type that did load is read all the same. The detail stays for whoever investigates.
                 Exception first = ex.LoaderExceptions != null && ex.LoaderExceptions.Length > 0 ? ex.LoaderExceptions[0] : ex;
-                Faults.Say("AssemblyTypes.Of partial load (" + assembly.GetName().Name + ")", first,
-                    $"{ex.Types.Length - loaded.Count} type(s) could not load, the other {loaded.Count} are read");
+                LogDebug($"[AssemblyTypes] {assembly.GetName().Name}: {ex.Types.Length - loaded.Count} type(s) could not load, the other {loaded.Count} are read — first: {first.GetType().Name}: {first.Message}");
                 types = loaded.ToArray();
             }
 

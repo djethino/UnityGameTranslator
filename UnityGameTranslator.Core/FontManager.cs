@@ -3949,6 +3949,11 @@ namespace UnityGameTranslator.Core
         /// </summary>
         private static bool PutUnityClone(UnityEngine.Object c)
         {
+            // 🔴 As the UI.Text it is. Under IL2CPP the scene list (FindAllObjectsOfType) may hand a
+            // bare UnityEngine.Object wrapper, on which no font property exists: SetFont refused it
+            // ("no writable font property on Object", asked by TryApplyUnityClone — bench 2021.3
+            // IL2CPP, 2026-10-10) and the component kept the game's font until the game wrote it again.
+            if (TypeHelper.Il2CppCast(c, TypeHelper.UI_TextType) is UnityEngine.Object typed) c = typed;
             int id = ObjectNumbers.Of(c);
 
             var comp = c as Component;
@@ -5671,15 +5676,44 @@ namespace UnityGameTranslator.Core
                 _clearBorrowed = tmpType.GetMethod("ClearFallbackCharacterTable", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, Type.EmptyTypes, null);
             }
             if (_clearBorrowed == null) return;
+            if (!_lookupSought)
+            {
+                _lookupSought = true;
+                const BindingFlags any = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+                _lookupField = tmpType.GetField("m_CharacterLookupDictionary", any);
+                if (_lookupField == null) _lookupProperty = tmpType.GetProperty("m_CharacterLookupDictionary", any);
+            }
             int cleared = 0;
             foreach (var obj in TypeHelper.FindAllAssetsOfType(tmpType))
             {
                 var asset = TypeHelper.Il2CppCast(obj, tmpType);
                 if (asset == null) continue;
-                try { _clearBorrowed.Invoke(asset, null); cleared++; }
+                // 🔴 A font whose letter dictionary is not built yet has looked nothing up, so it has
+                // borrowed nothing. TMP builds it at the font's first use, and ClearFallbackCharacterTable
+                // walks it unchecked: on a font never used yet (a game font only loaded, a copy just
+                // made) it threw a NullReferenceException at every fallback change (bench, Unity 6000.x,
+                // Mono and IL2CPP). Read from the field, never the property, whose getter would build it.
+                try
+                {
+                    if (!HasLetterDictionary(asset)) continue;
+                    _clearBorrowed.Invoke(asset, null);
+                    cleared++;
+                }
                 catch (Exception ex) { Faults.Say("FontManager.ForgetBorrowedLetters", ex, (asset as UnityEngine.Object)?.name); }
             }
             TranslatorCore.LogDebug($"[FontManager] fallback list changed: {cleared} TMP font asset(s) forgot the letters they had found elsewhere");
+        }
+
+        private static bool _lookupSought;
+        private static FieldInfo _lookupField;
+        private static PropertyInfo _lookupProperty;   // IL2CPP: the interop exposes the field as a property
+
+        /// <summary>Whether TMP has built this font's letter dictionary yet (ForgetBorrowedLetters). Unreadable: asked as built, as before.</summary>
+        private static bool HasLetterDictionary(object asset)
+        {
+            if (_lookupField != null) return _lookupField.GetValue(asset) != null;
+            if (_lookupProperty != null) return _lookupProperty.GetValue(asset, null) != null;
+            return true;
         }
 
         internal static object GetFallbackListReflection(object font)

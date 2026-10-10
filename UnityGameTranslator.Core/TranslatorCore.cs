@@ -2091,6 +2091,8 @@ namespace UnityGameTranslator.Core
             Adapter = adapter;
             // Every failure caught at a boundary is said in this log (Engine/Faults).
             Faults.AttachSink(line => adapter.LogWarning(line));
+            // What an assembly could not load of its types: an expected answer, at debug level.
+            AssemblyTypes.DebugSink = LogDebug;
 
             // Before anything reads or writes JSON: a runtime that refuses to emit methods would
             // otherwise fail every object the config and the translation are made of (issue #29).

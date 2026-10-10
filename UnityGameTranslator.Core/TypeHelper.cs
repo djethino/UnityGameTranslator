@@ -455,7 +455,7 @@ namespace UnityGameTranslator.Core
 
                 if (prop == null || !prop.CanWrite)
                 {
-                    TranslatorCore.LogWarning($"[TypeHelper] SetFont failed: no writable font property on {type.Name}");
+                    TranslatorCore.LogWarning($"[TypeHelper] SetFont failed: no writable font property on {type.Name} (asked by {by})");
                     return;
                 }
 

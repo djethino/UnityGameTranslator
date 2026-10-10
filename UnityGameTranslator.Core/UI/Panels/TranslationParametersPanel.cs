@@ -403,6 +403,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 case "sharpnessChanged": return OnFontSharpnessChanged;
                 // Explicit user request: this is the one place the ranking is allowed to re-rank —
                 // and the fonts folder is read again, so a file dropped in it while the game runs is offered.
+                case "openFontsFolder": return OnOpenFontsFolderClicked;
                 case "refreshFonts": return () => { CustomFontLoader.Rescan(); InvalidateFontOrder(); RefreshFontsList(); };
                 case "rtlAll": return () => SetEveryRtlMirror(true);
                 case "rtlNone": return () => SetEveryRtlMirror(false);
@@ -2174,7 +2175,32 @@ namespace UnityGameTranslator.Core.UI.Panels
             foreach (var name in new List<string>(_extractByFont.Keys)) ShowExtract(name);
         }
 
+        /// <summary>Opens the fonts folder in the system's file browser — as the packs card opens its own.</summary>
+        private void OnOpenFontsFolderClicked()
+        {
+            System.IO.Directory.CreateDirectory(FontsFolder);
+            if (!TranslatorCore.OpenFolderSafe(FontsFolder) && _fontsStatus != null)
+            {
+                _fontsStatus.Show("Could not open the fonts folder: " + FontsFolder);
+                _fontsStatus.Tone = Tone.Warning;
+            }
+        }
+
+        /// <summary>
+        /// Extract, asked first: a game's font has its own licence, and the copy is for adapting it for
+        /// one's own use — said before it is written (user, 2026-10-10; the Manager's Export says the same).
+        /// </summary>
         private void ExtractFont(string fontName)
+        {
+            _extractSource.TryGetValue(fontName, out var source);
+            if (GameFontFiles.WhyNotExtract(source, TraceNameOf(fontName), FontsFolder, out var font) != null) return;
+            string shown = font?.Name ?? TraceNameOf(fontName);
+            Intents.Confirm("Extract font",
+                $"{UnityGameTranslator.Common.UnityFiles.GameFonts.ExportNotice}\n\n{shown} is saved in the fonts folder, where it becomes a Custom font.",
+                "Extract", () => RunExtract(fontName), isDanger: false);
+        }
+
+        private void RunExtract(string fontName)
         {
             _extractSource.TryGetValue(fontName, out var source);
             string traceName = TraceNameOf(fontName);

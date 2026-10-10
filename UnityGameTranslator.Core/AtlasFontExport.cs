@@ -150,7 +150,23 @@ namespace UnityGameTranslator.Core
             var raw = ReadBack(Member(asset, type, "atlas"), out var tex);
             if (raw == null) { refusal = "its atlas cannot be read back"; return null; }
 
-            foreach (var glyph in Items(glyphs))
+            // The list can lack the space, which TMProOld then answers from the dictionary it builds when
+            // it reads its asset (as KeepOldSpecialGlyphs reads it): without it, a traced font drew its
+            // spaces with .notdef's half-em (Silksong's perpetua_tmpro, 2026-10-10).
+            var all = new List<object>(Items(glyphs));
+            var listed = new HashSet<int>();
+            foreach (var g in all) if (g != null) listed.Add((int)Num(g, "id"));
+            var dictionary = type.GetProperty("characterDictionary", Pub)?.GetValue(asset, null);
+            var tryGet = dictionary?.GetType().GetMethod("TryGetValue");
+            if (tryGet != null)
+                foreach (int special in new[] { 0x20, 0xA0 })
+                {
+                    if (listed.Contains(special)) continue;
+                    var args = new object[] { special, null };
+                    if ((bool)tryGet.Invoke(dictionary, args) && args[1] != null) all.Add(args[1]);
+                }
+
+            foreach (var glyph in all)
             {
                 if (glyph == null) continue;
                 int unicode = (int)Num(glyph, "id");

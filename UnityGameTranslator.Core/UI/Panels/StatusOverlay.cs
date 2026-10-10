@@ -1113,6 +1113,18 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (shown == 0) height = FloorHeight();
 
             Overlays.SetSize(Window, PanelWidth, Math.Max(50, height));
+
+            // Each distinct set of boxes once (Debug logging), with the height it gave — see
+            // TranslatorUIManager.UpdateStatusOverlay for why.
+            if (TranslatorCore.DebugMode)
+            {
+                var names = new List<string>();
+                foreach (var box in new[] { _modUpdateBox, _syncBox, _webNotifBox, _failuresBox, _fontCoverageBox, _fontDecorationsBox, _windowFontBox, _unreachableBox, _fontBox, _aiBox, _connectionBox, _toast?.Handle })
+                    if (box != null && box.Visible) names.Add(box.Object != null ? box.Object.name : "?");
+                string boxes = names.Count == 0 ? "none" : string.Join(", ", names.ToArray());
+                if (DiagnosticOnce.First("overlay-boxes", boxes))
+                    TranslatorCore.LogDebug($"[StatusOverlay] boxes [{boxes}] → {Math.Max(50, height)} px{(shown == 0 ? " (nothing measured: floor)" : "")}");
+            }
         }
 
         // What the stack costs around its boxes, and between them.

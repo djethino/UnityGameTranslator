@@ -539,8 +539,10 @@ namespace UnityGameTranslator.Core.UI.Panels
                     else if (success)
                     {
                         // The way out, in the words of the site's own list (GameCandidates.NothingFound)
-                        // — and, without an account, that the list was the site's games alone.
-                        GameSearchStatus.Say(GameCandidates.NothingFoundFor(stores), Tone.Muted);
+                        // — and, without an account, that the list was the site's games alone. In the
+                        // warning tone, as the Manager's game picker says it: a grey line was missed
+                        // (user, 2026-10-10).
+                        GameSearchStatus.Say(GameCandidates.NothingFoundFor(stores), Tone.Warning);
                     }
                     else
                     {

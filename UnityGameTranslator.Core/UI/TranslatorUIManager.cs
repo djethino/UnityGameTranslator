@@ -5912,6 +5912,14 @@ namespace UnityGameTranslator.Core.UI
 
             bool shouldShow = firstRunDone && StatusOverlay.HasSomethingToSay(panelsOpen);
 
+            // Each distinct state once (Debug logging): an overlay seen frozen on the bench, its
+            // content never refreshed, could not be explained from the code alone (2026-10-10).
+            if (TranslatorCore.DebugMode)
+            {
+                string state = $"show={shouldShow} panelsOpen={panelsOpen} enabled={StatusOverlay.Enabled} toast={StatusOverlay.IsToastActive}";
+                if (DiagnosticOnce.First("overlay-state", state)) TranslatorCore.LogDebug($"[StatusOverlay] {state}");
+            }
+
             if (shouldShow)
             {
                 // Tell overlay which mode to use
@@ -5921,6 +5929,10 @@ namespace UnityGameTranslator.Core.UI
                 if (!StatusOverlay.Enabled)
                 {
                     StatusOverlay.SetActive(true);
+                    // 🔴 Filled and sized on the frame it appears, never half a second later: until
+                    // its first refresh the window has its document's height (overlay.json, 180) under
+                    // a one-line box — the stretched blue seen at every game start (user, 2026-10-10).
+                    _overlayRefreshTimer = OVERLAY_REFRESH_INTERVAL;
                 }
 
                 // Refresh status overlay content periodically

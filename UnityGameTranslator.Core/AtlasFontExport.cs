@@ -212,7 +212,10 @@ namespace UnityGameTranslator.Core
             {
                 if (cmap.ContainsKey(letter.Unicode)) continue;
                 var outline = new DerivedFontWriter.Outline { Advance = (int)Math.Round(letter.Advance * s) };
-                if (letter.Grid != null)
+                // A space draws nothing whatever its box covers: TMProOld's space has a box over another
+                // letter's pixels, which came out as a stray mark in every space (Silksong, 2026-10-10).
+                bool blank = TextShaping.UnicodeInfo.IsWhiteSpace(letter.Unicode) || TextShaping.UnicodeInfo.IsControl(letter.Unicode);
+                if (letter.Grid != null && !blank)
                     foreach (var contour in AtlasTracer.Trace(letter.Grid, letter.Width, letter.Height))
                     {
                         var points = new List<DerivedFontWriter.QuadPoint>(contour.Count);

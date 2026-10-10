@@ -2145,7 +2145,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         /// <summary>The asset name to trace when the font has no file (a TMP asset: its atlas), or null.</summary>
         private string TraceNameOf(string fontName) =>
-            _extractType.TryGetValue(fontName, out var type) && type == "TextMeshPro" ? fontName : null;
+            _extractType.TryGetValue(fontName, out var type) && FontManager.IsTmpType(type) ? fontName : null;
 
         private static string FontsFolder => System.IO.Path.Combine(TranslatorCore.ModFolder, UnityGameTranslator.Common.AssetPacks.FontsFolder);
 
@@ -2156,6 +2156,9 @@ namespace UnityGameTranslator.Core.UI.Panels
             _extractSource.TryGetValue(fontName, out var source);
             string why = GameFontFiles.WhyNotExtract(source, TraceNameOf(fontName), FontsFolder, out _);
             button.Enabled = why == null;
+            // Said once per font and reason: a greyed Extract read only on hover left nothing to diagnose by.
+            if (why != null && DiagnosticOnce.First("extract-greyed", fontName + "\u0001" + why))
+                TranslatorCore.LogInfo($"[GameFonts] Extract on '{fontName}' ({(_extractType.TryGetValue(fontName, out var t) ? t : "?")}): {why}");
             _helpZone?.Describe(button, why ?? ExtractHelp);
         }
 
@@ -2294,7 +2297,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             // The same list wherever a font is chosen to draw text (FontOptions): the Options
             // window's fonts for the mod's own window take the legacy one.
-            bool isTMPFont = fontInfo.Type == "TMP" || fontInfo.Type == "TextMeshPro" || fontInfo.Type == "TMP (alt)";
+            bool isTMPFont = FontManager.IsTmpType(fontInfo.Type);
             long at = SpentFrom;
             var options = FontOptions.For(fontInfo.Type == "TMP (alt)" ? FontOptionKind.AltTmp : isTMPFont ? FontOptionKind.Tmp : FontOptionKind.Legacy,
                                           _systemFonts);

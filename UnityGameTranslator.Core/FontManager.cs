@@ -1303,9 +1303,16 @@ namespace UnityGameTranslator.Core
         /// legacy text, a TextMesh Pro asset's source file — null when the asset has none (a static
         /// asset: its letters exist only in its atlas). What Extract looks for (GameFontFiles).
         /// </summary>
+        /// <summary>
+        /// Whether a detected font's type is TextMesh Pro — written three ways: "TextMeshPro" by a
+        /// detection, "TMP" / "TMP (alt)" (TMProOld) as the translation stores it. Testing one of them
+        /// left every stored TMP font out of Extract (2026-10-10).
+        /// </summary>
+        internal static bool IsTmpType(string type) => type == "TMP" || type == "TextMeshPro" || type == "TMP (alt)";
+
         internal static string SourceFontNameOf(string fontName, string type)
         {
-            if (type != "TextMeshPro") return fontName;
+            if (!IsTmpType(type)) return fontName;
             var asset = LoadedTmpFontNamed(fontName);
             if (asset == null)
             {
@@ -1324,7 +1331,7 @@ namespace UnityGameTranslator.Core
 
         /// <summary>The loaded TextMesh Pro asset a detected font of that type is — what Extract traces when it has no file.</summary>
         internal static object TraceableAssetOf(string fontName, string type) =>
-            type == "TextMeshPro" ? LoadedTmpFontNamed(fontName) : null;
+            IsTmpType(type) ? LoadedTmpFontNamed(fontName) : null;
 
         private static object LoadedTmpFontNamed(string name)
         {
@@ -6514,7 +6521,7 @@ namespace UnityGameTranslator.Core
         {
             if (string.IsNullOrEmpty(storedType) || storedType == "Unknown") return true;
 
-            bool isTmp = storedType == "TMP" || storedType == "TextMeshPro" || storedType == "TMP (alt)";
+            bool isTmp = IsTmpType(storedType);
             if (isTmp) return tmpFamily;
 
             bool isUnity = storedType == "Unity" || storedType == "Unity Font" || storedType == "TextMesh";

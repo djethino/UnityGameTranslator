@@ -1307,9 +1307,19 @@ namespace UnityGameTranslator.Core
         {
             if (type != "TextMeshPro") return fontName;
             var asset = LoadedTmpFontNamed(fontName);
-            if (asset == null) return null;
-            var file = TypeHelper.TMP_FontAssetType.GetProperty("sourceFontFile", BindingFlags.Public | BindingFlags.Instance)?.GetValue(asset, null) as Font;
-            return file != null ? file.name : null;
+            if (asset == null)
+            {
+                if (DiagnosticOnce.First("source-font-noasset", fontName))
+                    TranslatorCore.LogInfo($"[FontManager] '{fontName}': no loaded TextMesh Pro asset of this name — its source file is not known");
+                return null;
+            }
+            var raw = TypeHelper.TMP_FontAssetType.GetProperty("sourceFontFile", BindingFlags.Public | BindingFlags.Instance)?.GetValue(asset, null);
+            // ⚠ IL2CPP: the value read by reflection is the interop wrapper, which `as Font` refuses
+            // (analyse/pieges-projet.md §2, "L'enveloppe IL2CPP n'est pas l'objet") — cast it first.
+            string name = raw == null ? null : TypeHelper.FontNameOf(TypeHelper.Il2CppCast(raw, typeof(Font)) ?? raw);
+            if (name == null && DiagnosticOnce.First("source-font-none", fontName))
+                TranslatorCore.LogInfo($"[FontManager] '{fontName}': {(raw == null ? "its asset keeps no source font file (its letters are in its atlas only)" : $"its source font ({raw.GetType().Name}) has no readable name")}");
+            return name;
         }
 
         private static object LoadedTmpFontNamed(string name)

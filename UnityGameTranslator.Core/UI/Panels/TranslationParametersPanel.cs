@@ -2297,7 +2297,10 @@ namespace UnityGameTranslator.Core.UI.Panels
                         : $"Could not extract {shown}. See the log.");
                     _fontsStatus.Tone = written != null ? Tone.Success : Tone.Warning;
                 }
-                if (written != null) { CustomFontLoader.Rescan(); InvalidateFontOrder(); RefreshFontsList(); }
+                // The new Custom font joins every card's menu; the cards keep their order and the view
+                // its place — an Extract is no Refresh List, and re-ranking sent the list back to its
+                // first row under the card just extracted from (2026-10-10).
+                if (written != null) { CustomFontLoader.Rescan(); RefreshFontsList(); }
             };
             // The game's file when it has one (exact); otherwise the letters traced from the atlas.
             if (font != null) GameFontFiles.Extract(font, FontsFolder, done);

@@ -91,6 +91,18 @@ namespace UnityGameTranslator.Core.UI.Components
         }
 
         /// <summary>
+        /// Remove one row, the others kept where they are — deactivated before being destroyed, for
+        /// the reason <see cref="Clear"/> gives.
+        /// </summary>
+        public void Remove(Host row)
+        {
+            var child = row?.Object;
+            if (child == null) return;
+            child.SetActive(false);
+            Object.Destroy(child);
+        }
+
+        /// <summary>
         /// Say that rows were added: the empty sentence goes.
         ///
         /// 🔴 **The view stays where the person left it** (user, 2026-09-30: « on ne fait pas sauter

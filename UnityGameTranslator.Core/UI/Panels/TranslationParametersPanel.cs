@@ -1906,8 +1906,37 @@ namespace UnityGameTranslator.Core.UI.Panels
             Spent("font order", at);
 
             bool reuse = SameFontRows(fonts);
+            // 🔴 Fonts gone or added, the rest unchanged and in order: the cards of the fonts still
+            // there are kept — the person's place in the list with them — and only the new ones are
+            // built, at the end where the frozen order puts them. Rebuilt from nothing, the list
+            // emptied and went back to its first row after an Apply (user, 2026-10-10).
+            var keptRows = reuse ? null : RowsKeptFor(fonts);
+            if (keptRows != null)
+            {
+                RemoveFontRowsNotIn(fonts);
+                if (DiagnosticOnce.First("fonts-list-partial", $"{_fontRows.Count}/{fonts.Count}"))
+                    TranslatorCore.LogDebug($"[TranslationParametersPanel] fonts list: {_fontRows.Count} card(s) kept, {fonts.Count - _fontRows.Count} to build");
+                _fontsList.Filled();
+                for (int i = 0; i < _fontRows.Count; i++)
+                    FillFontRow(_fontRows[i].Value, fonts[i]);
+                if (_fontRows.Count == fonts.Count) { FinishFontsList(fonts.Count); return; }
+                _fontsToBuild = fonts;
+                _fontsBuilt = _fontRows.Count;
+                BuildSomeFontRows();
+                return;
+            }
             if (!reuse)
             {
+                // Why from nothing, once per distinct case (Debug logging): the first place the cards
+                // and the fonts part.
+                if (TranslatorCore.DebugMode && _fontRows.Count > 0)
+                {
+                    int at0 = 0;
+                    while (at0 < fonts.Count && at0 < _fontRows.Count && fonts[at0].Name == _fontRows[at0].Key) at0++;
+                    string why = $"{_fontRows.Count} card(s) for {fonts.Count} font(s), first apart at {at0}: card '{(at0 < _fontRows.Count ? _fontRows[at0].Key : "-")}' font '{(at0 < fonts.Count ? fonts[at0].Name : "-")}'";
+                    if (DiagnosticOnce.First("fonts-list-rebuilt", why))
+                        TranslatorCore.LogDebug($"[TranslationParametersPanel] fonts list built again from nothing: {why}");
+                }
                 // Clean up searchable dropdowns first
                 foreach (var dropdown in _fallbackDropdowns)
                 {
@@ -2013,6 +2042,54 @@ namespace UnityGameTranslator.Core.UI.Panels
                 if (built == null || built.Root == null || built.Root.Object == null) return false;
             }
             return true;
+        }
+
+        /// <summary>
+        /// Whether the cards built can stay for these fonts: every font that has a card comes first,
+        /// in the cards' own order, and the fonts without one after them (the frozen order appends
+        /// newcomers, ApplyStableFontOrder). Null when not — the list is then built from nothing.
+        /// </summary>
+        private HashSet<string> RowsKeptFor(List<FontDisplayInfo> fonts)
+        {
+            if (fonts == null || fonts.Count == 0 || _fontRows.Count == 0) return null;
+            var built = new Dictionary<string, BuiltScreen>(StringComparer.Ordinal);
+            foreach (var kv in _fontRows)
+            {
+                if (kv.Value == null || kv.Value.Root == null || kv.Value.Root.Object == null) return null;
+                built[kv.Key] = kv.Value;
+            }
+            var kept = new HashSet<string>(StringComparer.Ordinal);
+            int next = 0;                                     // the next card, in the cards' order
+            bool newcomerSeen = false;
+            foreach (var font in fonts)
+            {
+                if (!built.ContainsKey(font.Name)) { newcomerSeen = true; continue; }
+                if (newcomerSeen) return null;                // a kept card after a new one: reordered
+                while (next < _fontRows.Count && _fontRows[next].Key != font.Name) next++;
+                if (next == _fontRows.Count) return null;     // out of the cards' order
+                kept.Add(font.Name);
+                next++;
+            }
+            return kept.Count == 0 ? null : kept;
+        }
+
+        /// <summary>The cards of fonts no longer detected, taken out with their menu and Identify button.</summary>
+        private void RemoveFontRowsNotIn(List<FontDisplayInfo> fonts)
+        {
+            var wanted = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var font in fonts) wanted.Add(font.Name);
+            for (int i = _fontRows.Count - 1; i >= 0; i--)
+            {
+                var kv = _fontRows[i];
+                if (wanted.Contains(kv.Key)) continue;
+                var dropdown = kv.Value.Dropdown("Fallback");
+                if (dropdown != null && _fallbackDropdowns.Remove(dropdown)) dropdown.Destroy();
+                _identifyByFont.Remove(kv.Key);
+                // Its "?" goes with it: dressing it back would throw (see the full rebuild).
+                if (kv.Key == _highlightedFontName) _highlightedButton = null;
+                _fontsList.Remove(kv.Value.Root);
+                _fontRows.RemoveAt(i);
+            }
         }
 
         // Row order held for the whole editing session. Rebuilt only when the user opens the panel

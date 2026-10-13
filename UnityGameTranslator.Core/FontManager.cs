@@ -4993,9 +4993,9 @@ namespace UnityGameTranslator.Core
             // The game font that IS the replacement (a "[Game]" fallback) is its own backup.
             if (originalFontObj is UnityEngine.Object originalObj && originalObj == shared) return null;
 
-            bool modernLines = lines > 0.001f && modern;
-            string headName = shared.name + " + " + originalFontName + (modernLines ? " (lines " + lines.ToString("F3", System.Globalization.CultureInfo.InvariantCulture) + ")" : "");
-            string key = ObjectNumbers.Of(shared) + "\u0001" + originalFontName + (modernLines ? "\u0001" + lines.ToString("F3", System.Globalization.CultureInfo.InvariantCulture) : "");
+            bool keptLines = lines > 0.001f;
+            string headName = shared.name + " + " + originalFontName + (keptLines ? " (lines " + lines.ToString("F3", System.Globalization.CultureInfo.InvariantCulture) + ")" : "");
+            string key = ObjectNumbers.Of(shared) + "\u0001" + originalFontName + (keptLines ? "\u0001" + lines.ToString("F3", System.Globalization.CultureInfo.InvariantCulture) : "");
             if (_backupHeads.TryGetValue(key, out var known))
             {
                 if (TypeHelper.IsUnityObjectAlive(known)) return known;
@@ -5005,7 +5005,7 @@ namespace UnityGameTranslator.Core
             try
             {
                 string spareKey = ObjectNumbers.Of(shared) + "\u0001" + originalFontName;
-                var spare = modernLines ? TakeSpare(spareKey, head: true) : null;
+                var spare = keptLines ? TakeSpare(spareKey, head: true) : null;
                 if (spare != null)
                 {
                     // A head of this replacement for this game font, made for a size nobody is laid
@@ -5014,7 +5014,8 @@ namespace UnityGameTranslator.Core
                     var again = TypeHelper.Il2CppCast(spare.Asset, type);
                     GiveGameLines(again, originalFontObj, type, headName, lines);
                     PutLinesBehind(again, originalFontObj, type, originalFontName, lines, gameCopy: true, name: headName);
-                    CustomFontLoader.RebuildLookupTables(again, type);
+                    if (modern) CustomFontLoader.RebuildLookupTables(again, type);
+                    else oldRead.Invoke(again, null);
                     EngineStrings.SetName(spare.Asset, headName);
                     _createdFallbackFontNames.Add(spare.Asset.name);
                     _gameFontOfCreated[spare.Asset.name] = originalFontName;
@@ -5028,12 +5029,13 @@ namespace UnityGameTranslator.Core
                 var head = TypeHelper.Il2CppCast(copy, type);
                 if (!(head is UnityEngine.Object made)) return null;
 
-                if (modernLines)
+                if (keptLines)
                 {
                     // The replacement's letters stay in it (they are its copy's, on the replacement's
                     // atlas, which nobody writes: both are static), under the game's line heights.
+                    // The old TextMesh Pro the same: its one list of glyphs, copied whole.
                     GiveGameLines(head, originalFontObj, type, headName, lines);
-                    CustomFontLoader.MakeStatic(head, type, headName);
+                    if (modern) CustomFontLoader.MakeStatic(head, type, headName);
                 }
                 else if (modern)
                 {
@@ -5050,11 +5052,17 @@ namespace UnityGameTranslator.Core
                     // And it never adds one: static, it never writes into the atlas it shares.
                     CustomFontLoader.MakeStatic(head, type, shared.name + " + " + originalFontName);
                 }
-                else if (!KeepOldSpecialGlyphs(shared, type, head)) return null;
+                else
+                {
+                    if (!KeepOldSpecialGlyphs(shared, type, head)) return null;
+                    // The lines nobody's letter sets are measured in the head: the game's, as in the
+                    // modern one (before the lookups are read, which take the space's box from them).
+                    if (HeadKeepsGameLines) GiveGameLines(head, originalFontObj, type, shared.name + " + " + originalFontName);
+                }
 
                 var fallbacks = GetFallbackListReflection(head);
                 if (fallbacks == null) return null;
-                if (modernLines)
+                if (keptLines)
                 {
                     // Behind it, under the same heights: the game font, then what the game font
                     // itself searches (PutLinesBehind).
@@ -5078,7 +5086,7 @@ namespace UnityGameTranslator.Core
                 _createdFallbackFontNames.Add(made.name);
                 _gameFontOfCreated[made.name] = originalFontName;
                 _backupHeads[key] = head;
-                if (modernLines)
+                if (keptLines)
                 {
                     // A letter the mod adds to the replacement later is added to this copy of it.
                     int sharedId = ObjectNumbers.Of(shared);

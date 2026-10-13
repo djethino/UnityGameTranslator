@@ -218,7 +218,7 @@ namespace UnityGameTranslator.Core
                 {
                     GiveGameLines(spare.Copy.Twin, gameFont, type, name, size);
                     ClearList(GetFallbackListReflection(spare.Copy.Twin));
-                    CustomFontLoader.RebuildLookupTables(spare.Copy.Twin, type);
+                    ReadAgain(spare.Copy.Twin, type);
                     EngineStrings.SetName(again, name);
                     _createdFallbackFontNames.Add(again.name);
                     _gameFontOfCreated[again.name] = gameFontName;
@@ -242,7 +242,7 @@ namespace UnityGameTranslator.Core
                 ClearList(GetFallbackListReflection(twin));
                 foreach (var character in ListOf(type.GetProperty("characterTable", pub)?.GetValue(twin, null)))
                     if (character != null) copy.Has.Add(Convert.ToUInt32(ValueOf(character, "unicode") ?? 0u));
-                CustomFontLoader.RebuildLookupTables(twin, type);
+                ReadAgain(twin, type);
                 EngineStrings.SetName(made, name);
                 made.hideFlags |= HideFlags.DontUnloadUnusedAsset;
                 _createdFallbackFontNames.Add(made.name);
@@ -313,7 +313,8 @@ namespace UnityGameTranslator.Core
         {
             try
             {
-                var settings = fontAssetType.Assembly.GetType("TMPro.TMP_Settings");
+                // Beside the font asset's own type: TMPro's, or the old TextMesh Pro a game carries (TMProOld).
+                var settings = fontAssetType.Assembly.GetType(fontAssetType.Namespace + ".TMP_Settings");
                 return settings?.GetProperty("fallbackFontAssets", BindingFlags.Public | BindingFlags.Static)?.GetValue(null, null);
             }
             // Without them, a letter only TMP's own fallbacks hold keeps its own heights: said.
@@ -328,14 +329,12 @@ namespace UnityGameTranslator.Core
         /// </summary>
         private static object LinesWear(object gameFont, Type type, string gameFontName, float size)
         {
-            // The old TextMesh Pro keeps its letters and its lines another way: not done there.
-            if (type.GetProperty("characterTable", BindingFlags.Public | BindingFlags.Instance) == null) return null;
             var copy = LinesTwin(gameFont, gameFont, type, gameFontName, size);
             if (copy == null) return null;
             if (copy.Twin is UnityEngine.Object twin && !_linesFamilies.ContainsKey(ObjectNumbers.Of(twin)))
             {
                 PutLinesBehind(copy.Twin, gameFont, type, gameFontName, size, gameCopy: false, name: twin.name);
-                CustomFontLoader.RebuildLookupTables(copy.Twin, type);
+                ReadAgain(copy.Twin, type);
             }
             return copy.Twin;
         }
@@ -453,6 +452,78 @@ namespace UnityGameTranslator.Core
         internal static void GiveGameLinesTo(object asset, object gameFont, Type fontAssetType, string name, float size) =>
             GiveGameLines(asset, gameFont, fontAssetType, name, size);
 
+        /// <summary>An asset's lookups read again after its tables or its lines changed: the modern way, or the old TextMesh Pro's (ReadFontDefinition).</summary>
+        private static void ReadAgain(object asset, Type type)
+        {
+            var old = type.GetProperty("characterTable", BindingFlags.Public | BindingFlags.Instance) == null
+                ? type.GetMethod("ReadFontDefinition", BindingFlags.Public | BindingFlags.Instance, null, Type.EmptyTypes, null) : null;
+            if (old != null) old.Invoke(asset, null);
+            else CustomFontLoader.RebuildLookupTables(asset, type);
+        }
+
+        // ── The same in the OLD TextMesh Pro (a game's own, before 1.4: Silksong's TMProOld) ────────
+        // Its heights are the fields of one object, m_fontInfo (FaceInfo), by other names. A line is
+        // laid out the same way — the heights of the asset that owns its letters, at fontSize ÷
+        // PointSize × Scale — so the same lengths are taken, in the same units.
+
+        private static readonly string[] OldLineLengths =
+        {
+            "Ascender", "CapHeight", "CenterLine", "Baseline", "Descender", "LineHeight",
+            "Underline", "UnderlineThickness", "strikethrough", "strikethroughThickness",
+            "SuperscriptOffset", "SubscriptOffset", "TabWidth",
+        };
+
+        private static readonly string[] OldLinePlaceLengths = { "Ascender", "Descender", "LineHeight" };
+
+        /// <summary>An old asset's m_fontInfo — a field on Mono, a property on IL2CPP interop (CustomFontLoader.TryGetLegacyFaceInfo).</summary>
+        private static object OldInfoOf(object asset)
+        {
+            var t = asset.GetType();
+            const BindingFlags any = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
+            return t.GetProperty("m_fontInfo", BindingFlags.Public | BindingFlags.Instance)?.GetValue(asset, null)
+                   ?? t.GetField("m_fontInfo", any)?.GetValue(asset)
+                   ?? t.GetProperty("fontInfo", BindingFlags.Public | BindingFlags.Instance)?.GetValue(asset, null);
+        }
+
+        private static void GiveGameLinesOld(object head, object gameFont, Type type, string name, float size)
+        {
+            try
+            {
+                var game = TypeHelper.Il2CppCast(gameFont, type) ?? gameFont;
+                if (!CustomFontLoader.TryGetLegacyFaceInfo(head, out float headPoint, out float headFace) || headPoint <= 0f) return;
+                if (!CustomFontLoader.TryGetLegacyFaceInfo(game, out float gamePoint, out float gameFace) || gamePoint <= 0f) return;
+                if (headFace <= 0f) headFace = 1f;
+                if (gameFace <= 0f) gameFace = 1f;
+                double factor = (headPoint * gameFace) / (gamePoint * headFace);
+                object own = OldInfoOf(head), theirs = OldInfoOf(game);
+                if (own == null || theirs == null || ReferenceEquals(own, theirs)) return;
+                const BindingFlags pub = BindingFlags.Public | BindingFlags.Instance;
+                var face = own.GetType();
+                // Read whole before anything is written: an asset given its own lines again reads itself.
+                var taken = new List<KeyValuePair<string, float>>();
+                foreach (string length in OldLineLengths)
+                {
+                    object value = face.GetProperty(length, pub)?.GetValue(theirs, null) ?? face.GetField(length, pub)?.GetValue(theirs);
+                    if (value == null) continue;
+                    double kept = size > 0.001f && Array.IndexOf(OldLinePlaceLengths, length) >= 0 ? 1.0 / size : 1.0;
+                    taken.Add(new KeyValuePair<string, float>(length, (float)(Convert.ToDouble(value) * factor * kept)));
+                }
+                int written = 0;
+                foreach (var length in taken)
+                {
+                    var p = face.GetProperty(length.Key, pub);
+                    var f = p == null ? face.GetField(length.Key, pub) : null;
+                    if (p != null && p.CanWrite) p.SetValue(own, length.Value, null);
+                    else if (f != null) f.SetValue(own, length.Value);
+                    else continue;
+                    written++;
+                }
+                TranslatorCore.LogDebug($"[FontManager] '{name}': lines laid out as the game font's ({written} length(s) taken, old TextMesh Pro{(Math.Abs(size - 1f) > 0.001f ? $", kept at the game's size for texts drawn at {size:F3}" : "")})");
+            }
+            // The head keeps the replacement's heights: a menu's empty lines are the replacement's — said.
+            catch (Exception ex) { Faults.Say("FontManager.GiveGameLinesOld", ex.InnerException ?? ex, name); }
+        }
+
         private static readonly string[] GameLineLengths =
         {
             "ascentLine", "capLine", "meanLine", "baseline", "descentLine", "lineHeight",
@@ -468,6 +539,11 @@ namespace UnityGameTranslator.Core
         /// text, smaller or larger, stays on the game's lines. 1 where the lines follow the size.</param>
         private static void GiveGameLines(object head, object gameFont, Type type, string name, float size = 1f)
         {
+            if (type.GetProperty("faceInfo", BindingFlags.Public | BindingFlags.Instance) == null)
+            {
+                GiveGameLinesOld(head, gameFont, type, name, size);
+                return;
+            }
             try
             {
                 var game = TypeHelper.Il2CppCast(gameFont, type) ?? gameFont;

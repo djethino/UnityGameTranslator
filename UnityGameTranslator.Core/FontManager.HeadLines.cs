@@ -76,6 +76,96 @@ namespace UnityGameTranslator.Core
             return live;
         }
 
+        // ── The copies nobody wears any more ────────────────────────────────────────────────────
+        //
+        // An asset that keeps the game's lines is made for ONE size (its heights are divided by
+        // it): every size a translator tries in the Fonts tab asks for a head and the copies
+        // behind it, each with a whole font's tables. Once no component is laid out on a size, its
+        // assets are set aside, and the next size asked for the same fonts takes them — given
+        // its heights — instead of making new ones.
+        //
+        // 🔴 Set aside, never destroyed: a copy shares its source's atlases, and TMP destroys a font
+        // asset's atlases with it. Destroying the copies of one size blanked the letters of the
+        // game's own fallback font on the texts of the next (bench tmphide -Resize, 2026-10-13).
+
+        /// <summary>An asset made for one game font at one size (a head, or a copy behind one).</summary>
+        private sealed class LinesMade
+        {
+            public UnityEngine.Object Asset;
+            /// <summary>Whose it is whatever the size (what a spare is taken by), then the size and the key it is known under.</summary>
+            public string Base, Game, Lines, Key;
+            public bool Head;
+            public LinesCopy Copy;
+        }
+
+        private static readonly List<LinesMade> _linesMade = new List<LinesMade>();
+        private static readonly List<LinesMade> _linesSpare = new List<LinesMade>();
+        private static bool _linesSweepDue;
+        private static int _linesSweepWait;
+        /// <summary>Frames left to the texts to move to the assets just asked for, before the others are looked at.</summary>
+        private const int LinesSweepFrames = 300;
+
+        private static void NoteLinesMade(UnityEngine.Object asset, string baseKey, string gameFontName, float size, string key, bool head, LinesCopy copy = null)
+        {
+            _linesMade.Add(new LinesMade { Asset = asset, Base = baseKey, Game = gameFontName, Lines = LinesText(size), Key = key, Head = head, Copy = copy });
+            _linesSweepDue = true;
+            _linesSweepWait = LinesSweepFrames;
+        }
+
+        /// <summary>An asset set aside for these fonts, taken back; null when there is none.</summary>
+        private static LinesMade TakeSpare(string baseKey, bool head)
+        {
+            for (int i = _linesSpare.Count - 1; i >= 0; i--)
+            {
+                var spare = _linesSpare[i];
+                if (!TypeHelper.IsUnityObjectAlive(spare.Asset)) { _linesSpare.RemoveAt(i); continue; }
+                if (spare.Head != head || !string.Equals(spare.Base, baseKey, StringComparison.Ordinal)) continue;
+                _linesSpare.RemoveAt(i);
+                return spare;
+            }
+            return null;
+        }
+
+        /// <summary>Once per frame: sets aside the assets made for a size no component is laid out on any more.</summary>
+        internal static void LinesSweepTick()
+        {
+            if (!_linesSweepDue || --_linesSweepWait > 0) return;
+            _linesSweepDue = false;
+            try
+            {
+                var worn = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var replaced in _replacedFor)
+                {
+                    if (!_replacedLines.TryGetValue(replaced.Key, out float lines) || lines <= 0.001f) continue;
+                    // A component destroyed since, its number not forgotten yet, wears nothing.
+                    if (_replacedComponentRefs.TryGetValue(replaced.Key, out var component) && !TypeHelper.IsUnityObjectAlive(component)) continue;
+                    worn.Add(replaced.Value + "\u0001" + LinesText(lines));
+                }
+                int aside = 0;
+                for (int i = _linesMade.Count - 1; i >= 0; i--)
+                {
+                    var made = _linesMade[i];
+                    bool alive = TypeHelper.IsUnityObjectAlive(made.Asset);
+                    if (alive && worn.Contains(made.Game + "\u0001" + made.Lines)) continue;
+                    _linesMade.RemoveAt(i);
+                    if (made.Head) _backupHeads.Remove(made.Key); else _linesCopies.Remove(made.Key);
+                    if (!alive) continue;
+                    int id = ObjectNumbers.Of(made.Asset);
+                    if (_linesFamilies.TryGetValue(id, out var family))
+                    {
+                        if (family.Copies.Exists(c => c.Dynamic)) _dynamicLinesFamilies--;
+                        _linesFamilies.Remove(id);
+                    }
+                    _linesSpare.Add(made);
+                    aside++;
+                }
+                if (aside > 0)
+                    TranslatorCore.LogDebug($"[FontManager] {aside} font copy(ies) made for a size no text is laid out on any more: set aside for the next size ({_linesMade.Count} worn, {_linesSpare.Count} aside)");
+            }
+            // They stay where they are: more copies than needed until the game closes — said.
+            catch (Exception ex) { Faults.Say("FontManager.LinesSweepTick", ex); }
+        }
+
         /// <summary>A copy made to carry the game's lines, and the font it copies.</summary>
         private sealed class LinesCopy
         {
@@ -117,10 +207,28 @@ namespace UnityGameTranslator.Core
             {
                 const BindingFlags pub = BindingFlags.Public | BindingFlags.Instance;
                 var cast = TypeHelper.Il2CppCast(original, type);
-                var twin = TypeHelper.Il2CppCast(UnityEngine.Object.Instantiate(original), type);
-                if (!(twin is UnityEngine.Object made)) return null;
                 string name = original == game ? gameFontName + " (lines " + LinesText(size) + ")"
                                                : original.name + " (lines of " + gameFontName + " " + LinesText(size) + ")";
+                string baseKey = ObjectNumbers.Of(original) + "\u0001" + ObjectNumbers.Of(game);
+
+                // One set aside for these two fonts (another size, worn by nobody now): given this
+                // size's heights, it is this size's copy.
+                var spare = TakeSpare(baseKey, head: false);
+                if (spare != null && spare.Copy != null && spare.Asset is UnityEngine.Object again)
+                {
+                    GiveGameLines(spare.Copy.Twin, gameFont, type, name, size);
+                    ClearList(GetFallbackListReflection(spare.Copy.Twin));
+                    CustomFontLoader.RebuildLookupTables(spare.Copy.Twin, type);
+                    EngineStrings.SetName(again, name);
+                    _createdFallbackFontNames.Add(again.name);
+                    _gameFontOfCreated[again.name] = gameFontName;
+                    _linesCopies[key] = spare.Copy;
+                    NoteLinesMade(again, baseKey, gameFontName, size, key, head: false, copy: spare.Copy);
+                    return spare.Copy;
+                }
+
+                var twin = TypeHelper.Il2CppCast(UnityEngine.Object.Instantiate(original), type);
+                if (!(twin is UnityEngine.Object made)) return null;
                 GiveGameLines(twin, gameFont, type, name, size);
                 var copy = new LinesCopy { Twin = twin, Source = cast };
                 object population = type.GetProperty("atlasPopulationMode", pub)?.GetValue(cast, null);
@@ -128,6 +236,10 @@ namespace UnityGameTranslator.Core
                 CustomFontLoader.MakeStatic(twin, type, name);
                 // A dynamic source may open another atlas later: its copy reads the same list of them.
                 if (copy.Dynamic) CustomFontLoader.ShareAtlasList(twin, cast, type);
+                // 🔴 Nothing behind a copy but what PutLinesBehind puts there: it came with its
+                // source's own fallback fonts, which TMP searches BEFORE the next asset of the list
+                // the copy stands in — a letter found there would be drawn under their heights.
+                ClearList(GetFallbackListReflection(twin));
                 foreach (var character in ListOf(type.GetProperty("characterTable", pub)?.GetValue(twin, null)))
                     if (character != null) copy.Has.Add(Convert.ToUInt32(ValueOf(character, "unicode") ?? 0u));
                 CustomFontLoader.RebuildLookupTables(twin, type);
@@ -136,6 +248,7 @@ namespace UnityGameTranslator.Core
                 _createdFallbackFontNames.Add(made.name);
                 _gameFontOfCreated[made.name] = gameFontName;
                 _linesCopies[key] = copy;
+                NoteLinesMade(made, baseKey, gameFontName, size, key, head: false, copy: copy);
                 return copy;
             }
             catch (Exception ex) { Faults.Say("FontManager.LinesTwin", ex.InnerException ?? ex, gameFontName); return null; }

@@ -578,6 +578,9 @@ namespace UnityGameTranslator.Core
             TmpSubMeshFollow.Tick();
             Perf.Stop(Perf.SubMeshFollow, tFollow);
 
+            // The font copies made for a size no text is laid out on any more (FontManager.HeadLines).
+            LinesSweepTick();
+
             // Fonts whose names were rewritten: one new size of letters each, until their atlas rebuilds.
             RebuildAtlases();
 
@@ -4990,6 +4993,26 @@ namespace UnityGameTranslator.Core
 
             try
             {
+                string spareKey = ObjectNumbers.Of(shared) + "\u0001" + originalFontName;
+                var spare = modernLines ? TakeSpare(spareKey, head: true) : null;
+                if (spare != null)
+                {
+                    // A head of this replacement for this game font, made for a size nobody is laid
+                    // out on any more: given this size's heights and what stands behind it at this
+                    // size, it is this size's head. Its letters are the replacement's still.
+                    var again = TypeHelper.Il2CppCast(spare.Asset, type);
+                    GiveGameLines(again, originalFontObj, type, headName, lines);
+                    PutLinesBehind(again, originalFontObj, type, originalFontName, lines, gameCopy: true, name: headName);
+                    CustomFontLoader.RebuildLookupTables(again, type);
+                    EngineStrings.SetName(spare.Asset, headName);
+                    _createdFallbackFontNames.Add(spare.Asset.name);
+                    _gameFontOfCreated[spare.Asset.name] = originalFontName;
+                    _backupHeads[key] = again;
+                    NoteLinesMade(spare.Asset, spareKey, originalFontName, lines, key, head: true);
+                    TranslatorCore.LogDebug($"[FontManager] '{spare.Asset.name}': a head set aside, taken again for this size");
+                    return again;
+                }
+
                 var copy = UnityEngine.Object.Instantiate(shared);
                 var head = TypeHelper.Il2CppCast(copy, type);
                 if (!(head is UnityEngine.Object made)) return null;
@@ -5050,6 +5073,7 @@ namespace UnityGameTranslator.Core
                     int sharedId = ObjectNumbers.Of(shared);
                     if (!_letterHeadsOf.TryGetValue(sharedId, out var heads)) _letterHeadsOf[sharedId] = heads = new List<object>();
                     heads.Add(head);
+                    NoteLinesMade(made, spareKey, originalFontName, lines, key, head: true);
                 }
                 TranslatorCore.LogDebug($"[FontManager] '{made.name}': '{shared.name}' draws, '{originalFontName}' behind it for what it lacks");
                 return head;

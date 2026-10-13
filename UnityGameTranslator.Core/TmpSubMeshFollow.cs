@@ -22,11 +22,18 @@ namespace UnityGameTranslator.Core
     /// holds no letter: FontManager.BackupHead). And a text nobody replaced the font of gets one
     /// the day its translation holds a letter the game's font lacks: the game's own fallback draws
     /// it, in a child — the "é" of a room's name stayed alone on Blue Prince's pause menu, in a
-    /// font with no replacement set (2026-10-13). So for EVERY 3D text that has such children, they
+    /// font with no replacement set (2026-10-13). So for EVERY text that has such children, they
     /// are set to what their parent is, every frame, just before the draw: nothing tells when a
     /// game writes a layer or a renderer, so the state is compared, and written only where it
     /// differs. What differs is said once per kind (DiagnosticOnce): that is how a game's way of
     /// hiding its texts gets known.
+    ///
+    /// A text on a canvas (TextMeshProUGUI) is drawn by its canvas renderer, and so are its
+    /// children (TMP SubMesh UI): what is followed there is the canvas renderer's colour — its
+    /// alpha is the fade — and its culling, and the material. TMP itself carries to the children
+    /// a component switched off, a fade asked through CrossFadeAlpha and the text's colour; a
+    /// canvas renderer written directly, it does not (bench `tmphide`, canvas cases, 2026-10-13:
+    /// the game alone leaves the child drawn too).
     ///
     /// ⚠ What a game does in code to the letters themselves (a reveal that moves the vertices of the
     /// first mesh alone) is no state to compare, and is not followed.
@@ -37,6 +44,9 @@ namespace UnityGameTranslator.Core
         {
             public GameObject Object;
             public Renderer Renderer;
+            /// <summary>On a canvas: what draws it, and the TMP SubMesh UI whose material it is.</summary>
+            public CanvasRenderer Canvas;
+            public Component Sub;
             /// <summary>The material TMP gave it, and the copy of ours put in its place once the parent's changed.</summary>
             public Material Given, Own;
             /// <summary>Set to its parent's state at the last frame, and how many frames running it was found undone.</summary>
@@ -49,6 +59,10 @@ namespace UnityGameTranslator.Core
             public Component Text;
             public GameObject Object;
             public Renderer Renderer;
+            /// <summary>On a canvas: what draws the text itself.</summary>
+            public CanvasRenderer Canvas;
+            public bool Culled;
+            public Color Colour;
             public readonly List<Child> Children = new List<Child>();
             /// <summary>The parent's material as it was when the children were last made to match it.</summary>
             public int MaterialId, MaterialCrc;
@@ -83,21 +97,33 @@ namespace UnityGameTranslator.Core
             int id = TypeHelper.GetInstanceID(text);
             if (id == -1 || _leftToTheGame.Contains(id)) return;
             if (!(text is Component component)) return;
-            // 3D texts: a canvas text's children are drawn by the canvas, another state to follow.
+            // A 3D text is drawn by its renderer, a canvas text by its canvas renderer.
             var renderer = component.GetComponent<Renderer>();
-            if (renderer == null) { _followed.Remove(id); return; }
+            var canvas = renderer == null ? component.GetComponent<CanvasRenderer>() : null;
+            if (renderer == null && canvas == null) { _followed.Remove(id); return; }
 
             Followed entry = null;
             foreach (var sub in SubObjects(text))
             {
                 if (!(sub is Component subComponent) || subComponent == null) continue;
-                var subRenderer = subComponent.GetComponent<Renderer>();
-                if (subRenderer == null) continue;
-                if (entry == null) entry = new Followed { Text = component, Object = component.gameObject, Renderer = renderer };
-                entry.Children.Add(new Child { Object = subComponent.gameObject, Renderer = subRenderer, Given = subRenderer.sharedMaterial });
+                Child child;
+                if (renderer != null)
+                {
+                    var subRenderer = subComponent.GetComponent<Renderer>();
+                    if (subRenderer == null) continue;
+                    child = new Child { Object = subComponent.gameObject, Renderer = subRenderer, Given = subRenderer.sharedMaterial };
+                }
+                else
+                {
+                    var subCanvas = subComponent.GetComponent<CanvasRenderer>();
+                    if (subCanvas == null) continue;
+                    child = new Child { Object = subComponent.gameObject, Canvas = subCanvas, Sub = subComponent, Given = MaterialOf(subComponent, SubMaterial) };
+                }
+                if (entry == null) entry = new Followed { Text = component, Object = component.gameObject, Renderer = renderer, Canvas = canvas };
+                entry.Children.Add(child);
             }
             if (entry == null) { _followed.Remove(id); return; }
-            var material = renderer.sharedMaterial;
+            var material = renderer != null ? renderer.sharedMaterial : MaterialOf(component, TextMaterial);
             entry.MaterialId = material != null ? ObjectNumbers.Of(material) : 0;
             entry.MaterialCrc = material != null ? LookOf(material) : 0;
             _followed[id] = entry;
@@ -112,12 +138,12 @@ namespace UnityGameTranslator.Core
             {
                 var entry = pair.Value;
                 // Destroyed (a scene left): Unity's own test, through the overloaded comparison.
-                if (entry.Text == null || entry.Object == null || entry.Renderer == null) { _gone.Add(pair.Key); continue; }
+                if (entry.Text == null || entry.Object == null || (entry.Renderer == null && entry.Canvas == null)) { _gone.Add(pair.Key); continue; }
                 try
                 {
                     // A text nobody draws: its children are not drawn either, whatever they hold.
                     if (!entry.Object.activeInHierarchy) continue;
-                    if (Follow(entry)) continue;
+                    if (entry.Renderer != null ? Follow(entry) : FollowCanvas(entry)) continue;
                     _gone.Add(pair.Key);
                     _leftToTheGame.Add(pair.Key);
                     TranslatorCore.LogInfo($"[SubMeshFollow] The game keeps setting a child object of {TranslatorCore.GetGameObjectPath(entry.Object)} "
@@ -171,6 +197,60 @@ namespace UnityGameTranslator.Core
             return true;
         }
 
+        /// <summary>The same for a text on a canvas: its canvas renderer's colour (the alpha a fade writes) and culling, and its material.</summary>
+        private static bool FollowCanvas(Followed entry)
+        {
+            Color colour = entry.Canvas.GetColor();
+            bool culled = entry.Canvas.cull;
+            var material = MaterialOf(entry.Text, TextMaterial);
+            int materialId = material != null ? ObjectNumbers.Of(material) : 0;
+            int materialCrc = material != null ? LookOf(material) : 0;
+            bool materialChanged = materialId != entry.MaterialId || materialCrc != entry.MaterialCrc;
+            bool parentSame = entry.Seen && entry.Colour == colour && entry.Culled == culled;
+            entry.Seen = true; entry.Colour = colour; entry.Culled = culled;
+
+            foreach (var child in entry.Children)
+            {
+                if (child.Object == null || child.Canvas == null) continue;
+                bool off = false;
+                if (child.Canvas.GetColor() != colour) { child.Canvas.SetColor(colour); Say("canvas renderer's colour"); off = true; }
+                if (child.Canvas.cull != culled) { child.Canvas.cull = culled; Say("canvas renderer's culling"); off = true; }
+                if (off && child.Wrote && parentSame) { if (++child.Undone >= MaxUndone) return false; }
+                else child.Undone = 0;
+                child.Wrote = off;
+                if (material == null) continue;
+
+                var worn = MaterialOf(child.Sub, SubMaterial);
+                if (worn != null && worn != child.Own && worn != child.Given) { child.Given = worn; continue; }
+                if (!materialChanged || worn == null) continue;
+                TakeLook(child, worn, material);
+                Say("material");
+            }
+            entry.MaterialId = materialId;
+            entry.MaterialCrc = materialCrc;
+            return true;
+        }
+
+        /// <summary>The material a text is given by its game (TMP_Text), and the one TMP gives a child on a canvas (TMP_SubMeshUI).</summary>
+        private const string TextMaterial = "fontSharedMaterial", SubMaterial = "sharedMaterial";
+        private static readonly Dictionary<Type, PropertyInfo> _textMaterials = new Dictionary<Type, PropertyInfo>();
+        private static readonly Dictionary<Type, PropertyInfo> _subMaterials = new Dictionary<Type, PropertyInfo>();
+
+        private static PropertyInfo MaterialProperty(Component owner, string name)
+        {
+            var known = name == TextMaterial ? _textMaterials : _subMaterials;
+            var type = owner.GetType();
+            if (!known.TryGetValue(type, out var property))
+                known[type] = property = type.GetProperty(name, BindingFlags.Public | BindingFlags.Instance);
+            return property;
+        }
+
+        private static Material MaterialOf(Component owner, string name)
+        {
+            if (owner == null) return null;
+            return MaterialProperty(owner, name)?.GetValue(owner, null) as Material;
+        }
+
         /// <summary>
         /// The parent's material changed (a colour faded, another preset put on): the child draws
         /// with a copy that takes everything from it but what belongs to the child's own atlas —
@@ -200,7 +280,15 @@ namespace UnityGameTranslator.Core
             if (atlas != null && own.HasProperty("_MainTex")) own.SetTexture("_MainTex", atlas);
             for (int i = 0; i < AtlasFloats.Length; i++)
                 if (!float.IsNaN(kept[i]) && own.HasProperty(AtlasFloats[i])) own.SetFloat(AtlasFloats[i], kept[i]);
-            if (child.Renderer.sharedMaterial != own) child.Renderer.sharedMaterial = own;
+            if (child.Renderer != null)
+            {
+                if (child.Renderer.sharedMaterial != own) child.Renderer.sharedMaterial = own;
+                return;
+            }
+            // On a canvas, through TMP's own setter: it marks the child to be drawn again with it,
+            // masks included.
+            var property = MaterialProperty(child.Sub, SubMaterial);
+            if (property != null && property.CanWrite && MaterialOf(child.Sub, SubMaterial) != own) property.SetValue(child.Sub, own, null);
         }
 
         private static MethodInfo _computeCrc;

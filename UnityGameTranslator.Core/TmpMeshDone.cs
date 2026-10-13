@@ -24,6 +24,9 @@ namespace UnityGameTranslator.Core.TextShaping
                     TmpLayout.UpdateVertexData.Invoke(__instance, null);
             }
             finally { Perf.Stop(Perf.TmpLayout, tLayout); }
+            // The child objects TMP drew this text's other fonts in, as they stand now.
+            try { TmpSubMeshFollow.Note(__instance); }
+            catch (Exception ex) { Faults.Say("TmpSubMeshFollow.Note", ex); }
         }
     }
 }

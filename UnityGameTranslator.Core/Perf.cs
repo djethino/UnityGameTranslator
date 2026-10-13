@@ -75,7 +75,8 @@ namespace UnityGameTranslator.Core
         // call of 82 ms on a game, of which those four held 13 (2026-10-02).
         internal const int ScanInput = 27;       // ...of which: is it an input field's text, or an echo of typing
         internal const int ScanSeen = 28;        // ...of which: was this text seen on it already, is it the mod's own
-        private const int SlotCount = 29;
+        internal const int SubMeshFollow = 29;   // TmpSubMeshFollow.Tick, every frame before the draw
+        private const int SlotCount = 30;
 
         private static readonly string[] Names =
         {
@@ -84,7 +85,7 @@ namespace UnityGameTranslator.Core
             "Scan.Find", "UITK.Cycle", "UITK.Setter", "Scan.Process", "Scan.Text",
             "Scan.Gate", "Scan.Translate", "Scan.Apply",
             "Setter", "Setter.Note", "Setter.Release", "TMP.Layout", "Reveal", "RenderWatch",
-            "Find.All", "Scene.Read", "Text.OnEnable", "Scan.Input", "Scan.Seen",
+            "Find.All", "Scene.Read", "Text.OnEnable", "Scan.Input", "Scan.Seen", "SubMesh.Follow",
         };
 
         private static readonly long[] _ticks = new long[SlotCount];

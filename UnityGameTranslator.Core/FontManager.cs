@@ -572,6 +572,12 @@ namespace UnityGameTranslator.Core
             TranslatorScanner.TickRenderWatch();   // says its own failures, entry by entry
             Perf.Stop(Perf.RenderWatch, tWatch);
 
+            // The letters TMP draws in child objects follow their text's own object (layer,
+            // renderer, material): after the game's frame, before the draw.
+            long tFollow = Perf.Start();
+            TmpSubMeshFollow.Tick();
+            Perf.Stop(Perf.SubMeshFollow, tFollow);
+
             // Fonts whose names were rewritten: one new size of letters each, until their atlas rebuilds.
             RebuildAtlases();
 
@@ -4918,6 +4924,9 @@ namespace UnityGameTranslator.Core
                     ClearList(characters);
                     ClearList(glyphs);
                     KeepUnderline(shared, type, characters, glyphs);
+                    // No letter of its own, but the lines nobody's letter sets — an empty line, a
+                    // line feed — are measured in the head: the game's.
+                    if (HeadKeepsGameLines) GiveGameLines(head, originalFontObj, type, shared.name + " + " + originalFontName);
                     // And it never adds one: static, it never writes into the atlas it shares.
                     CustomFontLoader.MakeStatic(head, type, shared.name + " + " + originalFontName);
                 }

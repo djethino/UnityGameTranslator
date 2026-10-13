@@ -408,9 +408,42 @@ namespace UnityGameTranslator.Core
             catch (Exception ex) { Faults.Say("FontManager.EnsureLinesLetters", ex.InnerException ?? ex, family.Name); }
         }
 
-        /// <summary>TMP's own adding of letters to a dynamic font (TryAddCharacters, whatever its shape in this TMP).</summary>
+        /// <summary>
+        /// TMP's own adding of letters to a dynamic font. 🔴 One letter at a time, by the method
+        /// TMP itself calls when a text meets a letter its font lacks (TryAddCharacterInternal):
+        /// the public TryAddCharacters(string) of TextMesh Pro 1.4 throws on a set of letters its
+        /// atlas takes none of (a null array read after FontEngine.TryAddGlyphsToTexture — bench
+        /// 2018.4, 2026-10-14: no letter was entered, and the text kept the font's own lines).
+        /// The public one where the other is absent.
+        /// </summary>
         private static void AskFontFor(object font, Type type, string letters)
         {
+            const BindingFlags any = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
+            // Its lookups read first: a font no text has drawn with yet has none.
+            type.GetProperty("characterLookupTable", BindingFlags.Public | BindingFlags.Instance)?.GetValue(font, null);
+            MethodInfo one = null;
+            foreach (var method in type.GetMethods(any))
+            {
+                if (method.Name != "TryAddCharacterInternal") continue;
+                var parameters = method.GetParameters();
+                if (parameters.Length >= 2 && parameters[0].ParameterType == typeof(uint) && parameters[1].IsOut) { one = method; break; }
+            }
+            if (one != null)
+            {
+                var parameters = one.GetParameters();
+                for (int i = 0; i < letters.Length; i++)
+                {
+                    uint code = letters[i];
+                    if ((code & 0xFC00) == 0xD800 && i + 1 < letters.Length && (letters[i + 1] & 0xFC00) == 0xDC00)
+                        code = 0x10000 + ((code - 0xD800) << 10) + (uint)(letters[++i] - 0xDC00);
+                    var arguments = new object[parameters.Length];
+                    arguments[0] = code;
+                    for (int k = 2; k < parameters.Length; k++)
+                        arguments[k] = parameters[k].ParameterType == typeof(bool) ? (object)false : null;
+                    one.Invoke(font, arguments);
+                }
+                return;
+            }
             foreach (var method in type.GetMethods(BindingFlags.Public | BindingFlags.Instance))
             {
                 if (method.Name != "TryAddCharacters") continue;

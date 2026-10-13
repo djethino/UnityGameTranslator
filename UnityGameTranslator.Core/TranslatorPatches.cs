@@ -3454,6 +3454,7 @@ namespace UnityGameTranslator.Core
                         TextShaping.RtlPresenter.Present(__instance, compId, ref textValue,
                                                          settingsFontName ?? fontName, fontOverrideMatched);
                         _sizeTagWrites.NoteShown(compId, textValue);
+                        if (componentType == "TMP") FontManager.EnsureLinesLetters(compId, __instance, textValue);
                         ApplyFontScaleGated(__instance, unityCloneFont, unityCloneName, settingsFontName ?? fontName);
                         RelayoutIfResized(__instance, compId, ref textValue);
                         return;
@@ -3482,6 +3483,7 @@ namespace UnityGameTranslator.Core
                 TextShaping.RtlPresenter.Present(__instance, compId, ref textValue,
                                                  settingsFontName ?? fontName, fontOverrideMatched);
                 _sizeTagWrites.NoteShown(compId, textValue);
+                if (componentType == "TMP") FontManager.EnsureLinesLetters(compId, __instance, textValue);
 
                 // Detect missed SetFont: text was translated but HasCachedTranslation said no
                 if (unityCloneFont != null && componentType == "Unity" && (translated || textValue != fitted))

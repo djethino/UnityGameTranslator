@@ -2129,6 +2129,40 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// Where a font's texts can be kept on the game's lines: TextMesh Pro, whose lines come from
+        /// the font. Not the old TextMesh Pro ("TMP (alt)"), which keeps them another way, nor
+        /// UI.Text / TextMesh, whose lines the mod does not move.
+        /// </summary>
+        public static bool SupportsKeptLines(string fontType) => SupportsDesignScale(fontType);
+
+        /// <summary>
+        /// Keep a font's texts on the game's lines or not (Fonts tab, FontSettings.keep_lines).
+        /// Only ever called from the Apply flow, like every font setting.
+        /// </summary>
+        /// <param name="settleNow">False when several fonts move together — see UpdateFontSettings.</param>
+        public static void SetFontKeepLines(string fontName, bool keep, bool settleNow = true)
+        {
+            if (string.IsNullOrEmpty(fontName))
+                return;
+
+            if (!TranslatorCore.FontSettingsMap.TryGetValue(fontName, out var settings))
+            {
+                settings = new FontSettings { type = "Unknown" };
+                TranslatorCore.FontSettingsMap[fontName] = settings;
+            }
+
+            settings.keep_lines = keep;
+            TranslatorCore.LogDebug($"[FontManager] Game's lines for '{fontName}' -> {(keep ? "kept" : "not kept")}");
+
+            // Each component of this font is asked again what it wears: ApplyFontReplacement
+            // compares the lines it was laid out on with the ones asked for now.
+            if (settings.enabled)
+                TranslatorScanner.RefreshForFont(fontName);
+
+            if (settleNow) TranslatorCore.SaveCache();
+        }
+
+        /// <summary>
         /// Increment the usage count for a font.
         /// Called when text using this font is translated.
         /// </summary>
@@ -2163,7 +2197,10 @@ namespace UnityGameTranslator.Core
                     // Freshly detected (not loaded from an existing translation) → eligible for the
                     // auto design-scale, but only for TMP-family fonts where it means something.
                     // Entries loaded from JSON keep scale_auto=false (frozen translations).
-                    scale_auto = SupportsDesignScale(fontType)
+                    scale_auto = SupportsDesignScale(fontType),
+                    // Same rule: a font met for the first time keeps the game's lines; one loaded
+                    // from an existing translation stays as that translation was made.
+                    keep_lines = SupportsKeptLines(fontType)
                 };
             }
         }
@@ -2733,6 +2770,20 @@ namespace UnityGameTranslator.Core
             TranslatorCore.LogDebug($"[FontReplace] '{origMat.name}': dev thins {thinGamePx:F2} px of a {strokeGame:F2} px stroke ({share:P0} of each half); ours {strokeOurs:F2} px → {thinOursPx:F2} px, face dilate {dilate:F3}");
         }
 
+        /// <summary>A material put on a TMP component as its shared one (the setter takes TMP's own cast of it).</summary>
+        private static void PutSharedMaterial(object component, object material)
+        {
+            if (component == null || material == null) return;
+            try
+            {
+                var property = component.GetType().GetProperty("fontSharedMaterial", BindingFlags.Public | BindingFlags.Instance);
+                if (property != null && property.CanWrite)
+                    property.SetValue(component, TypeHelper.Il2CppCast(material, property.PropertyType) ?? material, null);
+            }
+            // The component then draws with its font's default material: its own look is lost — said.
+            catch (Exception ex) { Faults.Say("FontManager.PutSharedMaterial", ex.InnerException ?? ex); }
+        }
+
         private static void SetFontSharedMaterial(object component, object fontAsset)
         {
             if (component == null || fontAsset == null) return;
@@ -3295,7 +3346,10 @@ namespace UnityGameTranslator.Core
             int instanceId = TypeHelper.GetInstanceID(component);
             if (instanceId != -1 && _replacedFor.TryGetValue(instanceId, out var replacedFor))
             {
-                if (string.Equals(replacedFor, originalFontName, StringComparison.Ordinal))
+                // ... and laid out on the lines asked for now (KeptLines): a size or the setting changed.
+                _replacedLines.TryGetValue(instanceId, out float wornLines);
+                if (string.Equals(replacedFor, originalFontName, StringComparison.Ordinal)
+                    && Math.Abs(wornLines - KeptLines(originalFontName, instanceId)) < 0.0005f)
                     return;
 
                 // What it wears was asked under another name — a font rule that moved or stopped
@@ -3351,10 +3405,19 @@ namespace UnityGameTranslator.Core
             }
 
             var shared = GetTMPReplacementFont(originalFontName);
-            if (shared == null) return;
+            float lines = KeptLines(originalFontName, instanceId);
+            // A font with no replacement whose lines are kept: its own letters, in a copy of it that
+            // carries the game's lines at whatever size its texts are drawn (LinesWear).
+            bool ownCopy = shared == null;
+            // At the game's size it IS the game's font, lines included: nothing to wear.
+            if (ownCopy && (lines <= 0.001f || Math.Abs(lines - 1f) < 0.0005f
+                            || originalFontObj == null || TypeHelper.TMP_FontAssetType == null)) return;
             // What the component wears: the replacement with THIS component's own font behind it
             // (BackupHead) — or, where no head can be made, the shared replacement as before.
-            var replacementFont = BackupHead(shared, originalFontObj, originalFontName);
+            var replacementFont = ownCopy
+                ? LinesWear(originalFontObj, TypeHelper.TMP_FontAssetType, originalFontName, lines)
+                : BackupHead(shared, originalFontObj, originalFontName, lines);
+            if (ownCopy && replacementFont == null) return;
             if (replacementFont == null)
             {
                 // No head (its making failed, said; or the replacement IS this game font): the
@@ -3374,7 +3437,7 @@ namespace UnityGameTranslator.Core
             string replacementName = (replacementFont is UnityEngine.Object rObj) ? rObj.name : null;
             if (currentFontName == replacementName)
             {
-                if (instanceId != -1) _replacedFor[instanceId] = originalFontName;
+                if (instanceId != -1) { _replacedFor[instanceId] = originalFontName; _replacedLines[instanceId] = lines; }
                 return;
             }
 
@@ -3400,12 +3463,19 @@ namespace UnityGameTranslator.Core
             if (instanceId != -1 && originalSharedMaterial != null && !_originalMaterialsPerComponent.ContainsKey(instanceId))
                 _originalMaterialsPerComponent[instanceId] = originalSharedMaterial;
 
+            // A dynamic font behind an asset that keeps the game's lines: the letters of the text
+            // already shown.
+            EnsureLinesLettersOf(replacementFont, TypeHelper.GetText(component));
+
             // SetFont to replacement
             TypeHelper.SetFont(component, replacementFont);
 
             // Mark as replaced, and for which name (skip reflection on subsequent set_text calls)
             if (instanceId != -1)
+            {
                 _replacedFor[instanceId] = originalFontName;
+                _replacedLines[instanceId] = lines;
+            }
 
             // Bind a material pointing at OUR atlas — without this, TMP renders with the
             // old font's atlas/shader → empty rectangles. Prefer an ADAPTED clone of the
@@ -3413,7 +3483,9 @@ namespace UnityGameTranslator.Core
             // (issue #21: green title with drop shadow rendered plain red when the
             // replacement font's generic material was assigned instead). ApplyAdaptedMaterial
             // rescales the shadow/outline for our atlas's gradientScale so they keep the dev's look.
-            ApplyAdaptedMaterial(component, replacementFont, originalFontObj, originalSharedMaterial);
+            // The game font's own copy draws from the game's atlas: the component's material as it was.
+            if (ownCopy) PutSharedMaterial(component, originalSharedMaterial);
+            else ApplyAdaptedMaterial(component, replacementFont, originalFontObj, originalSharedMaterial);
 
             // Force mesh regeneration so the new font renders immediately
             TypeHelper.ForceMeshUpdate(component);
@@ -4890,7 +4962,12 @@ namespace UnityGameTranslator.Core
         /// (KeepOldSpecialGlyphs). Null when no head can be made: the caller wears the shared
         /// replacement.
         /// </summary>
-        private static object BackupHead(object replacement, object originalFontObj, string originalFontName)
+        /// <param name="lines">Above 0, the texts of this game font keep the GAME's lines
+        /// (FontSettings.keep_lines) and are drawn at this share of the game's size: the head then
+        /// HOLDS the replacement's letters — a static copy on the replacement's own atlas — with the
+        /// game's line heights, and has behind it the game font, in a copy with those heights too
+        /// when the size is not the game's (LinesTwin). 0: the head with no letter, as before.</param>
+        private static object BackupHead(object replacement, object originalFontObj, string originalFontName, float lines = 0f)
         {
             if (!(replacement is UnityEngine.Object shared) || originalFontObj == null) return null;
             var type = TypeHelper.TMP_FontAssetType;
@@ -4902,7 +4979,9 @@ namespace UnityGameTranslator.Core
             // The game font that IS the replacement (a "[Game]" fallback) is its own backup.
             if (originalFontObj is UnityEngine.Object originalObj && originalObj == shared) return null;
 
-            string key = ObjectNumbers.Of(shared) + "\u0001" + originalFontName;
+            bool modernLines = lines > 0.001f && modern;
+            string headName = shared.name + " + " + originalFontName + (modernLines ? " (lines " + lines.ToString("F3", System.Globalization.CultureInfo.InvariantCulture) + ")" : "");
+            string key = ObjectNumbers.Of(shared) + "\u0001" + originalFontName + (modernLines ? "\u0001" + lines.ToString("F3", System.Globalization.CultureInfo.InvariantCulture) : "");
             if (_backupHeads.TryGetValue(key, out var known))
             {
                 if (TypeHelper.IsUnityObjectAlive(known)) return known;
@@ -4915,7 +4994,14 @@ namespace UnityGameTranslator.Core
                 var head = TypeHelper.Il2CppCast(copy, type);
                 if (!(head is UnityEngine.Object made)) return null;
 
-                if (modern)
+                if (modernLines)
+                {
+                    // The replacement's letters stay in it (they are its copy's, on the replacement's
+                    // atlas, which nobody writes: both are static), under the game's line heights.
+                    GiveGameLines(head, originalFontObj, type, headName, lines);
+                    CustomFontLoader.MakeStatic(head, type, headName);
+                }
+                else if (modern)
                 {
                     // No letter of its own: every one is the replacement's, through the list below —
                     // save the underline's, which TMP looks for in the worn font alone.
@@ -4934,21 +5020,37 @@ namespace UnityGameTranslator.Core
 
                 var fallbacks = GetFallbackListReflection(head);
                 if (fallbacks == null) return null;
-                ClearList(fallbacks);
-                var add = fallbacks.GetType().GetMethod("Add");
-                if (add == null) return null;
-                add.Invoke(fallbacks, new[] { TypeHelper.Il2CppCast(shared, type) });
-                add.Invoke(fallbacks, new[] { TypeHelper.Il2CppCast(originalFontObj, type) });
+                if (modernLines)
+                {
+                    // Behind it, under the same heights: the game font, then what the game font
+                    // itself searches (PutLinesBehind).
+                    PutLinesBehind(head, originalFontObj, type, originalFontName, lines, gameCopy: true, name: headName);
+                }
+                else
+                {
+                    ClearList(fallbacks);
+                    var add = fallbacks.GetType().GetMethod("Add");
+                    if (add == null) return null;
+                    add.Invoke(fallbacks, new[] { TypeHelper.Il2CppCast(shared, type) });
+                    add.Invoke(fallbacks, new[] { TypeHelper.Il2CppCast(originalFontObj, type) });
+                }
                 if (modern) CustomFontLoader.RebuildLookupTables(head, type);
                 else oldRead.Invoke(head, null);
 
                 // Ours, standing for that game font: never listed as a game font, and read back as
                 // the game font it replaces wherever a component is met wearing it (GameFontOf).
-                EngineStrings.SetName(made, shared.name + " + " + originalFontName);
+                EngineStrings.SetName(made, headName);
                 made.hideFlags |= HideFlags.DontUnloadUnusedAsset;
                 _createdFallbackFontNames.Add(made.name);
                 _gameFontOfCreated[made.name] = originalFontName;
                 _backupHeads[key] = head;
+                if (modernLines)
+                {
+                    // A letter the mod adds to the replacement later is added to this copy of it.
+                    int sharedId = ObjectNumbers.Of(shared);
+                    if (!_letterHeadsOf.TryGetValue(sharedId, out var heads)) _letterHeadsOf[sharedId] = heads = new List<object>();
+                    heads.Add(head);
+                }
                 TranslatorCore.LogDebug($"[FontManager] '{made.name}': '{shared.name}' draws, '{originalFontName}' behind it for what it lacks");
                 return head;
             }

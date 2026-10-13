@@ -1152,6 +1152,8 @@ namespace UnityGameTranslator.Core
                     fontObj["scale_auto"] = true;
                 if (Math.Abs(kvp.Value.size_percent - 1.0f) > 0.001f)
                     fontObj["size_percent"] = kvp.Value.size_percent;
+                if (kvp.Value.keep_lines)
+                    fontObj["keep_lines"] = true;
                 // Same rule as the rules' rtl_alignment below: a font field that only lives in
                 // memory is unchecked at every launch and never reaches whoever downloads this
                 // translation. Absent is the default (mirror).
@@ -1257,6 +1259,7 @@ namespace UnityGameTranslator.Core
                     settings.size_percent = sizePercentToken != null
                         ? sizePercentToken.Value<float>()
                         : (settings.scale_auto ? 1.0f : settings.scale);
+                    settings.keep_lines = fontObj["keep_lines"]?.Value<bool>() ?? false;
                     settings.rtl_alignment = fontObj["rtl_alignment"]?.Value<string>();
                     settings.decorations_accepted_without = fontObj["decorations_accepted_without"]?.Value<string>();
                 }
@@ -7354,6 +7357,17 @@ namespace UnityGameTranslator.Core
         /// analyse/font-rendering-target-size.md (Phase B).
         /// </summary>
         public bool scale_auto { get; set; } = false;
+
+        /// <summary>
+        /// When true, the texts of this font stay on the GAME's lines: the step from one line to
+        /// the next and the place of the first are those of the game's font at the game's size,
+        /// whatever draws the letters (the replacement, at whatever <see cref="size_percent"/>).
+        /// A menu written as one text stays beside the pointer the game moves by a fixed step; a
+        /// title stays in the bar drawn for it. Off (absent in an existing translation): a line
+        /// takes the heights of the font that draws it, at the size it is drawn — a script taller
+        /// than the game's font needs that room (FontManager.GiveGameLines).
+        /// </summary>
+        public bool keep_lines { get; set; } = false;
 
         /// <summary>
         /// Number of times this font has been used for translation.

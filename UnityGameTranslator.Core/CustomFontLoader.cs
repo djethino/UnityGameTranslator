@@ -2816,6 +2816,10 @@ namespace UnityGameTranslator.Core
             // for a text inside a <font> tag is missing there.
             if (fontInfo.FallbackTwin != null && TypeHelper.IsUnityObjectAlive(fontInfo.FallbackTwin))
                 ok &= AddGlyphsTo(fontInfo.FallbackTwin, fontInfo.TwinGlyphMetricsScale, fontInfo, added);
+            // A head that keeps the game's lines holds its own copy of these letters, on this atlas
+            // (FontManager.BackupHead): the same entries.
+            foreach (var head in FontManager.LetterHeadsOf(fontInfo.FontAsset))
+                ok &= AddGlyphsTo(head, fontInfo.LiveGlyphMetricsScale, fontInfo, added);
             return ok;
         }
 
@@ -2914,6 +2918,60 @@ namespace UnityGameTranslator.Core
                 TranslatorCore.LogWarning($"[CustomFontLoader] AddGlyphsToLiveAsset failed for {fontInfo.Name}: {ex.Message}");
                 return false;
             }
+        }
+
+        /// <summary>
+        /// A copy of a dynamic font reads the SAME list of atlases as its source: the source may open
+        /// another one, and a letter entered in the copy afterwards names it by its place in that list.
+        /// </summary>
+        internal static void ShareAtlasList(object copy, object source, Type fontAssetType)
+        {
+            try
+            {
+                var property = fontAssetType.GetProperty("atlasTextures", BindingFlags.Public | BindingFlags.Instance)
+                               ?? fontAssetType.GetProperty("m_AtlasTextures", BindingFlags.Public | BindingFlags.Instance);
+                object list = property?.GetValue(source, null);
+                if (list != null && property.CanWrite) property.SetValue(copy, list, null);
+            }
+            catch (Exception ex) { Faults.Say("CustomFontLoader.ShareAtlasList", ex.InnerException ?? ex, (source as UnityEngine.Object)?.name); }
+        }
+
+        /// <summary>
+        /// A letter of <paramref name="sourceCharacter"/>'s font entered in a copy of that font: its
+        /// glyph as it is (the same record, on the same atlas — a glyph names no font) under a
+        /// character record of the copy's own, for a character names the font it belongs to.
+        /// The caller rebuilds the lookup tables. False when the tables cannot be reached.
+        /// </summary>
+        internal static bool AddCharacterOf(object copy, object sourceCharacter, uint unicode)
+        {
+            if (!_typesInitialized) InitializeTypes();
+            try
+            {
+                var type = copy.GetType();
+                object glyphTable = GetPropertyOrField(copy, type, "m_GlyphTable");
+                object charTable = GetPropertyOrField(copy, type, "m_CharacterTable");
+                var addGlyph = glyphTable?.GetType().GetMethod("Add");
+                var addChar = charTable?.GetType().GetMethod("Add");
+                Type charType = GetListElementType(charTable);
+                object glyph = GetPropertyOrField(sourceCharacter, sourceCharacter.GetType(), "glyph");
+                if (addGlyph == null || addChar == null || charType == null || glyph == null) return false;
+                uint index = Convert.ToUInt32(GetPropertyOrField(glyph, glyph.GetType(), "index") ?? 0u);
+                object scale = GetPropertyOrField(sourceCharacter, sourceCharacter.GetType(), "scale");
+                bool held = false;
+                var item = glyphTable.GetType().GetProperty("Item");
+                long count = ReflectListCount(glyphTable);
+                for (int i = 0; i < count && !held && item != null; i++)
+                {
+                    object known = item.GetValue(glyphTable, new object[] { i });
+                    held = known != null && Convert.ToUInt32(GetPropertyOrField(known, known.GetType(), "index") ?? uint.MaxValue) == index;
+                }
+                if (!held) addGlyph.Invoke(glyphTable, new[] { glyph });
+                object character = CreateModernCharacter(charType, unicode, index, scale != null ? Convert.ToSingle(scale) : 1f);
+                if (character == null) return false;
+                addChar.Invoke(charTable, new[] { character });
+                return true;
+            }
+            catch (Exception ex) { Faults.Say("CustomFontLoader.AddCharacterOf", ex.InnerException ?? ex, (copy as UnityEngine.Object)?.name); return false; }
         }
 
         /// <summary>Where a TTF-built font's .gen cache lives: the mod's fonts/ folder for a system font, next to the TTF for a custom one.</summary>

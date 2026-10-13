@@ -85,8 +85,9 @@ namespace UnityGameTranslator.Core.UI.Panels
         // Pending font changes (fontName -> (enabled, fallback, sizePercent, scaleAuto, mirrorRtl)).
         // sizePercent = the deliberate size slider (orthogonal to the auto design-scale baseline);
         // scaleAuto = whether the design-scale is folded in. The two combine multiplicatively.
-        private Dictionary<string, (bool enabled, string fallback, float sizePercent, bool scaleAuto, bool mirrorRtl)> _pendingFontSettings = new Dictionary<string, (bool, string, float, bool, bool)>();
-        private Dictionary<string, (bool enabled, string fallback, float sizePercent, bool scaleAuto, bool mirrorRtl)> _initialFontSettings = new Dictionary<string, (bool, string, float, bool, bool)>();
+        // keepLines = whether this font's texts stay on the game's lines (FontSettings.keep_lines).
+        private Dictionary<string, (bool enabled, string fallback, float sizePercent, bool scaleAuto, bool mirrorRtl, bool keepLines)> _pendingFontSettings = new Dictionary<string, (bool, string, float, bool, bool, bool)>();
+        private Dictionary<string, (bool enabled, string fallback, float sizePercent, bool scaleAuto, bool mirrorRtl, bool keepLines)> _initialFontSettings = new Dictionary<string, (bool, string, float, bool, bool, bool)>();
 
         // Whether the per-RULE alignment control is shown: when any font is (RtlControlsFor), noise
         // for everyone else (user-arbitrated). Recomputed at each list refresh.
@@ -2181,7 +2182,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                         float saved = SavedFontSizePercent(capturedFontName);
                         SetScaleSlider(row, saved);
                         var cur = GetEffectiveFontSettings(capturedFontName);
-                        _pendingFontSettings[capturedFontName] = (cur.enabled, cur.fallback, saved, cur.scaleAuto, cur.mirrorRtl);
+                        _pendingFontSettings[capturedFontName] = (cur.enabled, cur.fallback, saved, cur.scaleAuto, cur.mirrorRtl, cur.keepLines);
                         if (_fontsStatus != null)
                         {
                             _fontsStatus.Show($"Font size of {capturedFontName} back to {(int)Math.Round(saved * 100f)}%");
@@ -2199,6 +2200,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                         ShowScaleButtons(row, capturedFontName);
                     };
                     case "autoScaleChanged": return () => { if (!_fillingRows) OnFontAutoScaleChanged(capturedFontName, row.Toggle("AutoScale").IsOn); };
+                    case "keepLinesChanged": return () => { if (!_fillingRows) OnFontKeepLinesChanged(capturedFontName, row.Toggle("KeepLines").IsOn); };
                     default: return null;
                 }
             });
@@ -2399,6 +2401,18 @@ namespace UnityGameTranslator.Core.UI.Panels
                     autoToggle.IsOn = FontManager.GetFontSettings(capturedFontName)?.scale_auto ?? false;
                     Pending.Track(autoToggle, () => FontFieldChanged(capturedFontName, (p, i) => p.scaleAuto != i.scaleAuto), "fonts");
                 }
+
+                // The game's lines kept — this font's texts stay on the lines the game laid out,
+                // whatever size or replacement they are drawn with (FontManager.HeadLines). Hidden
+                // where it is not done: only TextMesh Pro takes its lines from the font.
+                bool keptLines = FontManager.SupportsKeptLines(fontInfo.Type);
+                row.Host("LinesRow").Visible = keptLines;
+                if (keptLines)
+                {
+                    var linesToggle = row.Toggle("KeepLines");
+                    linesToggle.IsOn = GetEffectiveFontSettings(capturedFontName).keepLines;
+                    Pending.Track(linesToggle, () => FontFieldChanged(capturedFontName, (p, i) => p.keepLines != i.keepLines), "fonts");
+                }
                 Spent("card fill", at);
             }
             finally { _fillingRows = false; }
@@ -2480,8 +2494,8 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// stands in, which is what "as it was" means for that font.
         /// </summary>
         private bool FontFieldChanged(string fontName,
-            Func<(bool enabled, string fallback, float sizePercent, bool scaleAuto, bool mirrorRtl),
-                 (bool enabled, string fallback, float sizePercent, bool scaleAuto, bool mirrorRtl), bool> differs)
+            Func<(bool enabled, string fallback, float sizePercent, bool scaleAuto, bool mirrorRtl, bool keepLines),
+                 (bool enabled, string fallback, float sizePercent, bool scaleAuto, bool mirrorRtl, bool keepLines), bool> differs)
         {
             if (!_pendingFontSettings.TryGetValue(fontName, out var pending)) return false;
             if (!_initialFontSettings.TryGetValue(fontName, out var initial))
@@ -2489,7 +2503,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                 var settings = FontManager.GetFontSettings(fontName);
                 initial = (settings?.enabled ?? true, settings?.fallback, FontManager.GetFontSizePercent(fontName),
                            settings?.scale_auto ?? false,
-                           !string.Equals(settings?.rtl_alignment, "keep", StringComparison.OrdinalIgnoreCase));
+                           !string.Equals(settings?.rtl_alignment, "keep", StringComparison.OrdinalIgnoreCase),
+                           settings?.keep_lines ?? false);
             }
             return differs(pending, initial);
         }
@@ -2608,7 +2623,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// captured initial, else the live font state. Single source so each handler mutates one
         /// field and preserves the others (enabled, fallback, sizePercent, scaleAuto).
         /// </summary>
-        private (bool enabled, string fallback, float sizePercent, bool scaleAuto, bool mirrorRtl) GetEffectiveFontSettings(string fontName)
+        private (bool enabled, string fallback, float sizePercent, bool scaleAuto, bool mirrorRtl, bool keepLines) GetEffectiveFontSettings(string fontName)
         {
             if (_pendingFontSettings.TryGetValue(fontName, out var pending))
                 return pending;
@@ -2618,7 +2633,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             return (settings?.enabled ?? true, settings?.fallback,
                     FontManager.GetFontSizePercent(fontName),  // deliberate percent (not the effective)
                     settings?.scale_auto ?? false,
-                    !string.Equals(settings?.rtl_alignment, "keep", StringComparison.OrdinalIgnoreCase));
+                    !string.Equals(settings?.rtl_alignment, "keep", StringComparison.OrdinalIgnoreCase),
+                    settings?.keep_lines ?? false);
         }
 
         /// <summary>
@@ -2643,14 +2659,14 @@ namespace UnityGameTranslator.Core.UI.Panels
         private void OnFontRtlAlignChanged(string fontName, bool mirror)
         {
             var cur = GetEffectiveFontSettings(fontName);
-            _pendingFontSettings[fontName] = (cur.enabled, cur.fallback, cur.sizePercent, cur.scaleAuto, mirror);
+            _pendingFontSettings[fontName] = (cur.enabled, cur.fallback, cur.sizePercent, cur.scaleAuto, mirror, cur.keepLines);
             UpdateApplyButtonText();
         }
 
         private void OnFontEnableChanged(string fontName, bool enabled)
         {
             var cur = GetEffectiveFontSettings(fontName);
-            _pendingFontSettings[fontName] = (enabled, cur.fallback, cur.sizePercent, cur.scaleAuto, cur.mirrorRtl);
+            _pendingFontSettings[fontName] = (enabled, cur.fallback, cur.sizePercent, cur.scaleAuto, cur.mirrorRtl, cur.keepLines);
 
             if (_fontsStatus != null)
             {
@@ -2664,7 +2680,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         private void OnFontFallbackChanged(string fontName, string fallbackFont)
         {
             var cur = GetEffectiveFontSettings(fontName);
-            _pendingFontSettings[fontName] = (cur.enabled, fallbackFont, cur.sizePercent, cur.scaleAuto, cur.mirrorRtl);
+            _pendingFontSettings[fontName] = (cur.enabled, fallbackFont, cur.sizePercent, cur.scaleAuto, cur.mirrorRtl, cur.keepLines);
 
             if (_fontsStatus != null)
             {
@@ -2687,7 +2703,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             var cur = GetEffectiveFontSettings(fontName);
             // The slider is the deliberate size percent — orthogonal to the auto design-scale, so
             // scaleAuto is preserved (Model B: the two combine).
-            _pendingFontSettings[fontName] = (cur.enabled, cur.fallback, sizePercent, cur.scaleAuto, cur.mirrorRtl);
+            _pendingFontSettings[fontName] = (cur.enabled, cur.fallback, sizePercent, cur.scaleAuto, cur.mirrorRtl, cur.keepLines);
 
             if (_fontsStatus != null)
             {
@@ -2706,13 +2722,33 @@ namespace UnityGameTranslator.Core.UI.Panels
         private void OnFontAutoScaleChanged(string fontName, bool scaleAuto)
         {
             var cur = GetEffectiveFontSettings(fontName);
-            _pendingFontSettings[fontName] = (cur.enabled, cur.fallback, cur.sizePercent, scaleAuto, cur.mirrorRtl);
+            _pendingFontSettings[fontName] = (cur.enabled, cur.fallback, cur.sizePercent, scaleAuto, cur.mirrorRtl, cur.keepLines);
 
             if (_fontsStatus != null)
             {
                 _fontsStatus.Show(scaleAuto
                     ? $"Auto native size enabled for {fontName}"
                     : $"Auto native size disabled for {fontName}");
+                _fontsStatus.Tone = Tone.Secondary;
+            }
+
+            UpdateApplyButtonText();
+        }
+
+        /// <summary>
+        /// Keep this font's texts on the game's lines, or let them take the lines of what draws
+        /// them. Applied on Apply only.
+        /// </summary>
+        private void OnFontKeepLinesChanged(string fontName, bool keepLines)
+        {
+            var cur = GetEffectiveFontSettings(fontName);
+            _pendingFontSettings[fontName] = (cur.enabled, cur.fallback, cur.sizePercent, cur.scaleAuto, cur.mirrorRtl, keepLines);
+
+            if (_fontsStatus != null)
+            {
+                _fontsStatus.Show(keepLines
+                    ? $"The game's lines will be kept for {fontName}"
+                    : $"The game's lines will no longer be kept for {fontName}");
                 _fontsStatus.Tone = Tone.Secondary;
             }
 
@@ -3191,7 +3227,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                     var sizePercent = FontManager.GetFontSizePercent(fontInfo.Name);  // deliberate percent
                     var scaleAuto = settings?.scale_auto ?? false;
                     var mirrorRtl = !string.Equals(settings?.rtl_alignment, "keep", StringComparison.OrdinalIgnoreCase);
-                    _initialFontSettings[fontInfo.Name] = (enabled, fallback, sizePercent, scaleAuto, mirrorRtl);
+                    _initialFontSettings[fontInfo.Name] = (enabled, fallback, sizePercent, scaleAuto, mirrorRtl, settings?.keep_lines ?? false);
                 }
             }
             catch (Exception ex) { TranslatorCore.LogWarning($"[TranslationParametersPanel] Font settings capture failed: {ex.Message}"); }
@@ -3281,6 +3317,11 @@ namespace UnityGameTranslator.Core.UI.Panels
                     bool initialAuto = _initialFontSettings.TryGetValue(fontName, out var init0) && init0.scaleAuto;
                     if (pending.scaleAuto != initialAuto)
                         FontManager.SetFontAutoScale(fontName, pending.scaleAuto, settleNow: false);
+
+                    // The game's lines kept or not — pushed only when it moved.
+                    bool initialLines = _initialFontSettings.TryGetValue(fontName, out var init2) && init2.keepLines;
+                    if (pending.keepLines != initialLines)
+                        FontManager.SetFontKeepLines(fontName, pending.keepLines, settleNow: false);
 
                     // Deliberate size percent — pushed only when the slider actually moved (editing
                     // only fallback/enabled must not touch the size). UpdateFontScale also recompensates
@@ -3402,7 +3443,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 {
                     var settings = FontManager.GetFontSettings(fontInfo.Name);
                     _initialFontSettings[fontInfo.Name] = (settings?.enabled ?? true, settings?.fallback, FontManager.GetFontSizePercent(fontInfo.Name), settings?.scale_auto ?? false,
-                        !string.Equals(settings?.rtl_alignment, "keep", StringComparison.OrdinalIgnoreCase));
+                        !string.Equals(settings?.rtl_alignment, "keep", StringComparison.OrdinalIgnoreCase), settings?.keep_lines ?? false);
                 }
                 _pendingFontSettings.Clear();
 

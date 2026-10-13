@@ -449,6 +449,10 @@ namespace UnityGameTranslator.Core
             for (int i = 0; i < n; i++) yield return item.GetValue(list, new object[] { i });
         }
 
+        /// <summary>The game font's line heights written in an asset of ours of another family of types (UI Toolkit's TextCore asset).</summary>
+        internal static void GiveGameLinesTo(object asset, object gameFont, Type fontAssetType, string name, float size) =>
+            GiveGameLines(asset, gameFont, fontAssetType, name, size);
+
         private static readonly string[] GameLineLengths =
         {
             "ascentLine", "capLine", "meanLine", "baseline", "descentLine", "lineHeight",

@@ -2248,7 +2248,7 @@ namespace UnityGameTranslator.Core
                         replacementName = rule.replacement;
                 }
 
-                ApplyReplacement(element, replacementName, currentFont);
+                ApplyReplacement(element, replacementName, currentFont, settingsName);
                 ApplyScale(element, settingsName);
                 return true;
             }
@@ -2268,13 +2268,18 @@ namespace UnityGameTranslator.Core
         /// mixes fonts, and the Fonts tab lists them one by one. Acting per element is also what the
         /// other paths do per component, which is what keeps the tab's counts truthful.
         /// </summary>
+        /// <param name="gameFontName">The element's own game font, whose settings say its size and whether its lines are kept.</param>
         private static void ApplyReplacement(object element, string settingsName,
-                                             UnityEngine.Object currentFont)
+                                             UnityEngine.Object currentFont, string gameFontName)
         {
             var replacement = FontManager.GetUnityReplacementFont(settingsName);
 
             if (replacement == null)
             {
+                // No replacement, but a size and the game's lines kept: its own font, in an asset of ours.
+                _originalFontObject.TryGet(element, out var own);
+                if (WearOwnLines(element, own, currentFont, gameFontName)) return;
+
                 // 🔴 **Putting it back is an action, not the absence of one.** Clearing the fallback
                 // used to fall straight through this return, so the replacement stayed on screen and
                 // "(none)" could never be gone back to while the game ran. Nothing else was going to
@@ -2301,10 +2306,18 @@ namespace UnityGameTranslator.Core
             // This is the test FontManager.ApplyFontReplacement makes too: current == replacement,
             // stop; anything else, write.
             string wanted = replacement.name;
-            if (string.Equals(currentFont.name, wanted, StringComparison.Ordinal)) return;
-
             _originalFontObject.TryGet(element, out var original);
-            object definition = BuildDefinition(replacement, original, settingsName);
+            // The lines of the asset this element wears or is about to: the game's, or its own,
+            // as its game font's setting says now (KeepLinesOf) — asked at every pass, a size or
+            // the setting changes while the element keeps its font.
+            bool linesMoved = KeepLinesOf(CachedAsset(replacement, original, settingsName), original, gameFontName);
+            if (string.Equals(currentFont.name, wanted, StringComparison.Ordinal))
+            {
+                if (linesMoved) LayOutAgain(element);
+                return;
+            }
+
+            object definition = BuildDefinition(replacement, original, settingsName, gameFontName);
             if (definition == null) return;
 
             var styleValue = Activator.CreateInstance(_styleFontDefinitionType, definition);
@@ -2679,7 +2692,195 @@ namespace UnityGameTranslator.Core
         /// be the kind of leak that only shows up after twenty minutes of play.
         /// Without TextCore's SDF API (UI Toolkit before 2021.2), the replacement Font as it is.
         /// </summary>
-        private static object BuildDefinition(Font replacement, object original, string settingsName)
+        /// <summary>The asset already made for this replacement and this game font (BuildDefinition's cache); null when none is.</summary>
+        private static object CachedAsset(Font replacement, object original, string settingsName)
+        {
+            string originalName = original is UnityEngine.Object originalObject && originalObject != null ? originalObject.name : settingsName;
+            return _sdfCache.TryGetValue((replacement.name ?? "?") + "\u0001" + originalName, out var asset) && TypeHelper.IsUnityObjectAlive(asset) ? asset : null;
+        }
+
+        /// <summary>The line heights an asset of ours was made with, and the lines it was last given (see <see cref="LinesOn"/>).</summary>
+        private static readonly Dictionary<int, object> _ownFace = ForgetByNumber.Tracked(new Dictionary<int, object>());
+        private static readonly Dictionary<int, string> _linesGiven = ForgetByNumber.Tracked(new Dictionary<int, string>());
+
+        /// <summary>
+        /// The line heights of an asset of OURS: its own (<paramref name="size"/> 0), or those of
+        /// <paramref name="truth"/> — itself as it was made when null — divided by the size its
+        /// texts are drawn at. True when they changed.
+        /// </summary>
+        private static bool LinesOn(object ours, object truth, float size, string name)
+        {
+            if (!(ours is UnityEngine.Object made) || made == null) return false;
+            int id = ObjectNumbers.Of(made);
+            string wanted = size <= 0f ? "own" : (truth is UnityEngine.Object from && from != null ? ObjectNumbers.Of(from).ToString() : "self")
+                                                 + "/" + size.ToString("F3", System.Globalization.CultureInfo.InvariantCulture);
+            if (_linesGiven.TryGetValue(id, out var given) ? given == wanted : size <= 0f) return false;
+            var face = _textCoreFontAssetType.GetProperty("faceInfo", BindingFlags.Public | BindingFlags.Instance);
+            if (face == null || !face.CanWrite) return false;
+            if (!_ownFace.ContainsKey(id)) _ownFace[id] = face.GetValue(ours, null);
+            // From what it was made with, each time: the lengths are read before they are written.
+            face.SetValue(ours, _ownFace[id], null);
+            if (size > 0f && (truth != null || Math.Abs(size - 1f) > 0.0005f))
+                FontManager.GiveGameLinesTo(ours, truth ?? ours, _textCoreFontAssetType, name, size);
+            _linesGiven[id] = wanted;
+            return true;
+        }
+
+        /// <summary>The size the texts of a game font are drawn at when its lines are kept the game's; 0 when they are not.</summary>
+        private static float KeptLines(string gameFontName) =>
+            FontManager.KeepsLines(gameFontName) ? Math.Max(0.001f, FontManager.GetFontScale(gameFontName)) : 0f;
+
+        /// <summary>
+        /// 🔴 **The game's lines kept in UI Toolkit** (FontSettings.keep_lines) — as for TextMesh Pro
+        /// (FontManager.HeadLines): a line takes the heights of the asset that owns its letters, and
+        /// those heights are fields. The asset an element wears is OURS, one per game font: the
+        /// game font's heights are written there, divided by the size its texts are drawn at (one
+        /// size per game font on this path, ApplyScale). And so are they in what stands BEHIND it
+        /// for the letters it lacks — the game's own font, in an asset of ours (OwnCopyOf): left
+        /// as the game's, a line of such letters closed up with the size while an empty line kept
+        /// its place (bench uitkmod -UitkLines, 2026-10-14: a menu step of 69 for 77).
+        /// Put back to their own when the setting is off. True when the lines changed: an element
+        /// already laid out with the asset must be laid out again.
+        /// </summary>
+        private static bool KeepLinesOf(object asset, object original, string gameFontName)
+        {
+            if (!(asset is UnityEngine.Object made) || made == null || original == null || _textCoreFontAssetType == null) return false;
+            try
+            {
+                float size = KeptLines(gameFontName);
+                bool sized = size > 0f && Math.Abs(size - 1f) > 0.0005f;
+                bool legacy = original is Font;
+                // The game's own font as an asset of ours: a legacy Font always stands behind as
+                // one; an SDF asset of the game wherever the lines are kept — at the game's size
+                // too, where its heights are the game's own. 🔴 Not only once a size divides them:
+                // swapped in behind an asset already drawing, the Advanced Text Generator laid
+                // one line of a menu out of place until the game was started again (bench uitkmod
+                // -UitkLines, 100 % then 50 % while shown, 2026-10-14). What stands behind an
+                // asset changes only when the setting itself does.
+                bool ownBehind = legacy || size > 0f;
+                object own = ownBehind ? OwnCopyOf(original) : null;
+                object gameAsset = legacy ? null : TypeHelper.Il2CppCast(original, _textCoreFontAssetType);
+                bool moved = false;
+                if (own != null)
+                {
+                    // Its heights as the game's first: the replacement's asset reads them there.
+                    moved |= LinesOn(own, gameAsset, size > 0f ? 1f : 0f, ((UnityEngine.Object)own).name);
+                }
+                object truth = legacy ? own : gameAsset;
+                if (truth == null) return moved;
+                moved |= LinesOn(asset, size > 0f ? truth : null, size, made.name + " (UI Toolkit, for " + gameFontName + ")");
+                if (own != null && sized) moved |= LinesOn(own, gameAsset, size, ((UnityEngine.Object)own).name);
+                object behind = ownBehind ? own : gameAsset;
+                if (behind != null && PutBehind(asset, behind))
+                {
+                    // 🔴 The asset remembers where it found each letter it lacks: with another one
+                    // behind it now, the letters already met were still taken from the first —
+                    // their line closed up while its neighbours kept their place (bench uitkmod
+                    // -UitkLines, a size changed while the text is shown, 2026-10-14). Its
+                    // tables are read again, and its lines given again after that reading.
+                    CustomFontLoader.RebuildLookupTables(asset, _textCoreFontAssetType);
+                    _linesGiven.Remove(ObjectNumbers.Of(made));
+                    LinesOn(asset, size > 0f ? truth : null, size, made.name + " (UI Toolkit, for " + gameFontName + ")");
+                    moved = true;
+                }
+                return moved;
+            }
+            // The asset keeps the heights it had: the lines of its texts are the replacement's — said.
+            catch (Exception ex) { Faults.Say("UIToolkit.KeepLinesOf", ex.InnerException ?? ex, gameFontName); return false; }
+        }
+
+        /// <summary>The one asset that stands behind a replacement's (its fallback list); true when it was another.</summary>
+        private static bool PutBehind(object asset, object behind)
+        {
+            var table = _textCoreFontAssetType.GetProperty("fallbackFontAssetTable", BindingFlags.Public | BindingFlags.Instance);
+            object list = table?.GetValue(asset, null);
+            if (list == null) return false;
+            var type = list.GetType();
+            var count = type.GetProperty("Count");
+            var item = type.GetProperty("Item");
+            int n = count != null ? Convert.ToInt32(count.GetValue(list, null)) : 0;
+            if (n == 1 && item != null && item.GetValue(list, new object[] { 0 }) is UnityEngine.Object held
+                && behind is UnityEngine.Object wanted && held == wanted) return false;
+            type.GetMethod("Clear")?.Invoke(list, null);
+            type.GetMethod("Add")?.Invoke(list, new[] { behind });
+            return true;
+        }
+
+        /// <summary>
+        /// The game's own font in an asset of OURS, whose line heights can be written: a legacy
+        /// Font as the asset made from it (OriginalAsset); an SDF asset of the game as one made
+        /// from its source font file when it names one, else as a copy of it. Null when none can
+        /// be made (said by the makers).
+        /// </summary>
+        private static object OwnCopyOf(object original)
+        {
+            if (original is Font legacy) return OriginalAsset(legacy);
+            if (!(original is UnityEngine.Object asset) || asset == null) return null;
+            int id = ObjectNumbers.Of(asset);
+            if (_originalAssets.TryGetValue(id, out var known) && TypeHelper.IsUnityObjectAlive(known)) return known;
+            object cast = TypeHelper.Il2CppCast(asset, _textCoreFontAssetType) ?? asset;
+            object source = _textCoreFontAssetType.GetProperty("sourceFontFile", BindingFlags.Public | BindingFlags.Instance)?.GetValue(cast, null);
+            // ⚠ IL2CPP: the value read by reflection is the interop wrapper, cast before it is taken as a Font.
+            var font = (TypeHelper.Il2CppCast(source, typeof(Font)) ?? source) as Font;
+            object made = font != null
+                ? FontManager.CreateSdfFontAsset(font, _textCoreFontAssetType) ?? FontManager.CreateSdfFontAssetByFamily(font, _textCoreFontAssetType)
+                : null;
+            if (made == null) made = TypeHelper.Il2CppCast(UnityEngine.Object.Instantiate(asset), _textCoreFontAssetType);
+            if (!(made is UnityEngine.Object copy) || copy == null) return null;
+            EngineStrings.SetName(copy, asset.name + " (UGT backup)");
+            FontManager.GetCreatedFallbackFontNames().Add(copy.name);
+            ShieldFromUnload(copy);
+            _originalAssets[id] = copy;
+            return copy;
+        }
+
+        /// <summary>
+        /// A game font with NO replacement whose lines are kept at another size: the element wears
+        /// the game's font in an asset of ours, with its lines divided by that size. False when
+        /// there is nothing to wear it for — the caller gives the element its own font back.
+        /// </summary>
+        private static bool WearOwnLines(object element, object original, UnityEngine.Object currentFont, string gameFontName)
+        {
+            float size = KeptLines(gameFontName);
+            if (size <= 0f || Math.Abs(size - 1f) <= 0.0005f || original == null || _fromSdfFontMethod == null) return false;
+            try
+            {
+                object own = OwnCopyOf(original);
+                if (!(own is UnityEngine.Object copy) || copy == null) return false;
+                object gameAsset = original is Font ? null : TypeHelper.Il2CppCast(original, _textCoreFontAssetType);
+                bool moved = LinesOn(own, gameAsset, size, copy.name);
+                if (string.Equals(currentFont.name, copy.name, StringComparison.Ordinal))
+                {
+                    if (moved) LayOutAgain(element);
+                    return true;
+                }
+                object definition = _fromSdfFontMethod.Invoke(null, new[] { own });
+                var style = _styleProp.GetValue(element, null);
+                if (definition == null || style == null) return false;
+                _styleFontProp.SetValue(style, Activator.CreateInstance(_styleFontDefinitionType, definition), null);
+                _fontStyleWritten = true;
+                ShapeAgainForNewFont(element, gameFontName);
+                return true;
+            }
+            catch (Exception ex) { Faults.Say("UIToolkit.WearOwnLines", ex.InnerException ?? ex, gameFontName); return false; }
+        }
+
+        /// <summary>An element whose font's line heights just changed under it: its font written again, which lays it out again.</summary>
+        private static void LayOutAgain(object element)
+        {
+            try
+            {
+                var style = _styleProp.GetValue(element, null);
+                if (style == null) return;
+                _styleFontProp.SetValue(style, _styleFontProp.GetValue(style, null), null);
+                var dirty = element.GetType().GetMethod("MarkDirtyRepaint", BindingFlags.Public | BindingFlags.Instance, null, Type.EmptyTypes, null);
+                dirty?.Invoke(element, null);
+                _fontStyleWritten = true;
+            }
+            catch (Exception ex) { Faults.Say("UIToolkit.LayOutAgain", ex.InnerException ?? ex); }
+        }
+
+        private static object BuildDefinition(Font replacement, object original, string settingsName, string gameFontName)
         {
             if (_textCoreFontAssetType != null && _fromSdfFontMethod != null)
             {
@@ -2730,7 +2931,10 @@ namespace UnityGameTranslator.Core
                 }
 
                 if (asset != null)
+                {
+                    KeepLinesOf(asset, original, gameFontName);
                     return _fromSdfFontMethod.Invoke(null, new[] { asset });
+                }
 
                 // 🔴 **Nothing, rather than a legacy Font.** A document laid out for SDF renders one
                 // with different metrics: text lands in the wrong places and some of it is not drawn

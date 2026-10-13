@@ -4023,7 +4023,15 @@ namespace UnityGameTranslator.Core
                 _trueOriginalFontSizes[instanceId] = value;
 
                 float scale = FontManager.GetFontScale(settingsFontName, instanceId);
-                if (Math.Abs(scale - 1.0f) < 0.001f) return;
+                // 🔴 The base is the size the game wrote LAST, at a scale of 1 as well: a base
+                // recorded when the text was set stayed the first one, and ApplyFontScale put it
+                // back at the next pass — a script that sets a text, then its size, got its
+                // first size again (bench tmphide, "late", 2026-10-13).
+                if (Math.Abs(scale - 1.0f) < 0.001f)
+                {
+                    if (_originalFontSizes.ContainsKey(instanceId)) _originalFontSizes[instanceId] = value;
+                    return;
+                }
 
                 _originalFontSizes[instanceId] = value;
 
@@ -4060,7 +4068,12 @@ namespace UnityGameTranslator.Core
                 // scale change rescales from the real base, not an already-replaced value (issue #21).
                 _trueOriginalFontSizes[instanceId] = value;
                 float scale = FontManager.GetFontScale(settingsFontName, instanceId);
-                if (Math.Abs(scale - 1.0f) < 0.001f) return;
+                // The base is the size the game wrote last (see TMPText_SetFontSize_Prefix).
+                if (Math.Abs(scale - 1.0f) < 0.001f)
+                {
+                    if (_originalFontSizes.ContainsKey(instanceId)) _originalFontSizes[instanceId] = value;
+                    return;
+                }
                 _originalFontSizes[instanceId] = value;
                 value = (int)(value * scale);
             }

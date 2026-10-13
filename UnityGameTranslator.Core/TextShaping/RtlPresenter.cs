@@ -52,6 +52,9 @@ namespace UnityGameTranslator.Core.TextShaping
         // component that moves on to non-RTL text gets its own state back, not our leftovers.
         private static readonly Dictionary<long, bool> _flaggedOriginal = ForgetByNumber.Tracked(new Dictionary<long, bool>());
         private static readonly Dictionary<long, object> _alignedOriginal = ForgetByNumber.Tracked(new Dictionary<long, object>());
+        // The alignment the mod itself put on a component: found holding another one, the game
+        // wrote it since, and that one is the game's from then on (MirrorAlignment).
+        private static readonly Dictionary<long, object> _alignedWritten = ForgetByNumber.Tracked(new Dictionary<long, object>());
         private static readonly Dictionary<long, object> _wrapOriginal = ForgetByNumber.Tracked(new Dictionary<long, object>());
 
         // Components whose text went through Present, and those just enabled still wearing a
@@ -1840,10 +1843,27 @@ namespace UnityGameTranslator.Core.TextShaping
                     original = current;
                     if (compId != -1) _alignedOriginal[compId] = original;
                 }
+                else
+                {
+                    // 🔴 The game's alignment is the one it wrote LAST. The component should hold
+                    // what the mod put there (or the game's own, where there was nothing to
+                    // swap); holding anything else, the game has written it since — a script
+                    // that sets a text, then its alignment — and that is the original now.
+                    // Kept as first seen, a text the game moved to the top went back to the
+                    // middle at the next pass of the scanner (bench tmphide, "late", 2026-10-13).
+                    object expected = _alignedWritten.TryGetValue(compId, out var written) ? written : original;
+                    if (!Equals(current, expected))
+                    {
+                        original = current;
+                        _alignedOriginal[compId] = original;
+                        _alignedWritten.Remove(compId);
+                    }
+                }
 
                 object mirroredObj = MirroredAlignmentValue(alignProp.PropertyType, original);
                 if (mirroredObj == null || Equals(mirroredObj, current)) return;
                 alignProp.SetValue(comp, mirroredObj, null);
+                if (compId != -1) _alignedWritten[compId] = mirroredObj;
             }
             catch (Exception ex) { Faults.Say("RtlPresenter.MirrorAlignment", ex); }
         }
@@ -1951,10 +1971,15 @@ namespace UnityGameTranslator.Core.TextShaping
         {
             if (compId == -1 || !_alignedOriginal.TryGetValue(compId, out object anchor)) return;
             _alignedOriginal.Remove(compId);
+            bool wrote = _alignedWritten.TryGetValue(compId, out object written);
+            _alignedWritten.Remove(compId);
             try
             {
                 var alignProp = instance.GetType().GetProperty("alignment", BindingFlags.Public | BindingFlags.Instance);
-                alignProp?.SetValue(instance, anchor, null);
+                if (alignProp == null) return;
+                // What the game wrote since the mod's own write is the game's: nothing to give back.
+                if (!Equals(alignProp.GetValue(instance, null), wrote ? written : anchor)) return;
+                alignProp.SetValue(instance, anchor, null);
             }
             catch (Exception ex) { Faults.Say("RtlPresenter.RestoreAlignment", ex); }
         }

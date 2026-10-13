@@ -346,6 +346,23 @@ namespace UnityGameTranslator.Core
                     }
 
 
+                    // UI.Text built its mesh: the letters of a text whose lines are kept the game's are
+                    // moved to where the game's font has them (LegacyLines).
+                    MethodInfo populateMesh = null;
+                    foreach (var m in TypeHelper.UI_TextType.GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
+                    {
+                        if (m.Name != "OnPopulateMesh") continue;
+                        var ps = m.GetParameters();
+                        if (ps.Length == 1 && ps[0].ParameterType.Name == "VertexHelper") { populateMesh = m; break; }
+                    }
+                    if (populateMesh != null)
+                    {
+                        var meshPostfix = typeof(TranslatorPatches).GetMethod(nameof(UIText_OnPopulateMesh_Postfix), BindingFlags.Static | BindingFlags.Public);
+                        patcher(populateMesh, null, meshPostfix);
+                        patchCount++;
+                    }
+                    else TranslatorCore.LogWarning("[Patches] no OnPopulateMesh(VertexHelper) on UI.Text: a text whose lines are kept the game's sits where its font puts it");
+
                     // UI.Text.fontSize setter — only on Mono (on IL2CPP, causes font atlas corruption)
                     if (TranslatorCore.Adapter != null && !TranslatorCore.Adapter.IsIL2CPP)
                     {
@@ -2737,6 +2754,8 @@ namespace UnityGameTranslator.Core
         {
             if (!WearsClone(instance, unityCloneFont, unityCloneName)) return;
             ApplyFontScale(instance, fontNameForScale);
+            // Its font and its size are the ones it is drawn with: its lines, on UI.Text and TextMesh.
+            LegacyLines.Apply(instance, fontNameForScale);
         }
 
         /// <summary>
@@ -2858,6 +2877,7 @@ namespace UnityGameTranslator.Core
         internal static void ApplyScaleForFont(object instance, string fontName)
         {
             ApplyFontScale(instance, fontName);
+            LegacyLines.Apply(instance, fontName);
             // The text's own absolute sizes with it (SizeTags) — the one write this path makes,
             // and only when a size tag needs it.
             RefitSizeTagsInPlace(instance, fontName);
@@ -2873,6 +2893,19 @@ namespace UnityGameTranslator.Core
             if (instance == null || string.IsNullOrEmpty(fontName)) return false;
             // A template's size stays the game's: every copy starts from it (TypeHelper.IsInScene).
             return TypeHelper.IsInScene(instance);
+        }
+
+        /// <summary>The size the mod last left on a component whose size setter it does not hook (ApplyFontScale).</summary>
+        private static readonly Dictionary<int, float> _writtenFontSizes = ForgetByNumber.Tracked(new Dictionary<int, float>());
+
+        /// <summary>Whether the game's writes of this component's size pass through a hook of the mod (the fontSize prefixes).</summary>
+        private static bool SizeSetterHooked(object instance)
+        {
+            var type = instance.GetType();
+            if (TypeHelper.TMP_TextType != null && TypeHelper.TMP_TextType.IsAssignableFrom(type)) return true;
+            if (TypeHelper.UI_TextType != null && TypeHelper.UI_TextType.IsAssignableFrom(type))
+                return TranslatorCore.Adapter == null || !TranslatorCore.Adapter.IsIL2CPP;
+            return false;
         }
 
         private static void ApplyFontScale(object instance, string fontName)
@@ -2912,10 +2945,28 @@ namespace UnityGameTranslator.Core
                 _originalFontSizes[instanceId] = originalSize;
             }
 
+            float currentSize = TypeHelper.GetFontSize(instance);
+
+            // 🔴 Where no hook sees the game write a size (UI.Text on IL2CPP — the hook corrupts
+            // the atlas there — and TextMesh everywhere), the size the component holds is compared
+            // with the one the mod left: anything else, the game wrote since, and it is the base
+            // now. A Text made in code is met at its font, still at the engine's default 14;
+            // sized 32 by its game right after, it was put back to 14 times the scale (bench
+            // tmphide, UI.Text on 6000.0 IL2CPP: 11 for 26, 2026-10-13).
+            if (!sizeFirst && currentSize >= 0 && !SizeSetterHooked(instance))
+            {
+                float expected = _writtenFontSizes.TryGetValue(instanceId, out float written) ? written : originalSize;
+                if (Math.Abs(currentSize - expected) > 0.1f)
+                {
+                    originalSize = currentSize;
+                    _originalFontSizes[instanceId] = originalSize;
+                    _trueOriginalFontSizes[instanceId] = originalSize;
+                }
+            }
+
             // What the component will hold — rounded for a whole-number size (TypeHelper.HeldFontSize).
             float targetSize = TypeHelper.HeldFontSize(instance, originalSize * scale);
-
-            float currentSize = TypeHelper.GetFontSize(instance);
+            _writtenFontSizes[instanceId] = targetSize;
 
             // TMP auto-sizing OWNS fontSize: it recomputes the fit on every layout. Setting fontSize
             // directly on an auto-sized component is useless AND harmful — each refresh pass re-inflates
@@ -4078,6 +4129,13 @@ namespace UnityGameTranslator.Core
                 value = (int)(value * scale);
             }
             catch (Exception ex) { Faults.Say("Patches.UIText_SetFontSize_Prefix", ex); }
+        }
+
+        public static void UIText_OnPopulateMesh_Postfix(object __instance, object __0)
+        {
+            try { LegacyLines.Shift(__instance, __0); }
+            // A patch body the engine calls while it draws: the text then sits where its font puts it.
+            catch (Exception ex) { Faults.Say("TranslatorPatches.UI.Text OnPopulateMesh postfix", ex); }
         }
 
         public static void UIText_SetText_Prefix(object __instance, ref string value)

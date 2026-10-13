@@ -1535,6 +1535,94 @@ namespace UnityGameTranslator.Core.TextShaping
             catch (Exception ex) { Faults.Say("RtlPresenter.ReadUGuiGlyphs", ex); return false; }
         }
 
+        private static GeneratorList _generatorVerts;       // TextGenerator.GetVertices(List<UIVertex>)
+        private static MemberInfo _vertPosition;            // UIVertex.position
+        private static bool _vertsResolved;
+
+        /// <summary>
+        /// Where the engine's own text generator puts <paramref name="font"/> at <paramref name="size"/>:
+        /// the foot of one line's first letter (<paramref name="foot"/>, y upwards) and the step from
+        /// one line to the next at a line spacing of 1 (<paramref name="step"/>) — in the units of
+        /// <paramref name="uiText"/> when one is given (laid out as it lays out: its anchor, its
+        /// style, its canvas's scale), in pixels otherwise (a TextMesh). Only DIFFERENCES between
+        /// two fonts measured the same way mean something: the box is an arbitrary one.
+        /// False when this runtime's generator cannot be driven or read — the caller says so.
+        /// </summary>
+        /// <summary>Why the last measure failed, for the one line that says it.</summary>
+        internal static string MeasureWhy;
+
+        internal static bool MeasureLegacyLines(object uiText, object font, int size, out float foot, out float step)
+        {
+            foot = 0f; step = 0f;
+            EnsureGeneratorPlumbing();
+            if (_generatorPopulate == null || _ownGenerator == null || font == null || size < 1) { MeasureWhy = "no generator, font or size"; return false; }
+            if (!_vertsResolved)
+            {
+                _vertsResolved = true;
+                _generatorVerts = GeneratorList.Resolve(_ownGenerator.GetType(), "GetVertices");
+                _vertPosition = Members.FieldOrProperty(_generatorVerts?.Element, "position", PublicInstance);
+            }
+            if (_generatorVerts == null || _vertPosition == null) { MeasureWhy = "the generator's vertices cannot be read"; return false; }
+
+            var settingsType = _generatorPopulate.GetParameters()[1].ParameterType;
+            var extents = new UnityEngine.Vector2(4000f, 4000f);
+            object settings = uiText != null && _getGenerationSettings != null
+                ? _getGenerationSettings.Invoke(uiText, new object[] { extents })
+                : Activator.CreateInstance(settingsType);
+            if (settings == null) { MeasureWhy = "no generation settings"; return false; }
+
+            float scale = 1f;
+            if (uiText != null)
+            {
+                object factor = SettingOf(settings, "scaleFactor");
+                if (factor != null) scale = Convert.ToSingle(factor);
+                if (scale <= 0f) scale = 1f;
+            }
+            else
+            {
+                PutSetting(settings, "scaleFactor", 1f);
+                PutSetting(settings, "generationExtents", extents);
+                PutSetting(settings, "pivot", new UnityEngine.Vector2(0.5f, 0.5f));
+                PutSetting(settings, "color", UnityEngine.Color.white);
+                PutSetting(settings, "generateOutOfBounds", true);
+            }
+            if (!PutSetting(settings, "font", font) || !PutSetting(settings, "fontSize", (int)Math.Round(size * scale))) { MeasureWhy = "the settings take no font or no size"; return false; }
+            PutSetting(settings, "lineSpacing", 1f);
+            PutSetting(settings, "richText", false);
+            PutSetting(settings, "resizeTextForBestFit", false);
+            SetOverflowSetting(settings, "horizontalOverflow");
+            SetOverflowSetting(settings, "verticalOverflow");
+
+            // One line for where the block sits (the engine anchors it by a line whatever the
+            // spacing), three for the step between the first two (the generator hands over
+            // fewer vertices than its characters have: the end of a text is not relied on).
+            if (!(bool)_generatorPopulate.Invoke(_ownGenerator, new object[] { "A", settings })) { MeasureWhy = "the generator refused one line"; return false; }
+            var one = _generatorVerts.Read(_ownGenerator);
+            if (one.Count < 4) { MeasureWhy = "one line gave no vertex"; return false; }
+            float single = ((UnityEngine.Vector3)Members.Get(_vertPosition, one[3])).y;
+            if (!(bool)_generatorPopulate.Invoke(_ownGenerator, new object[] { "A\nA\nA", settings })) { MeasureWhy = "the generator refused three lines"; return false; }
+            var two = _generatorVerts.Read(_ownGenerator);
+            if (two.Count < 12) { MeasureWhy = "three lines gave " + two.Count + " vertices, one gave " + one.Count; return false; }
+            float first = ((UnityEngine.Vector3)Members.Get(_vertPosition, two[3])).y;
+            float second = ((UnityEngine.Vector3)Members.Get(_vertPosition, two[11])).y;
+            foot = single / scale;
+            step = (first - second) / scale;
+            MeasureWhy = step > 0.01f ? null : "the two lines are " + step.ToString("F3") + " apart (feet " + first.ToString("F1") + ", " + second.ToString("F1") + ")";
+            return step > 0.01f;
+        }
+
+        /// <summary>Writes one generation setting; false when this runtime's settings lack it.</summary>
+        private static bool PutSetting(object settings, string name, object value)
+        {
+            var m = Members.FieldOrProperty(settings.GetType(), name, PublicInstance);
+            if (m == null) return false;
+            var type = Members.TypeOf(m);
+            // The interop's own wrapper of a Unity object (the font), where the runtime needs it.
+            if (value is UnityEngine.Object) value = TypeHelper.Il2CppCast(value, type) ?? value;
+            Members.Set(m, settings, value);
+            return true;
+        }
+
         private static string BuildUGuiLinesNow(object comp, string assigned, out string whyNot)
         {
             whyNot = null;

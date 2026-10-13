@@ -2136,7 +2136,16 @@ namespace UnityGameTranslator.Core
         /// the font. Not the old TextMesh Pro ("TMP (alt)"), which keeps them another way, nor
         /// UI.Text / TextMesh, whose lines the mod does not move.
         /// </summary>
-        public static bool SupportsKeptLines(string fontType) => SupportsDesignScale(fontType);
+        public static bool SupportsKeptLines(string fontType) => SupportsDesignScale(fontType) || fontType == "Unity";
+
+        /// <summary>Whether the texts of this game font keep the game's lines (FontSettings.keep_lines).</summary>
+        internal static bool KeepsLines(string gameFontName) =>
+            !string.IsNullOrEmpty(gameFontName) && TranslatorCore.FontSettingsMap.TryGetValue(gameFontName, out var settings)
+            && settings.enabled && settings.keep_lines;
+
+        /// <summary>The game's own font of a component the mod gave another one; null when it wears its own.</summary>
+        internal static object OriginalFontOf(int instanceId) =>
+            _originalFontsPerComponent.TryGetValue(instanceId, out var font) && TypeHelper.IsUnityObjectAlive(font) ? font : null;
 
         /// <summary>
         /// Keep a font's texts on the game's lines or not (Fonts tab, FontSettings.keep_lines).
@@ -4186,6 +4195,8 @@ namespace UnityGameTranslator.Core
         public static void RestoreOriginalFont(object component)
         {
             if (component == null) return;
+            // Its lines with its font: the game's line spacing back (UI.Text, TextMesh).
+            LegacyLines.Restore(component);
             int instanceId = TypeHelper.GetInstanceID(component);
             if (instanceId == -1) return;
 

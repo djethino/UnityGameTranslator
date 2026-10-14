@@ -2595,6 +2595,8 @@ namespace UnityGameTranslator.Core
                     UnityEngine.Object.DontDestroyOnLoad(adapted);
                     adapted.hideFlags |= HideFlags.DontUnloadUnusedAsset;
                     _adaptedMaterials[key] = adapted;
+                    if (TranslatorCore.DebugMode)
+                        TranslatorCore.LogDebug($"[FontReplace] '{origMat.name}' as the game draws it: {LookFigures(origMat)} ; on our atlas: {LookFigures(adapted)}");
                     TranslatorCore.LogDebug($"[FontReplace] Adapted material '{origMat.name}' → atlas of '{(replacementFont as UnityEngine.Object)?.name}' (preset preserved)");
                 }
 
@@ -2611,14 +2613,54 @@ namespace UnityGameTranslator.Core
             }
         }
 
-        /// <summary>TMP's own ratio computation, run on a material after its widths changed.</summary>
+        private static readonly string[] LookFigureNames =
+            { "_GradientScale", "_WeightNormal", "_WeightBold", "_FaceDilate", "_FaceSoftness", "_OutlineWidth", "_OutlineSoftness", "_ScaleRatioA", "_ScaleRatioB", "_ScaleRatioC", "_Sharpness" };
+
+        /// <summary>A TMP material's figures that set how thick and how sharp its letters are drawn, for the log.</summary>
+        private static string LookFigures(Material material)
+        {
+            var sb = new System.Text.StringBuilder();
+            foreach (var name in LookFigureNames)
+                if (material.HasProperty(name))
+                    sb.Append(sb.Length == 0 ? "" : " ").Append(name.TrimStart('_')).Append('=').Append(material.GetFloat(name).ToString("0.###", System.Globalization.CultureInfo.InvariantCulture));
+            if (material.HasProperty("_OutlineColor")) sb.Append(" OutlineAlpha=").Append(material.GetColor("_OutlineColor").a.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture));
+            return sb.ToString();
+        }
+
+        /// <summary>
+        /// TMP's own ratio computation, run on a material after its widths changed. 🔴 Looked for
+        /// beside the font asset's own type: the old TextMesh Pro a game carries in its code keeps it
+        /// as TMProOld.ShaderUtilities. Named TMPro.ShaderUtilities, it was never found there and
+        /// never run: the game's ratios, computed for its own atlas, stayed on ours (Silksong's titles).
+        /// </summary>
         private static void UpdateShaderRatios(Material material, object anyTmpObject)
         {
             try
             {
-                var shaderUtils = anyTmpObject.GetType().Assembly.GetType("TMPro.ShaderUtilities");
-                shaderUtils?.GetMethod("UpdateShaderRatios", BindingFlags.Public | BindingFlags.Static)
-                          ?.Invoke(null, new object[] { material });
+                var type = anyTmpObject.GetType();
+                var shaderUtils = type.Assembly.GetType(type.Namespace + ".ShaderUtilities") ?? type.Assembly.GetType("TMPro.ShaderUtilities");
+                // One parameter in TMP; the old one a game carries may ask for more (Silksong's: a bool,
+                // whether the text is bold) — given its default, as for a text drawn in its regular weight.
+                MethodInfo update = null;
+                if (shaderUtils != null)
+                    foreach (var m in shaderUtils.GetMethods(BindingFlags.Public | BindingFlags.Static))
+                    {
+                        if (m.Name != "UpdateShaderRatios") continue;
+                        var ps = m.GetParameters();
+                        if (ps.Length >= 1 && ps[0].ParameterType == typeof(Material) && (update == null || ps.Length < update.GetParameters().Length)) update = m;
+                    }
+                if (update == null)
+                {
+                    if (DiagnosticOnce.First("FontManager.noShaderRatios", type.FullName))
+                        TranslatorCore.LogWarning($"[FontReplace] no ShaderUtilities.UpdateShaderRatios beside {type.FullName}: a game material put on our atlas keeps the ratios computed for its own");
+                    return;
+                }
+                var parameters = update.GetParameters();
+                var arguments = new object[parameters.Length];
+                arguments[0] = material;
+                for (int i = 1; i < parameters.Length; i++)
+                    arguments[i] = parameters[i].ParameterType.IsValueType ? Activator.CreateInstance(parameters[i].ParameterType) : null;
+                update.Invoke(null, arguments);
             }
             // Left unrun, the outline and underlay keep ratios meant for the old widths.
             catch (Exception ex) { Faults.Say("FontManager.UpdateShaderRatios", ex, material?.name); }
@@ -3538,7 +3580,7 @@ namespace UnityGameTranslator.Core
                     if (originalFontObj != null && CustomFontLoader.TryGetModernFaceInfo(originalFontObj, out var ops, out var osc))
                         origFace = $"pointSize={ops}, scale={osc}";
                     string nowFont = TypeHelper.GetFontName(component);
-                    TranslatorCore.LogInfo($"[FontManager] DIAG replace '{originalFontName}' → '{nowFont}' on {ct.Name}: fontSize={fs}→{fsAfter}, autoSize={autoSize} [{fsMin}..{fsMax}], preferred={prefW}x{prefH}, rect={rectStr}, original faceInfo: {origFace}");
+                    TranslatorCore.LogInfo($"[FontManager] DIAG replace '{originalFontName}' → '{nowFont}' on {ct.Name}: fontSize={fs}→{fsAfter}, autoSize={autoSize} [{fsMin}..{fsMax}], preferred={prefW}x{prefH}, rect={rectStr}, spacing character={ReadProp("characterSpacing")} word={ReadProp("wordSpacing")} line={ReadProp("lineSpacing")}, original faceInfo: {origFace}");
                 }
                 catch (Exception ex)
                 {

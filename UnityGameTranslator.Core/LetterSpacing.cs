@@ -56,6 +56,8 @@ namespace UnityGameTranslator.Core
         {
             if (ownUi || compId == -1 || instance == null || string.IsNullOrEmpty(value)) return;
             bool translation = ShapedTranslation(value);
+            if (TranslatorCore.DebugMode && ShapingCommon.HoldsShapedLetters(value) && DiagnosticOnce.First("LetterSpacing.seen", compId.ToString()))
+                TranslatorCore.LogDebug($"[LetterSpacing] comp={compId} seen: {WhatSpaces(instance, value)} ; translation of ours {translation}");
             if (!translation && !_kept.ContainsKey(compId))
             {
                 // Letters that must not be spaced, on a component that may space them, not taken for
@@ -113,6 +115,41 @@ namespace UnityGameTranslator.Core
         }
 
         private static string Clip(string text) => text.Length > 40 ? text.Substring(0, 40) + "…" : text;
+
+        /// <summary>
+        /// For the debug log: everything that sets how far apart a component draws its letters —
+        /// the text it showed before this one (tags included), its spacings, its style, its font and that font's own.
+        /// </summary>
+        private static string WhatSpaces(object instance, string value)
+        {
+            var type = instance.GetType();
+            object Read(object on, string name)
+            {
+                if (on == null) return null;
+                var t = on.GetType();
+                try { return t.GetProperty(name, Pub)?.GetValue(on, null) ?? t.GetField(name, Pub)?.GetValue(on); }
+                catch (Exception ex) { return "unreadable " + (ex.InnerException ?? ex).GetType().Name; }
+            }
+            object font = Read(instance, "font");
+            string written = Read(instance, "text") as string ?? "";
+            var sb = new System.Text.StringBuilder();
+            sb.Append(type.Name).Append(" '").Append(Clip(value)).Append("' (it showed '").Append(Clip(Escaped(written))).Append("')");
+            foreach (var name in new[] { "characterSpacing", "wordSpacing", "fontStyle", "fontSize", "enableKerning", "richText", "isRightToLeftText", "monoSpacing" })
+            {
+                object v = Read(instance, name);
+                if (v != null) sb.Append(' ').Append(name).Append('=').Append(v);
+            }
+            sb.Append(" font '").Append(font is UnityEngine.Object o ? o.name : "none").Append('\'');
+            foreach (var name in new[] { "normalSpacingOffset", "boldSpacing", "normalStyle", "boldStyle" })
+            {
+                object v = Read(font, name);
+                if (v != null) sb.Append(' ').Append(name).Append('=').Append(v);
+            }
+            return sb.ToString();
+        }
+
+        /// <summary>A text for one log line: its line breaks shown as \n.</summary>
+        private static string Escaped(string text) => text.Replace("\n", "\\n").Replace("\r", "\\r");
 
         /// <summary>
         /// The spacing TextMesh Pro adds from the component's font asset (normalSpacingOffset, a

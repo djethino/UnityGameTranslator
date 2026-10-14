@@ -266,6 +266,26 @@ namespace UnityGameTranslator.Core.TextShaping
         /// <summary>Does CLDR say this script cannot be shown without shaping? (scriptMetadata shapingReq, generated)</summary>
         internal static bool IsShapingRequired(int script) => Array.BinarySearch(ShapingTables.ShapingRequiredScripts, script) >= 0;
 
+        /// <summary>
+        /// Does this text hold a letter of a script CLDR says cannot be shown without shaping —
+        /// letters joined, reordered, stacked (Arabic, Devanagari, Khmer…)? Judged per code point
+        /// on its script, Arabic's presentation forms included (Unicode gives them Arabic).
+        /// </summary>
+        internal static bool HoldsShapedLetters(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return false;
+            for (int i = 0; i < text.Length; i++)
+            {
+                char c = text[i];
+                // ASCII holds no letter of such a script: the common case costs one compare.
+                if (c < 0x80) continue;
+                int cp = c;
+                if (char.IsHighSurrogate(c) && i + 1 < text.Length && char.IsLowSurrogate(text[i + 1])) { cp = char.ConvertToUtf32(c, text[i + 1]); i++; }
+                if (IsShapingRequired(ScriptOf(cp))) return true;
+            }
+            return false;
+        }
+
         /// <summary>Is this a virama a conjunct joins across — Unicode's InCB=Linker? (generated)</summary>
         internal static bool IsLinker(int cp) => Array.BinarySearch(ShapingTables.Linkers, cp) >= 0;
 

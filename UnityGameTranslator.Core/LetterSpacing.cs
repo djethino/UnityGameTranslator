@@ -2,12 +2,14 @@ using System;
 using System.Collections.Generic;
 using System.Reflection;
 using UnityGameTranslator.Common;
+using UnityGameTranslator.Core.TextShaping;
 
 namespace UnityGameTranslator.Core
 {
     /// <summary>
     /// 🔴 **No letter spacing in a translation whose letters are shaped together** (CLDR's
-    /// shapingReq "yes": Arabic, Devanagari, Bengali, Tamil, Khmer… — Languages.LettersShapedTogether).
+    /// shapingReq "yes": Arabic, Devanagari, Bengali, Tamil, Khmer… — the table the shapers read,
+    /// ShapingCommon.HoldsShapedLetters).
     ///
     /// A game spaces the letters of some of its texts for their look (Silksong's titles in Trajan:
     /// a character spacing of 10). Latin takes it; a script whose letters join does not: the top bar
@@ -16,9 +18,10 @@ namespace UnityGameTranslator.Core
     /// letter-spaced). So while a component shows a TRANSLATION into such a language, its letter
     /// spacing is 0; it gets the game's back when it shows the game's own text again.
     ///
-    /// ⚠ Decided by the translation's language and by the text being a translation — never by
-    /// the letters a text holds: a Latin name in a Hindi translation is drawn in the translation's
-    /// spacing, and an untranslated label keeps the game's.
+    /// ⚠ Decided by the translation's own letters, the way the shapers decide (one table, one
+    /// rule), never by its language: a translation that holds only Latin ("OK", a name) keeps the
+    /// game's spacing, and a language the catalogue does not know is judged like any other.
+    /// Only a translation: the game's own text is left as the game spaces it.
     /// ⚠ The spacing is the game's to write too: found other than what the mod left, it is the
     /// game's new value (the rule of the alignment, RtlPresenter.MirrorAlignment).
     /// Engines: TextMesh Pro (characterSpacing, the old one included), NGUI (spacingX), UI Toolkit
@@ -32,31 +35,24 @@ namespace UnityGameTranslator.Core
         }
 
         private static readonly Dictionary<long, Kept> _kept = ForgetByNumber.Tracked(new Dictionary<long, Kept>());
-        private static string _targetOf;
-        private static bool _joined;
         private const BindingFlags Pub = BindingFlags.Public | BindingFlags.Instance;
 
-        /// <summary>Whether the translation's language is written in a script whose letters are shaped together.</summary>
-        private static bool TargetLettersJoin
+        /// <summary>
+        /// A translation whose letters are shaped together: its logical text (Arabic presented in
+        /// its joined forms is read back from what was presented) holds such a letter.
+        /// </summary>
+        private static bool ShapedTranslation(string value)
         {
-            get
-            {
-                string target = TranslatorCore.EffectiveTargetLanguage;
-                if (!string.Equals(target, _targetOf, StringComparison.Ordinal))
-                {
-                    _joined = Languages.LettersShapedTogether(target) == true;
-                    _targetOf = target;
-                }
-                return _joined;
-            }
+            string logical = TranslatorCore.TryGetPresentedLogical(value);
+            if (logical == null && !TranslatorCore.IsAlreadyTargetText(value)) return false;
+            return ShapingCommon.HoldsShapedLetters(logical ?? value);
         }
 
         /// <summary>A text about to be shown by a game component (RtlPresenter.Present): its letter spacing for it.</summary>
         internal static void Present(object instance, long compId, string value, bool ownUi)
         {
             if (ownUi || compId == -1 || instance == null || string.IsNullOrEmpty(value)) return;
-            bool translation = TargetLettersJoin
-                               && (TranslatorCore.IsAlreadyTargetText(value) || TranslatorCore.TryGetPresentedLogical(value) != null);
+            bool translation = ShapedTranslation(value);
             if (!translation && !_kept.ContainsKey(compId)) return;
             try
             {

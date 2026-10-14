@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 
 namespace UnityGameTranslator.Core.Checks
 {
@@ -335,6 +335,7 @@ namespace UnityGameTranslator.Core.Checks
             Section("Derived font pipeline (shape, name, write, draw — against HarfBuzz)", DerivedPipelineChecks.Run);
 
             Section("Shaping coverage (engine × font origin, from the mod's own decision)", ShapingCoverageChecks.Run);
+            Section("Shaped letters (a game's letter spacing taken out of them)", ShapedLettersChecks.Run);
             Section("Shaper stages (a GSUB feature runs once, at its earliest stage)", ShaperStagesChecks.Run);
             Section("Font coverage (what each font drew, what its font lacks)", FontCoverageChecks.Run);
 

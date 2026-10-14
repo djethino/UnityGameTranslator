@@ -2310,10 +2310,11 @@ namespace UnityGameTranslator.Core
             // The lines of the asset this element wears or is about to: the game's, or its own,
             // as its game font's setting says now (KeepLinesOf) — asked at every pass, a size or
             // the setting changes while the element keeps its font.
-            bool linesMoved = KeepLinesOf(CachedAsset(replacement, original, settingsName), original, gameFontName);
+            object worn = CachedAsset(replacement, original, settingsName);
+            bool linesMoved = KeepLinesOf(worn, original, gameFontName);
             if (string.Equals(currentFont.name, wanted, StringComparison.Ordinal))
             {
-                if (linesMoved) LayOutAgain(element);
+                if (linesMoved) LayOutAgain(element, worn);
                 return;
             }
 
@@ -2851,7 +2852,7 @@ namespace UnityGameTranslator.Core
                 bool moved = LinesOn(own, gameAsset, size, copy.name);
                 if (string.Equals(currentFont.name, copy.name, StringComparison.Ordinal))
                 {
-                    if (moved) LayOutAgain(element);
+                    if (moved) LayOutAgain(element, own);
                     return true;
                 }
                 object definition = _fromSdfFontMethod.Invoke(null, new[] { own });
@@ -2865,14 +2866,19 @@ namespace UnityGameTranslator.Core
             catch (Exception ex) { Faults.Say("UIToolkit.WearOwnLines", ex.InnerException ?? ex, gameFontName); return false; }
         }
 
-        /// <summary>An element whose font's line heights just changed under it: its font written again, which lays it out again.</summary>
-        private static void LayOutAgain(object element)
+        /// <summary>
+        /// An element whose font's line heights just changed under it: its font written again, which
+        /// lays it out again. ⚠ Written from the asset, never read back from the style: the inline
+        /// style's font has no getter on IL2CPP (Unity 2021.3 — "Property Get method was not found").
+        /// </summary>
+        private static void LayOutAgain(object element, object asset)
         {
             try
             {
                 var style = _styleProp.GetValue(element, null);
-                if (style == null) return;
-                _styleFontProp.SetValue(style, _styleFontProp.GetValue(style, null), null);
+                object definition = asset != null ? _fromSdfFontMethod?.Invoke(null, new[] { asset }) : null;
+                if (style == null || definition == null) return;
+                _styleFontProp.SetValue(style, Activator.CreateInstance(_styleFontDefinitionType, definition), null);
                 var dirty = element.GetType().GetMethod("MarkDirtyRepaint", BindingFlags.Public | BindingFlags.Instance, null, Type.EmptyTypes, null);
                 dirty?.Invoke(element, null);
                 _fontStyleWritten = true;

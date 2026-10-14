@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Reflection;
 using UnityGameTranslator.Common;
 
-namespace UnityGameTranslator.Core.TextShaping
+namespace UnityGameTranslator.Core
 {
     /// <summary>
     /// 🔴 **No letter spacing in a translation whose letters are shaped together** (CLDR's

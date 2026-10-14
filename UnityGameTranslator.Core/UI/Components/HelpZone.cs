@@ -57,7 +57,14 @@ namespace UnityGameTranslator.Core.UI.Components
 
         private GameObject _root;
         private Text _label;
+        private LayoutElement _labelLayout;
         private string _defaultText;
+
+        /// <summary>The label's height before any reservation: the bar's own minimum.</summary>
+        private static float BaseLabelHeight => UIStyles.MultiLineSmall - 8;
+
+        /// <summary>The label width the reserved height was measured at; -1 before the first measure.</summary>
+        private float _measuredWidth = -1f;
 
         // Source text currently displayed untranslated (cache miss at write time), or null
         // when the label is up to date. See ApplyPendingTranslations.
@@ -86,7 +93,8 @@ namespace UnityGameTranslator.Core.UI.Components
             _label = UIFactory.CreateLabel(_root, "HelpZoneLabel", "", TextAnchor.MiddleLeft);
             _label.fontSize = UIStyles.FontSizeSmall;
             _label.color = UIStyles.TextSecondary;
-            UIFactory.SetLayoutElement(_label.gameObject, flexibleWidth: 9999, minHeight: UIStyles.MultiLineSmall - 8);
+            UIFactory.SetLayoutElement(_label.gameObject, flexibleWidth: 9999, minHeight: (int)BaseLabelHeight);
+            _labelLayout = _label.GetComponent<LayoutElement>();
 
             TranslatorCore.RegisterExcluded(_label);
             zones.Add(this);
@@ -137,6 +145,8 @@ namespace UnityGameTranslator.Core.UI.Components
                 Text = helpText,
                 Composed = composed,
             };
+            // A new help may be the tallest: measured again on the next poll.
+            _measuredWidth = -1f;
         }
 
         /// <summary>
@@ -148,6 +158,7 @@ namespace UnityGameTranslator.Core.UI.Components
         public static void PollHover()
         {
             ApplyPendingTranslations();
+            for (int i = 0; i < zones.Count; i++) zones[i].ReserveTallest();
 
             if (entries.Count == 0) return;
 
@@ -198,6 +209,49 @@ namespace UnityGameTranslator.Core.UI.Components
                 best.Zone.SetText(best.Text, translate: !best.Composed);
         }
 
+        /// <summary>
+        /// 🔴 **Hovering never moves the panel.** The bar is as tall as the tallest help it can show,
+        /// at the width it is shown at, from the moment it is shown. Sized to the help of the moment,
+        /// a long one grew it, the panel's content shrank and moved, the control left the pointer,
+        /// the help went back to one line, the control came back under the pointer — and again,
+        /// every frame (Schedule I's Fonts tab, 2026-10-14: "Keep the game's lines", three lines in
+        /// a narrow window). Measured again only when the width changes: every help of this zone
+        /// written into the label in turn, within one frame (none is drawn), its translation used
+        /// when it is already known — measuring asks nothing of the translator.
+        /// </summary>
+        private void ReserveTallest()
+        {
+            if (_label == null || _labelLayout == null || !_root.activeInHierarchy) return;
+            float width = _label.rectTransform.rect.width;
+            if (width <= 0f || Mathf.Abs(width - _measuredWidth) < 0.5f) return;
+            _measuredWidth = width;
+
+            string shown = _label.text;
+            _labelLayout.minHeight = BaseLabelHeight;
+            float tallest = HeightOf(_defaultText, translate: true);
+            foreach (var e in entries.Values)
+                if (e.Zone == this && e.Rect != null) tallest = Mathf.Max(tallest, HeightOf(e.Text, translate: !e.Composed));
+            _label.text = shown;
+            _labelLayout.minHeight = Mathf.Max(BaseLabelHeight, tallest);
+        }
+
+        /// <summary>The label's height with this help in it, at its current width.</summary>
+        private float HeightOf(string text, bool translate)
+        {
+            if (string.IsNullOrEmpty(text)) return 0f;
+            _label.text = translate && TranslatorCore.HasCachedTranslation(text) ? TranslatorCore.TranslateOwnUIDynamic(text) : text;
+            return LayoutUtility.GetPreferredHeight(_label.rectTransform);
+        }
+
+        /// <summary>A help written now that needs more room than reserved (a translation that came
+        /// in longer): the reservation grows to it once, and stays.</summary>
+        private void GrowToShown()
+        {
+            if (_labelLayout == null) return;
+            float needed = LayoutUtility.GetPreferredHeight(_label.rectTransform);
+            if (needed > _labelLayout.minHeight + 0.5f) _labelLayout.minHeight = needed;
+        }
+
         private static int HierarchyDepth(Transform t)
         {
             int d = 0;
@@ -220,11 +274,13 @@ namespace UnityGameTranslator.Core.UI.Components
             {
                 _label.text = text;
                 _pendingSource = null;
+                GrowToShown();
                 return;
             }
 
             string shown = TranslatorCore.TranslateOwnUIDynamic(text);
             _label.text = shown;
+            GrowToShown();
 
             // Still waiting only if nothing came back AND nothing is cached: when a cached entry
             // translates to itself (validated identity), there is nothing more to wait for.
@@ -251,7 +307,10 @@ namespace UnityGameTranslator.Core.UI.Components
 
                 string translated = TranslatorCore.TranslateOwnUIDynamic(zone._pendingSource);
                 if (translated != zone._pendingSource)
+                {
                     zone._label.text = translated;
+                    zone.GrowToShown();
+                }
                 zone._pendingSource = null;
             }
         }

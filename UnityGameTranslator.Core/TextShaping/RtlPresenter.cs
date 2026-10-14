@@ -190,6 +190,8 @@ namespace UnityGameTranslator.Core.TextShaping
             // Every game text goes out through here, with its font and still logical: the account
             // of what each font must be able to draw (FontManager.Coverage).
             FontManager.NoteTextDrawn(compId, settingsFontName, value);
+            // A translation whose letters are shaped together is not letter-spaced (LetterSpacing).
+            LetterSpacing.Present(instance, compId, value, ownUi);
             string arrived = value;
 
             long tPerf = Perf.Start();

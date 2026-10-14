@@ -46,9 +46,16 @@ namespace UnityGameTranslator.Core
         /// </summary>
         private static bool ShapedTranslation(string value)
         {
+            // The letters first: a scan that stops at the first one, ASCII at one compare each.
+            // Every other text of a game (all of them, in a Latin translation) is done with here,
+            // without the readback index's normalization — it ran for each text shown.
+            if (ShapingCommon.HoldsShapedLetters(value))
+                return TranslatorCore.TryGetPresentedLogical(value) != null || TranslatorCore.IsAlreadyTargetText(value);
+            // A presented form whose letters are all our private glyphs: its logical text says.
+            // Only such a text is looked up (the lookup normalizes it).
+            if (!ReadbackIndex.HasPrivateGlyphCodepoint(value)) return false;
             string logical = TranslatorCore.TryGetPresentedLogical(value);
-            if (logical == null && !TranslatorCore.IsAlreadyTargetText(value)) return false;
-            return ShapingCommon.HoldsShapedLetters(logical ?? value);
+            return logical != null && ShapingCommon.HoldsShapedLetters(logical);
         }
 
         /// <summary>A text about to be shown by a game component (RtlPresenter.Present): its letter spacing for it.</summary>

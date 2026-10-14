@@ -1752,6 +1752,37 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// 🔴 **A font of ours whose letters are shaped together spaces none of them** — neither in
+        /// bold (boldSpacing) nor otherwise (normalSpacingOffset). TextMesh Pro, the old one and
+        /// the modern one, widens every letter's advance by the spacing of the asset that DRAWS it:
+        /// 7 for bold by default, which a clone of a game font carries over. Latin takes the air;
+        /// a Hindi word's top bar came apart at each letter (Silksong's bold inventory titles,
+        /// 2026-10-14: set to 0 live, the bar closed). Judged by the font's own letters with the
+        /// shapers' table (ShapingCommon.HoldsShapedLetters' rule), so only such a font is touched
+        /// and the heads made from it inherit it. A component's own spacing is LetterSpacing's.
+        /// </summary>
+        private static void UnspaceShapedLetters(object fontAsset, CustomFontInfo fontInfo)
+        {
+            bool shaped = false;
+            foreach (var g in fontInfo.AtlasData.glyphs)
+                if (TextShaping.ShapingCommon.IsShapingRequired(TextShaping.ShapingCommon.ScriptOf(g.unicode))) { shaped = true; break; }
+            if (!shaped) return;
+            var type = fontAsset.GetType();
+            foreach (var name in new[] { "boldSpacing", "normalSpacingOffset" })
+            {
+                try
+                {
+                    var property = type.GetProperty(name, BindingFlags.Public | BindingFlags.Instance);
+                    if (property != null && property.CanWrite) property.SetValue(fontAsset, 0f, null);
+                    else type.GetField(name, BindingFlags.Public | BindingFlags.Instance)?.SetValue(fontAsset, 0f);
+                }
+                // Left as cloned: this font's letters part in bold — said, with the font.
+                catch (Exception ex) { Faults.Say("CustomFontLoader.UnspaceShapedLetters", ex.InnerException ?? ex, fontInfo.Name + " " + name); }
+            }
+            TranslatorCore.LogDebug($"[CustomFontLoader] '{fontInfo.Name}': letters shaped together — no bold or normal spacing of its own");
+        }
+
+        /// <summary>
         /// Creates a TMP_FontAsset from the loaded custom font data.
         /// </summary>
         private static object CreateFontAsset(CustomFontInfo fontInfo)
@@ -2049,6 +2080,7 @@ namespace UnityGameTranslator.Core
                 fontInfo.LivePointSize = pointSize;
                 fontInfo.LiveGlyphMetricsScale = glyphMetricsScale;
                 SetupGlyphs(fontAsset, fontInfo, pointSize, glyphMetricsScale);
+                UnspaceShapedLetters(fontAsset, fontInfo);
 
                 return fontAsset;
             }

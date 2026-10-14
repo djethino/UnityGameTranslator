@@ -26,9 +26,9 @@ namespace UnityGameTranslator.Core
     /// game's new value (the rule of the alignment, RtlPresenter.MirrorAlignment).
     /// Engines: TextMesh Pro (characterSpacing, the old one included), NGUI (spacingX), UI Toolkit
     /// (the inline style's letterSpacing). UI.Text and TextMesh have none.
-    /// ⚠ TextMesh Pro adds its font asset's own spacing to the component's (normalSpacingOffset,
-    /// TMP_Text's layout): "no spacing" is the component's set against the font's, so the two add
-    /// up to nothing.
+    /// ⚠ A font asset's own spacings (bold, normal) are not the component's: TextMesh Pro takes
+    /// them from the asset that draws each letter, and the mod's fonts of such scripts carry none
+    /// (CustomFontLoader.UnspaceShapedLetters).
     /// </summary>
     internal static class LetterSpacing
     {
@@ -72,14 +72,12 @@ namespace UnityGameTranslator.Core
                 object current = spacing.GetValue(owner, null);
                 if (translation)
                 {
-                    float fontSpacing = FontSpacingOf(instance);
-                    object none = NoneOf(spacing.PropertyType, fontSpacing);
+                    object none = ZeroOf(spacing.PropertyType);
                     if (none == null) return;
-                    bool followed = _kept.TryGetValue(compId, out var kept);
-                    if (!followed)
+                    if (!_kept.TryGetValue(compId, out var kept))
                     {
                         // Nothing to take away: the component is left as it is, and not followed.
-                        if (Equals(current, none) || (fontSpacing == 0f && IsZero(instance, current))) return;
+                        if (IsZero(instance, current)) return;
                         _kept[compId] = kept = new Kept { Original = current };
                     }
                     // Not what the mod left there: the game wrote it since, and it is the game's now.
@@ -87,7 +85,7 @@ namespace UnityGameTranslator.Core
                     if (!Equals(current, none)) spacing.SetValue(owner, none, null);
                     kept.Written = spacing.GetValue(owner, null);
                     if (TranslatorCore.DebugMode && DiagnosticOnce.First("LetterSpacing.taken", compId.ToString()))
-                        TranslatorCore.LogDebug($"[LetterSpacing] comp={compId} {instance.GetType().Name}: '{Clip(value)}' — the game's letter spacing ({kept.Original}, its font's {fontSpacing}) set to {kept.Written} — given back with the game's own text");
+                        TranslatorCore.LogDebug($"[LetterSpacing] comp={compId} {instance.GetType().Name}: '{Clip(value)}' — the game's letter spacing ({kept.Original}) set to {kept.Written} — given back with the game's own text");
                 }
                 else if (_kept.TryGetValue(compId, out var kept))
                 {
@@ -151,13 +149,7 @@ namespace UnityGameTranslator.Core
         /// <summary>A text for one log line: its line breaks shown as \n.</summary>
         private static string Escaped(string text) => text.Replace("\n", "\\n").Replace("\r", "\\r");
 
-        /// <summary>
-        /// The spacing TextMesh Pro adds from the component's font asset (normalSpacingOffset, a
-        /// field in the old one, the modern one's too); 0 for any other engine or a font without it.
-        /// </summary>
-        private static float FontSpacingOf(object instance) => FontSpacing(instance.GetType().GetProperty("font", Pub)?.GetValue(instance, null));
-
-        /// <summary>A TextMesh Pro font asset's own letter spacing (normalSpacingOffset); 0 for anything else.</summary>
+        /// <summary>A TextMesh Pro font asset's own letter spacing (normalSpacingOffset), for the log; 0 for anything else.</summary>
         internal static float FontSpacing(object font)
         {
             if (font == null) return 0f;
@@ -166,10 +158,10 @@ namespace UnityGameTranslator.Core
             return value is float f ? f : 0f;
         }
 
-        /// <summary>No spacing, in the property's own type: the font's own spacing set against (TMP), 0, or UI Toolkit's length of 0.</summary>
-        private static object NoneOf(Type type, float fontSpacing)
+        /// <summary>No spacing, in the property's own type: 0, or UI Toolkit's length of 0.</summary>
+        private static object ZeroOf(Type type)
         {
-            if (type == typeof(float)) return -fontSpacing;
+            if (type == typeof(float)) return 0f;
             if (type == typeof(int)) return 0;
             var fromFloat = type.GetConstructor(new[] { typeof(float) });
             return fromFloat?.Invoke(new object[] { 0f });

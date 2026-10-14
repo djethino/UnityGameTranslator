@@ -3105,6 +3105,9 @@ namespace UnityGameTranslator.Core
         // ClearFontSizeCache for that reason; CleanDeadRefs drops it per dead id, which is safe.
         private static readonly Dictionary<int, int> _originalMaxFontSizes = ForgetByNumber.Tracked(new Dictionary<int, int>());
 
+        /// <summary>The ceiling a Best Fit text had before the mod sized it (ApplyBestFitScale); false when the mod never did.</summary>
+        internal static bool OriginalBestFitMax(int instanceId, out int max) => _originalMaxFontSizes.TryGetValue(instanceId, out max);
+
         public static void ApplyBestFitScalePublic(object instance, int instanceId, float scale)
             => ApplyBestFitScale(instance, instanceId, scale);
 

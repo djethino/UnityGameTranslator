@@ -27,8 +27,16 @@ namespace UnityGameTranslator.Core
     ///
     /// ⚠ The line spacing is the game's to write too: what the component holds is compared with
     /// what the mod wrote, and anything else is the game's new value (the rule of the alignment,
-    /// RtlPresenter.MirrorAlignment). A text sized to its box (Best Fit) is left alone: the size
-    /// the engine picks there is not one the game would have picked.
+    /// RtlPresenter.MirrorAlignment).
+    ///
+    /// A text sized to its box (Best Fit): the engine picks its size between two bounds, the mod
+    /// sizing the upper one (ApplyBestFitScale). The two fonts' lines are in the same ratio at
+    /// every size, so the spacing is the same whatever the engine picks — measured at the bounds,
+    /// with no loop between the size the spacing lets fit and the spacing. The move of the block
+    /// grows with the size: it is measured at the upper bound and scaled, when the mesh is built,
+    /// by the size the engine picked (TextGenerator.fontSizeUsedForBestFit). The same rule as
+    /// TextMesh Pro's auto-size: the game font's lines at the size the engine chose, divided by
+    /// the size put on the font.
     /// </summary>
     internal static class LegacyLines
     {
@@ -39,6 +47,8 @@ namespace UnityGameTranslator.Core
             public bool Wrote;
             /// <summary>How far down (negative) or up the letters of a UI.Text are moved, in its own units.</summary>
             public float Shift;
+            /// <summary>Best Fit: the move is for this size (the generator's units); scaled by the size it picks.</summary>
+            public float ShiftAt;
         }
 
         private static readonly Dictionary<int, Kept> _kept = ForgetByNumber.Tracked(new Dictionary<int, Kept>());
@@ -66,15 +76,26 @@ namespace UnityGameTranslator.Core
                 if (spacing == null || !spacing.CanWrite) return;
 
                 // A template's lines stay the game's: every copy starts from them (TypeHelper.IsInScene).
-                bool keep = FontManager.KeepsLines(fontName) && TypeHelper.IsInScene(instance) && !BestFit(instance, type);
+                bool keep = FontManager.KeepsLines(fontName) && TypeHelper.IsInScene(instance);
                 object worn = keep ? TypeHelper.GetFont(instance) : null;
                 object game = keep ? (FontManager.OriginalFontOf(id) ?? worn) : null;
                 int wornSize = 0, gameSize = 0;
+                bool bestFit = uiText && BestFit(instance, type);
                 if (keep && TypeHelper.IsUnityObjectAlive(worn) && TypeHelper.IsUnityObjectAlive(game))
                 {
-                    float held = TypeHelper.GetFontSize(instance);
-                    wornSize = SizeOr(worn, held);
-                    gameSize = SizeOr(game, TranslatorPatches.TrueOriginalFontSizes.TryGetValue(id, out float first) ? first : held);
+                    if (bestFit)
+                    {
+                        // Its bounds stand for its size: the upper one as the mod left it, and as the game set it.
+                        object ceiling = type.GetProperty("resizeTextMaxSize", Pub)?.GetValue(instance, null);
+                        wornSize = ceiling != null ? Convert.ToInt32(ceiling) : 0;
+                        gameSize = TranslatorPatches.OriginalBestFitMax(id, out int first) ? first : wornSize;
+                    }
+                    else
+                    {
+                        float held = TypeHelper.GetFontSize(instance);
+                        wornSize = SizeOr(worn, held);
+                        gameSize = SizeOr(game, TranslatorPatches.TrueOriginalFontSizes.TryGetValue(id, out float first) ? first : held);
+                    }
                 }
                 bool same = keep && worn is UnityEngine.Object w && game is UnityEngine.Object g && w == g && wornSize == gameSize;
                 if (!keep || wornSize < 1 || gameSize < 1 || same) { Restore(instance, id, spacing); return; }
@@ -82,7 +103,7 @@ namespace UnityGameTranslator.Core
                 int row = uiText || textMesh ? AnchorRow(instance, type) : 0;
                 float unit = uiText ? PixelsPerUnit(instance, type) : 1f;
                 string key = ObjectNumbers.Of((UnityEngine.Object)game) + "|" + gameSize + "|" + ObjectNumbers.Of((UnityEngine.Object)worn) + "|" + wornSize
-                             + "|" + (uiText ? "u" : "m") + row + "|" + unit.ToString("F3", System.Globalization.CultureInfo.InvariantCulture);
+                             + "|" + (uiText ? "u" : "m") + row + "|" + unit.ToString("F3", System.Globalization.CultureInfo.InvariantCulture) + (bestFit ? "|fit" : "");
                 if (!_measures.TryGetValue(key, out var measure))
                 {
                     measure = null;
@@ -107,6 +128,7 @@ namespace UnityGameTranslator.Core
                 float shift = uiText ? measure[1] : 0f;
                 bool moved = Math.Abs(kept.Shift - shift) > 0.01f;
                 kept.Shift = shift;
+                kept.ShiftAt = bestFit ? wornSize * unit : 0f;
                 float target = kept.Original * measure[0];
                 if (Math.Abs(current - target) > 0.0005f)
                 {
@@ -148,6 +170,14 @@ namespace UnityGameTranslator.Core
         {
             if (_kept.Count == 0 || instance == null) return;
             if (!_kept.TryGetValue(TypeHelper.GetInstanceID(instance), out var kept) || Math.Abs(kept.Shift) < 0.01f) return;
+            float shift = kept.Shift;
+            if (kept.ShiftAt > 0f)
+            {
+                // Best Fit: the size the engine just picked, from the generator that laid this mesh out.
+                int used = UsedSize(instance);
+                if (used <= 0) return;
+                shift *= used / kept.ShiftAt;
+            }
             if (!(helper is VertexHelper vertices))
             {
                 if (DiagnosticOnce.First("LegacyLines.helper", helper?.GetType().FullName ?? "null"))
@@ -160,10 +190,23 @@ namespace UnityGameTranslator.Core
             {
                 vertices.PopulateUIVertex(ref vertex, i);
                 var position = vertex.position;
-                position.y += kept.Shift;
+                position.y += shift;
                 vertex.position = position;
                 vertices.SetUIVertex(vertex, i);
             }
+        }
+
+        private static PropertyInfo _generatorOf, _usedSizeOf;
+
+        /// <summary>The size the engine picked for a Best Fit text it just laid out (TextGenerator.fontSizeUsedForBestFit); 0 unread.</summary>
+        private static int UsedSize(object instance)
+        {
+            if (_generatorOf == null) _generatorOf = instance.GetType().GetProperty("cachedTextGenerator", Pub);
+            object generator = _generatorOf?.GetValue(instance, null);
+            if (generator == null) return 0;
+            if (_usedSizeOf == null) _usedSizeOf = generator.GetType().GetProperty("fontSizeUsedForBestFit", Pub);
+            object used = _usedSizeOf?.GetValue(generator, null);
+            return used != null ? Convert.ToInt32(used) : 0;
         }
 
         /// <summary>The size a text is drawn at: its own, or — 0 on a TextMesh — its font's.</summary>

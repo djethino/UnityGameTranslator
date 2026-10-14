@@ -3580,7 +3580,7 @@ namespace UnityGameTranslator.Core
                     if (originalFontObj != null && CustomFontLoader.TryGetModernFaceInfo(originalFontObj, out var ops, out var osc))
                         origFace = $"pointSize={ops}, scale={osc}";
                     string nowFont = TypeHelper.GetFontName(component);
-                    TranslatorCore.LogInfo($"[FontManager] DIAG replace '{originalFontName}' → '{nowFont}' on {ct.Name}: fontSize={fs}→{fsAfter}, autoSize={autoSize} [{fsMin}..{fsMax}], preferred={prefW}x{prefH}, rect={rectStr}, spacing character={ReadProp("characterSpacing")} word={ReadProp("wordSpacing")} line={ReadProp("lineSpacing")}, original faceInfo: {origFace}");
+                    TranslatorCore.LogInfo($"[FontManager] DIAG replace '{originalFontName}' → '{nowFont}' on {ct.Name}: fontSize={fs}→{fsAfter}, autoSize={autoSize} [{fsMin}..{fsMax}], preferred={prefW}x{prefH}, rect={rectStr}, spacing character={ReadProp("characterSpacing")} word={ReadProp("wordSpacing")} line={ReadProp("lineSpacing")} font's={LetterSpacing.FontSpacing(ReadProp("font"))} original font's={LetterSpacing.FontSpacing(originalFontObj)}, original faceInfo: {origFace}");
                 }
                 catch (Exception ex)
                 {

@@ -11,6 +11,10 @@
 
 A mod that players install into any Unity game to play it in their language — the game doesn't need to support it, and the developer doesn't need to do anything. Use translations shared by the community, or translate live with your own AI: a free local server (Ollama, LM Studio — Vulkan covers NVIDIA, AMD and Intel GPUs) if your machine can run the game and the model together, or any OpenAI-compatible online provider (Groq, Gemini, OpenAI, OpenRouter…), Google Translate or DeepL with your own key. Fully offline with a local AI: no API key, no internet, no cost. Supports all writing systems and any language direction.
 
+<p align="center">
+  <img src="docs/screenshots/one-window.webp" alt="The mod's window in a game: the bar of sections on the left, Translation Tools open on its Tools tab" width="720">
+</p>
+
 > This README covers the technical side (installation details, configuration, self-hosting, building). For the user guide — setup wizard, editors, collaboration, troubleshooting — see the [documentation on the website](https://unitygametranslator.asymptomatikgames.com/docs).
 
 ## Features
@@ -130,12 +134,17 @@ The full set of measures, and who sees each, is published at `/docs`.
 ### In-Game Overlay
 
 - **First-run wizard** — guided setup on first launch
-- **Settings hotkey** — Shift+F10 (configurable) opens the full settings panel
+- **Settings hotkey** — Shift+F10 (configurable) opens the mod's window, on the section shown last
+- **One window** — This game, Translation Tools and Mod Options are sections of one window, picked on a bar at its left that folds to icons. Choices not applied are kept when you switch sections, and the window asks before closing with changes not applied. Prefer separate windows? Mod Options › General › Interface › Windows
 - **Free cursor hotkey** (unset by default, Options › Hotkeys) — takes the cursor in games that hide it, so the corner notifications can be clicked; press again to give it back
 - **Translation info** — H/V/A/S distribution, review stage, lines left to review, sync status
 - **Translation Tools** — tabs for Tools (editors), Exclusions, Fonts (Global + Overrides), Images, Variables
 - **Merge panel** — resolve conflicts with per-entry Keep Mine / Take Server choices
 - **Status overlay** — corner notifications for updates, sync, and AI queue
+
+<p align="center">
+  <img src="docs/screenshots/mod-options-translation.webp" alt="Mod Options, Translation tab: a local AI server, its model and the game context" width="640">
+</p>
 
 > **Note:** Only text displayed during gameplay is translated. Play through the game to build the translation cache.
 
@@ -237,7 +246,7 @@ The mod works with **any server that exposes the OpenAI-compatible API** (`/v1/c
 | [Google Translate](https://cloud.google.com/translate) | Cloud Translation API |
 | [DeepL](https://www.deepl.com/pro-api) | Free and Pro tiers |
 
-**Setup:** Open the mod panel (Shift+F10) → Mod Options → Translation tab → select backend → enter URL/key → Test → Enable.
+**Setup:** Open the mod (Shift+F10) → Mod Options → Translation tab → select backend → enter URL/key → Test → Enable.
 
 > **Which local model?** A file cannot answer that: models age in weeks, and a name written here
 > would still be advertised long after it stopped being a sensible choice — the one that used to sit
@@ -263,7 +272,8 @@ Translation cache: `translations.json` in the same folder.
 | `translation_backend` | `"llm"`, `"google"`, `"deepl"`, or `"none"` |
 | `target_language` | `"auto"` (system language) or specific (e.g., `"French"`) |
 | `game_context` | Game description for better AI translations (e.g., `"Medieval fantasy RPG"`) |
-| `settings_hotkey` | Key to open settings (default: `"Shift+F10"`) |
+| `settings_hotkey` | Key to open the mod's window (default: `"Shift+F10"`) |
+| `window_layout` | `"one"` (one window with sections, default) or `"separate"` (one window per screen) |
 | `online_mode` | Enable community features (sync, upload) |
 | `sync.merge_strategy` | `"ask"`, `"merge"`, or `"replace"` |
 
@@ -278,7 +288,7 @@ UnityGameTranslator can use custom fonts and replacement images to improve trans
 | BepInEx | `<Game>/BepInEx/plugins/UnityGameTranslator/fonts/` | `<Game>/BepInEx/plugins/UnityGameTranslator/images/` |
 | MelonLoader | `<Game>/UserData/UnityGameTranslator/fonts/` | `<Game>/UserData/UnityGameTranslator/images/` |
 
-**Custom fonts** — drop `.ttf` or `.otf` files into the `fonts/` folder, or use **Extract** on a game font in the Fonts tab (its **Open folder** button opens `fonts/`). The filename (without extension) becomes the font name shown in the Translation Parameters panel. Assign per UI element or globally.
+**Custom fonts** — drop `.ttf` or `.otf` files into the `fonts/` folder, or use **Extract** on a game font in the Fonts tab (its **Open folder** button opens `fonts/`). The filename (without extension) becomes the font name shown in the Fonts tab of Translation Tools. Assign per UI element or globally.
 
 **Replacement images** — drop `.png` files (with transparency) into the `images/` folder. Use the in-game image capture feature to export existing sprites, edit them externally, then save the modified versions back.
 
@@ -355,7 +365,7 @@ UnityGameTranslator/
 │   ├── GitHubUpdateChecker.cs          # Mod version update checker
 │   ├── TokenProtection.cs              # AES-256 token encryption
 │   └── UI/                             # UniverseLib uGUI overlay
-│       ├── Panels/                     # 12 panels (wizard, settings, merge, inspector...)
+│       ├── Panels/                     # 12 screens (wizard, settings, merge, inspector...) and the section bar
 │       └── Components/                 # Reusable UI components
 ├── UniverseLib/                        # Git submodule (yukieiji fork)
 ├── UnityGameTranslator-BepInEx5/       # BepInEx 5 adapter (Mono)

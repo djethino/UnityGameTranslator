@@ -124,7 +124,11 @@ namespace UnityGameTranslator.Core.Checks
                 "the arbitration of whose settings to keep runs after the reload: the window's snapshot would describe the moment between");
 
             // ⚠ A row reads its value from the pending answer, else from the snapshot: dropping
-            // them AFTER building the list shows the previous file's values.
+            // them AFTER building the list shows the previous file's values. The lists are built
+            // by RefreshFacts, which an opening calls after the forgetting — and which a return
+            // to the section of the one window calls alone, so it must forget nothing (2026-10-15).
+            string facts = panel == null ? null : BodyOf(panel, "private void RefreshFacts()");
+            int factsCall = loadState == null ? -1 : loadState.IndexOf("RefreshFacts();", StringComparison.Ordinal);
             foreach (var (drop, build) in new[]
             {
                 ("_pendingFontSettings.Clear();", "RefreshFontsList("),
@@ -133,10 +137,12 @@ namespace UnityGameTranslator.Core.Checks
             })
             {
                 int d = loadState == null ? -1 : loadState.IndexOf(drop, StringComparison.Ordinal);
-                int b = loadState == null ? -1 : loadState.IndexOf(build, StringComparison.Ordinal);
-                check(d >= 0 && b > d,
+                check(d >= 0 && factsCall > d && facts != null && facts.Contains(build, StringComparison.Ordinal),
                     $"the window forgets ({drop}) before it builds ({build})",
                     "built first, the list shows the answers and the snapshot of the file that was there before");
+                check(facts != null && !facts.Contains(drop, StringComparison.Ordinal),
+                    $"reading the game again keeps the answers ({drop} not in RefreshFacts)",
+                    "a return to Translation Tools in the one window keeps what was chosen and not applied");
             }
 
             // ── The interface file is per LANGUAGE, and the language is settled halfway. ──

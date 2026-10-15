@@ -431,7 +431,9 @@ namespace UnityGameTranslator.Core.UI
 
         // UniverseLib theme extras (no dedicated UGT use yet — kept here so the whole UniverseLib
         // palette is driven from ONE place; see TranslatorUIManager.Initialize theme sync)
-        public static readonly Color SliderBackgroundColor = Of(Theme.SurfaceCard);
+        // The part not chosen is the trough a progress bar's remainder is (TroughBackground): it was
+        // the card's own colour, so a slider read as a bar of purple floating on nothing (2026-10-14).
+        public static readonly Color SliderBackgroundColor = TroughBackground;
         public static readonly Color SliderFillColor = Of(Theme.Accent, 0.85f);
         public static readonly Color SliderHandleColor = Of(Theme.SurfaceHover);
         /// <summary>The handle of a rail that holds the wheel — the hover colour buttons already use.</summary>

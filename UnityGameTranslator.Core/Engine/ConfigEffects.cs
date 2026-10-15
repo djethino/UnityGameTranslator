@@ -83,7 +83,7 @@ namespace UnityGameTranslator.Core
 
             // Said in a log, about our own windows, or about how often we look.
             "debug", "debug_ai", "debug_text_trace", "config_version", "first_run_completed", "window_preferences",
-            "panel_opacity_focused", "panel_opacity_unfocused",
+            "panel_opacity_focused", "panel_opacity_unfocused", "window_layout",
             "max_text_detection_latency_seconds",
         };
 

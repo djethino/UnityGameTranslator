@@ -337,8 +337,9 @@ namespace UnityGameTranslator.Core.Checks
             // 46 = the 42 settings acts (the last ones: the source text, target text and object name
             // fonts of the game's text the window shows) plus the About tab's four doors out: this mod's source, the
             // Manager, the website, the studio. A tab that only reads and links asks for no more.
-            check(options.Acts.Count == 46 && options.Nodes["AiAdvanced"].Kind == "collapsible" && options.Nodes["AiAdvanced"].Flag("expanded") == false,
-                "options.json asks for 46 acts and folds the AI's advanced settings", $"got {options.Acts.Count} acts");
+            // + the window layout's choice (one window or separate ones, 2026-10-14).
+            check(options.Acts.Count == 47 && options.Nodes["AiAdvanced"].Kind == "collapsible" && options.Nodes["AiAdvanced"].Flag("expanded") == false,
+                "options.json asks for 47 acts and folds the AI's advanced settings", $"got {options.Acts.Count} acts");
 
             // ⚠ The About tab carries the mod's only two pictures. A document can name a picture
             // and never hold one: if either box disappears, the code that fills it throws at

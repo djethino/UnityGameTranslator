@@ -37,6 +37,187 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// <summary>Raised when the state as asked changed, whichever road asked — see _reportedVisible.</summary>
         public event Action<IScreen, bool> VisibilityChanged;
 
+        // ── One window: the three sections share one rectangle (analyse/fenetre-unique-sections.md) ──
+
+        /// <summary>True for Translation, Translation Tools and Mod Options — the sections of the one window.</summary>
+        protected virtual bool IsWindowSection => false;
+
+        /// <summary>True for the section whose declared size is the one window's default (Translation Tools, decided 2026-10-11).</summary>
+        protected virtual bool GivesSectionDefaultSize => false;
+
+        /// <summary>One window: this panel is drawn in the rectangle the three sections share.</summary>
+        protected bool SharesSectionRect => IsWindowSection && Intents.OneWindow;
+
+        /// <summary>
+        /// This opening puts the panel in place of another section of the same window: what it
+        /// keeps then is the choices it held, unapplied (decided 2026-10-11) — an opening with the
+        /// window closed starts afresh, as every window does.
+        /// </summary>
+        protected bool ShownInPlaceOfAnotherSection => IsWindowSection && Intents.SwitchingSections;
+
+        /// <summary>
+        /// This opening keeps what the section shows instead of reading it again: put up in place
+        /// of another section AND holding unapplied choices. ⚠ Both: a section never filled, or one
+        /// with nothing waiting, reads afresh like any window (2026-10-14: the Fonts tab came up
+        /// with empty lists on the first switch to it).
+        /// </summary>
+        protected bool KeepsHeldChoices => ShownInPlaceOfAnotherSection && PendingChanges > 0;
+
+        /// <summary>The window preference the three sections share, beside each panel's own.</summary>
+        private const string SectionsPreference = "Sections";
+
+        /// <summary>
+        /// The one window's rectangle as a section last held it — anchors, pivot, position and
+        /// size together. 🔴 **All five, never a size alone** (2026-10-14: the window jumped wider
+        /// at every grab of its edge). The dragger resizes by moving the ANCHORS, so a sizeDelta
+        /// means nothing without the anchors it was read under; the three sections hang from the
+        /// same canvas, so the same five values are the same rectangle.
+        /// </summary>
+        private struct SectionLayout
+        {
+            public Vector2 AnchorMin, AnchorMax, Pivot, Position, SizeDelta;
+            public static SectionLayout Of(RectTransform r) => new SectionLayout
+            { AnchorMin = r.anchorMin, AnchorMax = r.anchorMax, Pivot = r.pivot, Position = r.anchoredPosition, SizeDelta = r.sizeDelta };
+            public void ApplyTo(RectTransform r)
+            { r.anchorMin = AnchorMin; r.anchorMax = AnchorMax; r.pivot = Pivot; r.sizeDelta = SizeDelta; r.anchoredPosition = Position; }
+        }
+
+        /// <summary>The rectangle a section last held, once one has been shown.</summary>
+        private static SectionLayout? _sectionLayout;
+        private static Vector2 _sectionDefaultSize;
+
+        /// <summary>The name its position and size are saved under.</summary>
+        private string PreferenceName => SharesSectionRect ? SectionsPreference : Name;
+
+        /// <summary>
+        /// Puts this section in the one window's rectangle: the one the last section held, else
+        /// the saved size and position, else the default size at the centre. Never under this
+        /// panel's own minimum, never past the screen.
+        ///
+        /// ⚠ Called on the panel's real hidden → shown change only: SetActive(true) also arrives
+        /// on every frame the window's edge is held, and taking the rectangle there undid the
+        /// person's drag at each frame (2026-10-14).
+        /// </summary>
+        private void TakeSectionRect()
+        {
+            if (Rect == null) return;
+            _isProgrammaticResize = true;
+            try
+            {
+                if (_sectionLayout.HasValue) _sectionLayout.Value.ApplyTo(Rect);
+                else
+                {
+                    // A saved position is read from the centre of the canvas, as every window's is.
+                    Rect.anchorMin = Rect.anchorMax = Rect.pivot = new Vector2(0.5f, 0.5f);
+                    var size = DefaultSectionSize();
+                    var position = Vector2.zero;
+                    var prefs = TranslatorCore.Config.window_preferences;
+                    if (prefs.panels.TryGetValue(SectionsPreference, out var pref) && SavedOnThisScreen(pref, prefs))
+                    {
+                        if (pref.hasPosition) position = new Vector2(pref.x, pref.y);
+                        if (pref.userResized && pref.width > 0 && pref.height > 0) size = new Vector2(pref.width, pref.height);
+                    }
+                    Rect.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, size.x);
+                    Rect.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, size.y);
+                    Rect.anchoredPosition = position;
+                }
+                float width = Mathf.Min(Math.Max(Rect.rect.width, MinWidth), UIStyles.CalculateMaxPanelWidth(Screen.width));
+                float height = Mathf.Min(Math.Max(Rect.rect.height, MinPanelHeight), TallestOnThisScreen);
+                if (Math.Abs(Rect.rect.width - width) > 0.5f) Rect.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, width);
+                if (Math.Abs(Rect.rect.height - height) > 0.5f) Rect.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, height);
+                EnsureValidPosition();
+                UpdateDraggerCache();
+            }
+            finally { _isProgrammaticResize = false; }
+            _sectionLayout = SectionLayout.Of(Rect);
+        }
+
+        /// <summary>
+        /// The one window's size before anybody sizes it: as tall as the screen holds — what
+        /// Translation Tools took as a window of its own, its lists asking for every row — and a
+        /// quarter wider than tall, never under Translation Tools' declared size (decided 2026-10-11,
+        /// user 2026-10-14: « plus grande et plus large par défaut, on a de la place à l'écran »).
+        /// Measured on the canvas, the space the window is laid out in, not on the screen's pixels.
+        /// </summary>
+        private Vector2 DefaultSectionSize()
+        {
+            var floor = _sectionDefaultSize != Vector2.zero ? _sectionDefaultSize : new Vector2(PanelWidth, PanelHeight);
+            var canvas = Owner.RootRect.rect;
+            float height = Math.Max(floor.y, UIStyles.CalculateMaxPanelHeight(canvas.height));
+            float width = Mathf.Min(UIStyles.CalculateMaxPanelWidth(canvas.width), Math.Max(floor.x, height * 1.25f));
+            return new Vector2(width, height);
+        }
+
+        /// <summary>
+        /// Where the window's centre is on the canvas, whatever its anchors and pivot — what a place
+        /// is saved and compared as. ⚠ Not anchoredPosition: the dragger resizes by moving the
+        /// anchors, after which anchoredPosition is measured from somewhere else, and a place saved
+        /// that way came back anywhere. Restored under centred anchors, it is the anchoredPosition.
+        /// </summary>
+        private Vector2 CentreOnCanvas =>
+            (Vector2)Rect.localPosition + Vector2.Scale(new Vector2(0.5f, 0.5f) - Rect.pivot, Rect.rect.size);
+
+        /// <summary>
+        /// A saved place and size belong to the screen they were taken on. One saved before each
+        /// window carried its own screen is judged by the screen saved last, all it has.
+        /// </summary>
+        private static bool SavedOnThisScreen(WindowPreference pref, WindowPreferences prefs)
+        {
+            int width = pref.screenWidth > 0 ? pref.screenWidth : prefs.screenWidth;
+            int height = pref.screenHeight > 0 ? pref.screenHeight : prefs.screenHeight;
+            return width <= 0 || height <= 0 || (width == Screen.width && height == Screen.height);
+        }
+
+        /// <summary>The one window was moved or resized through this section: the other two follow.</summary>
+        private void NoteSectionRect()
+        {
+            if (!SharesSectionRect || Rect == null) return;
+            _sectionLayout = SectionLayout.Of(Rect);
+        }
+
+        /// <summary>The one window takes this section's rectangle — when the layout is switched to one window.</summary>
+        internal void GiveSectionRect()
+        {
+            if (Rect == null) return;
+            _sectionLayout = SectionLayout.Of(Rect);
+        }
+
+        /// <summary>
+        /// The cross of a section of the one window closes the window, and with it the choices
+        /// the other sections hold: asked first (Intents.LeaveWindow). A section with choices of
+        /// its own says what its cross does with them (Translation Tools, Mod Options).
+        /// </summary>
+        protected override void OnClosePanelClicked()
+        {
+            if (IsWindowSection) Intents.LeaveWindow(this, () => base.OnClosePanelClicked(), ownDiscarded: true);
+            else base.OnClosePanelClicked();
+        }
+
+        /// <summary>
+        /// The section's body arriving, the title bar left still: each block under the title
+        /// grows in as a tab's content does (Appearances.Block — the same slight movement).
+        /// </summary>
+        private void ArriveUnderTitle()
+        {
+            if (ContentRoot == null) return;
+            var root = ContentRoot.transform;
+            for (int i = 0; i < root.childCount; i++)
+            {
+                var child = root.GetChild(i).gameObject;
+                if (child == TitleBar || !child.activeSelf) continue;
+                Components.Appearances.Block(child);
+            }
+        }
+
+        /// <summary>The rectangle on screen this window occupies, for what is drawn beside it (the section bar).</summary>
+        internal RectTransform WindowRect => Rect;
+
+        /// <summary>Whether its showing plays the arrival movement (Appearances.Panel). The section bar's follows its section.</summary>
+        protected virtual bool ArrivesOnItsOwn => true;
+
+        /// <summary>How many of its choices wait for Apply — what the section bar writes after its name. None by default.</summary>
+        public virtual int PendingChanges => 0;
+
         /// <summary>
         /// The scrollable body with its fixed footer — the skeleton every ordinary panel is built
         /// on: content scrolls if needed while the buttons stay at the bottom. Handed to the panel
@@ -232,6 +413,8 @@ namespace UnityGameTranslator.Core.UI.Panels
         public static void ResetAllLiveWindows()
         {
             _livePanels.RemoveAll(p => p == null || p.Rect == null);
+            // The one window's rectangle goes too: its default is computed again (DefaultSectionSize).
+            _sectionLayout = null;
             foreach (var panel in _livePanels)
             {
                 try { panel.ResetWindowToDefaults(); }
@@ -247,6 +430,14 @@ namespace UnityGameTranslator.Core.UI.Panels
         private void ResetWindowToDefaults()
         {
             if (!UsesCenterAnchors) return;
+
+            // One window: the section up takes the default rectangle again; a hidden one takes it
+            // when it comes up.
+            if (SharesSectionRect)
+            {
+                if (Enabled) TakeSectionRect();
+                return;
+            }
 
             // Hand the panel back to dynamic sizing, otherwise the reset would keep the very
             // size the user asked to drop.
@@ -275,7 +466,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             // the panel and clamps it back on screen
             SetDefaultSizeAndPosition();
 
-            _lastSavedPosition = Rect.anchoredPosition;
+            _lastSavedPosition = CentreOnCanvas;
             _lastSavedSize = new Vector2(Rect.rect.width, Rect.rect.height);
             _hasLastSavedValues = true;
         }
@@ -362,7 +553,12 @@ namespace UnityGameTranslator.Core.UI.Panels
             const float GrabMargin = 50f;
 
             // X: leave at least GrabMargin px of the panel inside the screen on each side.
-            pos.x = Mathf.Clamp(pos.x, -halfW + GrabMargin - halfPanelW, halfW - GrabMargin + halfPanelW);
+            // 🔴 One window: the section bar hangs off the left edge and is the only way to the other
+            // sections, so the left edge is held like the top — the bar never leaves the screen
+            // (user, 2026-10-15: « on bloque comme en haut ? »). It overlaps the window by a pixel.
+            float barWidth = SharesSectionRect ? Intents.SectionBarWidth : 0f;
+            float leftmost = barWidth > 0f ? -halfW + barWidth - 1f + halfPanelW : -halfW + GrabMargin - halfPanelW;
+            pos.x = Mathf.Clamp(pos.x, leftmost, Mathf.Max(leftmost, halfW - GrabMargin + halfPanelW));
 
             // Y, top edge: the panel top may touch the screen edge exactly (no dead band)
             // but never pass above it — the title bar is the only way to move the panel.
@@ -481,8 +677,17 @@ namespace UnityGameTranslator.Core.UI.Panels
             // nothing about the window shown now.
             if (active) _tremble.Reset();
 
+            // One window: the section is drawn where the window is, at its size — the panel's own
+            // sizing (first show, content) never runs there. Taken on the real change to shown
+            // only: this also runs on every frame the window's edge is held (TakeSectionRect).
+            if (active && SharesSectionRect)
+            {
+                _needsFirstShowSizing = false;
+                _initialSizingComplete = true;
+                if (!_reportedVisible) TakeSectionRect();
+            }
             // Dynamic sizing on FIRST SHOW - this is when Unity's layout is actually calculated
-            if (active && _needsFirstShowSizing && UseDynamicSizing)
+            else if (active && _needsFirstShowSizing && UseDynamicSizing)
             {
                 _needsFirstShowSizing = false;
                 UniverseLib.RuntimeHelper.StartCoroutine(DelayedFirstShowSizing());
@@ -501,7 +706,14 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // ⚠ Here and nowhere else: this is the one place that knows a panel really changed
                 // state. SetActive(true) arrives on every frame the drag handle is held, and
                 // playing the movement on each would hold the panel at 96% for the whole drag.
-                if (active) Components.Appearances.Panel(UIRoot);
+                // One window: a section in place of another is the same window, nothing arrives;
+                // the section bar follows its section's movement (TickSectionBar), none of its own.
+                if (active && ArrivesOnItsOwn && !ShownInPlaceOfAnotherSection) Components.Appearances.Panel(UIRoot);
+                // A section in place of another: the window stays, its title bar and the section bar
+                // with it; what is under the title arrives as a tab's content does (TabBar).
+                else if (active && ShownInPlaceOfAnotherSection) ArriveUnderTitle();
+                if (active && TranslatorCore.DebugMode)
+                    TranslatorCore.LogDebug($"[Focus] frame {Time.frameCount}: {Name} shown ({(ShownInPlaceOfAnotherSection ? "in place of another section" : ArrivesOnItsOwn ? "arriving" : "placed")})");
 
                 VisibilityChanged?.Invoke(this, active);
             }
@@ -530,7 +742,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             EnsureValidPosition();
 
             // Update tracking values
-            _lastSavedPosition = Rect.anchoredPosition;
+            _lastSavedPosition = CentreOnCanvas;
             _lastSavedSize = new Vector2(Rect.rect.width, Rect.rect.height);
             _hasLastSavedValues = true;
             _initialSizingComplete = true;
@@ -785,6 +997,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             // 🔴 The hand on the grip wins: the dragger already holds the window between MinHeight
             // and MaxHeight, and a size set under it made the grip jump and let go (2026-10-09).
             if (UserIsResizing) return;
+            // One window: its size is the person's, shared by the sections — content never sets it.
+            if (SharesSectionRect) return;
 
             _isProgrammaticResize = true;
             try
@@ -874,28 +1088,58 @@ namespace UnityGameTranslator.Core.UI.Panels
                 return;
             }
 
+            if (GivesSectionDefaultSize) _sectionDefaultSize = new Vector2(PanelWidth, PanelHeight);
+
+            ApplyWindowPreference();
+        }
+
+        /// <summary>
+        /// One window became separate windows (Mod Options): a section that is not up becomes a
+        /// window of its own again — its own saved place and size, else centred and sized to its
+        /// content when it next comes up, as at a start in that layout. The section up stays where
+        /// it is (TranslatorUIManager.ApplyWindowLayout).
+        /// </summary>
+        internal void BecomeOwnWindow()
+        {
+            if (Rect == null || !UsesCenterAnchors) return;
+            Rect.anchorMin = Rect.anchorMax = Rect.pivot = new Vector2(0.5f, 0.5f);
+            _userChoseSize = false;
+            _hasDynamicSize = false;
+            _contentMeasured = false;
+            _needsFirstShowSizing = true;
+            _initialSizingComplete = false;
+            ApplyWindowPreference();
+        }
+
+        /// <summary>
+        /// The window's saved place and size, read under its preference name — at construction,
+        /// and when a section becomes a window of its own again (BecomeOwnWindow).
+        /// </summary>
+        private void ApplyWindowPreference()
+        {
             // Try to load saved preferences
             // Position and size are now independent:
             // - Position is only applied if hasPosition is true (user moved the panel)
             // - Size is only applied if userResized is true (user resized the panel)
             WindowPreference pref = null;
             var prefs = TranslatorCore.Config.window_preferences;
-            bool hasPreference = PersistWindowPreferences && prefs.panels.TryGetValue(Name, out pref);
+            bool hasPreference = PersistWindowPreferences && prefs.panels.TryGetValue(PreferenceName, out pref);
 
+            // 🔴 Saved on another screen: dropped, the window opens at its default (user, 2026-10-15:
+            // « si on change de résolution réinitialisée pour pas se retrouver n'importe comment »).
+            // Scaling a place and a size taken on another screen is what landed windows anywhere.
+            if (hasPreference && !SavedOnThisScreen(pref, prefs)) hasPreference = false;
             var screenDim = new Vector2(Screen.width, Screen.height);
-            float widthRatio = prefs.screenWidth > 0 ? screenDim.x / prefs.screenWidth : 1f;
-            float heightRatio = prefs.screenHeight > 0 ? screenDim.y / prefs.screenHeight : 1f;
-            bool resolutionChanged = Math.Abs(widthRatio - 1) > 0.1f || Math.Abs(heightRatio - 1) > 0.1f;
 
             // Handle position (independent of size). The restored SIZE matters
             // here: a user-resized panel is often taller/wider than the
             // declared defaults, and judging bounds with the default size let
             // saved positions land with the title bar above the screen.
-            bool sizeRestored = hasPreference && pref.userResized && pref.width > 0 && pref.height > 0 && !resolutionChanged;
+            bool sizeRestored = hasPreference && pref.userResized && pref.width > 0 && pref.height > 0;
             if (hasPreference && pref.hasPosition)
             {
-                float newX = resolutionChanged ? pref.x * widthRatio : pref.x;
-                float newY = resolutionChanged ? pref.y * heightRatio : pref.y;
+                float newX = pref.x;
+                float newY = pref.y;
                 float halfWidth = (sizeRestored ? pref.width : PanelWidth) / 2f;
                 float halfHeight = (sizeRestored ? pref.height : PanelHeight) / 2f;
 
@@ -950,7 +1194,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Otherwise, keep _needsFirstShowSizing = true to calculate size dynamically
 
             // Initialize tracking values
-            _lastSavedPosition = Rect.anchoredPosition;
+            _lastSavedPosition = CentreOnCanvas;
             _lastSavedSize = new Vector2(Rect.rect.width, Rect.rect.height);
             _hasLastSavedValues = true;
 
@@ -992,11 +1236,13 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Don't save during initial construction - only after user interaction
             if (!_initialSizingComplete) return;
 
-            // Save size only (not position) - position is saved separately when dragging
+            // The size, and the place with it: an edge pulled moves the window's centre, so a size
+            // saved alone came back around the old centre, shifted by half the pull (2026-10-15).
+            NoteSectionRect();
             if (PersistWindowPreferences && HasSizeChanged())
             {
                 _userChoseSize = true;
-                SaveWindowPreference(savePosition: false, saveSize: true);
+                SaveWindowPreference(savePosition: true, saveSize: true);
             }
         }
 
@@ -1013,6 +1259,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Don't save during initial construction - only after user interaction
             if (!_initialSizingComplete) return;
 
+            NoteSectionRect();
             if (HasPositionChanged())
             {
                 SaveWindowPreference(savePosition: true, saveSize: false);
@@ -1026,8 +1273,9 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             if (!_hasLastSavedValues) return true;
             const float tolerance = 1f;
-            return Math.Abs(Rect.anchoredPosition.x - _lastSavedPosition.x) > tolerance ||
-                   Math.Abs(Rect.anchoredPosition.y - _lastSavedPosition.y) > tolerance;
+            var centre = CentreOnCanvas;
+            return Math.Abs(centre.x - _lastSavedPosition.x) > tolerance ||
+                   Math.Abs(centre.y - _lastSavedPosition.y) > tolerance;
         }
 
         /// <summary>
@@ -1290,7 +1538,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// </summary>
         protected void RecalculateSize()
         {
-            if (!UseDynamicSizing) return;
+            if (!UseDynamicSizing || SharesSectionRect) return;
             UniverseLib.RuntimeHelper.StartCoroutine(DelayedRecalculateSize());
         }
 
@@ -1331,6 +1579,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             // The hand on the grip wins — see ResizeTo. Its release decides the size.
             if (UserIsResizing) return;
+            if (SharesSectionRect) { UpdateDraggerCache(); return; }
 
             if (!UseDynamicSizing)
             {
@@ -1393,7 +1642,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             var prefs = TranslatorCore.Config.window_preferences;
 
             // Get or create preference
-            if (!prefs.panels.TryGetValue(Name, out var pref))
+            if (!prefs.panels.TryGetValue(PreferenceName, out var pref))
             {
                 pref = new WindowPreference();
             }
@@ -1401,10 +1650,11 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Save position if requested
             if (savePosition)
             {
-                pref.x = Rect.anchoredPosition.x;
-                pref.y = Rect.anchoredPosition.y;
+                var centre = CentreOnCanvas;
+                pref.x = centre.x;
+                pref.y = centre.y;
                 pref.hasPosition = true;
-                _lastSavedPosition = Rect.anchoredPosition;
+                _lastSavedPosition = centre;
             }
 
             // Save size if requested
@@ -1416,7 +1666,12 @@ namespace UnityGameTranslator.Core.UI.Panels
                 _lastSavedSize = new Vector2(Rect.rect.width, Rect.rect.height);
             }
 
-            prefs.panels[Name] = pref;
+            // The screen it was saved on, with it: read back on another, it is dropped
+            // (SavedOnThisScreen) — the global pair below says only which screen saved LAST.
+            pref.screenWidth = Mathf.RoundToInt(screenDim.x);
+            pref.screenHeight = Mathf.RoundToInt(screenDim.y);
+
+            prefs.panels[PreferenceName] = pref;
 
             // Update global screen dimensions
             prefs.screenWidth = Mathf.RoundToInt(screenDim.x);

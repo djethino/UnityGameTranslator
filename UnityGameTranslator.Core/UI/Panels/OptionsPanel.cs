@@ -66,6 +66,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         private ToggleHandle _captureMouseAxesToggle;
         private ToggleHandle _pauseGameToggle;
         private SliderHandle _opacityFocusedSlider;
+        private ChoiceHandle _windowLayoutChoice;   // 0 = One window, 1 = Separate windows
         private SliderHandle _opacityUnfocusedSlider;
 
         // Hotkey section
@@ -272,6 +273,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             public bool pause_game;
             public float panel_opacity_focused;
             public float panel_opacity_unfocused;
+            public string window_layout;
             public string proxy_mode;
             public string proxy_url;
             public string proxy_username;
@@ -349,6 +351,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                     pause_game = TranslatorCore.PauseGame,
                     panel_opacity_focused = TranslatorCore.PanelOpacityFocused,
                     panel_opacity_unfocused = TranslatorCore.PanelOpacityUnfocused,
+                    window_layout = TranslatorCore.Config.OneWindow ? "one" : "separate",
                     proxy_mode = TranslatorCore.Config.proxy_mode ?? "default",
                     proxy_url = TranslatorCore.Config.proxy_url ?? "",
                     proxy_username = TranslatorCore.Config.proxy_username ?? "",
@@ -438,6 +441,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _lockedTargetMark = _screen.Host("TargetMark");
             _lockedTargetLangValue = _screen.Label("TargetValue");
             _opacityFocusedSlider = _screen.Slider("OpacityFocused");
+            _windowLayoutChoice = _screen.Choice("WindowLayout");
             _opacityUnfocusedSlider = _screen.Slider("OpacityUnfocused");
             _resetWindowsStatusLabel = _screen.Label("ResetStatus");
 
@@ -565,6 +569,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _proxyModeDropdown.SelectedValue = ProxyModeDisplayOptions[0];
 
             _opacityFocusedSlider.Value = TranslatorCore.PanelOpacityFocused;
+            _windowLayoutChoice.Selected = TranslatorCore.Config.OneWindow ? 0 : 1;
             _opacityUnfocusedSlider.Value = TranslatorCore.PanelOpacityUnfocused;
 
             // Setup change listeners for tracking pending changes
@@ -591,7 +596,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                 case "targetChanged": return UpdateApplyButtonText;
                 case "sourceChanged": return OnSourceLanguageChanged;
                 case "opacityFocusedChanged":
-                case "opacityUnfocusedChanged": return OnSettingChanged;
+                case "opacityUnfocusedChanged":
+                case "windowLayoutChanged": return OnSettingChanged;
                 case "resetWindows": return OnResetWindowPositionsClicked;
                 case "reportBug": return () => TranslatorCore.OpenUrlSafe("https://github.com/djethino/UnityGameTranslator/issues");
                 case "discussions": return () => TranslatorCore.OpenUrlSafe("https://github.com/djethino/UnityGameTranslator/discussions");
@@ -627,7 +633,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 case "checkModUpdates": return OnCheckModUpdatesNowClicked;
                 case "proxyModeChanged": return OnProxyModeChanged;
                 // Footer
-                case "cancel": return DiscardAndClose;
+                case "cancel": return () => Intents.LeaveWindow(this, DiscardAndClose, ownDiscarded: true);
                 case "apply": return OnApplyClicked;
                 default: return null;
             }
@@ -693,8 +699,14 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// ⚠ Two ways out of a screen must not mean two different things about the answers typed
         /// in it. Nothing here is ever written without Apply, so leaving by either door abandons —
         /// and saying it in one place is what stops the two drifting.
+        ///
+        /// 🔴 Asked first when answers wait (Intents.LeaveWindow, user 2026-10-15): the cross is the
+        /// one way out that does not say "drop them".
         /// </summary>
-        protected override void OnClosePanelClicked() => DiscardAndClose();
+        protected override void OnClosePanelClicked() => Intents.LeaveWindow(this, DiscardAndClose, ownDiscarded: false);
+
+        /// <summary>The window layout picked on the screen, as the config writes it.</summary>
+        private string WindowLayoutPicked => _windowLayoutChoice != null && _windowLayoutChoice.Selected == 1 ? "separate" : "one";
 
         /// <summary>A setting moved: the Apply button counts again — unless the settings are being loaded, which is not a change.</summary>
         private void OnSettingChanged()
@@ -847,13 +859,17 @@ namespace UnityGameTranslator.Core.UI.Panels
             UpdateApplyButtonText();
         }
 
+        protected override bool IsWindowSection => true;
+        public override int PendingChanges => CountPendingChanges();
+
         public override void SetActive(bool active)
         {
             bool wasActive = Enabled;
             base.SetActive(active);
             if (active && !wasActive)
             {
-                LoadCurrentSettings();
+                // Back from another section of the one window: what was chosen and not applied stays.
+                if (!KeepsHeldChoices) LoadCurrentSettings();
 
                 // Keeps the window from resizing when the visitor switches tabs
                 KeepPanelHeightAcrossTabs(_tabBar);
@@ -896,6 +912,27 @@ namespace UnityGameTranslator.Core.UI.Panels
         public void ShowTranslationTab() => _tabBar?.SelectTab("Translation");
 
         public void ShowGeneralTab() => _tabBar?.SelectTab("General");
+
+        /// <summary>
+        /// A switch moved outside this screen — translations or live translation, by their hotkey
+        /// or the corner's Ignore: its box follows, and every other answer waiting for Apply stays
+        /// (user, 2026-10-15). The switch is the latest act, so it wins over an answer on that box.
+        /// Re-reading the whole screen (RefreshFromConfig) dropped them all.
+        /// </summary>
+        public void FollowSwitches()
+        {
+            if (_enableTranslationsToggle == null || _initialSnapshot == null) return;
+            var config = TranslatorCore.Config;
+            _isLoadingSettings = true;
+            _initialSnapshot.enable_translations = config.enable_translations;
+            _enableTranslationsToggle.IsOn = config.enable_translations;
+            _initialSnapshot.enable_ai = config.enable_ai;
+            if (_enableTranslationBackendToggle != null)
+                _enableTranslationBackendToggle.IsOn = config.enable_ai && (config.translation_backend ?? "none") != "none";
+            _isLoadingSettings = false;
+            UpdateBackendSections();
+            UpdateApplyButtonText();
+        }
 
         public void RefreshFromConfig()
         {
@@ -1068,6 +1105,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _captureMouseAxesToggle.IsOn = TranslatorCore.CaptureMouseAxes;
             _pauseGameToggle.IsOn = TranslatorCore.PauseGame;
             _opacityFocusedSlider.Value = TranslatorCore.PanelOpacityFocused;
+            _windowLayoutChoice.Selected = TranslatorCore.Config.OneWindow ? 0 : 1;
             _opacityUnfocusedSlider.Value = TranslatorCore.PanelOpacityUnfocused;
 
             // Update strict toggle based on source language
@@ -1594,59 +1632,68 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // comparison that decides, at the end, whether the game has to be redrawn.
                 var before = ConfigEffects.Snapshot(TranslatorCore.Config);
 
+                // 🔴 **Only what the person changed on this screen is written** (2026-10-15). Every
+                // field used to be copied from its control, so a setting moved elsewhere while the
+                // screen held a choice — translations or the AI paused by their hotkeys — was put
+                // back to what the screen had read when it opened. Each write below asks the same
+                // question as the field's Apply count (RegisterPendingFields): the screen's answer
+                // against what the screen read (_initialSnapshot).
+                var read = _initialSnapshot ?? ConfigSnapshot.FromConfig();
+
                 // General
-                TranslatorCore.Config.enable_translations = _enableTranslationsToggle.IsOn;
-                // Applying records an EXPLICIT choice (tri-state leaves "undecided" for users who
-                // never opened this, letting the translation decide for them).
-                TranslatorCore.Config.translate_mod_ui = _translateModUIToggle.IsOn;
+                if (_enableTranslationsToggle.IsOn != read.enable_translations)
+                    TranslatorCore.Config.enable_translations = _enableTranslationsToggle.IsOn;
+                // Applying records an EXPLICIT choice — when the box was moved; untouched, a user who
+                // never decided stays undecided and the translation decides for them.
+                if (_translateModUIToggle.IsOn != read.translate_mod_ui)
+                    TranslatorCore.Config.translate_mod_ui = _translateModUIToggle.IsOn;
                 string interfaceFontBefore = TranslatorCore.EffectiveInterfaceFont;
-                if (_interfaceFontDropdown != null)
+                if (_interfaceFontDropdown != null && NormalizeInterfaceFont(_interfaceFontDropdown.SelectedValue) != read.interface_font)
                     TranslatorCore.SetInterfaceFont(NormalizeInterfaceFont(_interfaceFontDropdown.SelectedValue));
-                TranslatorCore.Config.source_text_font = _sourceTextFontDropdown != null
-                    ? NormalizeInterfaceFont(_sourceTextFontDropdown.SelectedValue)
-                    : TranslatorCore.Config.source_text_font;
-                TranslatorCore.Config.target_text_font = _targetTextFontDropdown != null
-                    ? NormalizeInterfaceFont(_targetTextFontDropdown.SelectedValue)
-                    : TranslatorCore.Config.target_text_font;
-                TranslatorCore.Config.object_name_font = _objectNameFontDropdown != null
-                    ? NormalizeInterfaceFont(_objectNameFontDropdown.SelectedValue)
-                    : TranslatorCore.Config.object_name_font;
+                if (_sourceTextFontDropdown != null && NormalizeInterfaceFont(_sourceTextFontDropdown.SelectedValue) != read.source_text_font)
+                    TranslatorCore.Config.source_text_font = NormalizeInterfaceFont(_sourceTextFontDropdown.SelectedValue);
+                if (_targetTextFontDropdown != null && NormalizeInterfaceFont(_targetTextFontDropdown.SelectedValue) != read.target_text_font)
+                    TranslatorCore.Config.target_text_font = NormalizeInterfaceFont(_targetTextFontDropdown.SelectedValue);
+                if (_objectNameFontDropdown != null && NormalizeInterfaceFont(_objectNameFontDropdown.SelectedValue) != read.object_name_font)
+                    TranslatorCore.Config.object_name_font = NormalizeInterfaceFont(_objectNameFontDropdown.SelectedValue);
                 TranslatorCore.InvalidateInterfaceFontAvailability();
 
                 // Languages
                 string selectedSourceLang = _sourceLanguageDropdown.SelectedValue;
-                TranslatorCore.Config.source_language = selectedSourceLang == "auto (Detect)" ? "auto" : selectedSourceLang;
+                string sourceLang = selectedSourceLang == "auto (Detect)" ? "auto" : selectedSourceLang;
+                if (sourceLang != read.source_language) TranslatorCore.Config.source_language = sourceLang;
 
                 string selectedTargetLang = _targetLanguageDropdown.SelectedValue;
-                TranslatorCore.Config.target_language = selectedTargetLang == "auto (System)" ? "auto" : selectedTargetLang;
+                string targetLang = selectedTargetLang == "auto (System)" ? "auto" : selectedTargetLang;
+                if (targetLang != read.target_language) TranslatorCore.Config.target_language = targetLang;
 
                 // Hotkey
-                TranslatorCore.Config.settings_hotkey = _hotkeyCapture.HotkeyString;
-                TranslatorCore.Config.toggle_translations_hotkey = _hotkeyToggleTranslations.HotkeyString;
-                TranslatorCore.Config.toggle_ai_hotkey = _hotkeyToggleAI.HotkeyString;
-                TranslatorCore.Config.toggle_images_hotkey = _hotkeyToggleImages.HotkeyString;
-                TranslatorCore.Config.toggle_fonts_hotkey = _hotkeyToggleFonts.HotkeyString;
-                TranslatorCore.Config.toggle_overlay_hotkey = _hotkeyToggleOverlay.HotkeyString;
-                TranslatorCore.Config.toggle_cursor_hotkey = _hotkeyToggleCursor.HotkeyString;
-                TranslatorCore.Config.open_inspector_hotkey = _hotkeyOpenInspector.HotkeyString;
-                TranslatorCore.Config.open_upload_hotkey = _hotkeyOpenUpload.HotkeyString;
-                TranslatorCore.Config.open_exclusion_mode_hotkey = _hotkeyOpenExclusion.HotkeyString;
-                TranslatorCore.Config.open_text_editor_hotkey = _hotkeyOpenTextEditor.HotkeyString;
-                TranslatorCore.Config.force_scan_hotkey = _hotkeyForceScan.HotkeyString;
+                if (_hotkeyCapture.HotkeyString != read.settings_hotkey) TranslatorCore.Config.settings_hotkey = _hotkeyCapture.HotkeyString;
+                if (_hotkeyToggleTranslations.HotkeyString != read.toggle_translations_hotkey) TranslatorCore.Config.toggle_translations_hotkey = _hotkeyToggleTranslations.HotkeyString;
+                if (_hotkeyToggleAI.HotkeyString != read.toggle_ai_hotkey) TranslatorCore.Config.toggle_ai_hotkey = _hotkeyToggleAI.HotkeyString;
+                if (_hotkeyToggleImages.HotkeyString != read.toggle_images_hotkey) TranslatorCore.Config.toggle_images_hotkey = _hotkeyToggleImages.HotkeyString;
+                if (_hotkeyToggleFonts.HotkeyString != read.toggle_fonts_hotkey) TranslatorCore.Config.toggle_fonts_hotkey = _hotkeyToggleFonts.HotkeyString;
+                if (_hotkeyToggleOverlay.HotkeyString != read.toggle_overlay_hotkey) TranslatorCore.Config.toggle_overlay_hotkey = _hotkeyToggleOverlay.HotkeyString;
+                if (_hotkeyToggleCursor.HotkeyString != read.toggle_cursor_hotkey) TranslatorCore.Config.toggle_cursor_hotkey = _hotkeyToggleCursor.HotkeyString;
+                if (_hotkeyOpenInspector.HotkeyString != read.open_inspector_hotkey) TranslatorCore.Config.open_inspector_hotkey = _hotkeyOpenInspector.HotkeyString;
+                if (_hotkeyOpenUpload.HotkeyString != read.open_upload_hotkey) TranslatorCore.Config.open_upload_hotkey = _hotkeyOpenUpload.HotkeyString;
+                if (_hotkeyOpenExclusion.HotkeyString != read.open_exclusion_mode_hotkey) TranslatorCore.Config.open_exclusion_mode_hotkey = _hotkeyOpenExclusion.HotkeyString;
+                if (_hotkeyOpenTextEditor.HotkeyString != read.open_text_editor_hotkey) TranslatorCore.Config.open_text_editor_hotkey = _hotkeyOpenTextEditor.HotkeyString;
+                if (_hotkeyForceScan.HotkeyString != read.force_scan_hotkey) TranslatorCore.Config.force_scan_hotkey = _hotkeyForceScan.HotkeyString;
 
                 // Translation (Backend + Capture)
-                TranslatorCore.Config.capture_keys_only = _captureKeysOnlyToggle.IsOn;
-                if (_debugLoggingToggle != null) TranslatorCore.SetRuntimeDebug(_debugLoggingToggle.IsOn);
-                if (_debugAiToggle != null) TranslatorCore.Config.debug_ai = _debugAiToggle.IsOn;
-                if (_textTraceToggle != null) TranslatorCore.SetTextTrace(_textTraceToggle.IsOn);
+                if (_captureKeysOnlyToggle.IsOn != read.capture_keys_only) TranslatorCore.Config.capture_keys_only = _captureKeysOnlyToggle.IsOn;
+                if (_debugLoggingToggle != null && _debugLoggingToggle.IsOn != read.debug) TranslatorCore.SetRuntimeDebug(_debugLoggingToggle.IsOn);
+                if (_debugAiToggle != null && _debugAiToggle.IsOn != read.debug_ai) TranslatorCore.Config.debug_ai = _debugAiToggle.IsOn;
+                if (_textTraceToggle != null && _textTraceToggle.IsOn != read.debug_text_trace) TranslatorCore.SetTextTrace(_textTraceToggle.IsOn);
                 string newBackend = GetSelectedBackendConfig();
-                TranslatorCore.Config.translation_backend = newBackend;
+                if (newBackend != read.translation_backend) TranslatorCore.Config.translation_backend = newBackend;
                 // The toggle says whether translation runs; the dropdowns say what runs it. Two
                 // questions, two keys — so turning it off here and turning it off with the pause
                 // hotkey now leave the file in exactly the same state, and neither loses a
                 // setting on the way.
-                TranslatorCore.Config.enable_ai =
-                    _enableTranslationBackendToggle != null && _enableTranslationBackendToggle.IsOn;
+                bool backendOn = _enableTranslationBackendToggle != null && _enableTranslationBackendToggle.IsOn;
+                if (backendOn != read.enable_ai) TranslatorCore.Config.enable_ai = backendOn;
                 // Capture mode works WITHOUT a backend: the worker must run to
                 // store the H+empty entries (it never calls any backend then)
                 TranslatorCore.EnsureWorkerRunning();
@@ -1658,12 +1705,16 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // One spelling of this machine (Endpoints.Canonical) — and written back into the
                 // field too: Pending compares the field with the config, so a field left saying
                 // "localhost" over a config saying 127.0.0.1 would keep Apply (1) lit for ever.
-                string url = Endpoints.Canonical(_aiUrlInput.Text);
-                TranslatorCore.Config.ai_url = url;
-                if (_aiUrlInput.Text != url) _aiUrlInput.Text = url;
-                string apiKeyValue = _aiApiKeyInput.Text;
-                TranslatorCore.Config.ai_api_key = !string.IsNullOrEmpty(apiKeyValue) ? apiKeyValue : null;
-                TranslatorCore.Config.ai_model = _modelDropdown.SelectedValue ?? "";
+                if (_aiUrlInput.Text != read.ai_url)
+                {
+                    string url = Endpoints.Canonical(_aiUrlInput.Text);
+                    TranslatorCore.Config.ai_url = url;
+                    if (_aiUrlInput.Text != url) _aiUrlInput.Text = url;
+                }
+                string apiKeyValue = _aiApiKeyInput.Text ?? "";
+                if (apiKeyValue != read.ai_api_key) TranslatorCore.Config.ai_api_key = apiKeyValue.Length > 0 ? apiKeyValue : null;
+                string model = _modelDropdown.SelectedValue ?? "";
+                if (model != read.ai_model) TranslatorCore.Config.ai_model = model;
 
                 // A model nobody is going to use again should not go on holding the graphics card
                 // the game is playing on. Ollama keeps it for five minutes otherwise, and the
@@ -1674,69 +1725,73 @@ namespace UnityGameTranslator.Core.UI.Panels
                 {
                     TranslatorCore.ReleaseModel(previousUrl, previousModel);
                 }
-                TranslatorCore.Config.game_context = _gameContextInput.Text;
-                TranslatorCore.Config.strict_source_language = _strictSourceToggle.IsOn;
-                TranslatorCore.Config.ai_unload_on_exit = _unloadOnExitToggle.IsOn;
-                TranslatorCore.Config.ai_keep_loaded = _keepLoadedToggle.IsOn;
-                string googleKey = _googleApiKeyInput?.Text;
-                TranslatorCore.Config.google_api_key = !string.IsNullOrEmpty(googleKey) ? googleKey : null;
-                string deeplKey = _deeplApiKeyInput?.Text;
-                TranslatorCore.Config.deepl_api_key = !string.IsNullOrEmpty(deeplKey) ? deeplKey : null;
-                TranslatorCore.Config.deepl_use_free = _deeplUseFreeToggle.IsOn;
+                if (_gameContextInput.Text != read.game_context) TranslatorCore.Config.game_context = _gameContextInput.Text;
+                if (_strictSourceToggle.IsOn != read.strict_source_language) TranslatorCore.Config.strict_source_language = _strictSourceToggle.IsOn;
+                if (_unloadOnExitToggle.IsOn != read.ai_unload_on_exit) TranslatorCore.Config.ai_unload_on_exit = _unloadOnExitToggle.IsOn;
+                if (_keepLoadedToggle.IsOn != read.ai_keep_loaded) TranslatorCore.Config.ai_keep_loaded = _keepLoadedToggle.IsOn;
+                string googleKey = _googleApiKeyInput?.Text ?? "";
+                if (googleKey != read.google_api_key) TranslatorCore.Config.google_api_key = googleKey.Length > 0 ? googleKey : null;
+                string deeplKey = _deeplApiKeyInput?.Text ?? "";
+                if (deeplKey != read.deepl_api_key) TranslatorCore.Config.deepl_api_key = deeplKey.Length > 0 ? deeplKey : null;
+                if (_deeplUseFreeToggle.IsOn != read.deepl_use_free) TranslatorCore.Config.deepl_use_free = _deeplUseFreeToggle.IsOn;
                 float rateLimitDelay;
-                if (float.TryParse(_rateLimitDelayInput?.Text, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out rateLimitDelay) && rateLimitDelay >= 0.1f)
-                    TranslatorCore.Config.rate_limit_retry_delay = rateLimitDelay;
-                else
-                    TranslatorCore.Config.rate_limit_retry_delay = 3f;
+                if (!(float.TryParse(_rateLimitDelayInput?.Text, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out rateLimitDelay) && rateLimitDelay >= 0.1f))
+                    rateLimitDelay = 3f;
+                if (Math.Abs(rateLimitDelay - read.rate_limit_retry_delay) > 0.01f) TranslatorCore.Config.rate_limit_retry_delay = rateLimitDelay;
 
                 // Advanced (AI). Anything unreadable falls back to the default rather than to zero:
                 // an empty attempts field must not mean "never ask", and a mistyped temperature must
                 // not silently turn every translation deterministic — or the opposite.
                 int attempts;
-                if (int.TryParse((_aiMaxAttemptsInput?.Text ?? "").Trim(), System.Globalization.NumberStyles.Integer,
-                                 System.Globalization.CultureInfo.InvariantCulture, out attempts) && attempts >= 1 && attempts <= 10)
-                    TranslatorCore.Config.ai_max_attempts = attempts;
-                else
-                    TranslatorCore.Config.ai_max_attempts = Placeholders.MaxAttempts;
+                if (!(int.TryParse((_aiMaxAttemptsInput?.Text ?? "").Trim(), System.Globalization.NumberStyles.Integer,
+                                   System.Globalization.CultureInfo.InvariantCulture, out attempts) && attempts >= 1 && attempts <= 10))
+                    attempts = Placeholders.MaxAttempts;
+                if (attempts != read.ai_max_attempts) TranslatorCore.Config.ai_max_attempts = attempts;
 
-                TranslatorCore.Config.ai_temperature = TemperatureFromText(_aiTemperatureInput?.Text, 0.0);
-                TranslatorCore.Config.ai_temperature_repair = TemperatureFromText(_aiTemperatureRepairInput?.Text, 0.3);
-                TranslatorCore.Config.ai_temperature_retranslate = TemperatureFromText(_aiTemperatureRetranslateInput?.Text, 0.8);
-                TranslatorCore.Config.ai_seed = SeedFromText(_aiSeedInput?.Text);
-                TranslatorCore.Config.ai_seed_repair = SeedFromText(_aiSeedRepairInput?.Text);
-                TranslatorCore.Config.ai_seed_retranslate = SeedFromText(_aiSeedRetranslateInput?.Text);
+                double temperature = TemperatureFromText(_aiTemperatureInput?.Text, 0.0);
+                if (Math.Abs(temperature - read.ai_temperature) > 0.001) TranslatorCore.Config.ai_temperature = temperature;
+                double temperatureRepair = TemperatureFromText(_aiTemperatureRepairInput?.Text, 0.3);
+                if (Math.Abs(temperatureRepair - read.ai_temperature_repair) > 0.001) TranslatorCore.Config.ai_temperature_repair = temperatureRepair;
+                double temperatureRetranslate = TemperatureFromText(_aiTemperatureRetranslateInput?.Text, 0.8);
+                if (Math.Abs(temperatureRetranslate - read.ai_temperature_retranslate) > 0.001) TranslatorCore.Config.ai_temperature_retranslate = temperatureRetranslate;
+                if (SeedToText(SeedFromText(_aiSeedInput?.Text)) != read.ai_seed) TranslatorCore.Config.ai_seed = SeedFromText(_aiSeedInput?.Text);
+                if (SeedToText(SeedFromText(_aiSeedRepairInput?.Text)) != read.ai_seed_repair) TranslatorCore.Config.ai_seed_repair = SeedFromText(_aiSeedRepairInput?.Text);
+                if (SeedToText(SeedFromText(_aiSeedRetranslateInput?.Text)) != read.ai_seed_retranslate) TranslatorCore.Config.ai_seed_retranslate = SeedFromText(_aiSeedRetranslateInput?.Text);
 
                 // Online mode - detect transition for sync stream management
                 bool wasOnline = TranslatorCore.Config.online_mode;
-                bool nowOnline = _onlineModeToggle.IsOn;
+                bool nowOnline = _onlineModeToggle.IsOn != read.online_mode ? _onlineModeToggle.IsOn : wasOnline;
                 TranslatorCore.Config.online_mode = nowOnline;
 
                 // Applied in place, not "next launch": turning the stream on must open it now, and
                 // turning it off must close it now. Same for the rhythm.
                 string previousFrequency = UpdateCheckFrequency.Normalize(TranslatorCore.Config.sync.update_check_frequency);
-                string newFrequency = FrequencyDisplayToConfig(_checkFrequencyDropdown.SelectedValue);
+                string pickedFrequency = FrequencyDisplayToConfig(_checkFrequencyDropdown.SelectedValue);
+                string newFrequency = pickedFrequency != read.update_check_frequency ? pickedFrequency : previousFrequency;
 
                 bool previousRealtime = TranslatorCore.Config.sync.realtime_own_translation;
-                bool newRealtime = _realtimeOwnToggle.IsOn;
+                bool newRealtime = _realtimeOwnToggle.IsOn != read.realtime_own_translation ? _realtimeOwnToggle.IsOn : previousRealtime;
 
                 bool frequencyChanged = previousFrequency != newFrequency
                                         || previousRealtime != newRealtime;
 
                 TranslatorCore.Config.sync.update_check_frequency = newFrequency;
                 TranslatorCore.Config.sync.realtime_own_translation = newRealtime;
-                TranslatorCore.Config.sync.notify_updates = _notifyUpdatesToggle.IsOn;
-                TranslatorCore.Config.sync.auto_download = _autoDownloadToggle.IsOn;
-                TranslatorCore.Config.sync.check_mod_updates = _checkModUpdatesToggle.IsOn;
-                TranslatorCore.Config.sync.notify_prereleases = _notifyPrereleasesToggle.IsOn;
-                TranslatorCore.Config.sync.notifications_enabled = _notificationsEnabledToggle.IsOn;
-                TranslatorCore.Config.sync.notification_position = PositionDisplayToConfig(_notificationPositionDropdown.SelectedValue);
+                if (_notifyUpdatesToggle.IsOn != read.notify_updates) TranslatorCore.Config.sync.notify_updates = _notifyUpdatesToggle.IsOn;
+                if (_autoDownloadToggle.IsOn != read.auto_download) TranslatorCore.Config.sync.auto_download = _autoDownloadToggle.IsOn;
+                if (_checkModUpdatesToggle.IsOn != read.check_mod_updates) TranslatorCore.Config.sync.check_mod_updates = _checkModUpdatesToggle.IsOn;
+                if (_notifyPrereleasesToggle.IsOn != read.notify_prereleases) TranslatorCore.Config.sync.notify_prereleases = _notifyPrereleasesToggle.IsOn;
+                if (_notificationsEnabledToggle.IsOn != read.notifications_enabled) TranslatorCore.Config.sync.notifications_enabled = _notificationsEnabledToggle.IsOn;
+                string position = PositionDisplayToConfig(_notificationPositionDropdown.SelectedValue);
+                if (position != read.notification_position) TranslatorCore.Config.sync.notification_position = position;
 
                 // Apply notification position change immediately
                 Intents.OverlayPositionChanged();
 
                 // Advanced settings (per-game, stored in translations.json, requires restart)
-                bool eventSystemChanged = TranslatorCore.DisableEventSystemOverride != _disableEventSystemOverrideToggle.IsOn;
-                TranslatorCore.DisableEventSystemOverride = _disableEventSystemOverrideToggle.IsOn;
+                bool eventSystemChanged = _disableEventSystemOverrideToggle.IsOn != read.disable_eventsystem_override
+                                          && TranslatorCore.DisableEventSystemOverride != _disableEventSystemOverrideToggle.IsOn;
+                if (eventSystemChanged) TranslatorCore.DisableEventSystemOverride = _disableEventSystemOverrideToggle.IsOn;
                 // Keep UniverseLib's own copy in step: it consults the flag live (its EventSystem
                 // patches read it every time), so with this in place the setting takes effect at
                 // once instead of only at the next launch.
@@ -1751,14 +1806,17 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // Input capture (per-game too). No restart needed: the capture asks these on every
                 // read, so unticking one hands that input back to the game on the next frame —
                 // which is what someone turning it off because the game misbehaves needs.
-                TranslatorCore.CaptureKeyboard = _captureKeyboardToggle.IsOn;
-                TranslatorCore.CaptureKeyboardFocusOnly = _captureKeyboardFocusOnlyToggle.IsOn;
-                TranslatorCore.CaptureGameMenus = _captureGameMenusToggle.IsOn;
-                TranslatorCore.CaptureGameClicks = _captureGameClicksToggle.IsOn;
-                TranslatorCore.CaptureMouseAxes = _captureMouseAxesToggle.IsOn;
-                TranslatorCore.PauseGame = _pauseGameToggle.IsOn;
-                TranslatorCore.PanelOpacityFocused = _opacityFocusedSlider.Value;
-                TranslatorCore.PanelOpacityUnfocused = _opacityUnfocusedSlider.Value;
+                if (_captureKeyboardToggle.IsOn != read.capture_keyboard) TranslatorCore.CaptureKeyboard = _captureKeyboardToggle.IsOn;
+                if (_captureKeyboardFocusOnlyToggle.IsOn != read.capture_keyboard_focus_only) TranslatorCore.CaptureKeyboardFocusOnly = _captureKeyboardFocusOnlyToggle.IsOn;
+                if (_captureGameMenusToggle.IsOn != read.capture_game_menus) TranslatorCore.CaptureGameMenus = _captureGameMenusToggle.IsOn;
+                if (_captureGameClicksToggle.IsOn != read.capture_game_clicks) TranslatorCore.CaptureGameClicks = _captureGameClicksToggle.IsOn;
+                if (_captureMouseAxesToggle.IsOn != read.capture_mouse_axes) TranslatorCore.CaptureMouseAxes = _captureMouseAxesToggle.IsOn;
+                if (_pauseGameToggle.IsOn != read.pause_game) TranslatorCore.PauseGame = _pauseGameToggle.IsOn;
+                if (Math.Abs(_opacityFocusedSlider.Value - read.panel_opacity_focused) > 0.001f) TranslatorCore.PanelOpacityFocused = _opacityFocusedSlider.Value;
+                if (Math.Abs(_opacityUnfocusedSlider.Value - read.panel_opacity_unfocused) > 0.001f) TranslatorCore.PanelOpacityUnfocused = _opacityUnfocusedSlider.Value;
+                bool layoutChanged = WindowLayoutPicked != read.window_layout
+                                     && WindowLayoutPicked != (TranslatorCore.Config.OneWindow ? "one" : "separate");
+                if (layoutChanged) TranslatorCore.Config.window_layout = WindowLayoutPicked;
 
                 // Proxy / Network -- capture old values BEFORE overwriting to detect a change,
                 // then rebuild the shared HttpClient AFTER SaveConfig so the next request
@@ -1769,11 +1827,16 @@ namespace UnityGameTranslator.Core.UI.Panels
                 string oldProxyPass = TranslatorCore.Config.proxy_password ?? "";
                 bool oldProxyBypass = TranslatorCore.Config.proxy_bypass_local;
 
-                string newProxyMode = ProxyModeDisplayToConfig(_proxyModeDropdown.SelectedValue);
-                string newProxyUrl = (_proxyUrlInput.Text ?? "").Trim();
-                string newProxyUser = _proxyUserInput.Text ?? "";
-                string newProxyPass = _proxyPassInput.Text ?? "";
-                bool newProxyBypass = _proxyBypassLocalToggle.IsOn;
+                string pickedProxyMode = ProxyModeDisplayToConfig(_proxyModeDropdown.SelectedValue);
+                string pickedProxyUrl = (_proxyUrlInput.Text ?? "").Trim();
+                string pickedProxyUser = _proxyUserInput.Text ?? "";
+                string pickedProxyPass = _proxyPassInput.Text ?? "";
+                bool pickedProxyBypass = _proxyBypassLocalToggle.IsOn;
+                string newProxyMode = pickedProxyMode != read.proxy_mode ? pickedProxyMode : oldProxyMode;
+                string newProxyUrl = pickedProxyUrl != read.proxy_url ? pickedProxyUrl : oldProxyUrl;
+                string newProxyUser = pickedProxyUser != read.proxy_username ? pickedProxyUser : oldProxyUser;
+                string newProxyPass = pickedProxyPass != read.proxy_password ? pickedProxyPass : oldProxyPass;
+                bool newProxyBypass = pickedProxyBypass != read.proxy_bypass_local ? pickedProxyBypass : oldProxyBypass;
 
                 TranslatorCore.Config.proxy_mode = newProxyMode;
                 TranslatorCore.Config.proxy_url = string.IsNullOrEmpty(newProxyUrl) ? null : newProxyUrl;
@@ -1806,6 +1869,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                 }
 
                 TranslatorCore.LogInfo("[Options] Settings saved successfully");
+
+                // One window or separate ones: the windows are laid out again, this one staying up.
+                if (layoutChanged) Intents.WindowLayoutChanged();
 
                 // 🔴 **Only when something a text SHOWS has changed** (2026-09-20). Everything in
                 // this block is a pass over the whole game — the mod's own interface walked, every
@@ -1904,6 +1970,9 @@ namespace UnityGameTranslator.Core.UI.Panels
 
                 // Update snapshots after apply (no pending changes now)
                 _initialSnapshot = ConfigSnapshot.FromConfig();
+                // A field still differing now was moved elsewhere and left alone here (see the top
+                // of this method): the screen reads the mod again, so it shows what is in effect.
+                if (CountPendingChanges() > 0) LoadCurrentSettings();
 
                 // A source just named on a file with lines is now settled: shown as such at once.
                 UpdateLanguagesLocked();
@@ -1940,8 +2009,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
             else
             {
-                // No changes - just close
-                SetActive(false);
+                // No changes - just close (the window: another section may hold some)
+                Intents.LeaveWindow(this, () => SetActive(false), ownDiscarded: true);
             }
         }
 
@@ -2106,6 +2175,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             P.Track(_pauseGameToggle, () => _pauseGameToggle.IsOn != S().pause_game);
             P.Track(_opacityFocusedSlider, () => Math.Abs(_opacityFocusedSlider.Value - S().panel_opacity_focused) > 0.001f);
             P.Track(_opacityUnfocusedSlider, () => Math.Abs(_opacityUnfocusedSlider.Value - S().panel_opacity_unfocused) > 0.001f);
+            P.Track(_windowLayoutChoice, () => WindowLayoutPicked != S().window_layout);
 
             // Proxy / Network
             P.Track(_proxyModeDropdown.Handle, () => ProxyModeDisplayToConfig(_proxyModeDropdown.SelectedValue) != S().proxy_mode);

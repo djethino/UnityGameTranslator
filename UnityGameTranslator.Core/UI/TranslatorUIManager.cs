@@ -302,6 +302,8 @@ namespace UnityGameTranslator.Core.UI
         public static Panels.SettingsChoicePanel SettingsChoicePanel { get; private set; }
         public static Panels.InspectorPanel InspectorPanel { get; private set; }
         public static Panels.TranslationParametersPanel TranslationParamsPanel { get; private set; }
+        /// <summary>The one window's bar of sections — not a screen: placed beside the section up (TickSectionBar).</summary>
+        public static Panels.SectionBarPanel SectionBar { get; private set; }
 
         /// <summary>
         /// Which screen is up and the rules of their sequence (Engine/Screens.cs). Every panel is
@@ -1005,6 +1007,20 @@ namespace UnityGameTranslator.Core.UI
             float focused = TranslatorCore.PanelOpacityFocused;
             float unfocused = TranslatorCore.PanelOpacityUnfocused;
 
+            // 🔴 One window: the keyboard is the WINDOW's, whichever section it shows. A section put
+            // away for another hands it on at once — read from the state, not from the opening:
+            // this pass runs before TickNewlyOpenedPanels, and for one frame the new section was
+            // painted unfocused and the bar faded with it at every change of section (2026-10-15).
+            // ⚠ Asked of the router, not of Enabled: a close asked from inside a click is carried
+            // out a frame later (PanelBase), so the section left was still Enabled on the very
+            // frame it handed over — measured in the [Focus] lines, the first try missed it.
+            var focusedSection = _focusedPanel != null ? SectionOf(_focusedPanel) : null;
+            if (focusedSection != null && Screens != null && Screens.OneWindow && !Screens.IsVisible(focusedSection.Value))
+            {
+                var up = VisibleSectionPanel();
+                if (up != null) _focusedPanel = up;
+            }
+
             for (int i = 0; i < _interactivePanels.Count; i++)
             {
                 var panel = _interactivePanels[i];
@@ -1019,6 +1035,11 @@ namespace UnityGameTranslator.Core.UI
                 float alpha = Components.Appearances.HeldOutOfSight(panel.UIRoot) ? 0f : (hasFocus ? focused : unfocused);
                 SetPanelOpacity(panel, alpha);
                 SetTitleBarFocused(panel, hasFocus);
+
+                // The section bar is the window's too: written here, in the same pass, with its
+                // section's alpha — never a frame behind it (TickSectionBar copies the same value).
+                if (SectionBar != null && SectionBar.Enabled && ReferenceEquals(panel, VisibleSectionPanel()))
+                    SetPanelOpacity(SectionBar, alpha);
             }
         }
 
@@ -1048,7 +1069,14 @@ namespace UnityGameTranslator.Core.UI
 
             // Only when it actually changes: assigning alpha dirties the whole subtree.
             if (!Mathf.Approximately(group.alpha, alpha))
+            {
+                // Under Debug logging, every change of a window's opacity with the frame and who
+                // held the focus: a fade nobody can catch by eye is read here (2026-10-15).
+                if (TranslatorCore.DebugMode)
+                    TranslatorCore.LogDebug($"[Focus] frame {Time.frameCount}: {panel.Name} {group.alpha:0.00} -> {alpha:0.00} "
+                        + $"(focus: {(_focusedPanel != null ? _focusedPanel.Name : "none")}, shown: {VisibleSectionPanel()?.Name ?? "none"})");
                 group.alpha = alpha;
+            }
         }
 
         /// <summary>Title bar of the window holding the keyboard: lighter, still clearly a bar.</summary>
@@ -1121,7 +1149,26 @@ namespace UnityGameTranslator.Core.UI
                     return panel;
             }
 
+            // 🔴 The section bar is part of the window beside it: a press on it is a press on the
+            // section (2026-10-14: the bar was no panel of the list, a press on it took the focus
+            // away, and the window — the bar with it — faded at every change of section).
+            if (SectionBar != null && SectionBar.Enabled && SectionBar.WindowRect != null)
+            {
+                var bar = SectionBar.WindowRect;
+                if (bar.rect.Contains(bar.InverseTransformPoint(mouse)))
+                    return VisibleSectionPanel();
+            }
+
             return null;
+        }
+
+        /// <summary>The section of the one window that is up, or null (separate windows, or none up).</summary>
+        private static Panels.TranslatorPanelBase VisibleSectionPanel()
+        {
+            var up = Screens != null && Screens.OneWindow ? Screens.VisibleSection : null;
+            return up == ScreenId.Main ? (Panels.TranslatorPanelBase)MainPanel
+                : up == ScreenId.TranslationParameters ? TranslationParamsPanel
+                : up == ScreenId.Options ? OptionsPanel : null;
         }
 
         private static bool MouseAtRest()
@@ -1485,6 +1532,12 @@ namespace UnityGameTranslator.Core.UI
                 _panelWasVisible[i] = visible;
             }
 
+            if (_focusAfterOpening != null)
+            {
+                if (_focusAfterOpening.Enabled) { _focusedPanel = _focusAfterOpening; _interfaceHasFocus = true; }
+                _focusAfterOpening = null;
+            }
+
             // ⚠ Here rather than in a tick of its own: this asks the same question — which windows
             // are up — one line after it has been answered for the focus.
             MainPanel?.RefreshOpenerStates();
@@ -1603,6 +1656,7 @@ namespace UnityGameTranslator.Core.UI
             SettingsChoicePanel = new Panels.SettingsChoicePanel(UiBase);
             InspectorPanel = new Panels.InspectorPanel(UiBase);
             TranslationParamsPanel = new Panels.TranslationParametersPanel(UiBase);
+            SectionBar = new Panels.SectionBarPanel(UiBase);
 
             // Register interactive panels (excludes StatusOverlay which is a notification overlay)
             _interactivePanels.Clear();
@@ -1634,10 +1688,13 @@ namespace UnityGameTranslator.Core.UI
             Screens.Register(ScreenId.SettingsChoice, SettingsChoicePanel);
             Screens.Register(ScreenId.Inspector, InspectorPanel);
             Screens.Register(ScreenId.TranslationParameters, TranslationParamsPanel);
+            // One window (the default) or separate ones — Mod Options › Interface, config `window_layout`.
+            Screens.OneWindow = TranslatorCore.Config.OneWindow;
 
             // Hide all panels initially (using centralized list + StatusOverlay)
             CloseAllPanels();
             StatusOverlay.SetActive(false);
+            SectionBar.SetActive(false);
         }
 
         /// <summary>
@@ -5813,11 +5870,61 @@ namespace UnityGameTranslator.Core.UI
         public static void ToggleMain()
         {
             if (Screens == null) return;
+            // The router's act: in one window it opens on the section shown last (ScreenRouter.ToggleMain).
+            // Closing the one window by its hotkey drops what its sections hold: asked first.
+            var up = VisibleSectionPanel();
+            if (up != null)
+            {
+                LeaveWindow(up, () => Screens.ToggleMain(), ownDiscarded: false);
+                return;
+            }
+            Screens.ToggleMain();
+            if (Screens.AnyVisible) BootstrapInterfaceFontOnce();
+        }
 
-            if (Screens.IsVisible(ScreenId.Main))
-                Screens.Hide(ScreenId.Main);
-            else
-                ShowMain();
+        /// <summary>The screen a section panel is, for the router.</summary>
+        private static ScreenId? SectionOf(Panels.TranslatorPanelBase panel) =>
+            ReferenceEquals(panel, MainPanel) ? ScreenId.Main
+            : ReferenceEquals(panel, TranslationParamsPanel) ? ScreenId.TranslationParameters
+            : ReferenceEquals(panel, OptionsPanel) ? ScreenId.Options
+            : (ScreenId?)null;
+
+        /// <summary>
+        /// Leaving a window (Intents.LeaveWindow). 🔴 **Asked, never dropped without a word** (user,
+        /// 2026-10-15, the convention a window with an Apply follows): the choices waiting in the
+        /// window — every section of the one window, since closing one closes it — are named with
+        /// their count, Discard leaves, Cancel goes back to them. Not Apply from here: an Apply may
+        /// ask a question of its own (the source language), and two questions stacked on one
+        /// dialog is how an answer lands on the wrong one.
+        /// </summary>
+        public static void LeaveWindow(Panels.TranslatorPanelBase from, Action leave, bool ownDiscarded)
+        {
+            var held = new List<(Panels.TranslatorPanelBase Panel, ScreenId Screen, int Count)>();
+            void Consider(Panels.TranslatorPanelBase panel)
+            {
+                if (panel == null || (ownDiscarded && ReferenceEquals(panel, from))) return;
+                var screen = SectionOf(panel);
+                int count = panel.PendingChanges;
+                if (screen != null && count > 0) held.Add((panel, screen.Value, count));
+            }
+            if (Screens != null && Screens.OneWindow && SectionOf(from) != null)
+            {
+                Consider(MainPanel);
+                Consider(TranslationParamsPanel);
+                Consider(OptionsPanel);
+            }
+            else Consider(from);
+
+            if (held.Count == 0 || !Intents.CanConfirm()) { leave(); return; }
+
+            var lines = new List<string>();
+            foreach (var h in held)
+                lines.Add($"{h.Panel.Name}: {h.Count} {(h.Count == 1 ? "change" : "changes")} not applied.");
+            var back = held[0];
+            Intents.Confirm("Unapplied changes", string.Join("\n", lines.ToArray()), "Discard",
+                onConfirm: leave,
+                onCancel: () => Screens?.Show(back.Screen),
+                isDanger: true);
         }
 
         /// <summary>
@@ -5835,6 +5942,153 @@ namespace UnityGameTranslator.Core.UI
         /// <summary>
         /// Hide all panels including status overlay.
         /// </summary>
+        /// <summary>
+        /// The section bar, every frame the interface runs: up beside the section up in one window,
+        /// as tall as it and against its left edge — down otherwise. Its pressed button and the
+        /// counts of unapplied choices follow (SectionBarPanel.Show).
+        ///
+        /// ⚠ Placed here and not by either panel: a panel names no other panel (UiBoundaryChecks),
+        /// and the manager is what holds both.
+        /// </summary>
+        /// <summary>
+        /// The bar was placed beside its section on the last frame — what the Main reads to put its
+        /// own buttons to the other sections away. 🔴 Read from what happened, never from the
+        /// setting alone: a bar that fails to show must not leave the window with no way to the
+        /// other sections (2026-10-14, a placing call missing on IL2CPP left exactly that).
+        /// </summary>
+        public static bool SectionBarShown { get; private set; }
+
+        /// <summary>The section's title bar the head row copies, held so a frame allocates nothing.</summary>
+        private static float _sectionBarHeldAt;
+        private static Panels.TranslatorPanelBase _sectionHeldBesideBar;
+        private static GameObject _sectionTitleOf;
+        private static Components.Host _sectionTitle, _sectionWindow;
+
+        private static void TickSectionBar()
+        {
+            SectionBarShown = false;
+            if (SectionBar == null || Screens == null) return;
+            var up = Screens.OneWindow ? Screens.VisibleSection : null;
+            var section = VisibleSectionPanel();
+            if (section == null || section.WindowRect == null)
+            {
+                _sectionHeldBesideBar = null;
+                if (SectionBar.Enabled) SectionBar.SetActive(false);
+                return;
+            }
+            if (!SectionBar.Enabled) SectionBar.SetActive(true);
+
+            var window = section.WindowRect;
+            var bar = SectionBar.WindowRect;
+            if (bar == null) return;
+            float width = SectionBar.CurrentWidth;
+            // The bar came up or changed width (folded, opened, a count appeared): the window is
+            // held again so the bar stays on the screen (EnsureValidPosition).
+            if (Math.Abs(width - _sectionBarHeldAt) > 0.5f || !ReferenceEquals(section, _sectionHeldBesideBar))
+            {
+                _sectionBarHeldAt = width;
+                _sectionHeldBesideBar = section;
+                SectionBarShown = true;
+                section.EnsureValidPosition();
+                SectionBarShown = false;
+            }
+            var size = new Vector2(width, window.rect.height);
+            if (bar.sizeDelta != size) bar.sizeDelta = size;
+            // 🔴 **The section's movement and fade are the bar's** (2026-10-14: « le menu arrive pas
+            // en même temps que le reste de la fenêtre »). A window opening is held out of sight while
+            // it settles, then grows into place (Appearances, the focus pass): the bar takes the same
+            // scale, and sits against the edge at that scale. Its alpha is written by the focus pass
+            // itself, beside its section's (ApplyFocusAppearance) — one writer, never a frame behind.
+            var scale = window.localScale;
+            if (bar.localScale != scale) bar.localScale = scale;
+            // 🔴 **By the window's corners, never its anchored position** (2026-10-14: the window
+            // grown from its top edge, the bar grew downward). A resize by an edge moves that edge,
+            // and how the window's anchors and pivot carry it is the dragger's business; its corners
+            // are where it IS. The bar's centre: the middle of the window's left edge, half the
+            // bar's width further left, one pixel over the edge so no seam shows.
+            // ⚠ TransformPoint, never GetWorldCorners: an array parameter is missing from the
+            // interop on IL2CPP (MissingMethodException every frame, 2026-10-14; UIHelpers says why).
+            var local = window.rect;
+            var leftMiddle = window.TransformPoint(new Vector3(local.xMin, local.center.y, 0f));
+            float unit = window.lossyScale.x;
+            var at = leftMiddle - window.right * ((width / 2f - 1f) * unit);
+            if ((bar.position - at).sqrMagnitude > 0.0001f) bar.position = at;
+
+            // The head row continues the section's title bar: same height, same colour — which the
+            // focus pass sets lighter while the window has the keyboard.
+            if (section.TitleBar != null)
+            {
+                if (!ReferenceEquals(_sectionTitleOf, section.TitleBar))
+                {
+                    _sectionTitleOf = section.TitleBar;
+                    _sectionTitle = new Components.Host(section.TitleBar);
+                    _sectionWindow = new Components.Host(section.UIRoot);
+                }
+                SectionBar.MatchHead(_sectionTitle, _sectionWindow);
+            }
+
+            SectionBar.Show(up.Value, TranslationParamsPanel?.PendingChanges ?? 0, OptionsPanel?.PendingChanges ?? 0);
+            SectionBarShown = true;
+        }
+
+        /// <summary>
+        /// One window or separate ones was changed in Mod Options. Into one window: the section
+        /// asked from (Mod Options, where Apply was pressed) stays where it is and at its size,
+        /// and becomes the window the other sections share; the other two go. Into separate
+        /// windows: the section up stays where it is and keeps the keyboard; the other two become
+        /// windows of their own again, and the Main comes up behind it — the window the others
+        /// open from (user, 2026-10-14).
+        /// </summary>
+        public static void ApplyWindowLayout()
+        {
+            if (Screens == null) return;
+            bool one = TranslatorCore.Config.OneWindow;
+            if (Screens.OneWindow == one) return;
+            if (one)
+            {
+                OptionsPanel?.GiveSectionRect();
+                Screens.Hide(ScreenId.Main);
+                Screens.Hide(ScreenId.TranslationParameters);
+                Screens.OneWindow = true;
+            }
+            else
+            {
+                var up = VisibleSectionPanel();
+                Screens.OneWindow = false;
+                foreach (var section in new Panels.TranslatorPanelBase[] { MainPanel, TranslationParamsPanel, OptionsPanel })
+                    if (section != null && !ReferenceEquals(section, up)) section.BecomeOwnWindow();
+                // A section hidden with choices waiting comes up as its window, the choices kept:
+                // put away it would drop them at its next opening, without a word.
+                foreach (var section in new Panels.TranslatorPanelBase[] { TranslationParamsPanel, OptionsPanel })
+                {
+                    if (section == null || ReferenceEquals(section, up) || section.PendingChanges == 0) continue;
+                    KeepingChoices = true;
+                    try { Screens.Show(SectionOf(section).Value); }
+                    finally { KeepingChoices = false; }
+                }
+                if (up != null && !ReferenceEquals(up, MainPanel))
+                {
+                    Screens.Show(ScreenId.Main);
+                    // Back in front, and the keyboard stays where the person was working.
+                    up.SetActive(true);
+                    _focusAfterOpening = up;
+                }
+            }
+            MainPanel?.RefreshOpenerStates();
+        }
+
+        /// <summary>
+        /// A window that keeps the keyboard although another just opened beside it — what
+        /// TickNewlyOpenedPanels gives it once, instead of the newcomer.
+        /// </summary>
+        private static Panels.TranslatorPanelBase _focusAfterOpening;
+
+        /// <summary>
+        /// A section put up as a window of its own, keeping the choices it held hidden in the one
+        /// window (ApplyWindowLayout): read as a switch (Intents.SwitchingSections).
+        /// </summary>
+        public static bool KeepingChoices { get; private set; }
+
         public static void HideAll()
         {
             CloseAllPanels();
@@ -5885,6 +6139,9 @@ namespace UnityGameTranslator.Core.UI
 
             // Manage status overlay visibility
             UpdateStatusOverlay();
+
+            // The one window's bar, beside whichever section is up.
+            TickSectionBar();
         }
 
         private static void UpdateStatusOverlay()
@@ -6083,7 +6340,7 @@ namespace UnityGameTranslator.Core.UI
             // translationsSwitched: off gives the game back its fonts and images too, on puts the
             // images back — see TranslatorScanner.SpreadRefreshAllText.
             TranslatorScanner.SpreadRefreshAllText(reapplyAllScales: true, translationsSwitched: true);
-            OptionsPanel?.RefreshFromConfig();
+            OptionsPanel?.FollowSwitches();
             ShowHotkeyFeedback(config.enable_translations ? "Translations: ON" : "Translations: OFF", config.enable_translations);
         }
 
@@ -6140,7 +6397,7 @@ namespace UnityGameTranslator.Core.UI
             }
 
             TranslatorCore.SaveConfig();
-            OptionsPanel?.RefreshFromConfig();
+            OptionsPanel?.FollowSwitches();
             StatusOverlay?.RefreshOverlay();
         }
 

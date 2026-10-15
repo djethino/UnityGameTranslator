@@ -415,7 +415,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 case "imageInspector": return OnStartImageInspectorClicked;
                 case "loadAll": return OnLoadAllReplacementsClicked;
                 case "scan": return OnScanClicked;
-                case "cancel": return DiscardAndClose;
+                case "cancel": return () => Intents.LeaveWindow(this, DiscardAndClose, ownDiscarded: true);
                 case "apply": return OnApplyClicked;
                 default: return null;
             }
@@ -433,8 +433,11 @@ namespace UnityGameTranslator.Core.UI.Panels
             SetActive(false);
         }
 
-        /// <summary>The cross in the title bar is the same act as Cancel — see the Options screen.</summary>
-        protected override void OnClosePanelClicked() => DiscardAndClose();
+        /// <summary>
+        /// The cross in the title bar: Cancel, once asked — choices waiting are not dropped by a
+        /// cross without a word (Intents.LeaveWindow, 2026-10-15).
+        /// </summary>
+        protected override void OnClosePanelClicked() => Intents.LeaveWindow(this, DiscardAndClose, ownDiscarded: false);
 
         /// <summary>Pending only — applied (and fonts rebuilt) on Apply, like every other setting.</summary>
         private void OnFontSharpnessChanged()
@@ -460,10 +463,17 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         #region Tools Tab (formerly Behavior)
 
-        private void OnStartTextEditorClicked()
+        private void OnStartTextEditorClicked() => PickInGame(InspectorMode.TextEdit);
+
+        /// <summary>
+        /// The inspector, to pick something in the game. One window: the router puts this section
+        /// away and back, its choices kept (ScreenRouter, the Inspector rule). Separate windows:
+        /// this window goes, as it always did.
+        /// </summary>
+        private void PickInGame(InspectorMode mode)
         {
-            SetActive(false);
-            Intents.OpenInspector(InspectorMode.TextEdit);
+            if (!Intents.OneWindow) SetActive(false);
+            Intents.OpenInspector(mode);
         }
 
         private void OnBrowserEditorClicked()
@@ -1241,16 +1251,12 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         private void OnStartInspectorClicked()
         {
-            // Close panel and open inspector panel (exclusion mode)
-            SetActive(false);
-            Intents.OpenInspector();
+            PickInGame(InspectorMode.Exclusion);
         }
 
         private void OnStartImageInspectorClicked()
         {
-            // Close panel and open inspector panel (image replacement mode)
-            SetActive(false);
-            Intents.OpenInspector(InspectorMode.BitmapReplace);
+            PickInGame(InspectorMode.BitmapReplace);
         }
 
         private void OnAddManualPatternClicked()
@@ -1517,11 +1523,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             };
         }
 
-        private void OnStartFontOverrideInspector()
-        {
-            SetActive(false);
-            Intents.OpenInspector(InspectorMode.FontOverride);
-        }
+        private void OnStartFontOverrideInspector() => PickInGame(InspectorMode.FontOverride);
 
         /// <summary>
         /// Called from InspectorPanel when a font override target is selected.
@@ -3003,6 +3005,10 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         #region Panel Lifecycle
 
+        protected override bool IsWindowSection => true;
+        protected override bool GivesSectionDefaultSize => true;
+        public override int PendingChanges => CountPendingChanges();
+
         public override void SetActive(bool active)
         {
             bool wasActive = Enabled;
@@ -3012,7 +3018,9 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (opening)
             {
                 Lap("show");
-                LoadCurrentState();
+                // Back from another section of the one window: what was chosen and not applied stays.
+                if (KeepsHeldChoices) RefreshFacts();
+                else LoadCurrentState();
 
                 // The seams between the Failures tab's areas go back to the rule's division: a
                 // window opened again is opened afresh.
@@ -3188,18 +3196,14 @@ namespace UnityGameTranslator.Core.UI.Panels
         private void LoadCurrentState()
         {
             // A pack added and not applied does not survive the window closing — like every other
-            // answer here. The packs folder is read again: a file may have been dropped in meanwhile.
+            // answer here.
             ForgetPacks();
-            RefreshPacksFolder();
-            Lap("packs");
 
-            // The Export card read again, its System fonts choice made again (never remembered), and
-            // the last export's outcome gone with the window it belonged to.
+            // The Export card's System fonts choice made again (never remembered), and the last
+            // export's outcome gone with the window it belonged to.
             _exportIncludeSystem = false;
             _lastExport = null;
             if (_exportShowBtn != null) _exportShowBtn.Visible = false;
-            RefreshExport();
-            Lap("export");
 
             // Debug toggles
             if (_enableFontReplacementToggle != null)
@@ -3212,15 +3216,49 @@ namespace UnityGameTranslator.Core.UI.Panels
             // row reads its value from the pending answer, else from the snapshot. Built first, the
             // fonts list showed the previous snapshot — the previous FILE's settings, when the
             // translation had been replaced since (RefreshFromTranslation).
-            // Capture initial font settings for change tracking
             _initialFontSettings.Clear();
             _pendingFontSettings.Clear();
+            _pendingExclusionAdds.Clear();
+            _pendingExclusionRemoves.Clear();
+
+            // A removal not applied does not survive the window closing.
+            _pendingHeadForgets.Clear();
+
+            // Capture initial font overrides for change tracking
+            InitPendingFontOverrides();
+
+            RefreshFacts();
+
+            // Every pending answer was just dropped: so are the lines that announced them.
+            WithdrawAwaitingApply();
+
+            UpdateApplyButtonText();
+        }
+
+        /// <summary>
+        /// What the game holds, read again, and every list built from it — the answers waiting
+        /// for Apply left as they are: a row shows its pending answer, else what the game holds.
+        /// The second half of an opening (LoadCurrentState), and the whole of a return to this
+        /// section of the one window while answers wait (2026-10-15: the lists stayed as the
+        /// previous visit left them — a font detected since, a pack dropped in the folder).
+        /// </summary>
+        private void RefreshFacts()
+        {
+            // The packs folder is read again: a file may have been dropped in meanwhile.
+            RefreshPacksFolder();
+            Lap("packs");
+            RefreshExport();
+            Lap("export");
+
+            // The snapshot of a font is taken the first time it is seen, and kept: a font already
+            // snapshotted may carry a pending answer, which is compared against that snapshot.
             List<FontDisplayInfo> detected = null;
             try
             {
                 detected = FontManager.GetDetectedFontsInfo();
                 foreach (var fontInfo in detected)
                 {
+                    if (_initialFontSettings.ContainsKey(fontInfo.Name)) continue;
                     var settings = FontManager.GetFontSettings(fontInfo.Name);
                     var enabled = settings?.enabled ?? true;
                     var fallback = settings?.fallback;
@@ -3233,22 +3271,15 @@ namespace UnityGameTranslator.Core.UI.Panels
             catch (Exception ex) { TranslatorCore.LogWarning($"[TranslationParametersPanel] Font settings capture failed: {ex.Message}"); }
             Lap("font settings");
 
-            // Capture initial exclusions for change tracking
+            // The exclusions as the game holds them; the additions and removals waiting are kept apart.
             _initialExclusions.Clear();
-            _pendingExclusionAdds.Clear();
-            _pendingExclusionRemoves.Clear();
             foreach (var pattern in TranslatorCore.UserExclusions)
             {
                 _initialExclusions.Add(pattern);
             }
 
-            // A removal not applied does not survive the window closing.
-            _pendingHeadForgets.Clear();
             RefreshHeldList();
             Lap("held");
-
-            // Capture initial font overrides for change tracking
-            InitPendingFontOverrides();
 
             try { RefreshExclusionsList(); }
             catch (Exception ex) { TranslatorCore.LogWarning($"[TranslationParametersPanel] RefreshExclusionsList failed: {ex.Message}"); }
@@ -3263,9 +3294,6 @@ namespace UnityGameTranslator.Core.UI.Panels
             try { RefreshFontOverridesList(); }
             catch (Exception ex) { TranslatorCore.LogWarning($"[TranslationParametersPanel] RefreshFontOverridesList failed: {ex.Message}"); }
             Lap("override rules");
-
-            // Every pending answer was just dropped: so are the lines that announced them.
-            WithdrawAwaitingApply();
 
             UpdateApplyButtonText();
         }
@@ -3283,8 +3311,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
             else
             {
-                // No changes - just close
-                SetActive(false);
+                // No changes - just close (the window: another section may hold some)
+                Intents.LeaveWindow(this, () => SetActive(false), ownDiscarded: true);
             }
         }
 

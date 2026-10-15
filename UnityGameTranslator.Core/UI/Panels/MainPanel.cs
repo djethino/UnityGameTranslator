@@ -391,7 +391,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 case "transParams": return () => Intents.Toggle(ScreenId.TranslationParameters);
                 case "fix": return () => Intents.OpenTranslationParameters(ParametersTab.Failures);
                 case "options": return () => Intents.Toggle(ScreenId.Options);
-                case "close": return () => SetActive(false);
+                case "close": return () => Intents.LeaveWindow(this, () => SetActive(false), ownDiscarded: true);
                 default: return null;
             }
         }
@@ -453,6 +453,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                 TranslatorCore.OpenUrlSafe(url);
             }
         }
+
+        protected override bool IsWindowSection => true;
 
         public override void SetActive(bool active)
         {
@@ -1518,10 +1520,21 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// </summary>
         public void RefreshOpenerStates()
         {
+            // 🔴 One window: the section bar is the door to Translation Tools and Mod Options, the
+            // only one — two doors to the same act is the trap implement-with-existing.md names.
+            // ⚠ Put away only while the bar is actually there: a bar that cannot show must never
+            // leave the window with no way to the other sections.
+            bool separate = !Intents.OneWindow || !Intents.SectionBarShown;
             if (_transParamsBtn != null)
+            {
+                _transParamsBtn.Visible = separate;
                 _transParamsBtn.Showing = Intents.IsOpen(ScreenId.TranslationParameters);
+            }
             if (_optionsBtn != null)
+            {
+                _optionsBtn.Visible = separate;
                 _optionsBtn.Showing = Intents.IsOpen(ScreenId.Options);
+            }
             if (_backupsBtn != null)
                 _backupsBtn.Showing = Intents.IsOpen(ScreenId.Backups);
             if (_loginLogoutBtn != null)

@@ -487,6 +487,15 @@ namespace UnityGameTranslator.Core
         // say — and still read the game underneath it.
         public float panel_opacity_focused { get; set; } = 1f;
         public float panel_opacity_unfocused { get; set; } = 0.75f;
+        /// <summary>
+        /// How the three main windows are shown: "one" (sections of one window, the default) or
+        /// "separate". Read through <see cref="OneWindow"/>: any other value is "one".
+        /// </summary>
+        public string window_layout { get; set; } = "one";
+
+        /// <summary>Whether Translation, Translation Tools and Mod Options are sections of one window.</summary>
+        [Newtonsoft.Json.JsonIgnore]
+        public bool OneWindow => window_layout != "separate";
 
         // Max SDF atlas dimension the auto-quality picker may use when rasterizing a
         // replacement font. 0 = automatic (TtfFontPipeline.ChooseRenderSize: 4096, up to 8192
@@ -804,6 +813,9 @@ namespace UnityGameTranslator.Core
         public bool hasPosition { get; set; }
         /// <summary>True if user manually resized (don't auto-adjust size)</summary>
         public bool userResized { get; set; }
+        /// <summary>The screen this place and size were saved on; on another they are dropped. 0 = saved before this was kept.</summary>
+        public int screenWidth { get; set; }
+        public int screenHeight { get; set; }
     }
 
     /// <summary>
@@ -818,5 +830,7 @@ namespace UnityGameTranslator.Core
         public int screenHeight { get; set; }
         /// <summary>Per-panel position and size preferences</summary>
         public Dictionary<string, WindowPreference> panels { get; set; } = new Dictionary<string, WindowPreference>();
+        /// <summary>The one window's section bar folded to its pictures (true) or open on its words.</summary>
+        public bool sectionBarFolded { get; set; }
     }
 }

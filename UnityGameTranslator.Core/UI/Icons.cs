@@ -216,6 +216,13 @@ namespace UnityGameTranslator.Core.UI
                         // the manager has the system's own cursor and no use for these.
                         case "cursor": distance = Arrow(px, py); break;
                         case "cursor-rim": distance = Arrow(px, py) - CursorRim; break;
+                        // The one window's section bar (analyse/fenetre-unique-sections.md). Mod-only:
+                        // the manager has no such bar.
+                        case "section-translation": distance = SpeechBubble(px, py); break;
+                        case "section-tools": distance = Wrench(px, py); break;
+                        case "section-options": distance = Gear(px, py); break;
+                        case "chevron-left": distance = Chevron(px, py, false); break;
+                        case "chevron-right": distance = Chevron(px, py, true); break;
                         default: return null;
                     }
 
@@ -324,6 +331,48 @@ namespace UnityGameTranslator.Core.UI
             }
             double distance = Math.Sqrt(nearest);
             return inside ? -distance : distance;
+        }
+
+        // ── The section bar ───────────────────────────────────────────────────────────────────
+
+        /// <summary>A speech bubble with two lines of text in it: what this game's translation says.</summary>
+        private static double SpeechBubble(double x, double y)
+        {
+            var body = Max(Box_(x, y, 1.6, 2.4, 14.4, 11.4), -Box_(x, y, 3.0, 3.8, 13.0, 10.0));
+            var tail = Polygon(x, y, new[] { 4.2, 11.0, 4.2, 14.6, 8.0, 11.0 });
+            var lines = Min(Box_(x, y, 4.6, 5.4, 11.4, 6.4), Box_(x, y, 4.6, 7.4, 9.6, 8.4));
+            return Min(Min(body, tail), lines);
+        }
+
+        /// <summary>A wrench: a handle, and an open ring at its head.</summary>
+        private static double Wrench(double x, double y)
+        {
+            var handle = Capsule(x, y, 6.4, 9.6, 13.0, 13.0, 1.3);
+            var ring = Max(Disc(x, y, 5.0, 5.0, 4.0), -Disc(x, y, 5.0, 5.0, 1.8));
+            // The jaw's opening, cut toward the top-left.
+            var jaw = Capsule(x, y, 3.0, 3.0, 0.4, 0.4, 1.6);
+            return Min(handle, Max(ring, -jaw));
+        }
+
+        /// <summary>A gear: a ring with eight teeth, its hub open.</summary>
+        private static double Gear(double x, double y)
+        {
+            double cx = 8, cy = 8;
+            var wheel = Disc(x, y, cx, cy, 4.6);
+            for (int i = 0; i < 8; i++)
+            {
+                double a = i * Math.PI / 4;
+                double c = Math.Cos(a), s = Math.Sin(a);
+                wheel = Min(wheel, Capsule(x, y, cx + c * 4.2, cy + s * 4.2, cx + c * 6.2, cy + s * 6.2, 1.2));
+            }
+            return Max(wheel, -Disc(x, y, cx, cy, 2.0));
+        }
+
+        /// <summary>A chevron, pointing left or right: the section bar folding or unfolding.</summary>
+        private static double Chevron(double x, double y, bool right)
+        {
+            double tip = right ? 10.4 : 5.6, back = right ? 5.6 : 10.4;
+            return Min(Capsule(x, y, back, 3.4, tip, 8.0, 1.1), Capsule(x, y, tip, 8.0, back, 12.6, 1.1));
         }
 
         // ── Distances ─────────────────────────────────────────────────────────────────────────

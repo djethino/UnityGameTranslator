@@ -49,6 +49,42 @@ namespace UnityGameTranslator.Core.UI
 
         public static void ShowMain() => TranslatorUIManager.ShowMain();
 
+        /// <summary>The three sections are one window (config `window_layout`).</summary>
+        public static bool OneWindow => Screens?.OneWindow ?? TranslatorCore.Config.OneWindow;
+
+        /// <summary>The section bar is up beside its section (it placed itself on the last frame).</summary>
+        public static bool SectionBarShown => TranslatorUIManager.SectionBarShown;
+
+        /// <summary>How wide the section bar is beside its section, or 0 when it is not up.</summary>
+        public static float SectionBarWidth => TranslatorUIManager.SectionBarShown ? TranslatorUIManager.SectionBar.CurrentWidth : 0f;
+
+        /// <summary>A section of the one window is being put up in place of another (ScreenRouter.SwitchingSections).</summary>
+        public static bool SwitchingSections => Screens?.SwitchingSections == true || TranslatorUIManager.KeepingChoices;
+
+        /// <summary>
+        /// A section of the one window, from its bar: it comes in place of the one up, which keeps
+        /// its unapplied choices (ScreenRouter.Show).
+        /// </summary>
+        public static void ShowSection(ScreenId screen)
+        {
+            if (!ScreenRouter.IsSection(screen)) throw new ArgumentException("not a section of the one window", nameof(screen));
+            if (screen == ScreenId.Main) TranslatorUIManager.ShowMain();
+            else Screens?.Show(screen);
+        }
+
+        /// <summary>
+        /// Leaving a window: <paramref name="leave"/> runs at once, unless choices waiting for
+        /// Apply would go with it — then the person is asked, Discard or back to them. In one window
+        /// that is every section (closing one closes the window); separate, the window itself.
+        /// <paramref name="ownDiscarded"/>: the way out already says what happens to the window's
+        /// own choices (its Cancel), so only the others are asked about.
+        /// </summary>
+        public static void LeaveWindow(TranslatorPanelBase from, Action leave, bool ownDiscarded)
+            => TranslatorUIManager.LeaveWindow(from, leave, ownDiscarded);
+
+        /// <summary>One window or separate ones was changed in Mod Options: the windows are laid out again.</summary>
+        public static void WindowLayoutChanged() => TranslatorUIManager.ApplyWindowLayout();
+
         /// <summary>Put a screen away, whichever act it was up for.</summary>
         public static void Close(ScreenId screen) => Screens?.Hide(screen);
 
@@ -106,6 +142,10 @@ namespace UnityGameTranslator.Core.UI
         {
             var panel = TranslatorUIManager.TranslationParamsPanel;
             if (panel == null) return;
+            // 🔴 Through the router first: in one window it puts the section up IN PLACE of the one
+            // shown. The panel's own openers only SetActive, which put Translation Tools up beside
+            // another section — two sections of one window at once (2026-10-15).
+            Screens?.Show(ScreenId.TranslationParameters);
             switch (tab)
             {
                 case ParametersTab.Images: panel.OpenOnBitmapReplaceTab(); break;
@@ -119,7 +159,11 @@ namespace UnityGameTranslator.Core.UI
 
         /// <summary>A font override picked in the inspector, handed to the parameters window which opens on it.</summary>
         public static void AddFontOverride(string path)
-            => TranslatorUIManager.TranslationParamsPanel?.AddFontOverrideFromInspector(path);
+        {
+            if (TranslatorUIManager.TranslationParamsPanel == null) return;
+            Screens?.Show(ScreenId.TranslationParameters); // in place of the section shown — see OpenTranslationParameters
+            TranslatorUIManager.TranslationParamsPanel.AddFontOverrideFromInspector(path);
+        }
 
         // ── Dialogs and notices ────────────────────────────────────────────────────
 

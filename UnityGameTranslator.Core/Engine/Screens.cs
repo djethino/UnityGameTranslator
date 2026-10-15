@@ -69,6 +69,42 @@ namespace UnityGameTranslator.Core
         /// </summary>
         private bool _mainWasOpenBehindInspector;
 
+        /// <summary>One window: the section that was up when the Inspector came, put back when it goes.</summary>
+        private ScreenId? _sectionBehindInspector;
+
+        // ── One window (config `window_layout`, analyse/fenetre-unique-sections.md) ──────────
+        // Translation (the Main), Translation Tools and Mod Options are then SECTIONS of one window:
+        // one of them up at a time, the others put away when it comes. Separate windows: each its
+        // own, as before — every rule below leaves that mode exactly as it was.
+
+        /// <summary>Whether this screen is one of the three sections of the one window.</summary>
+        public static bool IsSection(ScreenId screen) =>
+            screen == ScreenId.Main || screen == ScreenId.TranslationParameters || screen == ScreenId.Options;
+
+        /// <summary>The three sections as one window (true, the default) or three windows.</summary>
+        public bool OneWindow { get; set; } = true;
+
+        /// <summary>The section shown last — the one the window opens on again.</summary>
+        public ScreenId LastSection { get; private set; } = ScreenId.Main;
+
+        /// <summary>
+        /// True while one section is put away for another (one window): what a section reads to
+        /// keep its unapplied choices instead of starting afresh — they are kept while the window
+        /// is open, and dropped when it closes (decided 2026-10-11).
+        /// </summary>
+        public bool SwitchingSections { get; private set; }
+
+        /// <summary>The section up right now, if any.</summary>
+        public ScreenId? VisibleSection
+        {
+            get
+            {
+                foreach (var pair in _views)
+                    if (IsSection(pair.Key) && pair.Value.Visible) return pair.Key;
+                return null;
+            }
+        }
+
         /// <summary>A screen's visibility actually changed. Raised after the sequence rules ran.</summary>
         public event Action<ScreenId, bool> VisibilityChanged;
 
@@ -107,7 +143,20 @@ namespace UnityGameTranslator.Core
 
         public void Show(ScreenId screen)
         {
-            if (_views.TryGetValue(screen, out var view)) view.Show();
+            if (!_views.TryGetValue(screen, out var view)) return;
+            if (OneWindow && IsSection(screen))
+            {
+                var current = VisibleSection;
+                if (current != null && current.Value != screen && _views.TryGetValue(current.Value, out var up))
+                {
+                    // Another section of the same window: it goes, this one comes, as one act.
+                    SwitchingSections = true;
+                    try { up.Hide(); view.Show(); }
+                    finally { SwitchingSections = false; }
+                    return;
+                }
+            }
+            view.Show();
         }
 
         public void Hide(ScreenId screen)
@@ -143,6 +192,15 @@ namespace UnityGameTranslator.Core
         /// <summary>The hotkey's act: the Main goes if it is up, and comes (in place of the wizard) if not.</summary>
         public void ToggleMain()
         {
+            if (OneWindow)
+            {
+                // The hotkey opens and closes the WINDOW: on the section shown last, whichever it is.
+                var up = VisibleSection;
+                if (up != null) Hide(up.Value);
+                else if (LastSection == ScreenId.Main) ShowMain();
+                else { Hide(ScreenId.Wizard); Show(LastSection); }
+                return;
+            }
             if (IsVisible(ScreenId.Main)) Hide(ScreenId.Main);
             else ShowMain();
         }
@@ -158,7 +216,28 @@ namespace UnityGameTranslator.Core
             // lands on top of it — put back is not brought forward.
             if (screen == ScreenId.Inspector)
             {
-                if (visible)
+                if (OneWindow)
+                {
+                    // One window: whichever section was up goes, and comes back — not only the Main.
+                    if (visible)
+                    {
+                        _sectionBehindInspector = VisibleSection;
+                        if (_sectionBehindInspector != null) Hide(_sectionBehindInspector.Value);
+                    }
+                    else
+                    {
+                        // Put back, not opened afresh: the section keeps the choices it held when
+                        // the Inspector put it away, as it does when another section takes its place.
+                        if (_sectionBehindInspector != null && _views.TryGetValue(_sectionBehindInspector.Value, out var behind))
+                        {
+                            SwitchingSections = true;
+                            try { behind.Show(); }
+                            finally { SwitchingSections = false; }
+                        }
+                        _sectionBehindInspector = null;
+                    }
+                }
+                else if (visible)
                 {
                     _mainWasOpenBehindInspector = IsVisible(ScreenId.Main);
                     if (_mainWasOpenBehindInspector) Hide(ScreenId.Main);
@@ -169,6 +248,7 @@ namespace UnityGameTranslator.Core
                     _mainWasOpenBehindInspector = false;
                 }
             }
+            if (visible && IsSection(screen)) LastSection = screen;
 
             VisibilityChanged?.Invoke(screen, visible);
         }

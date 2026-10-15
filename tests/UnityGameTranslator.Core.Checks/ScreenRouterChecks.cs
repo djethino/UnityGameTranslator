@@ -114,6 +114,7 @@ namespace UnityGameTranslator.Core.Checks
 
             {
                 var (router, _) = Build();
+                router.OneWindow = false;   // three windows up at once: only separate windows can
                 router.ShowMain();
                 router.Show(ScreenId.Options);
                 router.Show(ScreenId.Login);
@@ -136,6 +137,62 @@ namespace UnityGameTranslator.Core.Checks
                 bool refused = false;
                 try { router.Register(ScreenId.Main, new FakeScreen()); } catch (InvalidOperationException) { refused = true; }
                 check(refused, "registering a screen twice is refused", "two views for one screen would split the rules");
+            }
+
+            // ── One window: the three sections (analyse/fenetre-unique-sections.md) ──
+            {
+                var (router, views) = Build();
+                bool switchingSeen = false;
+                views[ScreenId.Options].VisibilityChanged += (v, on) => { if (on) switchingSeen = router.SwitchingSections; };
+                router.ShowMain();
+                router.Show(ScreenId.Options);
+                check(router.IsVisible(ScreenId.Options) && !router.IsVisible(ScreenId.Main),
+                    "one window: a section comes in place of the one up", "Translation, Tools and Options share one window");
+                check(switchingSeen && !router.SwitchingSections,
+                    "the section coming in hears it is a switch, and only during it", "it keeps its unapplied choices then, and only then");
+                check(router.LastSection == ScreenId.Options, "the section shown last is remembered", "the window opens on it again");
+                router.ToggleMain();
+                check(!router.AnyVisible, "the hotkey closes the window, whichever section is up", "not only the Main");
+                router.ToggleMain();
+                check(router.IsVisible(ScreenId.Options) && !router.IsVisible(ScreenId.Main),
+                    "the hotkey opens the window on the section shown last", "back where the player was");
+                switchingSeen = true;
+                router.Hide(ScreenId.Options);
+                router.Show(ScreenId.Options);
+                check(!switchingSeen, "a section opened with the window closed is no switch", "a fresh opening drops what was not applied");
+                router.Show(ScreenId.Login);
+                check(router.IsVisible(ScreenId.Login) && router.IsVisible(ScreenId.Options),
+                    "a window that is not a section opens beside the sections", "sign-in, upload, merge… stay windows of their own");
+            }
+
+            {
+                var (router, views) = Build();
+                bool switchingSeen = false;
+                views[ScreenId.TranslationParameters].VisibilityChanged += (v, on) => { if (on) switchingSeen = router.SwitchingSections; };
+                router.Show(ScreenId.TranslationParameters);
+                router.Show(ScreenId.Inspector);
+                check(!router.IsVisible(ScreenId.TranslationParameters),
+                    "one window: the inspector puts away whichever section is up", "the view must be clear to pick in the game");
+                router.Hide(ScreenId.Inspector);
+                check(router.IsVisible(ScreenId.TranslationParameters) && !router.IsVisible(ScreenId.Main),
+                    "and that section comes back, not the Main", "the window comes back as it was");
+                check(switchingSeen && !router.SwitchingSections,
+                    "it comes back put back, not opened afresh", "its unapplied choices are still there after picking in the game");
+            }
+
+            {
+                var (router, _) = Build();
+                router.OneWindow = false;
+                router.ShowMain();
+                router.Show(ScreenId.Options);
+                check(router.IsVisible(ScreenId.Main) && router.IsVisible(ScreenId.Options),
+                    "separate windows: the sections are three windows, up together", "the layout as it was before 2026-10");
+                router.Hide(ScreenId.Options);
+                router.Hide(ScreenId.Main);
+                router.Show(ScreenId.Options);
+                router.ToggleMain();
+                check(router.IsVisible(ScreenId.Main) && router.IsVisible(ScreenId.Options),
+                    "separate windows: the hotkey toggles the Main alone", "unchanged");
             }
 
             {

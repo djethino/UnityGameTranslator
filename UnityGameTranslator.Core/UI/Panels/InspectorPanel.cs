@@ -333,8 +333,14 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             if (!Enabled) return;
             _picker.Tick();
+            // ONE budget for this frame's work on the text list — the search and the rows share it,
+            // never one each: two consumers of the same budget made a frame twice as long.
+            float budgetMs = TranslatorScanner.DeliberateBudgetMs();
+            var frame = System.Diagnostics.Stopwatch.StartNew();
+            // The texts under a selection, read over frames (StepTextSearch).
+            if (_search != null) StepTextSearch(budgetMs);
             // The next rows of a long text list, as its view nears the end (BuildSomeTextRows).
-            if (TextRowsWanted) BuildSomeTextRows();
+            if (TextRowsWanted) BuildSomeTextRows(budgetMs - (float)frame.Elapsed.TotalMilliseconds);
             // Follows a fallback set or removed while the texts are on screen.
             if (_textEditIds.Count > 0) RefreshTextFontNotice();
         }
@@ -495,7 +501,9 @@ namespace UnityGameTranslator.Core.UI.Panels
             _slotStrip.Visible = false;
             _picker.ClearSelection();
 
-            // Clear TextEdit UI
+            // Clear TextEdit UI — and the search still reading under the previous selection
+            _search = null;
+            _statusLabel.Waiting = false;
             _pendingRetranslateRows.Clear();
             _textRowsToBuild.Clear();
             _textRowsBuilt = 0;
@@ -678,77 +686,179 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             if (_textEditRow == null || _textEditList == null) return;
 
-            var textEntries = new List<(object component, string text, string originalKey, string tag, string childPath, Dictionary<int, string> liveNumbers)>();
+            // 🔴 **Read over several frames, the wheel turning** (user, 2026-10-15: a pick well below
+            // the root held a game for twenty seconds before the list began to fill). Resolving
+            // what each text under the selection shows to its line of the file runs the
+            // translation pipeline's normalization once per text — thousands under a high group.
+            // The scene's texts are listed at once (that walk is fast), then worked through within
+            // the frame's budget (Update → StepTextSearch); rows appear as their lines are found.
+            _pendingRetranslateRows.Clear();
+            _textRowsToBuild.Clear();
+            _textRowsBuilt = 0;
+            _textEditRow.Visible = false;
+            _textEditList.Clear();
+            ForgetShares();
+            _textEditIds.Clear();
 
-            // Try the clicked path, then walk up the hierarchy until we find text components
-            string searchPath = path;
-            for (int attempt = 0; attempt < 3 && textEntries.Count == 0; attempt++)
+            // 🔴 One enumeration for every framework (TextTargets). This used to name UI.Text and
+            // TMP_Text here, so the in-game editor could only ever edit those two — on an NGUI, tk2d,
+            // TMProOld, TextMesh or UI Toolkit game it opened on an empty list, whatever had been
+            // picked. See analyse/text-targets-audit.md.
+            var listing = System.Diagnostics.Stopwatch.StartNew();
+            _search = new TextSearch { Path = path, Prefix = path, Targets = TextTargets.All() };
+            _search.ListedMs = listing.Elapsed.TotalMilliseconds;
+            _search.Started = System.Diagnostics.Stopwatch.StartNew();
+            _statusLabel.Say("Reading texts...");
+            _statusLabel.Tone = Tone.Secondary;
+            _statusLabel.Waiting = true;
+            StepTextSearch(TranslatorScanner.DeliberateBudgetMs());
+        }
+
+        /// <summary>
+        /// One search for the texts under a selection: the scene's texts, how far through them, the
+        /// prefix asked (the clicked path, then up to two levels above while nothing is found), and
+        /// each displayed text resolved once — a line shown by a hundred components is resolved once.
+        /// </summary>
+        private sealed class TextSearch
+        {
+            public string Path, Prefix;
+            public List<TextTarget> Targets;
+            public int Next, LevelsUp, Steps;
+            public double ListedMs;
+            public System.Diagnostics.Stopwatch Started;
+            public readonly List<(object component, string text, string originalKey, string tag, string childPath, Dictionary<int, string> liveNumbers)> Found
+                = new List<(object, string, string, string, string, Dictionary<int, string>)>();
+            public readonly Dictionary<string, TranslatorCore.DisplayedTextResolution> Resolved
+                = new Dictionary<string, TranslatorCore.DisplayedTextResolution>(StringComparer.Ordinal);
+            public readonly HashSet<string> Lines = new HashSet<string>(StringComparer.Ordinal);
+        }
+
+        private TextSearch _search;
+
+        /// <summary>
+        /// The next texts of the search, within this frame's budget; what they show resolved and
+        /// handed to the list. At the end: nothing under the path → one level up (twice at most),
+        /// as the inline search did; else the list is complete and says so.
+        /// </summary>
+        private void StepTextSearch(float budgetMs)
+        {
+            var search = _search;
+            if (search == null) return;
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            int foundBefore = search.Found.Count;
+            search.Steps++;
+
+            while (search.Next < search.Targets.Count && watch.Elapsed.TotalMilliseconds < budgetMs)
             {
-                FindTextComponentsAtPath(searchPath, textEntries);
-
-                if (textEntries.Count == 0)
+                var target = search.Targets[search.Next++];
+                try
                 {
-                    // Go up one level
-                    int lastSlash = searchPath.LastIndexOf('/');
-                    if (lastSlash <= 0) break;
-                    searchPath = searchPath.Substring(0, lastSlash);
+                    string compPath = target.Path;
+                    if (compPath != search.Prefix && !compPath.StartsWith(search.Prefix + "/", StringComparison.Ordinal))
+                        continue;
+
+                    // Resolve to the cache entry with pipeline normalization, so texts with dynamic
+                    // numbers map to their [!v*N] pattern key — once per displayed text.
+                    if (!search.Resolved.TryGetValue(target.Text, out var resolution))
+                    {
+                        resolution = TranslatorCore.ResolveDisplayedText(target.Text);
+                        search.Resolved[target.Text] = resolution;
+                    }
+                    if (resolution == null) continue;
+
+                    string tag = resolution.Entry?.Tag ?? "\u2014";
+                    // Prefill: current translation with placeholders, or the normalized source
+                    // text when no entry exists yet
+                    string translation = resolution.Entry?.Value ?? resolution.Key;
+                    search.Found.Add((target.Owner, translation, resolution.Key, tag, compPath, resolution.CapturedNumbers));
+                }
+                // One text that cannot be resolved stays off the list; the others still show — said.
+                catch (Exception ex) { Faults.Say("InspectorPanel.StepTextSearch", ex, target.Engine); }
+            }
+
+            if (search.Found.Count > foundBefore) AddFoundTexts(search, foundBefore);
+
+            if (search.Next < search.Targets.Count) return;   // more next frame
+
+            if (search.Found.Count == 0 && search.LevelsUp < 2)
+            {
+                // Nothing under the clicked path: one level up, the same texts read again.
+                int lastSlash = search.Prefix.LastIndexOf('/');
+                if (lastSlash > 0)
+                {
+                    search.Prefix = search.Prefix.Substring(0, lastSlash);
+                    search.LevelsUp++;
+                    search.Next = 0;
+                    return;
                 }
             }
 
-            if (textEntries.Count == 0)
+            _search = null;
+            _statusLabel.Waiting = false;
+            // Under Debug logging, what the search cost and where: the scene's listing in one frame,
+            // the resolving spread over the steps.
+            if (TranslatorCore.DebugMode)
+                TranslatorCore.LogDebug($"[Inspector] texts under '{search.Prefix}': {search.Targets.Count} listed in {search.ListedMs:0} ms, "
+                    + $"{search.Found.Count} found, {search.Resolved.Count} distinct resolved, {search.Steps} step(s) over {search.Started.Elapsed.TotalMilliseconds:0} ms, "
+                    + $"{_textRowsBuilt} of {_textRowsToBuild.Count} row(s) built so far");
+            if (search.Found.Count == 0)
             {
                 _statusLabel.Say("No text components found");
                 _statusLabel.Tone = Tone.Warning;
-                NoteNoText(path);
+                NoteNoText(search.Path);
                 return;
             }
-
-            // Clear previous entries — and with them any retranslation still expected for a row
-            // that is about to be destroyed
-            _pendingRetranslateRows.Clear();
-            _textEditList.Clear();
-            ForgetShares();
-
-            // Show the edit UI
-            _textEditRow.Visible = true;
-            var distinctLines = new HashSet<string>(StringComparer.Ordinal);
-            foreach (var e in textEntries) distinctLines.Add(e.originalKey ?? "");
-            _textEditCountLabel.Say($"{distinctLines.Count} text(s) found:");
-            _textEditIds.Clear();
-            foreach (var entry in textEntries)
-            {
-                long id = TypeHelper.GetInstanceID(entry.component);
-                if (id != -1) _textEditIds.Add(id);
-            }
-            RefreshTextFontNotice();
-
-            // An editable row for each LINE of the file. Two components showing the same line (a text
-            // and its shadow, a front and a back) are one line to edit, not two rows saying the same
-            // thing — a saved row reaches both through the line.
-            // 🔴 **Built as the list is read, not all at once** (user, 2026-10-14: Select Parent up to
-            // the scene's root froze the game). A group high in the hierarchy holds thousands of
-            // texts; a row is two scrolling fields and their chrome, and building them all in one
-            // frame — then measuring them — held the game for as long as that took. The rows that
-            // fill the view come first, within the frame's budget; the next ones as the view nears
-            // the end (Update). The count above says how many there are in all.
-            var shownKeys = new HashSet<string>(StringComparer.Ordinal);
-            _textRowsToBuild.Clear();
-            _textRowsBuilt = 0;
-            foreach (var entry in textEntries)
-                if (shownKeys.Add(entry.originalKey ?? "")) _textRowsToBuild.Add(entry);
-            BuildSomeTextRows();
-
-            // The list shares the body, then its fields share the list; the window opens at what
-            // everything comes to (ContentHeightFloor), and grows to it on a new selection
-            // (FitToTexts). Measured on the next tick, never in this one: rows just built are not
-            // at their width yet, and a ceiling taken from them would shrink the window for a frame.
-            _bodyShares.Add(_unfoldedList, () => LinesIn(_unfoldedList), UIStyles.RowHeightSmall, 0,
-                            least: TextEditListMinHeight);
-            RecalculateSize();
-            FitToTextsSoon();
-
             _statusLabel.Say("Edit translations and click Save");
             _statusLabel.Tone = Tone.Secondary;
+        }
+
+        /// <summary>
+        /// The texts found since the last step, into the list: the first ones open it, the next
+        /// ones join the rows still to build, and the count says how many lines so far.
+        /// </summary>
+        private void AddFoundTexts(TextSearch search, int from)
+        {
+            bool opening = !_textEditRow.Visible;
+            if (opening)
+            {
+                // Show the edit UI
+                _textEditRow.Visible = true;
+                // The list shares the body, then its fields share the list; the window opens at
+                // what everything comes to (ContentHeightFloor), and grows to it on a new selection
+                // (FitToTexts). Measured on the next tick, never in this one: rows just built are
+                // not at their width yet, and a ceiling taken from them would shrink the window.
+                _bodyShares.Add(_unfoldedList, () => LinesIn(_unfoldedList), UIStyles.RowHeightSmall, 0,
+                                least: TextEditListMinHeight);
+            }
+
+            for (int i = from; i < search.Found.Count; i++)
+            {
+                var entry = search.Found[i];
+                long id = TypeHelper.GetInstanceID(entry.component);
+                if (id != -1) _textEditIds.Add(id);
+                // An editable row for each LINE of the file. Two components showing the same line
+                // (a text and its shadow, a front and a back) are one line to edit, not two rows
+                // saying the same thing — a saved row reaches both through the line.
+                if (search.Lines.Add(entry.originalKey ?? "")) _textRowsToBuild.Add(entry);
+            }
+            _textEditCountLabel.Say($"{search.Lines.Count} text(s) found:");
+            RefreshTextFontNotice();
+
+            // 🔴 **Built as the list is read, not all at once** (user, 2026-10-14: Select Parent up
+            // to the scene's root froze the game). A row is two scrolling fields and their chrome:
+            // the rows that fill the view come first, within the frame's budget; the next ones as
+            // the view nears the end (Update). 🔴 Only what the view asks for: building every row
+            // as it was found (2026-10-15) laid out a list of hundreds of fields frame after frame —
+            // the game fell to one frame every two seconds, and the frame budget, measured on those
+            // frames, grew with them.
+            // The first ones fill the view now; the next ones come from Update, within the frame's
+            // one budget, as the view nears the end.
+            if (opening) BuildSomeTextRows(TranslatorScanner.DeliberateBudgetMs());
+            if (opening)
+            {
+                RecalculateSize();
+                FitToTextsSoon();
+            }
         }
 
         /// <summary>
@@ -778,11 +888,10 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// the list is filled and from Update, so the rows arrive as the person scrolls toward
         /// them. Rows added to a list already shown are sized at once (BodySized).
         /// </summary>
-        private void BuildSomeTextRows()
+        private void BuildSomeTextRows(float budgetMs)
         {
             if (_textRowsBuilt >= _textRowsToBuild.Count) return;
             var watch = System.Diagnostics.Stopwatch.StartNew();
-            float budgetMs = TranslatorScanner.DeliberateBudgetMs();
             bool first = _textRowsBuilt == 0;
             do CreateTextEditRow(_textRowsToBuild[_textRowsBuilt++]);
             while (_textRowsBuilt < _textRowsToBuild.Count && watch.Elapsed.TotalMilliseconds < budgetMs);
@@ -930,43 +1039,6 @@ namespace UnityGameTranslator.Core.UI.Panels
             BodySized();
             if (_ceiling > 0 && Rect.rect.height < Math.Min(_ceiling, TallestOnThisScreen) - 0.5f)
                 ResizeTo(_ceiling);
-        }
-
-        /// <summary>
-        /// Find all text components whose path matches or is a child of the given path.
-        /// Uses FindAllObjectsOfType (IL2CPP-safe).
-        /// </summary>
-        private void FindTextComponentsAtPath(string pathPrefix,
-            List<(object component, string text, string originalKey, string tag, string childPath, Dictionary<int, string> liveNumbers)> results)
-        {
-            // 🔴 One enumeration for every framework. This used to name UI.Text and TMP_Text here,
-            // so the in-game editor could only ever edit those two — on an NGUI, tk2d, TMProOld,
-            // TextMesh or UI Toolkit game it opened on an empty list, whatever had been picked.
-            // See analyse/text-targets-audit.md.
-            foreach (var target in TextTargets.All())
-            {
-                try
-                {
-                    string compPath = target.Path;
-                    if (compPath != pathPrefix && !compPath.StartsWith(pathPrefix + "/"))
-                        continue;
-
-                    // Resolve to the cache entry with pipeline normalization, so texts
-                    // with dynamic numbers map to their [!v*N] pattern key
-                    var resolution = TranslatorCore.ResolveDisplayedText(target.Text);
-                    if (resolution == null) continue;
-
-                    string tag = resolution.Entry?.Tag ?? "—";
-                    // Prefill: current translation with placeholders, or the normalized
-                    // source text when no entry exists yet
-                    string translation = resolution.Entry?.Value ?? resolution.Key;
-
-                    results.Add((target.Owner, translation, resolution.Key, tag, compPath,
-                                 resolution.CapturedNumbers));
-                }
-                // One text that cannot be resolved stays off the list; the others still show — said.
-                catch (Exception ex) { Faults.Say("InspectorPanel.FindTextComponentsAtPath", ex, target.Engine); }
-            }
         }
 
         /// <summary>

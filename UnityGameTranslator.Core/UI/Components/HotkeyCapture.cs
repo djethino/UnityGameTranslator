@@ -28,6 +28,9 @@ namespace UnityGameTranslator.Core.UI.Components
         private bool _alt;
         private bool _shift;
         private bool _isCapturing;
+
+        /// <summary>Keys the game's input system refused to be asked about — the same for every capture, so shared.</summary>
+        private static readonly System.Collections.Generic.HashSet<KeyCode> _refusedKeys = new System.Collections.Generic.HashSet<KeyCode>();
         private ButtonRef _clearButton;
 
         // Callback
@@ -180,17 +183,22 @@ namespace UnityGameTranslator.Core.UI.Components
                     continue;
                 }
 
+                if (_refusedKeys.Contains(key)) continue;
+
                 bool keyPressed = false;
                 try
                 {
                     keyPressed = UniverseLib.Input.InputManager.GetKeyDown(key);
                 }
-                // The game's input system refusing the question: said, and this frame's scan
-                // stops there — the same refusal would come back for every key after it.
+                // 🔴 The game's input system refusing ONE key — a KeyCode it has no key for (Clear,
+                // under the new Input System): said once, and that key alone is left out from then
+                // on. Stopping the whole scan there (2026-09-27 to 10-15) stopped it before the
+                // letters on every frame: no hotkey could be assigned at all in such a game.
                 catch (Exception ex)
                 {
+                    _refusedKeys.Add(key);
                     Faults.Say("HotkeyCapture.GetKeyDown", ex, key.ToString());
-                    break;
+                    continue;
                 }
 
                 if (keyPressed)

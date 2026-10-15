@@ -534,17 +534,18 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// makes a list of ten copies a wall of text, and the question being asked here is only
         /// "which one of mine is this". A flag answers it at a glance and takes no width.
         ///
-        /// ⚠ A source detected rather than chosen ("auto") reads « Auto », as on the Main's card
-        /// (Backups.IsAutoLanguage, user 2026-10-15) — the arrow with nothing before it read as
-        /// something missing. A side with nothing at all is left out, and the arrow with it.
+        /// ⚠ A source detected rather than chosen reads « Auto », as on the Main's card
+        /// (Backups.SourceOf, user 2026-10-15) — the arrow with nothing before it read as something
+        /// missing. Nothing known of the source is left out, and the arrow with it.
         ///
         /// ⚠ Nothing at all when neither is known: an older copy whose file did not say is a row
         /// with one line less, not a row with two empty boxes.
         /// </summary>
         private static void ShowLanguages(BuiltScreen text, BackupEntry entry)
         {
-            bool source = Backups.IsSettledLanguage(entry.SourceLanguage);
-            bool sourceAuto = Backups.IsAutoLanguage(entry.SourceLanguage);
+            var side = Backups.SourceOf(entry.SourceLanguage, entry.TargetLanguage);
+            bool source = side == Backups.SourceSide.Language;
+            bool sourceAuto = side == Backups.SourceSide.Auto;
             bool target = Backups.IsSettledLanguage(entry.TargetLanguage);
 
             if (!source && !sourceAuto && !target) return;

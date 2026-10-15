@@ -576,9 +576,15 @@ namespace UnityGameTranslator.Core
                 // and opening every file to draw a row is an access per row for a decoration.
                 // ⚠ `languages` marks them as LOOKED FOR, which is not the same as found: a
                 // translation that names no language must not be reopened on every draw for ever.
+                // ⚠ What the COPY says, read from the file just saved — as the Manager writes it
+                // (TranslationBackupStore.LanguagesIn). The game's setting said "auto" where the
+                // file says nothing, and a game re-targeted since would have its copy claim the new
+                // language (2026-10-15: the two products' rows differed on the same fact).
+                var copied = Path.Combine(directory, TranslationFile);
+                var saved = File.Exists(copied) ? JObject.Parse(File.ReadAllText(copied)) : null;
                 about["languages"] = true;
-                about["source_language"] = TranslatorCore.Config.source_language;
-                about["target_language"] = TranslatorCore.Config.target_language;
+                about["source_language"] = saved?["_source_language"]?.Value<string>();
+                about["target_language"] = saved?["_target_language"]?.Value<string>();
 
                 File.WriteAllText(Path.Combine(directory, Backups.AboutFileName),
                                   about.ToString(Newtonsoft.Json.Formatting.Indented));

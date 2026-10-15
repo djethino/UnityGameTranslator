@@ -534,9 +534,9 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// makes a list of ten copies a wall of text, and the question being asked here is only
         /// "which one of mine is this". A flag answers it at a glance and takes no width.
         ///
-        /// ⚠ A source that was never settled — "auto", or nothing — gets the arrow with nothing
-        /// before it, because that IS the fact: the copy was taken before anybody said what it
-        /// translates from. Writing "Auto" there would dress an absence up as an answer.
+        /// ⚠ A source detected rather than chosen ("auto") reads « Auto », as on the Main's card
+        /// (Backups.IsAutoLanguage, user 2026-10-15) — the arrow with nothing before it read as
+        /// something missing. A side with nothing at all is left out, and the arrow with it.
         ///
         /// ⚠ Nothing at all when neither is known: an older copy whose file did not say is a row
         /// with one line less, not a row with two empty boxes.
@@ -544,9 +544,10 @@ namespace UnityGameTranslator.Core.UI.Panels
         private static void ShowLanguages(BuiltScreen text, BackupEntry entry)
         {
             bool source = Backups.IsSettledLanguage(entry.SourceLanguage);
+            bool sourceAuto = Backups.IsAutoLanguage(entry.SourceLanguage);
             bool target = Backups.IsSettledLanguage(entry.TargetLanguage);
 
-            if (!source && !target) return;
+            if (!source && !sourceAuto && !target) return;
 
             text.Host("Languages").Visible = true;
 
@@ -556,6 +557,14 @@ namespace UnityGameTranslator.Core.UI.Panels
                 LanguageMark.Create(from, "From", entry.SourceLanguage);
                 from.Visible = true;
             }
+            else if (sourceAuto)
+            {
+                text.Say("fromAuto", TranslationLanguages.AutoWord);
+                text.Label("FromAuto").Visible = true;
+            }
+
+            // The arrow joins two sides: drawn only when there is something on each.
+            text.Label("To").Visible = (source || sourceAuto) && target;
 
             if (target)
             {

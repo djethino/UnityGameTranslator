@@ -592,7 +592,7 @@ namespace UnityGameTranslator.Core.UI.Components
 
             // Nothing to mark: no language was chosen, which is auto-detection rather than a value
             // we failed to record. The word takes the mark's place so the row still reads as a pair.
-            Labels.Create(_identityMarks, name + "Auto", TranslatorCore.TranslateOwnUIDynamic("Auto"),
+            Labels.Create(_identityMarks, name + "Auto", TranslatorCore.TranslateOwnUIDynamic(TranslationLanguages.AutoWord),
                           TextRole.Body, tone: Tone.Plain, policy: TextPolicy.Excluded, wrap: false,
                           minHeight: UIStyles.RowHeightSmall);
         }

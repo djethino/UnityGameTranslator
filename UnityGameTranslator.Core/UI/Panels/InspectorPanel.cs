@@ -333,6 +333,8 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             if (!Enabled) return;
             _picker.Tick();
+            // The next rows of a long text list, as its view nears the end (BuildSomeTextRows).
+            if (TextRowsWanted) BuildSomeTextRows();
             // Follows a fallback set or removed while the texts are on screen.
             if (_textEditIds.Count > 0) RefreshTextFontNotice();
         }
@@ -495,6 +497,8 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // Clear TextEdit UI
             _pendingRetranslateRows.Clear();
+            _textRowsToBuild.Clear();
+            _textRowsBuilt = 0;
             _textEditRow.Visible = false;
             _textEditList.Clear();
             ForgetShares();
@@ -718,15 +722,21 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
             RefreshTextFontNotice();
 
-            // Create an editable row for each LINE of the file. Two components showing the same line
-            // (a text and its shadow, a front and a back) are one line to edit, not two rows saying
-            // the same thing — a saved row reaches both through the line.
+            // An editable row for each LINE of the file. Two components showing the same line (a text
+            // and its shadow, a front and a back) are one line to edit, not two rows saying the same
+            // thing — a saved row reaches both through the line.
+            // 🔴 **Built as the list is read, not all at once** (user, 2026-10-14: Select Parent up to
+            // the scene's root froze the game). A group high in the hierarchy holds thousands of
+            // texts; a row is two scrolling fields and their chrome, and building them all in one
+            // frame — then measuring them — held the game for as long as that took. The rows that
+            // fill the view come first, within the frame's budget; the next ones as the view nears
+            // the end (Update). The count above says how many there are in all.
             var shownKeys = new HashSet<string>(StringComparer.Ordinal);
-            for (int i = 0; i < textEntries.Count; i++)
-            {
-                if (!shownKeys.Add(textEntries[i].originalKey ?? "")) continue;
-                CreateTextEditRow(textEntries[i]);
-            }
+            _textRowsToBuild.Clear();
+            _textRowsBuilt = 0;
+            foreach (var entry in textEntries)
+                if (shownKeys.Add(entry.originalKey ?? "")) _textRowsToBuild.Add(entry);
+            BuildSomeTextRows();
 
             // The list shares the body, then its fields share the list; the window opens at what
             // everything comes to (ContentHeightFloor), and grows to it on a new selection
@@ -756,6 +766,34 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// it only makes the list longer.
         /// </summary>
         private readonly ListShares _bodyShares = new ListShares();
+
+        /// <summary>The lines found under the selection, in order, and how many already have their row.</summary>
+        private readonly List<(object component, string text, string originalKey, string tag, string childPath, Dictionary<int, string> liveNumbers)> _textRowsToBuild
+            = new List<(object component, string text, string originalKey, string tag, string childPath, Dictionary<int, string> liveNumbers)>();
+        private int _textRowsBuilt;
+
+        /// <summary>
+        /// The next rows of the text list: at least one, then more while this frame's budget lasts
+        /// and while the list has less than one view of rows left below what it shows. Asked when
+        /// the list is filled and from Update, so the rows arrive as the person scrolls toward
+        /// them. Rows added to a list already shown are sized at once (BodySized).
+        /// </summary>
+        private void BuildSomeTextRows()
+        {
+            if (_textRowsBuilt >= _textRowsToBuild.Count) return;
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            float budgetMs = TranslatorScanner.DeliberateBudgetMs();
+            bool first = _textRowsBuilt == 0;
+            do CreateTextEditRow(_textRowsToBuild[_textRowsBuilt++]);
+            while (_textRowsBuilt < _textRowsToBuild.Count && watch.Elapsed.TotalMilliseconds < budgetMs);
+            // The same selection still arriving: the window grows to it as for the first rows.
+            if (!first) FitToTexts();
+        }
+
+        /// <summary>Whether the list's view nears its last built row while rows are still to build.</summary>
+        private bool TextRowsWanted =>
+            _textRowsBuilt < _textRowsToBuild.Count && _textEditRow != null && _textEditRow.Visible
+            && _textEditList.RoomBelowView < _textEditList.ViewHeight;
 
         /// <summary>
         /// Per row, its source and translation fields sharing the room that shows the row whole in

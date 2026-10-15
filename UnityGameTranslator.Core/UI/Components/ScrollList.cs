@@ -188,6 +188,34 @@ namespace UnityGameTranslator.Core.UI.Components
             }
         }
 
+        /// <summary>
+        /// How much of its rows lies below what it shows, in pixels, as last laid out — read, never
+        /// rebuilt (<see cref="ContentHeight"/> rebuilds). What a list filled as it is read asks:
+        /// rows are added while the view nears the end.
+        /// </summary>
+        public float RoomBelowView
+        {
+            get
+            {
+                var content = ContentRect;
+                var view = _scroll != null ? _scroll.GetComponent<ScrollRect>() : null;
+                if (content == null || view == null) return 0f;
+                var viewport = view.viewport != null ? view.viewport.rect.height : ((RectTransform)_scroll.transform).rect.height;
+                return content.rect.height - content.anchoredPosition.y - viewport;
+            }
+        }
+
+        /// <summary>The height of what it shows — its viewport.</summary>
+        public float ViewHeight
+        {
+            get
+            {
+                var view = _scroll != null ? _scroll.GetComponent<ScrollRect>() : null;
+                if (view == null) return 0f;
+                return view.viewport != null ? view.viewport.rect.height : ((RectTransform)_scroll.transform).rect.height;
+            }
+        }
+
         private RectTransform ContentRect
         {
             get

@@ -10,14 +10,17 @@ namespace UnityGameTranslator.Core.UI.Components
     public sealed class SliderHandle : Handle
     {
         internal readonly Slider Slider;
+        /// <summary>What one notch of the wheel moves it by: the step its number shows.</summary>
+        internal readonly float WheelStep;
         private readonly GameObject _row;
         private readonly LabelHandle _value;
         private readonly Func<float, string> _format;
 
-        internal SliderHandle(GameObject row, Slider slider, LabelHandle value, Func<float, string> format)
+        internal SliderHandle(GameObject row, Slider slider, LabelHandle value, Func<float, string> format, float wheelStep)
         {
             _row = row;
             Slider = slider;
+            WheelStep = wheelStep;
             _value = value;
             _format = format;
         }
@@ -49,10 +52,12 @@ namespace UnityGameTranslator.Core.UI.Components
     public static class Sliders
     {
         /// <param name="format">How the value is written beside the rail — "85%", "1.5×".</param>
+        /// <param name="wheelStep">The step <paramref name="format"/> shows — 0.01 for a percentage:
+        /// one notch of the wheel moves the rail by exactly that.</param>
         /// <param name="onChanged">Moved by the person. The written value follows on its own.</param>
         public static SliderHandle Labelled(Host parent, string name, string caption,
                                             float min, float max, float initial,
-                                            Func<float, string> format, Action<float> onChanged = null,
+                                            Func<float, string> format, float wheelStep, Action<float> onChanged = null,
                                             int captionWidth = 120, bool wholeNumbers = false)
         {
             var row = Stacks.Row(parent, name + "Row");
@@ -74,7 +79,7 @@ namespace UnityGameTranslator.Core.UI.Components
                                       minHeight: UIStyles.RowHeightNormal);
             UIFactory.SetLayoutElement(value.Text.gameObject, minWidth: 50, flexibleWidth: 0);
 
-            var handle = new SliderHandle(row.Object, slider, value, format);
+            var handle = new SliderHandle(row.Object, slider, value, format, wheelStep);
             Live.Add(handle);
 
             // UIHelpers carries the Il2Cpp delegate conversion; never AddListener from here.
@@ -95,12 +100,6 @@ namespace UnityGameTranslator.Core.UI.Components
         private static ScrollRect _silenced;
         private static float _silencedSensitivity;
         private static Vector3 _lastMouse;
-
-        /// <summary>
-        /// One turn of the wheel moves a rail by this share of its range — fifty turns end to end,
-        /// fine enough for a percentage, quick enough for a size.
-        /// </summary>
-        private const float TurnsEndToEnd = 50f;
 
         /// <summary>
         /// The wheel moves the rail under the pointer (user, 2026-09-30: « les curseurs … ne bougent
@@ -140,11 +139,18 @@ namespace UnityGameTranslator.Core.UI.Components
             if (_held != null && turns != 0f && Over(_held, point) && _held.Enabled)
             {
                 var slider = _held.Slider;
-                float step = (slider.maxValue - slider.minValue) / TurnsEndToEnd;
+                // 🔴 **One notch, one step of the number** (user, 2026-10-22: « les crans de molette
+                // … ne bougent que 1 par 1 … pour être plus précis que le click drag »). It was a
+                // fiftieth of the range: 4% a notch on a 0-200% rail, finer than nothing a drag does.
+                // From the value put on the step first, so a rail dragged to 87.3% goes to 88%.
+                // ⚠ One step per frame the wheel turned, by its sign only: a notch reads 1 under the
+                // old input and 120 under the new one, and a fast spin is not what precision is for.
+                float step = _held.WheelStep;
                 if (slider.wholeNumbers) step = Math.Max(1f, (float)Math.Round(step));
+                float onStep = (float)Math.Round(slider.value / step) * step;
                 // Setting the value raises the rail's own change, exactly as a drag does: the
                 // written value and the screen's callback follow (UIHelpers.AddSliderListener).
-                _held.Value = Mathf.Clamp(slider.value + turns * step, slider.minValue, slider.maxValue);
+                _held.Value = Mathf.Clamp(onStep + Math.Sign(turns) * step, slider.minValue, slider.maxValue);
             }
 
             // Who holds the wheel for the next frame.

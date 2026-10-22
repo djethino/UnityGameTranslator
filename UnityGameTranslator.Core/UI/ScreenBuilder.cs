@@ -412,10 +412,15 @@ namespace UnityGameTranslator.Core.UI
                 {
                     Action changed = node.Act != null ? Act(site, node) : null;
                     float min = node.Number("min") ?? 0f, max = node.Number("max") ?? 1f;
+                    bool whole = node.Flag("wholeNumbers") ?? false;
+                    // The format, and the step it shows — one notch of the wheel is one of those steps
+                    // (user, 2026-10-22: the wheel is for precision, finer than a drag). Decided here
+                    // together, so what the rail moves by is always what its number moves by.
                     Func<float, string> format;
+                    float step;
                     switch (node.Word("format"))
                     {
-                        case "Percent": format = v => $"{v * 100f:0}%"; break;
+                        case "Percent": format = v => $"{v * 100f:0}%"; step = 0.01f; break;
                         // A size multiplier in steps of 5%, "default" at zero.
                         case "PercentOrDefault":
                             format = v =>
@@ -423,14 +428,18 @@ namespace UnityGameTranslator.Core.UI
                                 float rounded = (float)Math.Round(v * 20) / 20f;
                                 return rounded > 0.001f ? $"{(int)(rounded * 100)}%" : "default";
                             };
+                            step = 0.05f;
                             break;
-                        default: format = v => v.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture); break;
+                        default:
+                            format = v => v.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
+                            step = whole ? 1f : 0.01f;
+                            break;
                     }
                     // Its value at show time is the code's; built at the floor of its range.
-                    var slider = Sliders.Labelled(parent, node.Name, node.Word("caption"), min, max, min, format,
+                    var slider = Sliders.Labelled(parent, node.Name, node.Word("caption"), min, max, min, format, step,
                                                   onChanged: changed != null ? (Action<float>)(_ => changed()) : null,
                                                   captionWidth: node.Int("captionWidth") ?? 120,
-                                                  wholeNumbers: node.Flag("wholeNumbers") ?? false);
+                                                  wholeNumbers: whole);
                     built.Add(node.Name, slider);
                     Describe(site, node, slider);
                     break;

@@ -1520,7 +1520,8 @@ namespace UnityGameTranslator.Core.UI
             }
             if (!toolkitFirst) AddToolkit();
 
-            TranslatorCore.LogDebug($"[Inspector] {entries.Count} objects under the pointer at {pointer.x:F0},{pointer.y:F0}: "
+            TranslatorCore.LogDebug($"[Inspector] {entries.Count} objects under the pointer at {pointer.x:F0},{pointer.y:F0}, "
+                                    + $"{toolkit.Count} of them UI Toolkit elements: "
                                     + string.Join(", ", entries.ConvertAll(e => "'" + e.Name + "'").ToArray()));
 
             _underPointer.Open(canvas, new Vector2(pointer.x, pointer.y), entries,

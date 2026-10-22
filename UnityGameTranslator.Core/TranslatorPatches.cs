@@ -2405,9 +2405,8 @@ namespace UnityGameTranslator.Core
         /// that refresh for every component it walks, when the rules are what changed.
         ///
         /// ⚠ The rule is asked with the GAME's text (a <c>text:</c> rule is written against it),
-        /// never the translation the component shows. ⚠ A UI.Text or TextMesh gets its rule's size
-        /// here and its rule's font at its next text write (TryApplyUnityClone has no way back to
-        /// the game's font to swap through).
+        /// never the translation the component shows. A UI.Text or TextMesh changes font in place too
+        /// (FontManager.ReplaceUnityFontInPlace), through the doors the scene pass uses.
         /// </summary>
         internal static void ApplyFontRulesInPlace(int id, object component)
         {
@@ -2428,14 +2427,17 @@ namespace UnityGameTranslator.Core
                 }
                 FontManager.ApplyRuleScale(id, rule);
 
-                // The font: what the prefix would give it now. ApplyFontReplacement leaves a component
-                // already wearing it, and swaps through the game's font one wearing another rule's.
-                if (TypeHelper.TMP_TextType != null && TypeHelper.TMP_TextType.IsInstanceOfType(component)
-                    && FontManager.TmpReplacesPerComponent)
+                // The font: what the prefix would give it now. Both doors leave a component already
+                // wearing it, and swap through the game's font one wearing another rule's.
+                string effective = rule != null && !string.IsNullOrEmpty(rule.replacement) ? rule.replacement : settingsName;
+                if (TypeHelper.TMP_TextType != null && TypeHelper.TMP_TextType.IsInstanceOfType(component))
                 {
-                    string effective = rule != null && !string.IsNullOrEmpty(rule.replacement) ? rule.replacement : settingsName;
-                    FontManager.ApplyFontReplacement(component, TypeHelper.GetFont(component), effective);
+                    if (FontManager.TmpReplacesPerComponent)
+                        FontManager.ApplyFontReplacement(component, TypeHelper.GetFont(component), effective);
                 }
+                else if ((TypeHelper.UI_TextType != null && TypeHelper.UI_TextType.IsInstanceOfType(component))
+                         || (TypeHelper.TextMeshType != null && TypeHelper.TextMeshType.IsInstanceOfType(component)))
+                    FontManager.ReplaceUnityFontInPlace(component, effective);
             }
             // The game's component, re-dressed through its setters: one that fails keeps what it
             // wears, the others follow the rules, and it is said.

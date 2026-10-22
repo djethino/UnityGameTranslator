@@ -4194,6 +4194,10 @@ namespace UnityGameTranslator.Core
             // Already wearing its clone — the common case (and the echo of our own SetFont), kept cheap.
             if (!string.Equals(settingsFontName, fontName, StringComparison.OrdinalIgnoreCase)) return false;
             if (!IsTranslationEnabled(settingsFontName)) return false;
+            // 🔴 The rules first, as the TMP scene pass and the prefix do (2026-10-22): this pass knew
+            // only the font's own replacement, so it put that back over a component a rule had sent
+            // to another font, or to the game's own.
+            settingsFontName = ResolveFontNameWithOverrides(c, id, settingsFontName);
             if (string.IsNullOrEmpty(GetConfiguredFallback(settingsFontName))) return false;
 
             string text = TypeHelper.GetText(c);
@@ -4211,6 +4215,36 @@ namespace UnityGameTranslator.Core
                 TranslatorPatches.ApplyScaleForFont(c, settingsFontName);
 
             return !string.Equals(nowName, fontName, StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
+        /// A UI.Text or TextMesh put on the font a rule asks for NOW, without waiting for its text
+        /// to be written again (TranslatorPatches.ApplyFontRulesInPlace): the replacement of
+        /// <paramref name="effectiveFontName"/> when it has one, the game's font otherwise.
+        ///
+        /// ⚠ Through the two doors that already do it, never a third: off our font by
+        /// RestoreOriginalFont (font, material, lines), onto the asked one by TryApplyUnityClone
+        /// (SetFont, the CanvasRenderer rebound by the enabled toggle, a TextMesh's material) — the
+        /// same as the scene pass, so the swap is drawn the very next frame. Swapping FROM one of our
+        /// clones goes through the game's font first, so the original recorded stays the game's.
+        /// </summary>
+        internal static void ReplaceUnityFontInPlace(object component, string effectiveFontName)
+        {
+            if (component == null || string.IsNullOrEmpty(effectiveFontName)) return;
+            var worn = TypeHelper.GetFont(component);
+            var wanted = string.IsNullOrEmpty(GetConfiguredFallback(effectiveFontName)) ? null : GetUnityReplacementFont(effectiveFontName);
+            string wornName = TypeHelper.FontNameOf(worn);
+            if (wanted != null && string.Equals(wornName, wanted.name, StringComparison.OrdinalIgnoreCase)) return;
+
+            bool wearsOurs = worn is UnityEngine.Object w && w != null && _cloneToOriginal.ContainsKey(ObjectNumbers.Of(w));
+            if (wearsOurs) RestoreOriginalFont(component);
+            if (wanted == null) return;
+
+            // What it shows decides whether the clone can draw it (CloneCoversText): the displayed text.
+            string shown = TypeHelper.GetText(component);
+            var clone = TryApplyUnityClone(component, TypeHelper.GetFont(component), effectiveFontName, shown);
+            if (clone != null && !string.IsNullOrEmpty(shown))
+                EnsureCharsInCloneAtlasDirect(shown, clone, effectiveFontName);
         }
 
         /// <summary>

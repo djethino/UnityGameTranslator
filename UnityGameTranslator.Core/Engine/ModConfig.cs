@@ -423,12 +423,6 @@ namespace UnityGameTranslator.Core
         // 0 = written before migrations were versioned. Persisted so each migration runs once.
         public int config_version { get; set; } = 0;
 
-        /// <summary>
-        /// The format of translation file this mod reads (common/TranslationFormat), written by the
-        /// mod at every launch it differs, read by UGT Manager before it installs a translation into
-        /// this game. Absent from a file a mod older than the key wrote: 1, what that mod reads.
-        /// </summary>
-        public int reads_format { get; set; } = TranslationFormat.Current;
 
         [JsonIgnore]
         internal bool _configMigrated = false;

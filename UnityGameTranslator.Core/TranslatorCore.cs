@@ -2802,16 +2802,6 @@ namespace UnityGameTranslator.Core
                     needsResave = true;
                 }
 
-                // What this mod reads, for UGT Manager (common/TranslationFormat): it installs no
-                // translation past it into this game. Written whenever it is not this mod's own.
-                // ⚠ Asked of the file, not of Config: deserialised, an absent key reads as the default.
-                if (rawJson["reads_format"]?.Type != JTokenType.Integer
-                    || rawJson["reads_format"].Value<int>() != TranslationFormat.Current)
-                {
-                    Config.reads_format = TranslationFormat.Current;
-                    needsResave = true;
-                }
-
                 if (Config._configMigrated)
                 {
                     LogDebug($"[Config] Migrated an older shape of the config (enable_ai={Config.enable_ai}, ai_url={Sanitize.Url(Config.ai_url)}, ai_model={Config.ai_model})");

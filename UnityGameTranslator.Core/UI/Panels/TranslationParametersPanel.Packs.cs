@@ -77,15 +77,20 @@ namespace UnityGameTranslator.Core.UI.Panels
             _screen.Say("packsFolder", folder == null ? "" : "Packs folder: " + folder);
 
             _packsFolderList.Clear();
+            bool any = false;
             foreach (var path in AssetPackService.PacksInFolder())
             {
                 var captured = path;
                 var row = _screen.Instantiate("PackFileRow", _packsFolderList.Rows,
                     act => act == "add" ? (Action)(() => AddPack(captured)) : null);
                 row.Say("name", Path.GetFileName(path));
+                any = true;
             }
 
-            _packsFolderList.Filled();
+            // Only with a row: an empty folder keeps its sentence. Said « filled » regardless, the
+            // sentence Clear had just shown was hidden in the same frame — the section blinked at
+            // every arrival and said nothing (2026-10-22).
+            if (any) _packsFolderList.Filled();
         }
 
         /// <summary>

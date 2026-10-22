@@ -107,6 +107,9 @@ namespace UnityGameTranslator.Core.UI.Components
 
         private static readonly List<Transform> _playing = new List<Transform>();
         private static readonly List<float> _startedAt = new List<float>();
+
+        /// <summary>A movement asked for and not advanced yet — its clock starts at its first Tick.</summary>
+        private const float NotStarted = float.NaN;
         private static readonly List<bool> _isPanel = new List<bool>();
 
         /// <summary>
@@ -139,16 +142,20 @@ namespace UnityGameTranslator.Core.UI.Components
             var transform = target.transform;
             if (transform == null) return;
 
+            // 🔴 **The clock starts at the first frame the movement is advanced, not here**
+            // (2026-10-22): a window opened by a long frame — Translation Tools reads its fonts, its
+            // packs and its export in some 280 ms — had spent its settling and its whole movement
+            // before anything was drawn, and arrived with none. NotStarted until Tick sees it.
             var known = _playing.IndexOf(transform);
             if (known >= 0)
             {
-                _startedAt[known] = Clock.Now;
+                _startedAt[known] = NotStarted;
                 _isPanel[known] = panel;
             }
             else
             {
                 _playing.Add(transform);
-                _startedAt.Add(Clock.Now);
+                _startedAt.Add(NotStarted);
                 _isPanel.Add(panel);
             }
 
@@ -169,7 +176,7 @@ namespace UnityGameTranslator.Core.UI.Components
             var known = _playing.IndexOf(panel.transform);
             if (known < 0 || !_isPanel[known]) return false;
 
-            return Clock.Now - _startedAt[known] < Settling;
+            return float.IsNaN(_startedAt[known]) || Clock.Now - _startedAt[known] < Settling;
         }
 
         /// <summary>
@@ -199,6 +206,12 @@ namespace UnityGameTranslator.Core.UI.Components
                 }
 
                 bool panel = _isPanel[i];
+                // The first frame it is advanced: the movement starts now, from where Start put it.
+                if (float.IsNaN(_startedAt[i]))
+                {
+                    _startedAt[i] = Clock.Now;
+                    continue;
+                }
                 var since = Clock.Now - _startedAt[i];
                 var wait = panel ? Settling : 0f;
 

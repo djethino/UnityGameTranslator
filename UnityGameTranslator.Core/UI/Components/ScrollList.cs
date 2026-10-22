@@ -91,6 +91,20 @@ namespace UnityGameTranslator.Core.UI.Components
         }
 
         /// <summary>
+        /// Two rows change places, nothing rebuilt — a rule moved up or down. Rebuilding the list
+        /// for it redrew every row, and the eye went to that rather than to the two that moved.
+        /// </summary>
+        public void Swap(Host a, Host b)
+        {
+            var first = a?.Object;
+            var second = b?.Object;
+            if (first == null || second == null || _rows == null) return;
+            int at = first.transform.GetSiblingIndex();
+            first.transform.SetSiblingIndex(second.transform.GetSiblingIndex());
+            second.transform.SetSiblingIndex(at);
+        }
+
+        /// <summary>
         /// Remove one row, the others kept where they are — deactivated before being destroyed, for
         /// the reason <see cref="Clear"/> gives.
         /// </summary>

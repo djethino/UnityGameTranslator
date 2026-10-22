@@ -1712,6 +1712,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _overrideRtlDropdowns.Clear();
 
             _fontOverridesList.Clear();
+            _overrideRowOf.Clear();
             Pending.ClearGroup("overrides");
 
             if (_overridesCountLabel != null)
@@ -1744,6 +1745,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             }) : null);
             Pending.TrackState(row.Root, () => PendingState.Removed, "overrides");
             row.Say("match", string.IsNullOrEmpty(rule.match) ? "(empty rule)" : rule.match);
+            _overrideRowOf[rule] = row;
         }
 
         private void CreateFontOverrideRow(int index, FontOverrideRule rule)
@@ -1754,7 +1756,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             // found by the rule: rules move); a rule added since is one thing waiting as a whole. A
             // removal keeps its slot until Apply.
             _initialOf.TryGetValue(rule, out FontOverrideRule initial);
-            int capturedIndex = index;
+            // ⚠ The acts read the rule itself, never the place it was built at: a move swaps two
+            // cards without rebuilding them (MoveFontOverride).
 
             BuiltScreen row = null;
             row = _screen.Instantiate("OverrideRow", _fontOverridesList.Rows, act =>
@@ -1763,8 +1766,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                 {
                     case "matchChanged": return () =>
                     {
-                        if (_fillingRows || capturedIndex >= _pendingFontOverrides.Count) return;
-                        _pendingFontOverrides[capturedIndex].match = row.Field("MatchInput").Text;
+                        if (_fillingRows || !_pendingFontOverrides.Contains(rule)) return;
+                        rule.match = row.Field("MatchInput").Text;
                         UpdateApplyButtonText();
                         OverrideStatusFollows(rule, withdrawn: false);
                     };
@@ -1772,9 +1775,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                     // one added since simply goes, there is nothing on disk to take back.
                     case "delete": return () =>
                     {
-                        if (capturedIndex >= _pendingFontOverrides.Count) return;
+                        if (!_pendingFontOverrides.Contains(rule)) return;
                         if (initial != null) _removedFontOverrides.Add(rule);
-                        else _pendingFontOverrides.RemoveAt(capturedIndex);
+                        else _pendingFontOverrides.Remove(rule);
                         RefreshFontOverridesList();
                         UpdateApplyButtonText();
 
@@ -1787,9 +1790,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                     {
                         if (_fillingRows) return;
                         float rounded = FontOverrideRule.RoundSize(row.Slider("OverrideSize").Value);
-                        if (capturedIndex < _pendingFontOverrides.Count)
+                        if (_pendingFontOverrides.Contains(rule))
                         {
-                            _pendingFontOverrides[capturedIndex].size_multiplier = rounded;
+                            rule.size_multiplier = rounded;
                             UpdateApplyButtonText();
                         }
                         ShowOverrideSizeButtons(row, rule, initial);
@@ -1798,7 +1801,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                     // nothing saved, and shows no Undo).
                     case "sizeUndo": return () =>
                     {
-                        if (initial == null || capturedIndex >= _pendingFontOverrides.Count) return;
+                        if (initial == null || !_pendingFontOverrides.Contains(rule)) return;
                         SetOverrideSizeSlider(row, initial.size_multiplier);
                         rule.size_multiplier = initial.size_multiplier;
                         UpdateApplyButtonText();
@@ -1806,35 +1809,30 @@ namespace UnityGameTranslator.Core.UI.Panels
                     };
                     case "sizeDefault": return () =>
                     {
-                        if (capturedIndex >= _pendingFontOverrides.Count) return;
+                        if (!_pendingFontOverrides.Contains(rule)) return;
                         SetOverrideSizeSlider(row, 1f);
                         rule.size_multiplier = 1f;
                         UpdateApplyButtonText();
                         ShowOverrideSizeButtons(row, rule, initial);
                     };
-                    case "moveUp": return () => MoveFontOverride(capturedIndex, -1);
-                    case "moveDown": return () => MoveFontOverride(capturedIndex, +1);
+                    case "moveUp": return () => MoveFontOverride(rule, -1);
+                    case "moveDown": return () => MoveFontOverride(rule, +1);
                     case "rtlChanged": return () =>
                     {
-                        if (_fillingRows || capturedIndex >= _pendingFontOverrides.Count) return;
+                        if (_fillingRows || !_pendingFontOverrides.Contains(rule)) return;
                         string selected = row.Dropdown("OverrideRtl").SelectedValue;
-                        _pendingFontOverrides[capturedIndex].rtl_alignment =
+                        rule.rtl_alignment =
                             selected == "Mirror" ? "mirror" : selected == "Keep game's" ? "keep" : null;
                         UpdateApplyButtonText();
                     };
                     default: return null;
                 }
             });
-            // The two rules that just changed places arrive where they now stand, so the eye follows
-            // the move rather than seeing two cards swap in a blink.
-            if (_justMoved.Contains(rule)) row.Root.Arrive();
+            _overrideRowOf[rule] = row;
             if (initial == null) Pending.TrackState(row.Root, () => PendingState.Added, "overrides");
             else Pending.TrackState(row.Root, () => MovedFromSaved(rule, initial) ? PendingState.Modified : PendingState.None, "overrides");
 
-            // Up and down, where the order is the author's to decide: not past a path rule of other
-            // precision, which keeps its place by precision (FontRules.CanSwap).
-            row.Button("MoveUpBtn").Enabled = index > 0 && FontRules.CanSwap(_pendingFontOverrides[index - 1], rule);
-            row.Button("MoveDownBtn").Enabled = index < _pendingFontOverrides.Count - 1 && FontRules.CanSwap(rule, _pendingFontOverrides[index + 1]);
+            ShowMoveButtons(row, rule);
 
             _fillingRows = true;
             try
@@ -1873,25 +1871,54 @@ namespace UnityGameTranslator.Core.UI.Panels
             finally { _fillingRows = false; }
         }
 
-        /// <summary>One rule a place up (-1) or down (+1), when the two may change places (FontRules.CanSwap).</summary>
-        private void MoveFontOverride(int index, int by)
+        /// <summary>
+        /// One rule a place up (-1) or down (+1), when the two may change places (FontRules.CanSwap):
+        /// the two cards swap and arrive where they now stand.
+        ///
+        /// 🔴 **Nothing rebuilt** (user, 2026-10-22): rebuilding the list made every card's Match
+        /// field blink, which drew the eye away from the two cards that moved.
+        /// </summary>
+        private void MoveFontOverride(FontOverrideRule rule, int by)
         {
+            int index = _pendingFontOverrides.IndexOf(rule);
             int other = index + by;
-            if (index < 0 || other < 0 || index >= _pendingFontOverrides.Count || other >= _pendingFontOverrides.Count) return;
+            if (index < 0 || other < 0 || other >= _pendingFontOverrides.Count) return;
             int upper = Math.Min(index, other), lower = Math.Max(index, other);
             if (!FontRules.CanSwap(_pendingFontOverrides[upper], _pendingFontOverrides[lower])) return;
-            var moved = _pendingFontOverrides[index];
-            _pendingFontOverrides[index] = _pendingFontOverrides[other];
-            _pendingFontOverrides[other] = moved;
-            _justMoved.Add(moved);
-            _justMoved.Add(_pendingFontOverrides[index]);
-            RefreshFontOverridesList();
-            _justMoved.Clear();
+
+            var neighbour = _pendingFontOverrides[other];
+            _pendingFontOverrides[index] = neighbour;
+            _pendingFontOverrides[other] = rule;
+
+            if (_overrideRowOf.TryGetValue(rule, out var movedRow) && _overrideRowOf.TryGetValue(neighbour, out var neighbourRow))
+            {
+                _fontOverridesList.Swap(movedRow.Root, neighbourRow.Root);
+                movedRow.Root.Arrive();
+                neighbourRow.Root.Arrive();
+            }
+            else RefreshFontOverridesList();
+
+            // What each card may do depends on its neighbours, which have just changed.
+            foreach (var kvp in _overrideRowOf) ShowMoveButtons(kvp.Value, kvp.Key);
             UpdateApplyButtonText();
         }
 
-        /// <summary>The rules a move has just swapped, while their rows are rebuilt (MoveFontOverride).</summary>
-        private readonly HashSet<FontOverrideRule> _justMoved = new HashSet<FontOverrideRule>();
+        /// <summary>Each rule's card, by the rule — to move it without rebuilding the list.</summary>
+        private readonly Dictionary<FontOverrideRule, BuiltScreen> _overrideRowOf = new Dictionary<FontOverrideRule, BuiltScreen>();
+
+        /// <summary>
+        /// Up and down, where the order is the author's to decide: not past a path rule of other
+        /// precision, which keeps its place by precision (FontRules.CanSwap). A card waiting for
+        /// removal has no such buttons.
+        /// </summary>
+        private void ShowMoveButtons(BuiltScreen row, FontOverrideRule rule)
+        {
+            if (_removedFontOverrides.Contains(rule)) return;
+            int index = _pendingFontOverrides.IndexOf(rule);
+            row.Button("MoveUpBtn").Enabled = index > 0 && FontRules.CanSwap(_pendingFontOverrides[index - 1], rule);
+            row.Button("MoveDownBtn").Enabled = index >= 0 && index < _pendingFontOverrides.Count - 1
+                                                && FontRules.CanSwap(rule, _pendingFontOverrides[index + 1]);
+        }
 
         /// <summary>
         /// Whether a saved rule stands elsewhere than it was saved — its rank among the saved rules,

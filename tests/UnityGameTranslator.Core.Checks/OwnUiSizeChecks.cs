@@ -60,7 +60,7 @@ namespace UnityGameTranslator.Core.Checks
         }
 
         /// <summary>The method's body, from its opening brace to the matching closing one.</summary>
-        private static string BodyAfter(string source, int from)
+        internal static string BodyAfter(string source, int from)
         {
             int open = source.IndexOf('{', from);
             if (open < 0) return null;
@@ -74,7 +74,7 @@ namespace UnityGameTranslator.Core.Checks
         }
 
         /// <summary>Up from the binary until the Core folder is found.</summary>
-        private static string FindCoreFolder()
+        internal static string FindCoreFolder()
         {
             var dir = new DirectoryInfo(AppContext.BaseDirectory);
             while (dir != null)

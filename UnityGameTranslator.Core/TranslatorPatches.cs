@@ -101,6 +101,12 @@ namespace UnityGameTranslator.Core
         // (This said "never cleared", which CleanDeadRefs has always contradicted.)
         private static readonly Dictionary<int, float> _trueOriginalFontSizes = ForgetByNumber.Tracked(new Dictionary<int, float>());
         public static Dictionary<int, float> TrueOriginalFontSizes => _trueOriginalFontSizes;
+        /// <summary>
+        /// The game's size of a generically detected text (NGUI UILabel, SuperTextMesh…), taken when
+        /// first seen and kept for the life of the component — never emptied by an Apply
+        /// (ApplyGenericFontScale). Forgotten with the component (ForgetByNumber).
+        /// </summary>
+        private static readonly Dictionary<int, float> _genericOriginalSizes = ForgetByNumber.Tracked(new Dictionary<int, float>());
 
         // Generically detected text component types (NGUI UILabel, SuperTextMesh, etc.)
         private static readonly List<RegisteredTextType> _genericTextTypes = new List<RegisteredTextType>();
@@ -1256,7 +1262,12 @@ namespace UnityGameTranslator.Core
 
             float originalSize;
             bool genericFirst = false;
-            if (!_originalFontSizes.TryGetValue(instanceId, out originalSize))
+            // 🔴 Its own record, which an Apply never empties (2026-10-22): this read _originalFontSizes,
+            // which ClearFontSizeCache empties, so the size the mod had put on the component was read
+            // back as the game's and scaled again at every Apply. Not _trueOriginalFontSizes, which
+            // ReapplyAllFontSizes writes back through `fontSize` — a type no size hook follows would
+            // then sit at the game's size until its next text.
+            if (!_genericOriginalSizes.TryGetValue(instanceId, out originalSize))
             {
                 genericFirst = true;
                 try
@@ -1270,7 +1281,7 @@ namespace UnityGameTranslator.Core
                 // and said.
                 catch (Exception ex) { Faults.Say("Patches.ApplyGenericFontScale read", ex, typeInfo.Name); return; }
                 if (originalSize <= 0) return;
-                _originalFontSizes[instanceId] = originalSize;
+                _genericOriginalSizes[instanceId] = originalSize;
             }
 
             if (Math.Abs(scale - 1.0f) < 0.001f)
@@ -2226,9 +2237,12 @@ namespace UnityGameTranslator.Core
         public static void ClearFontSizeCache()
         {
             _originalFontSizes.Clear();
-            _alternateTMPOriginalSizes.Clear();
-            _originalAutoSizeMax.Clear();
-            _originalAutoSizeMin.Clear();
+            // 🔴 **Not the auto-size bounds, nor the older TMP's sizes** (2026-10-22): they are the
+            // ONLY record of the game's value — no second one survives this, as _trueOriginalFontSizes
+            // does for fontSize — so cleared on a live component the bound the mod had scaled was
+            // read back as the game's and scaled again at every Apply (17 → 14.3 → 12 → 10.1 → 8.5
+            // on a menu's auto-sized texts). Kept for the life of the component, like
+            // _originalMaxFontSizes, and dropped with it in CleanDeadRefs.
         }
 
         /// <summary>
@@ -4457,11 +4471,10 @@ namespace UnityGameTranslator.Core
                         var currentSize = fontSizeProp.GetValue(instance, null);
                         if (currentSize is float floatSize)
                         {
-                            string instanceKey = instId.ToString();
-                            if (!_alternateTMPOriginalSizes.TryGetValue(instanceKey, out float originalSize))
+                            if (!_alternateTMPOriginalSizes.TryGetValue(instId, out float originalSize))
                             {
                                 originalSize = floatSize;
-                                _alternateTMPOriginalSizes[instanceKey] = originalSize;
+                                _alternateTMPOriginalSizes[instId] = originalSize;
                             }
                             float newSize = originalSize * scale;
                             if (Math.Abs(floatSize - newSize) > 0.1f)
@@ -4791,7 +4804,8 @@ namespace UnityGameTranslator.Core
         }
 
         // Cache for original font sizes to avoid compounding scale
-        private static Dictionary<string, float> _alternateTMPOriginalSizes = new Dictionary<string, float>();
+        // Forgotten with the component (ForgetByNumber), never on an Apply: see ClearFontSizeCache.
+        private static readonly Dictionary<int, float> _alternateTMPOriginalSizes = ForgetByNumber.Tracked(new Dictionary<int, float>());
 
         /// <summary>
         /// Search for all loaded TMP font assets of the alternate type.

@@ -121,6 +121,7 @@ namespace UnityGameTranslator.Core.Checks
         private static void WhatAPatternCovers()
         {
             Section("A damaged translation file, set aside", DamagedFilesChecks.Run);
+            Section("A copy of a template the mod sized", InheritedSizesChecks.Run);
             Section("Exclusion patterns", ExclusionPatternChecks.Run);
         }
 

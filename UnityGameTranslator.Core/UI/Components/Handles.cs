@@ -179,6 +179,16 @@ namespace UnityGameTranslator.Core.UI.Components
         /// mean holding a gap open for something already gone. An arrival nobody notices costs a
         /// reading; a departure nobody watches costs nothing.
         /// </summary>
+        /// <summary>
+        /// The movement a block makes as it appears, for one already shown that has just taken
+        /// another place — two rules changing places, say (user, 2026-10-22: « là ça saute de l'une
+        /// à l'autre des positions […] aucun retour visuel »). The same gesture as <see cref="Visible"/>.
+        /// </summary>
+        public void Arrive()
+        {
+            if (Object != null && Object.activeInHierarchy) Appearances.Block(Object);
+        }
+
         public bool Visible
         {
             get => Object != null && Object.activeSelf && (_veil == null || _veil.alpha > 0f);

@@ -1825,6 +1825,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                     default: return null;
                 }
             });
+            // The two rules that just changed places arrive where they now stand, so the eye follows
+            // the move rather than seeing two cards swap in a blink.
+            if (_justMoved.Contains(rule)) row.Root.Arrive();
             if (initial == null) Pending.TrackState(row.Root, () => PendingState.Added, "overrides");
             else Pending.TrackState(row.Root, () => MovedFromSaved(rule, initial) ? PendingState.Modified : PendingState.None, "overrides");
 
@@ -1880,9 +1883,15 @@ namespace UnityGameTranslator.Core.UI.Panels
             var moved = _pendingFontOverrides[index];
             _pendingFontOverrides[index] = _pendingFontOverrides[other];
             _pendingFontOverrides[other] = moved;
+            _justMoved.Add(moved);
+            _justMoved.Add(_pendingFontOverrides[index]);
             RefreshFontOverridesList();
+            _justMoved.Clear();
             UpdateApplyButtonText();
         }
+
+        /// <summary>The rules a move has just swapped, while their rows are rebuilt (MoveFontOverride).</summary>
+        private readonly HashSet<FontOverrideRule> _justMoved = new HashSet<FontOverrideRule>();
 
         /// <summary>
         /// Whether a saved rule stands elsewhere than it was saved — its rank among the saved rules,

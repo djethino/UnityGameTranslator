@@ -894,6 +894,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             _trembleValues[8] = viewport != null ? viewport.rect.width : 0f;
             _trembleValues[9] = viewport != null ? viewport.rect.height : 0f;
 
+            NoteViewportWidth(content, viewport);
+
             var trembles = _tremble.Feed(_trembleValues);
             if (trembles.Count == 0) return;
 
@@ -907,6 +909,45 @@ namespace UnityGameTranslator.Core.UI.Panels
                 + $"content {(content != null ? content.rect.height : 0f):0}, viewport {(viewport != null ? viewport.rect.width : 0f):0}x{(viewport != null ? viewport.rect.height : 0f):0}, "
                 + $"selected {DescribeSelected()}");
         }
+
+        /// <summary>The body's visible width at the last frame, to say when it moved (NoteViewportWidth).</summary>
+        private float _lastViewportWidth = -1f;
+
+        /// <summary>
+        /// Says, under debug logging, each time the body's visible width moves — what its scrollbar
+        /// does when it appears (28 px taken on the right) or goes — with the heights that decided it.
+        ///
+        /// ⚠ **A measure, written to find a jump** (user, 2026-10-22: « les panels du mod ont tendance à
+        /// sautiller sur leur droite quand on les ouvre / change d'onglet », Tools and Fonts at every
+        /// switch). One line per move, which is the event looked for: two lines a switch when the
+        /// content overshoots the window for a frame, none when it does not.
+        /// </summary>
+        private void NoteViewportWidth(RectTransform content, RectTransform viewport)
+        {
+            if (viewport == null) return;
+            float width = viewport.rect.width;
+            if (_lastViewportWidth >= 0f && Math.Abs(width - _lastViewportWidth) > 0.5f && TranslatorCore.DebugMode)
+            {
+                string tab = ShownTab;
+                TranslatorCore.LogDebug(
+                    $"[Layout] {Name}{(string.IsNullOrEmpty(tab) ? "" : " / " + tab)}: body width {_lastViewportWidth:0} -> {width:0} "
+                    + $"at frame {Time.frameCount} | content {(content != null ? content.rect.height : 0f):0} high, "
+                    + $"viewport {viewport.rect.height:0} high");
+            }
+            _lastViewportWidth = width;
+
+            // The window's own edge too: a right edge that moves is the other way to read « sautiller ».
+            float windowWidth = Rect.rect.width;
+            if (_lastWindowWidth >= 0f && Math.Abs(windowWidth - _lastWindowWidth) > 0.5f && TranslatorCore.DebugMode)
+            {
+                string tab = ShownTab;
+                TranslatorCore.LogDebug($"[Layout] {Name}{(string.IsNullOrEmpty(tab) ? "" : " / " + tab)}: window width "
+                                        + $"{_lastWindowWidth:0} -> {windowWidth:0} at frame {Time.frameCount}");
+            }
+            _lastWindowWidth = windowWidth;
+        }
+
+        private float _lastWindowWidth = -1f;
 
         /// <summary>The tab shown, for the tremble line — null for a window without tabs.</summary>
         protected virtual string ShownTab => null;

@@ -2208,13 +2208,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             });
             _identifyByFont[capturedFontName] = row.Button("IdentifyBtn");
             _extractByFont[capturedFontName] = row.Button("ExtractBtn");
-            // The game's Font this one is drawn from, looked up once (a TMP asset's source file
-            // means a scan of the loaded assets).
-            _extractSource[capturedFontName] = FontManager.SourceFontNameOf(capturedFontName, fontInfo.Type);
             _extractType[capturedFontName] = fontInfo.Type;
-            _extractFamily[capturedFontName] = _extractSource[capturedFontName] == null ? FontManager.FaceFamilyOf(capturedFontName, fontInfo.Type) : null;
-            if (FontManager.TraceableAssetOf(capturedFontName, fontInfo.Type) != null) _extractTraceable.Add(capturedFontName);
-            else _extractTraceable.Remove(capturedFontName);
+            LookUpExtract(capturedFontName);
             ShowExtract(capturedFontName);
             Spent("card build", at);
             return row;
@@ -2240,12 +2235,52 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         private static string FontsFolder => System.IO.Path.Combine(TranslatorCore.ModFolder, UnityGameTranslator.Common.AssetPacks.FontsFolder);
 
+        /// <summary>
+        /// What Extract works from for one card — the game's Font it is drawn from, its family, its
+        /// atlas — looked up in the assets loaded NOW (a TMP asset's source file means a scan of them).
+        /// </summary>
+        private void LookUpExtract(string fontName)
+        {
+            _extractType.TryGetValue(fontName, out var type);
+            _extractSource[fontName] = FontManager.SourceFontNameOf(fontName, type);
+            _extractFamily[fontName] = _extractSource[fontName] == null ? FontManager.FaceFamilyOf(fontName, type) : null;
+            if (FontManager.TraceableAssetOf(fontName, type) != null) _extractTraceable.Add(fontName);
+            else _extractTraceable.Remove(fontName);
+        }
+
+        /// <summary>
+        /// Every card's Extract asked again, when the window opens.
+        ///
+        /// 🔴 **Why** (2026-10-22, « il ne me dégrise jamais Extract ») : what a card answers was
+        /// looked up once, when the card was built, and cards are kept from one opening to the next.
+        /// A TextMesh Pro font of another room, not loaded then, stayed « no atlas » for the session
+        /// once the game had loaded it; a file deleted from the fonts folder stayed « already there ».
+        /// One scan of the loaded assets tells which fonts came in since; only those are looked up
+        /// again. The folder is read again by ShowExtract itself.
+        /// </summary>
+        private void RecheckExtract()
+        {
+            if (_extractByFont.Count == 0) return;
+            HashSet<string> loaded = null;
+            foreach (var name in new List<string>(_extractByFont.Keys))
+            {
+                if (_extractTraceable.Contains(name)) { ShowExtract(name); continue; }
+                if (loaded == null) loaded = FontManager.LoadedTraceableNames();
+                if (loaded.Contains(name)) LookUpExtract(name);
+                ShowExtract(name);
+            }
+        }
+
+        /// <summary>A TextMesh Pro font whose atlas the game holds nowhere right now (not loaded).</summary>
+        private bool NotLoaded(string fontName) =>
+            !_extractTraceable.Contains(fontName) && _extractType.TryGetValue(fontName, out var type) && FontManager.IsTmpType(type);
+
         /// <summary>Extract on one card: offered when the game holds the font's file, greyed with the reason otherwise.</summary>
         private void ShowExtract(string fontName)
         {
             if (!_extractByFont.TryGetValue(fontName, out var button) || button == null) return;
             _extractSource.TryGetValue(fontName, out var source);
-            string why = GameFontFiles.WhyNotExtract(source, FamilyOf(fontName), TraceNameOf(fontName), FontsFolder, out _);
+            string why = GameFontFiles.WhyNotExtract(source, FamilyOf(fontName), TraceNameOf(fontName), FontsFolder, out _, NotLoaded(fontName));
             button.Enabled = why == null;
             // Said once per font and reason: a greyed Extract read only on hover left nothing to diagnose by.
             if (why != null && DiagnosticOnce.First("extract-greyed", fontName + "\u0001" + why))
@@ -3021,6 +3056,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // Back from another section of the one window: what was chosen and not applied stays.
                 if (KeepsHeldChoices) RefreshFacts();
                 else LoadCurrentState();
+                // What the cards' Extract answers may have changed while the window was closed.
+                RecheckExtract();
 
                 // The seams between the Failures tab's areas go back to the rule's division: a
                 // window opened again is opened afresh.

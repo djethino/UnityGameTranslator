@@ -1343,6 +1343,28 @@ namespace UnityGameTranslator.Core
         /// it: a TextMesh Pro asset, or a UI Toolkit FontAsset (registered as a "Unity" font, the type
         /// UI Toolkit's legacy fonts share). Null when the font is no such asset.
         /// </summary>
+        /// <summary>
+        /// The names of every font asset loaded right now that Extract could trace (TextMesh Pro, UI
+        /// Toolkit's TextCore) — one scan for a whole list of cards, to tell which of them came into
+        /// memory since they were drawn.
+        /// </summary>
+        internal static HashSet<string> LoadedTraceableNames()
+        {
+            var names = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var type in new[] { TypeHelper.TMP_FontAssetType, UIToolkitSupport.TextCoreFontAssetType })
+            {
+                if (type == null) continue;
+                var loaded = TypeHelper.FindAllAssetsOfType(type);
+                if (loaded == null) continue;
+                foreach (var asset in loaded)
+                {
+                    string name = TypeHelper.FontNameOf(asset);
+                    if (!string.IsNullOrEmpty(name)) names.Add(name);
+                }
+            }
+            return names;
+        }
+
         internal static object TraceableAssetOf(string fontName, string type)
         {
             if (IsTmpType(type)) return LoadedTmpFontNamed(fontName);

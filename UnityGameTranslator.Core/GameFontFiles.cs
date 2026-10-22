@@ -267,7 +267,12 @@ namespace UnityGameTranslator.Core
         /// - <paramref name="traceName"/>: the asset's name when its atlas can be traced, else null.
         /// The game's file wins when there is one: it is exact.
         /// </summary>
-        internal static string WhyNotExtract(string sourceFontName, string family, string traceName, string fontsFolder, out GameFonts.Font font)
+        /// <param name="notLoaded">
+        /// The font is an atlas (TextMesh Pro) the game has not loaded right now — a font of another
+        /// room or menu. Said as that, not as "no atlas": it can be extracted where the game shows it.
+        /// </param>
+        internal static string WhyNotExtract(string sourceFontName, string family, string traceName, string fontsFolder, out GameFonts.Font font,
+                                             bool notLoaded = false)
         {
             font = null;
             if (_index == null)
@@ -278,6 +283,8 @@ namespace UnityGameTranslator.Core
             if (!string.IsNullOrEmpty(sourceFontName)) font = Find(sourceFontName);
             if (font == null && !string.IsNullOrEmpty(family)) font = FindOnlyOfFamily(family);
             string name = font?.Name ?? traceName;
+            if (name == null && notLoaded)
+                return "The game has not loaded this font right now. Open this window again where the game shows it.";
             if (name == null)
                 return "No font file in the game, and no atlas this mod can trace: a system font, or a font drawn another way.";
             if (_extractingToFonts.Contains(name)) return font != null ? "Extracting..." : "Tracing the letters...";

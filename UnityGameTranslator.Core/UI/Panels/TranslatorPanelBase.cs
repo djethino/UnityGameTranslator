@@ -945,9 +945,24 @@ namespace UnityGameTranslator.Core.UI.Panels
                                         + $"{_lastWindowWidth:0} -> {windowWidth:0} at frame {Time.frameCount}");
             }
             _lastWindowWidth = windowWidth;
+
+            // And what the body's content stands at — a section arriving that rearranges itself
+            // over a few frames shows here, and nowhere in the widths (2026-10-22).
+            float contentHeight = content != null ? content.rect.height : 0f;
+            float contentTop = content != null ? content.anchoredPosition.y : 0f;
+            if (_lastContentHeight >= 0f && (Math.Abs(contentHeight - _lastContentHeight) > 0.5f || Math.Abs(contentTop - _lastContentTop) > 0.5f)
+                && TranslatorCore.DebugMode)
+            {
+                string tab = ShownTab;
+                TranslatorCore.LogDebug($"[Layout] {Name}{(string.IsNullOrEmpty(tab) ? "" : " / " + tab)}: content {_lastContentHeight:0} high at {_lastContentTop:0} "
+                                        + $"-> {contentHeight:0} high at {contentTop:0}, frame {Time.frameCount}");
+            }
+            _lastContentHeight = contentHeight;
+            _lastContentTop = contentTop;
         }
 
         private float _lastWindowWidth = -1f;
+        private float _lastContentHeight = -1f, _lastContentTop;
 
         /// <summary>The tab shown, for the tremble line — null for a window without tabs.</summary>
         protected virtual string ShownTab => null;

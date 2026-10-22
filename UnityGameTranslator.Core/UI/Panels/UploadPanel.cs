@@ -124,6 +124,58 @@ namespace UnityGameTranslator.Core.UI.Panels
             _status = _screen.Status("Status");
             _backBtn = _screen.Button("BackBtn");
             _uploadBtn = _screen.Button("UploadBtn");
+            _cancelBtn = _screen.Button("CancelBtn");
+        }
+
+        private ButtonHandle _cancelBtn;
+
+        // ── Edit details: what the published translation said when the screen opened ─────────
+        // The four things this act can change, as the site described them. What differs from them is
+        // what Apply (N) counts and the only thing sent (the route writes only what it is given).
+        private string _detailsNotes, _detailsUrl;
+        private bool _detailsComplete;
+        private bool? _detailsAccepts;
+        private bool _detailsReady;
+
+        /// <summary>What the details screen would change, field by field — the N of Apply (N).</summary>
+        private int CountDetailChanges(out string notes, out string url, out string status, out bool? accepts)
+        {
+            notes = url = status = null;
+            accepts = null;
+            if (!_detailsReady) return 0;
+            int n = 0;
+            string typedNotes = _notesInput?.Text ?? "";
+            if (!string.Equals(typedNotes, _detailsNotes ?? "", StringComparison.Ordinal)) { notes = typedNotes; n++; }
+            string typedUrl = _resourcesUrlInput?.Text?.Trim() ?? "";
+            if (!string.Equals(typedUrl, _detailsUrl ?? "", StringComparison.Ordinal)) { url = typedUrl; n++; }
+            // The two declarations are a Main's: hidden from a branch, and never counted there.
+            if (_statusToggle != null && _statusToggle.Visible && _statusToggle.IsOn != _detailsComplete)
+            {
+                status = _statusToggle.IsOn ? "complete" : "in_progress";
+                n++;
+            }
+            if (_acceptBranchesToggle != null && _acceptBranchesToggle.Visible && _detailsAccepts.HasValue
+                && _acceptBranchesToggle.IsOn != _detailsAccepts.Value)
+            {
+                accepts = _acceptBranchesToggle.IsOn;
+                n++;
+            }
+            return n;
+        }
+
+        /// <summary>
+        /// The details screen's footer, as every settings window reads: « Apply (N) » while something
+        /// waits, « Close » when nothing does, and Cancel only beside an Apply — with nothing to abandon
+        /// it is the same act as Close (OptionsPanel.UpdateApplyButtonText; user, 2026-10-22: « garder
+        /// la même façon de faire partout »). Polled: field and box events are mute on IL2CPP.
+        /// </summary>
+        public override void Update()
+        {
+            base.Update();
+            if (!Enabled || !_detailsOnly || !_detailsReady || _isUploading) return;
+            int changes = CountDetailChanges(out _, out _, out _, out _);
+            _uploadBtn.Label = changes > 0 ? $"Apply ({changes})" : "Close";
+            if (_cancelBtn != null) _cancelBtn.Visible = changes > 0;
         }
 
         /// <summary>What each verb the document asks for does. A verb with no answer here fails at construction, not at the click.</summary>
@@ -147,6 +199,19 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             try
             {
+                // Edit details with nothing changed: the button reads Close, and closes.
+                if (_detailsOnly && _detailsReady && CountDetailChanges(out _, out _, out _, out _) == 0)
+                {
+                    SetActive(false);
+                    return;
+                }
+                // Details send no translation: the « nothing translated yet — publish anyway? »
+                // question is the upload's, never theirs.
+                if (_detailsOnly)
+                {
+                    DoUpload();
+                    return;
+                }
                 TranslatorCore.LogInfo("[UploadPanel] Upload button clicked!");
                 ConfirmThenUpload();
             }
@@ -207,6 +272,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                 _detailsOnly = _openingForDetails;
                 _openingForDetails = false;
                 _purposeStated = false;
+                // Counted against the published copy once it has been described, never before.
+                _detailsReady = false;
+                if (_cancelBtn != null) _cancelBtn.Visible = true;
 
                 CheckUploadMode();
             }
@@ -440,7 +508,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                                 AskTitleScope(EditScope.SideAfter(onThisMachine: false,
                                                                   yourPublishedCopy: true));
                                 _modeInfoLabel.Say($"Translation #{siteId} — the translation itself is not sent");
-                                _uploadBtn.Label = "Save";
+                                _uploadBtn.Label = "Close";
                                 DescribeUploadButton("Change what your published translation says about itself. The translation is not sent.");
                             }
                             else
@@ -457,6 +525,13 @@ namespace UnityGameTranslator.Core.UI.Panels
                             _notesInput.Text = existingNotes;
                             if (_resourcesUrlInput != null)
                                 _resourcesUrlInput.Text = existingUrl;
+
+                            // What Apply (N) is counted against: the published copy, as just described.
+                            _detailsNotes = existingNotes;
+                            _detailsUrl = existingUrl;
+                            _detailsComplete = _statusToggle != null && _statusToggle.IsOn;
+                            _detailsAccepts = TranslatorCore.ServerState?.AcceptsBranches;
+                            _detailsReady = _detailsOnly;
 
                             _status.Clear();
                             _isChecking = false;
@@ -1054,10 +1129,9 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             _status.Say("Saving...", Tone.Warning, waiting: true);
 
-            string notes = _notesInput.Text;
-            string resourcesUrl = _resourcesUrlInput?.Text?.Trim();
+            CountDetailChanges(out string notes, out string resourcesUrl, out string status, out bool? accepts);
 
-            var result = await ApiClient.UpdateDetails(siteId.Value, notes, resourcesUrl);
+            var result = await ApiClient.UpdateDetails(siteId.Value, notes, resourcesUrl, status, accepts);
 
             TranslatorUIManager.RunOnMainThread(() =>
             {
@@ -1071,6 +1145,14 @@ namespace UnityGameTranslator.Core.UI.Panels
                 }
 
                 _status.Show(Tr("Saved."), Tone.Success);
+
+                // What was sent is now what the published copy says: the count falls back to 0 and the
+                // footer to Close — and the screens that read the server state read the new values.
+                var state = TranslatorCore.ServerState;
+                if (notes != null) { _detailsNotes = notes; if (state != null) state.Notes = notes; }
+                if (resourcesUrl != null) { _detailsUrl = resourcesUrl; if (state != null) state.ResourcesUrl = resourcesUrl.Length == 0 ? null : resourcesUrl; }
+                if (status != null) { _detailsComplete = status == "complete"; if (state != null) state.Status = status; }
+                if (accepts.HasValue) { _detailsAccepts = accepts; if (state != null) state.AcceptsBranches = accepts; }
 
                 // The settings that travel with a translation are unchanged by this, so nothing
                 // local is dirty — but the screens read the notes from the server state.

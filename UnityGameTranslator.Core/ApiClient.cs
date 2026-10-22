@@ -2022,16 +2022,21 @@ namespace UnityGameTranslator.Core
         /// the opposite of the upload's rule — so a client fixing a link never restates a
         /// description it may not have read.
         /// </summary>
-        public static async Task<DetailsResult> UpdateDetails(int translationId, string notes,
-                                                              string resourcesUrl)
+        /// <param name="notes">The description, or null to leave it as it is.</param>
+        /// <param name="resourcesUrl">The link, "" to remove it, or null to leave it as it is.</param>
+        /// <param name="status">"complete" / "in_progress", or null to leave it (a Main's only; the site refuses it on a branch).</param>
+        /// <param name="acceptsBranches">Open or closed to contributions, or null to leave it (a Main's only).</param>
+        public static async Task<DetailsResult> UpdateDetails(int translationId, string notes, string resourcesUrl,
+                                                              string status = null, bool? acceptsBranches = null)
         {
             try
             {
-                var body = new JObject
-                {
-                    ["notes"] = notes ?? "",
-                    ["resources_url"] = string.IsNullOrWhiteSpace(resourcesUrl) ? null : resourcesUrl,
-                };
+                var body = new JObject();
+                if (notes != null) body["notes"] = notes;
+                if (resourcesUrl != null)
+                    body["resources_url"] = string.IsNullOrWhiteSpace(resourcesUrl) ? null : resourcesUrl;
+                if (status != null) body["status"] = status;
+                if (acceptsBranches.HasValue) body["accepts_branches"] = acceptsBranches.Value;
 
                 var content = new StringContent(body.ToString(), Encoding.UTF8, "application/json");
                 var request = new HttpRequestMessage(new HttpMethod("PATCH"),

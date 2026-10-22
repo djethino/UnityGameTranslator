@@ -73,12 +73,27 @@ namespace UnityGameTranslator.Core
             var textures = type.GetProperty("atlasTextures", Pub)?.GetValue(asset, null);
             int padding = shape.Padding;
             int listed = 0, noGlyph = 0, noCode = 0;
+            // 🔴 A letter's glyph, by its index in the glyph table when the letter does not point at it
+            // yet (2026-10-22: 96 letters, 96 glyphs, every letter's `glyph` empty — an Extract refused
+            // a font another session had traced). TextMesh Pro links the two only when it reads the
+            // asset to draw with it; the index is what the file itself keeps.
+            Dictionary<uint, object> glyphsByIndex = null;
             foreach (var character in Items(characters))
             {
                 listed++;
                 if (character == null) { noGlyph++; continue; }
                 int unicode = (int)Number(character, "unicode");
                 var glyph = Get(character, "glyph");
+                if (glyph == null)
+                {
+                    if (glyphsByIndex == null)
+                    {
+                        glyphsByIndex = new Dictionary<uint, object>();
+                        foreach (var g in Items(type.GetProperty("glyphTable", Pub)?.GetValue(asset, null)))
+                            if (g != null) glyphsByIndex[(uint)Number(g, "index")] = g;
+                    }
+                    glyphsByIndex.TryGetValue((uint)Number(character, "glyphIndex"), out glyph);
+                }
                 if (glyph == null) { noGlyph++; continue; }
                 if (unicode <= 0) { noCode++; continue; }
                 var metrics = Get(glyph, "metrics");

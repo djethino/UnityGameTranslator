@@ -32,6 +32,20 @@ namespace UnityGameTranslator.Core
         /// </summary>
         internal bool SwitchedOffThisSession;
 
+        /// <summary>The path pattern taken apart once (ExclusionPatterns.Compile), and the match it was taken from.</summary>
+        internal ExclusionPatterns.Compiled CompiledPath;
+        internal string CompiledFrom;
+
+        internal ExclusionPatterns.Compiled PathPattern(string pattern)
+        {
+            if (CompiledPath == null || !string.Equals(CompiledFrom, pattern, StringComparison.Ordinal))
+            {
+                CompiledPath = ExclusionPatterns.Compile(pattern);
+                CompiledFrom = pattern;
+            }
+            return CompiledPath;
+        }
+
         /// <summary>
         /// Replacement font name. Null = keep current font (only override size).
         /// </summary>
@@ -190,7 +204,7 @@ namespace UnityGameTranslator.Core
             if (match.StartsWith("path:", StringComparison.OrdinalIgnoreCase))
             {
                 string pattern = match.Substring(5);
-                return !string.IsNullOrEmpty(path) && ExclusionPatterns.Matches(path, pattern);
+                return !string.IsNullOrEmpty(path) && rule.PathPattern(pattern).Matches(path);
             }
             if (match.StartsWith("font:", StringComparison.OrdinalIgnoreCase))
             {
@@ -239,7 +253,7 @@ namespace UnityGameTranslator.Core
             }
 
             // No prefix: try path first, then text substring
-            if (!string.IsNullOrEmpty(path) && ExclusionPatterns.Matches(path, match))
+            if (!string.IsNullOrEmpty(path) && rule.PathPattern(match).Matches(path))
                 return true;
             if (!string.IsNullOrEmpty(text) && text.IndexOf(match, StringComparison.OrdinalIgnoreCase) >= 0)
                 return true;
@@ -256,7 +270,7 @@ namespace UnityGameTranslator.Core
         public void Load(IEnumerable<FontOverrideRule> rules)
         {
             _rules.Clear();
-            if (rules != null) _rules.AddRange(rules);
+            if (rules != null) _rules.AddRange(InPriority(rules));
             _readsText = false;
             foreach (var rule in _rules)
             {
@@ -267,6 +281,54 @@ namespace UnityGameTranslator.Core
                 if (!path && !font) { _readsText = true; break; }
             }
             ForgetAll();
+        }
+
+        /// <summary>A <c>path:</c> rule — the kind whose precision decides its place.</summary>
+        public static bool IsPathRule(FontOverrideRule rule) =>
+            rule != null && rule.match != null && rule.match.StartsWith("path:", StringComparison.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// The rules in the order they are asked: as written, except that the <c>path:</c> rules are
+        /// put from the most precise to the least in the places they hold
+        /// (<see cref="ExclusionPatterns.ComparePrecision"/>), the order kept between two as precise.
+        ///
+        /// 🔴 **The most precise path wins** (user, 2026-10-22). First match was the rule and the
+        /// inspector adds at the end, so <c>doc/**</c> written first took <c>doc/page 1/Prestation</c>
+        /// too, and the precise rules never applied. Between rules of other kinds — a <c>font:</c>,
+        /// a <c>text:</c> — and between two paths as precise, the order written decides, and the
+        /// Fonts tab moves it (<see cref="CanSwap"/>).
+        /// ⚠ The path rules keep the places they held: a <c>font:</c> rule written above them stays
+        /// above them all.
+        /// </summary>
+        public static List<FontOverrideRule> InPriority(IEnumerable<FontOverrideRule> rules)
+        {
+            var ordered = new List<FontOverrideRule>(rules ?? new FontOverrideRule[0]);
+            var slots = new List<int>();
+            var paths = new List<FontOverrideRule>();
+            for (int i = 0; i < ordered.Count; i++)
+                if (IsPathRule(ordered[i])) { slots.Add(i); paths.Add(ordered[i]); }
+
+            // A stable sort, most precise first: List.Sort is not stable, so the written order breaks ties.
+            var keyed = new List<KeyValuePair<int, FontOverrideRule>>();
+            for (int i = 0; i < paths.Count; i++) keyed.Add(new KeyValuePair<int, FontOverrideRule>(i, paths[i]));
+            keyed.Sort((a, b) =>
+            {
+                int byPrecision = ExclusionPatterns.ComparePrecision(b.Value.match.Substring(5), a.Value.match.Substring(5));
+                return byPrecision != 0 ? byPrecision : a.Key.CompareTo(b.Key);
+            });
+            for (int i = 0; i < slots.Count; i++) ordered[slots[i]] = keyed[i].Value;
+            return ordered;
+        }
+
+        /// <summary>
+        /// Whether two neighbouring rules may change places by hand: always, unless both are path
+        /// rules of different precision — the more precise one comes first, whatever is written.
+        /// </summary>
+        public static bool CanSwap(FontOverrideRule a, FontOverrideRule b)
+        {
+            if (a == null || b == null) return false;
+            if (!IsPathRule(a) || !IsPathRule(b)) return true;
+            return ExclusionPatterns.ComparePrecision(a.match.Substring(5), b.match.Substring(5)) == 0;
         }
 
         /// <summary>

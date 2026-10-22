@@ -34,6 +34,9 @@ namespace UnityGameTranslator.Core
     {
         private readonly List<string> _patterns = new List<string>();
 
+        /// <summary>The patterns taken apart once (ExclusionPatterns.Compile), dropped whenever the list moves.</summary>
+        private List<ExclusionPatterns.Compiled> _compiled;
+
         /// <summary>
         /// ⚠ Keyed by long, like every other per-target map: uGUI passes an instance id, UI Toolkit
         /// passes an id from beyond the int range. The widening from int is implicit, so nothing
@@ -83,9 +86,15 @@ namespace UnityGameTranslator.Core
         /// <summary>Whether a path matches anything written, with nothing remembered.</summary>
         public bool Matches(string path)
         {
-            foreach (string pattern in _patterns)
+            if (_compiled == null)
             {
-                if (ExclusionPatterns.Matches(path, pattern))
+                _compiled = new List<ExclusionPatterns.Compiled>(_patterns.Count);
+                foreach (string pattern in _patterns)
+                    if (!string.IsNullOrEmpty(pattern)) _compiled.Add(ExclusionPatterns.Compile(pattern));
+            }
+            foreach (var pattern in _compiled)
+            {
+                if (pattern.Matches(path))
                     return true;
             }
             return false;
@@ -105,6 +114,7 @@ namespace UnityGameTranslator.Core
             if (pattern.Length == 0 || _patterns.Contains(pattern)) return false;
 
             _patterns.Add(pattern);
+            _compiled = null;
             ForgetAll();
             return true;
         }
@@ -113,6 +123,7 @@ namespace UnityGameTranslator.Core
         public bool Remove(string pattern)
         {
             if (!_patterns.Remove(pattern)) return false;
+            _compiled = null;
 
             ForgetAll();
             return true;
@@ -122,6 +133,7 @@ namespace UnityGameTranslator.Core
         public void Clear()
         {
             _patterns.Clear();
+            _compiled = null;
             ForgetAll();
         }
 
@@ -134,6 +146,7 @@ namespace UnityGameTranslator.Core
         public void Load(IEnumerable<string> patterns)
         {
             _patterns.Clear();
+            _compiled = null;
             if (patterns != null) _patterns.AddRange(patterns);
             ForgetAll();
         }

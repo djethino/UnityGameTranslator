@@ -80,15 +80,48 @@ namespace UnityGameTranslator.Core.Checks
         {
             var first = Rule("path:Canvas/**", "First");
             var second = Rule("path:Canvas/Quest/**", "Second");
-            var rules = With(first, second);
 
-            check(ReferenceEquals(rules.Find(1, "Canvas/Quest/Title", "Arial", "Go"), first),
-                "the first rule that matches wins",
-                "the order in the file is a decision its author made, and a later rule must not quietly take over");
+            // 🔴 The most precise path wins, wherever it is written (user, 2026-10-22: « les autres
+            // textes utilisent les règles globales en fonction de la profondeur »). This check used
+            // to pin the opposite — the broad rule written first took the precise one's texts.
+            check(With(first, second).Find(1, "Canvas/Quest/Title", "Arial", "Go").replacement == "Second",
+                "the more precise path rule wins, even written after the broad one",
+                "Canvas/Quest/** names two levels, Canvas/** one: the deeper rule is the exception the author meant");
+            check(With(first, second).Find(2, "Canvas/Shop/Title", "Arial", "Go").replacement == "First",
+                "and the other texts still take the broad rule", "the exception covers its own place only");
 
-            check(With(second, first).Find(1, "Canvas/Quest/Title", "Arial", "Go").replacement == "Second",
-                "and reordering them changes the answer",
-                "otherwise 'first match wins' is a sentence in a comment rather than a behaviour");
+            var exact = Rule("path:Canvas/Quest/Title", "Exact");
+            check(With(first, second, exact).Find(3, "Canvas/Quest/Title", "Arial", "Go").replacement == "Exact",
+                "an exact path is the most precise of all", "doc/**, then doc/page 1/**, then doc/page 1/Prestation");
+            check(ExclusionPatterns.ComparePrecision("Canvas/Quest/**", "**/Canvas/Quest/**") > 0,
+                "for the same names, anchored at the root is more precise than floating",
+                "**/Canvas/Quest/** can be anywhere; Canvas/Quest/** is one place");
+            check(ExclusionPatterns.ComparePrecision("**/a/b/**", "**/a/**/b/**") > 0,
+                "b right under a is more precise than b anywhere under a", "the same names, one wildcard fewer");
+            check(ExclusionPatterns.ComparePrecision("**/a/b/**", "**/c/d/**") == 0,
+                "two patterns of the same shape are as precise: the order written decides", "and ↑ ↓ moves it");
+
+            // Between a path and another kind, and between two paths as precise: the order written.
+            var byFont = Rule("font:Arial", "Font");
+            check(With(byFont, second).Find(4, "Canvas/Quest/Title", "Arial", "Go").replacement == "Font"
+                  && With(second, byFont).Find(5, "Canvas/Quest/Title", "Arial", "Go").replacement == "Second",
+                "between a font rule and a path rule, the first written wins",
+                "precision is a measure of paths; across kinds, the order is the author's decision");
+            var a = Rule("path:**/a/b/**", "A");
+            var b = Rule("path:**/b/t/**", "B");
+            check(With(a, b).Find(6, "x/a/b/t", "Arial", "Go").replacement == "A"
+                  && With(b, a).Find(7, "x/a/b/t", "Arial", "Go").replacement == "B",
+                "between two paths as precise, the first written wins", "otherwise ↑ ↓ would move nothing");
+
+            // Moving by hand: never past a path of other precision, freely otherwise.
+            check(!FontRules.CanSwap(second, first) && FontRules.CanSwap(a, b) && FontRules.CanSwap(byFont, second),
+                "a rule may be moved past anything but a path rule of other precision",
+                "the precise one comes first whatever is written: a move against it would do nothing");
+            var placed = FontRules.InPriority(new[] { byFont, first, Rule("text:Go", "Text"), second });
+            check(ReferenceEquals(placed[0], byFont) && ReferenceEquals(placed[1], second) && ReferenceEquals(placed[3], first)
+                  && placed[2].replacement == "Text",
+                "the path rules are reordered in the places they hold, the others keep theirs",
+                "a font: rule written above them all stays above them all");
 
             check(With(Rule("path:Canvas/**", "Off", enabled: false), second)
                       .Find(1, "Canvas/Quest/Title", "Arial", "Go").replacement == "Second",

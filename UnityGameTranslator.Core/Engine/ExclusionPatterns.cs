@@ -36,79 +36,144 @@ namespace UnityGameTranslator.Core
         public static bool Matches(string path, string pattern)
         {
             if (string.IsNullOrEmpty(pattern)) return false;
-
-            // Exact path exclusions implicitly exclude all children:
-            // Pattern "Canvas/Panel" should match "Canvas/Panel", "Canvas/Panel/Child", "Canvas/Panel/Child/Text"
-            // Only apply this when pattern has no wildcards (pure path exclusion)
-            if (!pattern.Contains("*"))
-            {
-                if (string.Equals(path, pattern, StringComparison.OrdinalIgnoreCase))
-                    return true;
-                // Check if path is a child of the excluded path
-                if (path.Length > pattern.Length && path[pattern.Length] == '/' &&
-                    path.StartsWith(pattern, StringComparison.OrdinalIgnoreCase))
-                    return true;
-                return false;
-            }
-
-            // Wildcard pattern matching
-            // ** = any number of path segments (including zero)
-            // * = any single path segment name
-
-            // Split both into segments
-            var pathParts = path.Split('/');
-            var patternParts = pattern.Split('/');
-
-            return MatchPatternRecursive(pathParts, 0, patternParts, 0);
+            return Compile(pattern).Matches(path);
         }
 
-        private static bool MatchPatternRecursive(string[] path, int pathIdx, string[] pattern, int patternIdx)
+        /// <summary>
+        /// A pattern taken apart once — its segments split, a name holding a <c>*</c> turned into
+        /// its expression — for a caller that asks it of many paths (the exclusions and the font
+        /// rules keep one per pattern). The same grammar and the same answers as
+        /// <see cref="Matches(string, string)"/>, which is this, used once.
+        ///
+        /// 🔴 **Why** (2026-10-22): a name with a <c>*</c> built its expression again at every
+        /// comparison, for every pattern, for every text the decision was asked about.
+        /// </summary>
+        public static Compiled Compile(string pattern) => new Compiled(pattern ?? "");
+
+        public sealed class Compiled
         {
-            // Base cases
-            if (patternIdx >= pattern.Length)
-                return pathIdx >= path.Length;
+            private readonly string _pattern;
+            private readonly bool _plain;
+            private readonly string[] _parts;
+            private readonly Regex[] _names;
 
-            string patternPart = pattern[patternIdx];
-
-            if (patternPart == "**")
+            internal Compiled(string pattern)
             {
-                // ** matches zero or more path segments
-                // Try matching rest of pattern at every remaining position
-                for (int i = pathIdx; i <= path.Length; i++)
+                _pattern = pattern;
+                // Exact path exclusions implicitly exclude all children:
+                // Pattern "Canvas/Panel" should match "Canvas/Panel", "Canvas/Panel/Child", "Canvas/Panel/Child/Text"
+                // Only apply this when pattern has no wildcards (pure path exclusion)
+                _plain = !pattern.Contains("*");
+                if (_plain) return;
+
+                // Wildcard pattern matching
+                // ** = any number of path segments (including zero)
+                // * = any single path segment name
+                _parts = pattern.Split('/');
+                _names = new Regex[_parts.Length];
+                for (int i = 0; i < _parts.Length; i++)
                 {
-                    if (MatchPatternRecursive(path, i, pattern, patternIdx + 1))
-                        return true;
+                    string part = _parts[i];
+                    // A name holding * as a wildcard (e.g., "Chat*" matches "ChatWindow")
+                    if (part != "**" && part != "*" && part.Contains("*"))
+                        _names[i] = new Regex("^" + Regex.Escape(part).Replace("\\*", ".*") + "$", RegexOptions.IgnoreCase);
                 }
-                return false;
             }
 
-            if (pathIdx >= path.Length)
-                return false;
-
-            string pathPart = path[pathIdx];
-
-            if (patternPart == "*")
+            public bool Matches(string path)
             {
-                // * matches exactly one segment (any name)
-                return MatchPatternRecursive(path, pathIdx + 1, pattern, patternIdx + 1);
+                if (_pattern.Length == 0 || path == null) return false;
+                if (_plain)
+                {
+                    if (string.Equals(path, _pattern, StringComparison.OrdinalIgnoreCase))
+                        return true;
+                    // Check if path is a child of the excluded path
+                    return path.Length > _pattern.Length && path[_pattern.Length] == '/' &&
+                           path.StartsWith(_pattern, StringComparison.OrdinalIgnoreCase);
+                }
+                return MatchFrom(path.Split('/'), 0, 0);
             }
 
-            // Check if pattern part contains * as wildcard within the name
-            if (patternPart.Contains("*"))
+            private bool MatchFrom(string[] path, int pathIdx, int patternIdx)
             {
-                // Convert to simple wildcard matching (e.g., "Chat*" matches "ChatWindow")
-                string regexPattern = "^" + Regex.Escape(patternPart).Replace("\\*", ".*") + "$";
-                if (!Regex.IsMatch(pathPart, regexPattern, RegexOptions.IgnoreCase))
+                // Base cases
+                if (patternIdx >= _parts.Length)
+                    return pathIdx >= path.Length;
+
+                string patternPart = _parts[patternIdx];
+
+                if (patternPart == "**")
+                {
+                    // ** matches zero or more path segments
+                    // Try matching rest of pattern at every remaining position
+                    for (int i = pathIdx; i <= path.Length; i++)
+                    {
+                        if (MatchFrom(path, i, patternIdx + 1))
+                            return true;
+                    }
                     return false;
-            }
-            else
-            {
-                // Exact match (case-insensitive)
-                if (!string.Equals(pathPart, patternPart, StringComparison.OrdinalIgnoreCase))
-                    return false;
-            }
+                }
 
-            return MatchPatternRecursive(path, pathIdx + 1, pattern, patternIdx + 1);
+                if (pathIdx >= path.Length)
+                    return false;
+
+                string pathPart = path[pathIdx];
+
+                if (patternPart == "*")
+                {
+                    // * matches exactly one segment (any name)
+                    return MatchFrom(path, pathIdx + 1, patternIdx + 1);
+                }
+
+                var name = _names[patternIdx];
+                if (name != null)
+                {
+                    if (!name.IsMatch(pathPart))
+                        return false;
+                }
+                else
+                {
+                    // Exact match (case-insensitive)
+                    if (!string.Equals(pathPart, patternPart, StringComparison.OrdinalIgnoreCase))
+                        return false;
+                }
+
+                return MatchFrom(path, pathIdx + 1, patternIdx + 1);
+            }
+        }
+
+        /// <summary>
+        /// How precisely a pattern names a place — what decides, between two font rules matching the
+        /// same text, which one wins (user, 2026-10-22: « les autres textes utilisent les règles
+        /// globales en fonction de la profondeur »). Greater is more precise; compare with
+        /// <see cref="ComparePrecision"/>, in this order:
+        /// <list type="number">
+        /// <item>how many levels it names outright — <c>doc/page 1/Prestation</c> before <c>doc/page 1/**</c> before <c>doc/**</c>;</item>
+        /// <item>then anchored at the root before floating (<c>**/…</c>), for the same names;</item>
+        /// <item>then the fewer wildcards — so an exact path is the most precise of its depth.</item>
+        /// </list>
+        /// A name with a <c>*</c> inside (<c>Chat*</c>) is a wildcard, not a named level.
+        /// </summary>
+        public static int ComparePrecision(string a, string b)
+        {
+            Measure(a ?? "", out int namedA, out bool anchoredA, out int wildA);
+            Measure(b ?? "", out int namedB, out bool anchoredB, out int wildB);
+            if (namedA != namedB) return namedA.CompareTo(namedB);
+            if (anchoredA != anchoredB) return anchoredA ? 1 : -1;
+            return wildB.CompareTo(wildA);
+        }
+
+        private static void Measure(string pattern, out int named, out bool anchored, out int wild)
+        {
+            named = 0; wild = 0;
+            var parts = pattern.Split('/');
+            anchored = parts.Length > 0 && parts[0] != "**" && parts[0] != "*";
+            foreach (var part in parts)
+            {
+                if (part.Length == 0) continue;
+                if (part.Contains("*")) wild++;
+                else named++;
+            }
         }
     }
 }

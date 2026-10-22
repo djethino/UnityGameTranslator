@@ -1485,6 +1485,13 @@ namespace UnityGameTranslator.Core.UI.Panels
         // then, so the removal can be seen and undone; Apply writes the list without them.
         private readonly HashSet<FontOverrideRule> _removedFontOverrides = new HashSet<FontOverrideRule>();
 
+        /// <summary>
+        /// Each rule the panel opened with, by the rule — its saved copy. 🔴 **By the rule, no longer
+        /// by its place** (2026-10-22): rules move now (↑ ↓, a precise one added above a broad one),
+        /// and a comparison by index set each row against its neighbour's saved values.
+        /// </summary>
+        private readonly Dictionary<FontOverrideRule, FontOverrideRule> _initialOf = new Dictionary<FontOverrideRule, FontOverrideRule>();
+
         /// <summary>The rules Apply will keep: everything pending, minus what is marked for removal.</summary>
         private List<FontOverrideRule> KeptFontOverrides()
         {
@@ -1499,10 +1506,14 @@ namespace UnityGameTranslator.Core.UI.Panels
             _pendingFontOverrides.Clear();
             _initialFontOverrides.Clear();
             _removedFontOverrides.Clear();
+            _initialOf.Clear();
             foreach (var rule in TranslatorCore.FontOverrides)
             {
-                _pendingFontOverrides.Add(CloneRule(rule));
-                _initialFontOverrides.Add(CloneRule(rule));
+                var pending = CloneRule(rule);
+                var initial = CloneRule(rule);
+                _pendingFontOverrides.Add(pending);
+                _initialFontOverrides.Add(initial);
+                _initialOf[pending] = initial;
             }
         }
 
@@ -1611,6 +1622,11 @@ namespace UnityGameTranslator.Core.UI.Panels
                 enabled = true
             };
             _pendingFontOverrides.Add(rule);
+            // Where the rule is asked (FontRules.InPriority): a precise path added after a broad
+            // one goes above it, as it will be when applied.
+            var ordered = FontRules.InPriority(_pendingFontOverrides);
+            _pendingFontOverrides.Clear();
+            _pendingFontOverrides.AddRange(ordered);
             RefreshFontOverridesList();
             UpdateApplyButtonText();
             SayOverrideStatus(rule, "Added", awaitsApply: true, Tone.Success);
@@ -1734,10 +1750,10 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             if (_removedFontOverrides.Contains(rule)) { CreateRemovedFontOverrideRow(index, rule); return; }
 
-            // A rule the panel opened with is compared field by field to what it was; a rule
-            // added since is one thing waiting as a whole. The lists stay parallel by index —
-            // nothing reorders them, and a removal keeps its slot until Apply.
-            FontOverrideRule initial = index < _initialFontOverrides.Count ? _initialFontOverrides[index] : null;
+            // A rule the panel opened with is compared field by field to what it was (its saved copy,
+            // found by the rule: rules move); a rule added since is one thing waiting as a whole. A
+            // removal keeps its slot until Apply.
+            _initialOf.TryGetValue(rule, out FontOverrideRule initial);
             int capturedIndex = index;
 
             BuiltScreen row = null;
@@ -1796,6 +1812,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                         UpdateApplyButtonText();
                         ShowOverrideSizeButtons(row, rule, initial);
                     };
+                    case "moveUp": return () => MoveFontOverride(capturedIndex, -1);
+                    case "moveDown": return () => MoveFontOverride(capturedIndex, +1);
                     case "rtlChanged": return () =>
                     {
                         if (_fillingRows || capturedIndex >= _pendingFontOverrides.Count) return;
@@ -1808,6 +1826,12 @@ namespace UnityGameTranslator.Core.UI.Panels
                 }
             });
             if (initial == null) Pending.TrackState(row.Root, () => PendingState.Added, "overrides");
+            else Pending.TrackState(row.Root, () => MovedFromSaved(rule, initial) ? PendingState.Modified : PendingState.None, "overrides");
+
+            // Up and down, where the order is the author's to decide: not past a path rule of other
+            // precision, which keeps its place by precision (FontRules.CanSwap).
+            row.Button("MoveUpBtn").Enabled = index > 0 && FontRules.CanSwap(_pendingFontOverrides[index - 1], rule);
+            row.Button("MoveDownBtn").Enabled = index < _pendingFontOverrides.Count - 1 && FontRules.CanSwap(rule, _pendingFontOverrides[index + 1]);
 
             _fillingRows = true;
             try
@@ -1844,6 +1868,35 @@ namespace UnityGameTranslator.Core.UI.Panels
                 }
             }
             finally { _fillingRows = false; }
+        }
+
+        /// <summary>One rule a place up (-1) or down (+1), when the two may change places (FontRules.CanSwap).</summary>
+        private void MoveFontOverride(int index, int by)
+        {
+            int other = index + by;
+            if (index < 0 || other < 0 || index >= _pendingFontOverrides.Count || other >= _pendingFontOverrides.Count) return;
+            int upper = Math.Min(index, other), lower = Math.Max(index, other);
+            if (!FontRules.CanSwap(_pendingFontOverrides[upper], _pendingFontOverrides[lower])) return;
+            var moved = _pendingFontOverrides[index];
+            _pendingFontOverrides[index] = _pendingFontOverrides[other];
+            _pendingFontOverrides[other] = moved;
+            RefreshFontOverridesList();
+            UpdateApplyButtonText();
+        }
+
+        /// <summary>
+        /// Whether a saved rule stands elsewhere than it was saved — its rank among the saved rules,
+        /// the ones added since left out, against its saved rank.
+        /// </summary>
+        private bool MovedFromSaved(FontOverrideRule rule, FontOverrideRule initial)
+        {
+            int rank = 0;
+            foreach (var other in _pendingFontOverrides)
+            {
+                if (ReferenceEquals(other, rule)) break;
+                if (_initialOf.ContainsKey(other)) rank++;
+            }
+            return rank != _initialFontOverrides.IndexOf(initial);
         }
 
         /// <summary>Moves a rule's size slider without its move being taken as the user's.

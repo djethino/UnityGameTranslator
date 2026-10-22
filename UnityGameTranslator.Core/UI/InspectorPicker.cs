@@ -958,6 +958,7 @@ namespace UnityGameTranslator.Core.UI
             if (_isInspecting) _picking--;
             _isInspecting = false;
             _hoverPass = null;
+            _underPointer.Close();
             HideAllHighlights();
             if (_highlightCanvas != null)
                 _highlightCanvas.SetActive(false);
@@ -1014,6 +1015,7 @@ namespace UnityGameTranslator.Core.UI
         {
             _selectedCamera = (index > 0 && index <= _sceneCameras.Length) ? _sceneCameras[index - 1] : null;
             _searchAgain = true;
+            _underPointer.Close();   // it listed what another camera sees
             ClearSelection();
             ClearHover();
         }
@@ -1136,6 +1138,15 @@ namespace UnityGameTranslator.Core.UI
             {
                 _textAppeared = false;
                 DropSceneCaches();
+            }
+
+            // The list of what is under the pointer, when a click opened it, has the frame's input:
+            // its lines are hovered and taken, and the game under it is not searched meanwhile.
+            if (_underPointer.Tick())
+            {
+                if (_lastSelectedObject != null && SelectedMarkerShown() && ++_frameSkip % 10 == 0)
+                    PositionHighlight(_selectedHighlightRect, _selectedHighlight, _selectedEdges, _selectedEdgeImages, _lastSelectedObject);
+                return;
             }
 
             // 🔴 **Off the window, nothing is under the pointer** (2026-09-19). Reported: objects
@@ -1349,8 +1360,15 @@ namespace UnityGameTranslator.Core.UI
                 }
                 else
                     hitObject = RefineToText(hitObject, mousePos, out clickedByRectangle);
+                if (hitObject != null && IsOwnUI(hitObject)) hitObject = null;
 
-                if (hitObject != null && !IsOwnUI(hitObject))
+                // 🔴 More than one thing under the pointer: the list of them, to choose from (user,
+                // 2026-10-22) — the click's own answer first. One: taken at once, as always.
+                var under = UnderPointer(mousePos, hitObject);
+                if (under.Count > 1 && OpenUnderPointer(under, mousePos)) return;
+                if (hitObject == null && under.Count == 1) hitObject = under[0];
+
+                if (hitObject != null)
                 {
                     // Which of the two passes answered, and what it landed on. One line per click,
                     // because reading the code cannot tell you: both are wired, and they differ
@@ -1404,6 +1422,111 @@ namespace UnityGameTranslator.Core.UI
 
         /// <summary>Where the pointer was at the last selection — said again when Parent climbs from it.</summary>
         private Vector3 _lastSelectionPointer;
+
+        /// <summary>Everything under the pointer at the last click, as the open list shows it.</summary>
+        private readonly Components.UnderPointerList _underPointer = new Components.UnderPointerList();
+        private readonly List<GameObject> _underPointerObjects = new List<GameObject>();
+
+        /// <summary>
+        /// Everything under the pointer, front first, for the list a click opens: what the click
+        /// would have taken on its own (<paramref name="answer"/>) first, then — in the modes about
+        /// text — every text under the pointer, then whatever the game's own answer met, nearest
+        /// first. Each once, the mod's own interface left out.
+        ///
+        /// 🔴 **Why** (user, 2026-10-22): a pick keeps the nearest thing only, and an open book's box,
+        /// in front of the page it holds, made every text on the page unreachable. The passes that
+        /// answer a pick already met them; they are now asked to keep them all, on a click only —
+        /// a hover still stops at the first.
+        /// </summary>
+        private List<GameObject> UnderPointer(Vector3 screenPosition, GameObject answer)
+        {
+            var met = new List<GameObject>();
+            if (answer != null) met.Add(answer);
+            var texts = new List<GameObject>();
+            if (WantsText)
+            {
+                // The rectangle pass over every listed text — the one a hover asks, keeping them all.
+                PickTextByRectangle(screenPosition, null, texts);
+                met.AddRange(texts);
+            }
+            var hits = new List<GameObject>();
+            RaycastUIElement(screenPosition, hits);
+            met.AddRange(hits);
+
+            var listed = new List<GameObject>();
+            var seen = new HashSet<int>();
+            foreach (var go in met)
+            {
+                if (go == null || IsOwnUI(go)) continue;
+                if (!seen.Add(ObjectNumbers.Of(go))) continue;
+                listed.Add(go);
+            }
+            return listed;
+        }
+
+        /// <summary>A line of the list: the object's name, then what it says or what it is.</summary>
+        private static Components.UnderPointerList.Entry EntryOf(GameObject go)
+        {
+            TextsOf(go, false, out string source, out string shown, out _);
+            string said = shown ?? source;
+            string detail;
+            if (!string.IsNullOrEmpty(said)) detail = "“" + said.Replace("\r", " ").Replace("\n", " ").Trim() + "”";
+            else if (ImageReplacer.HasImageComponent(go)) detail = "Image";
+            else if (go.GetComponent<Renderer>() != null) detail = "3D object";
+            else if (go.GetComponent<RectTransform>() != null) detail = "UI element";
+            else detail = "Object";
+            return new Components.UnderPointerList.Entry { Name = go.name, Detail = detail };
+        }
+
+        /// <summary>
+        /// Open the list of what is under the pointer: a line hovered marks its object in the game
+        /// and names it in the window, as a hover does; a line clicked is the selection, through
+        /// the one door (<see cref="Select"/>).
+        /// </summary>
+        private bool OpenUnderPointer(List<GameObject> under, Vector3 pointer)
+        {
+            var canvas = _panelRect != null ? _panelRect.GetComponentInParent<Canvas>() : null;
+            if (canvas == null) return false;
+
+            _underPointerObjects.Clear();
+            _underPointerObjects.AddRange(under);
+            var entries = new List<Components.UnderPointerList.Entry>();
+            foreach (var go in under) entries.Add(EntryOf(go));
+
+            TranslatorCore.LogDebug($"[Inspector] {under.Count} objects under the pointer at {pointer.x:F0},{pointer.y:F0}: "
+                                    + string.Join(", ", entries.ConvertAll(e => "'" + e.Name + "'").ToArray()));
+
+            _underPointer.Open(canvas, new Vector2(pointer.x, pointer.y), entries,
+                onHover: index =>
+                {
+                    var go = index >= 0 && index < _underPointerObjects.Count ? _underPointerObjects[index] : null;
+                    if (go == null)
+                    {
+                        HideHoverMarker();
+                        _hoverTarget = null;
+                        if (_lastHoveredPath != "") { _lastHoveredPath = ""; Hovered?.Invoke("", null); }
+                        return;
+                    }
+                    PositionHighlight(_hoverHighlightRect, _hoverHighlight, _hoverEdges, _hoverEdgeImages, go);
+                    _hoverTarget = go;
+                    string path = TranslatorCore.GetGameObjectPath(go);
+                    if (path != _lastHoveredPath) { _lastHoveredPath = path; Hovered?.Invoke(path, go); }
+                },
+                onPick: index =>
+                {
+                    var go = index >= 0 && index < _underPointerObjects.Count ? _underPointerObjects[index] : null;
+                    if (go == null) return;
+                    TranslatorCore.LogDebug($"[Inspector] picked '{go.name}' from the list of what is under the pointer");
+                    Select(go, pointer);
+                },
+                onClose: () =>
+                {
+                    _underPointerObjects.Clear();
+                    // The pointer is back on the game: the next hover looks again.
+                    _searchAgain = true;
+                });
+            return _underPointer.IsOpen;
+        }
 
         /// <summary>
         /// Make <paramref name="hitObject"/> the selection: its path, what the mode needs to know of
@@ -1663,16 +1786,20 @@ namespace UnityGameTranslator.Core.UI
         /// Raycast to find UI element under screen position.
         /// Uses pure reflection — works on both Mono and IL2CPP.
         /// </summary>
+        /// <param name="all">When given, every object the pass meets is added to it, front first, and
+        /// the pass goes on past the first — what the list of everything under the pointer is made
+        /// of (<see cref="UnderPointer"/>). The answer returned is the same either way.</param>
         [MethodImpl(MethodImplOptions.NoInlining)]
-        private GameObject RaycastUIElement(Vector3 screenPosition)
+        private GameObject RaycastUIElement(Vector3 screenPosition, List<GameObject> all = null)
         {
             // If a camera is selected, raycast via that camera (world-space)
             if (_selectedCamera != null)
-                return RaycastViaCamera(_selectedCamera, screenPosition);
+                return RaycastViaCamera(_selectedCamera, screenPosition, all);
 
             // Default: UI Only mode via GraphicRaycasters
             if (!_raycastAvailable) return null;
 
+            GameObject first = null;
             try
             {
                 // Get EventSystem.current
@@ -1748,7 +1875,9 @@ namespace UnityGameTranslator.Core.UI
                                 if (!ImageReplacer.HasImageComponent(go)) continue;
                             }
 
-                            return go;
+                            if (all == null) return go;
+                            if (first == null) first = go;
+                            all.Add(go);
                         }
                     }
                     catch (Exception ex)
@@ -1763,17 +1892,18 @@ namespace UnityGameTranslator.Core.UI
                 Faults.Say("InspectorPicker.RaycastUIElement", ex);
             }
 
-            return null;
+            return first;
         }
 
         /// <summary>
         /// Raycast World Space Canvases that use a specific camera.
         /// Uses GraphicRaycaster on each matching Canvas.
         /// </summary>
-        private GameObject RaycastWorldSpaceCanvases(Camera camera, Vector3 screenPosition)
+        private GameObject RaycastWorldSpaceCanvases(Camera camera, Vector3 screenPosition, List<GameObject> all = null)
         {
             if (camera == null || !_raycastAvailable) return null;
 
+            GameObject first = null;
             try
             {
                 var eventSystem = _eventSystemCurrentProp.GetValue(null, null);
@@ -1838,7 +1968,9 @@ namespace UnityGameTranslator.Core.UI
                                 if (!ImageReplacer.HasImageComponent(go)) continue;
                             }
 
-                            return go;
+                            if (all == null) return go;
+                            if (first == null) first = go;
+                            all.Add(go);
                         }
                     }
                     catch (Exception ex) { Faults.Say("InspectorPicker.RaycastWorldSpaceCanvases", ex); }
@@ -1849,7 +1981,7 @@ namespace UnityGameTranslator.Core.UI
                 Faults.Say("InspectorPicker.RaycastWorldSpaceCanvases", ex);
             }
 
-            return null;
+            return first;
         }
 
         #region Texts found by their rectangle — when the game's own answer carries none
@@ -1943,8 +2075,13 @@ namespace UnityGameTranslator.Core.UI
             return text;
         }
 
-        private GameObject PickTextByRectangle(Vector3 screenPosition, GameObject within = null)
+        /// <param name="all">When given, every text under the pointer is added to it — those drawn on
+        /// the screen first, the last drawn first, then those in the world, nearest first.</param>
+        private GameObject PickTextByRectangle(Vector3 screenPosition, GameObject within = null, List<GameObject> all = null)
         {
+            // Listing: (overlay, sorting order, depth) for a text on the screen, reach for one in the world.
+            var listedOnScreen = all != null ? new List<KeyValuePair<long, GameObject>>() : null;
+            var listedInWorld = all != null ? new List<KeyValuePair<float, GameObject>>() : null;
             // How far the first solid thing sits, per camera: texts drawn by different cameras are
             // blocked by what each of them sees.
             var blockedAtByCamera = new Dictionary<int, float>();
@@ -2003,6 +2140,7 @@ namespace UnityGameTranslator.Core.UI
                             blockedAtByCamera[drawingId] = blockedAt;
                         }
                         if (along >= blockedAt) continue;
+                        listedInWorld?.Add(new KeyValuePair<float, GameObject>(along, go));
                         if (along < bestReach) { bestReach = along; bestInWorld = comp; bestBlockedAt = blockedAt; }
                         continue;
                     }
@@ -2035,6 +2173,9 @@ namespace UnityGameTranslator.Core.UI
                     {
                         int layerOver = overlay ? 1 : 0;
                         int order = canvas.sortingOrder;
+                        // One number sorting as drawnLater below does: overlay, then order, then depth.
+                        listedOnScreen?.Add(new KeyValuePair<long, GameObject>(
+                            ((long)layerOver << 62) + (((long)order + int.MaxValue + 1L) << 30) + Math.Max(0, Math.Min(depth, (1 << 30) - 1)), go));
                         bool drawnLater = layerOver != bestOverlay ? layerOver > bestOverlay
                             : order != bestOrder ? order > bestOrder
                             : depth > bestDepth;
@@ -2061,6 +2202,7 @@ namespace UnityGameTranslator.Core.UI
                         blockedAtByCamera[cameraId] = blockedAt;
                     }
                     if (reach >= blockedAt) continue;   // behind the first solid thing
+                    listedInWorld?.Add(new KeyValuePair<float, GameObject>(reach, go));
                     if (reach < bestReach) { bestReach = reach; bestInWorld = comp; bestBlockedAt = blockedAt; }
                 }
                 catch (Exception ex)
@@ -2073,6 +2215,14 @@ namespace UnityGameTranslator.Core.UI
                             + " — texts it happens to are skipped");
                     }
                 }
+            }
+
+            if (all != null)
+            {
+                listedOnScreen.Sort((a, b) => b.Key.CompareTo(a.Key));   // the last drawn first
+                foreach (var t in listedOnScreen) all.Add(t.Value);
+                listedInWorld.Sort((a, b) => a.Key.CompareTo(b.Key));    // the nearest first
+                foreach (var t in listedInWorld) all.Add(t.Value);
             }
 
             // Drawn on the screen means drawn over the world.
@@ -2204,15 +2354,16 @@ namespace UnityGameTranslator.Core.UI
         /// Raycast via a specific Camera for world-space Renderers.
         /// Only checks renderers visible to this camera (via cullingMask).
         /// </summary>
-        private GameObject RaycastViaCamera(Camera camera, Vector3 screenPosition)
+        private GameObject RaycastViaCamera(Camera camera, Vector3 screenPosition, List<GameObject> all = null)
         {
             if (camera == null) return null;
 
             // First: check World Space Canvases that use this camera
             // (these have GraphicRaycasters but aren't found by "UI Only" mode
             // because their GraphicRaycaster needs the correct camera context)
-            var canvasHit = RaycastWorldSpaceCanvases(camera, screenPosition);
-            if (canvasHit != null) return canvasHit;
+            // Listing everything, the boxes behind a canvas are met too: it answers first, still.
+            var canvasHit = RaycastWorldSpaceCanvases(camera, screenPosition, all);
+            if (canvasHit != null && all == null) return canvasHit;
 
             // 🔴 **The two passes TOGETHER, because each knows half the answer** (2026-09-19, after
             // three rounds of making them take turns). The ray knows what is in front, and nothing
@@ -2240,9 +2391,18 @@ namespace UnityGameTranslator.Core.UI
 
             // Then: the box pass over the renderers this camera can see, all at once.
             var pass = BeginBoxPass(camera, screenPosition, blocker, blockedAt);
-            if (pass == null) return null;
+            if (pass == null) return canvasHit;
+            if (all != null) pass.Hits = new List<KeyValuePair<float, GameObject>>();
             StepBoxPass(pass, double.MaxValue);
-            return EndBoxPass(pass);
+            var answer = EndBoxPass(pass);
+            if (all != null)
+            {
+                // Every box in front of the nearest solid thing, nearest first, then that thing.
+                pass.Hits.Sort((a, b) => a.Key.CompareTo(b.Key));
+                foreach (var hit in pass.Hits) all.Add(hit.Value);
+                if (pass.Blocker != null && Pickable(pass.Blocker)) all.Add(pass.Blocker);
+            }
+            return canvasHit ?? answer;
         }
 
         /// <summary>
@@ -2275,6 +2435,11 @@ namespace UnityGameTranslator.Core.UI
             public Renderer Behind;
             public long Ticks;
             public int Walked;
+            /// <summary>
+            /// Every box met in front of the nearest solid thing, with how far — kept only when
+            /// everything under the pointer is listed (a click), never on a hover.
+            /// </summary>
+            public List<KeyValuePair<float, GameObject>> Hits;
             public bool Done => All == null || Next >= All.Length;
         }
 
@@ -2381,7 +2546,9 @@ namespace UnityGameTranslator.Core.UI
                     // on) are the case, and a tie-break that changed with the viewpoint is the
                     // thing this pass was rewritten to be rid of.
                     float size = bounds.size.x * bounds.size.y * bounds.size.z;
-                    if (reach > pass.BestDepth || (reach == pass.BestDepth && size >= pass.BestArea)) continue;
+                    // Listing everything (pass.Hits), a box behind the best so far is kept too.
+                    bool listing = pass.Hits != null;
+                    if (!listing && (reach > pass.BestDepth || (reach == pass.BestDepth && size >= pass.BestArea))) continue;
 
                     // The world box only sorts: the few it lets through are measured by their own
                     // box (OrientedReach), which a turned wall does not overhang.
@@ -2391,8 +2558,9 @@ namespace UnityGameTranslator.Core.UI
                         if (own.Value < 0f) continue;           // the ray passes beside it
                         reach = own.Value;
                         if (reach >= pass.BlockedAt) { NoteBehind(pass, rend, reach); continue; }
-                        if (reach > pass.BestDepth || (reach == pass.BestDepth && size >= pass.BestArea)) continue;
+                        if (!listing && (reach > pass.BestDepth || (reach == pass.BestDepth && size >= pass.BestArea))) continue;
                     }
+                    bool nearer = reach < pass.BestDepth || (reach == pass.BestDepth && size < pass.BestArea);
 
                     // Only now, for the handful that are actually in front: who is it?
                     try
@@ -2413,6 +2581,8 @@ namespace UnityGameTranslator.Core.UI
                             continue;
                         }
 
+                        if (listing) pass.Hits.Add(new KeyValuePair<float, GameObject>(reach, go));
+                        if (!nearer) continue;
                         pass.BestDepth = reach;
                         pass.BestArea = size;
                         pass.BestHit = go;

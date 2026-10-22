@@ -368,6 +368,20 @@ namespace UnityGameTranslator.Core.UI.Components
                 _tabs[i].Content.SetActive(i == originalIndex);
             }
 
+            // 🔴 And the layout put back to that state in this same frame (2026-10-22, measured):
+            // left as it was measured, the frame drawn next laid the shown tab out in a container
+            // as tall as every tab together (1091 -> 3462 -> 1091), so the page sat elsewhere for
+            // one frame — in the middle of the window's arrival.
+            if (_contentContainer != null)
+            {
+                var containerRect = _contentContainer.GetComponent<RectTransform>();
+                if (containerRect != null)
+                {
+                    LayoutRebuilder.ForceRebuildLayoutImmediate(containerRect);
+                    LayoutRebuilder.MarkLayoutForRebuild(containerRect);
+                }
+            }
+
             return maxHeight;
         }
 

@@ -347,8 +347,17 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// <summary>The rendering half of <see cref="KeepPanelHeightAcrossTabs"/>: the wait is a coroutine.</summary>
         private void StartMeasuringTallestTab(TabBar tabBar)
         {
+            // 🔴 **Not again when the section only replaces another** (2026-10-22, measured): the
+            // measure switches every tab on and lays them all out — 100 ms frames on Translation
+            // Tools, four frames into its arrival — to hold a height the window already holds.
+            // Measured once, it is measured again at the window's real openings, as before.
+            if (ShownInPlaceOfAnotherSection && _measuredTabBars.Contains(tabBar)) return;
+            _measuredTabBars.Add(tabBar);
             UniverseLib.RuntimeHelper.StartCoroutine(MeasureTallestTab(tabBar));
         }
+
+        /// <summary>The tab bars measured at least once (StartMeasuringTallestTab).</summary>
+        private readonly HashSet<TabBar> _measuredTabBars = new HashSet<TabBar>();
 
         private System.Collections.IEnumerator MeasureTallestTab(TabBar tabBar)
         {

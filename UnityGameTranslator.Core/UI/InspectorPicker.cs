@@ -232,25 +232,67 @@ namespace UnityGameTranslator.Core.UI
         private static HashSet<int> _textHolders;
         private static Component[] _textHoldersFor;
 
+        /// <summary>The text component an object itself carries, by its transform's id — built with <see cref="_textHolders"/>.</summary>
+        private static Dictionary<int, Component> _textOn;
+
         private static HashSet<int> TextHolders()
         {
             var texts = Texts();
             if (_textHolders != null && ReferenceEquals(_textHoldersFor, texts)) return _textHolders;
 
             var holders = new HashSet<int>();
+            var on = new Dictionary<int, Component>();
             foreach (var comp in texts)
             {
                 if (comp == null) continue;
                 try
                 {
+                    int own = ObjectNumbers.Of(comp.transform);
+                    if (!on.ContainsKey(own)) on[own] = comp;
                     for (var tr = comp.transform; tr != null; tr = tr.parent)
                         if (!holders.Add(ObjectNumbers.Of(tr))) break;
                 }
                 catch (Exception ex) { Faults.Say("InspectorPicker.TextHolders", ex); }
             }
             _textHolders = holders;
+            _textOn = on;
             _textHoldersFor = texts;
             return holders;
+        }
+
+        /// <summary>
+        /// What a hovered or picked thing says, for the window to show beside its path — so the
+        /// person sees they have the line they meant before acting on it (user, 2026-10-22).
+        /// <paramref name="source"/> is the game's text, <paramref name="shown"/> what is on screen
+        /// when it differs (our translation), <paramref name="under"/> how many texts it holds when
+        /// it is not a text itself (counted only when <paramref name="countUnder"/>: a selection, not
+        /// every hover). Nothing is read from a thing that is not a text.
+        /// </summary>
+        internal static void TextsOf(object owner, bool countUnder, out string source, out string shown, out int under)
+        {
+            source = null; shown = null; under = 0;
+            try
+            {
+                if (owner is GameObject go && go != null)
+                {
+                    TextHolders();
+                    if (_textOn != null && _textOn.TryGetValue(ObjectNumbers.Of(go.transform), out var comp) && comp != null)
+                    {
+                        string onScreen = TypeHelper.GetText(comp);
+                        string original = TranslatorScanner.GetOriginalText(TypeHelper.GetInstanceID(comp));
+                        source = original ?? onScreen;
+                        if (original != null && !string.Equals(original, onScreen, StringComparison.Ordinal)) shown = onScreen;
+                        return;
+                    }
+                    if (!countUnder) return;
+                    var root = go.transform;
+                    foreach (var text in Texts())
+                        if (text != null && IsWithin(text.transform, root)) under++;
+                }
+                else if (owner != null && UIToolkitSupport.IsTextElementInstance(owner))
+                    source = UIToolkitSupport.GetElementText(owner);
+            }
+            catch (Exception ex) { Faults.Say("InspectorPicker.TextsOf", ex); }
         }
 
         /// <summary>
@@ -841,8 +883,11 @@ namespace UnityGameTranslator.Core.UI
 
         #endregion
 
-        /// <summary>Raised when the hovered path changes — including to "" when nothing is hovered.</summary>
-        public event Action<string> Hovered;
+        /// <summary>
+        /// Raised when the hovered path changes — including to "" when nothing is hovered — with
+        /// what is hovered (a GameObject, a UI Toolkit element, or null), opaque, for <see cref="TextsOf"/>.
+        /// </summary>
+        public event Action<string, object> Hovered;
 
         /// <summary>Raised on a click that hit something pickable, own UI excluded.</summary>
         public event Action<PickedTarget> Picked;
@@ -1122,7 +1167,7 @@ namespace UnityGameTranslator.Core.UI
                 if (_lastHoveredPath != "")
                 {
                     _lastHoveredPath = "";
-                    Hovered?.Invoke("");
+                    Hovered?.Invoke("", null);
                 }
                 return;
             }
@@ -1224,7 +1269,7 @@ namespace UnityGameTranslator.Core.UI
                     if (IsOwnUI(hoveredObject))
                     {
                         HideHoverMarker();
-                        if (_lastHoveredPath != "") { _lastHoveredPath = ""; Hovered?.Invoke(""); }
+                        if (_lastHoveredPath != "") { _lastHoveredPath = ""; Hovered?.Invoke("", null); }
                     }
                     else
                     {
@@ -1255,7 +1300,7 @@ namespace UnityGameTranslator.Core.UI
                                         : " | nothing was turned away for carrying no image")
                                     + SeenAndBehind());
 
-                            Hovered?.Invoke(path);
+                            Hovered?.Invoke(path, hoveredObject);
                         }
 
                         // Position hover highlight
@@ -1274,7 +1319,7 @@ namespace UnityGameTranslator.Core.UI
                         if (elementPath != _lastHoveredPath)
                         {
                             _lastHoveredPath = elementPath;
-                            Hovered?.Invoke(elementPath);
+                            Hovered?.Invoke(elementPath, element);
                         }
 
                         HideEdges(_hoverEdgeImages);
@@ -1283,7 +1328,7 @@ namespace UnityGameTranslator.Core.UI
                     else
                     {
                         HideHoverMarker();
-                        if (_lastHoveredPath != "") { _lastHoveredPath = ""; Hovered?.Invoke(""); }
+                        if (_lastHoveredPath != "") { _lastHoveredPath = ""; Hovered?.Invoke("", null); }
                     }
                 }
             }

@@ -78,6 +78,13 @@ namespace UnityGameTranslator.Core.UI.Panels
         // UI elements — shared
         private LabelHandle _hoveredPathLabel;
         private LabelHandle _selectedPathLabel;
+        // What the hovered / selected thing says under its path: the game's text, then what is on
+        // screen when it differs (user, 2026-10-22: « on devrait voir le texte pour être sûr qu'on a
+        // bien pris le bon élément »).
+        private LabelHandle _hoveredTextLabel;
+        private LabelHandle _hoveredShownLabel;
+        private LabelHandle _selectedTextLabel;
+        private LabelHandle _selectedShownLabel;
         private LabelHandle _statusLabel;
         private ButtonHandle _cancelBtn;
         private ButtonHandle _parentBtn;
@@ -88,6 +95,10 @@ namespace UnityGameTranslator.Core.UI.Panels
         private ButtonHandle _excludeThisBtn;
         private ButtonHandle _excludePatternBtn;
         private Host _exclusionActionsRow;
+
+        // UI elements — FontOverride mode
+        private ButtonHandle _addOverrideBtn;
+        private Host _fontOverrideActionsRow;
 
         // UI elements — BitmapReplace mode
         private ButtonHandle _exportOriginalBtn;
@@ -206,6 +217,12 @@ namespace UnityGameTranslator.Core.UI.Panels
             _cameraDropdown = _screen.Dropdown("CameraTarget");
             _hoveredPathLabel = _screen.Label("HoverPathValue");
             _selectedPathLabel = _screen.Label("SelectedPathValue");
+            _hoveredTextLabel = _screen.Label("HoverTextValue");
+            _hoveredShownLabel = _screen.Label("HoverShownValue");
+            _selectedTextLabel = _screen.Label("SelectedTextValue");
+            _selectedShownLabel = _screen.Label("SelectedShownValue");
+            _fontOverrideActionsRow = _screen.Host("FontOverrideActionRow");
+            _addOverrideBtn = _screen.Button("AddOverrideBtn");
             _imagePreview = _screen.Picture("ImagePreview");
             _slotStrip = _screen.Host("SlotStrip");
             _spriteInfoLabel = _screen.Label("SpriteInfo");
@@ -230,6 +247,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _selectedPathLabel.Say("(click to select)");
             _excludeThisBtn.Enabled = false;
             _excludePatternBtn.Enabled = false;
+            _addOverrideBtn.Enabled = false;
             _exportOriginalBtn.Enabled = false;
             _markReplaceBtn.Enabled = false;
             _cancelBtn.Enabled = false;
@@ -248,6 +266,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 case "cameraChanged": return OnCameraSelected;
                 case "excludeThis": return OnExcludeThisClicked;
                 case "excludePattern": return OnExcludePatternClicked;
+                case "addOverride": return OnAddOverrideClicked;
                 case "exportOriginal": return OnExportOriginalClicked;
                 case "markReplace": return OnMarkReplaceClicked;
                 case "clearSelection": return OnCancelClicked;
@@ -274,12 +293,13 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Update title
             if (_titleLabel != null)
                 _titleLabel.Say(isImage ? "Image Inspector"
-                    : isFontOverride ? "Font Override — Click on an element"
+                    : isFontOverride ? "Font Override — Select an element"
                     : isTextEdit ? "Text Editor — Click on text to edit"
                     : "Element Inspector");
 
             // Toggle action button visibility per mode
             _exclusionActionsRow.Visible = !isImage && !isFontOverride && !isTextEdit;
+            _fontOverrideActionsRow.Visible = isFontOverride;
             _imageActionsRow.Visible = isImage;
             _imagePreview.Visible = isImage;
             _spriteInfoLabel.Visible = isImage;
@@ -287,15 +307,62 @@ namespace UnityGameTranslator.Core.UI.Panels
             ForgetShares();
             _textEditIds.Clear();
 
-            // The picker already rebuilt its camera list in Start(); just mirror it into the dropdown.
+            // The picker already rebuilt its camera list in Start(); mirror it into the dropdown, on
+            // the camera this inspector picked through last when the scene holds it (RememberedCamera).
             _cameraDropdown.SetOptions(_picker.CameraNames);
-            _cameraDropdown.SelectedValue = "UI Only";
+            string remembered = RememberedCamera();
+            int rememberedAt = remembered != null ? Array.IndexOf(_picker.CameraNames, remembered) : -1;
+            _cameraDropdown.SelectedValue = rememberedAt > 0 ? remembered : "UI Only";
+            if (rememberedAt > 0) _picker.SelectCamera(rememberedAt);
+        }
+
+        /// <summary>
+        /// Which inspector this is, for what it remembers: each keeps its own camera (user,
+        /// 2026-10-22: « pas forcément la même pour chaque inspecteur »).
+        /// </summary>
+        private string ModeKey
+        {
+            get
+            {
+                switch (_currentMode)
+                {
+                    case InspectorMode.BitmapReplace: return "image";
+                    case InspectorMode.FontOverride: return "font";
+                    case InspectorMode.TextEdit: return "text";
+                    default: return "exclusion";
+                }
+            }
+        }
+
+        /// <summary>
+        /// The camera this inspector last picked through, as the Target list names it — kept in
+        /// config.json (window_preferences.inspectorCameras), like a window's place. Null: UI Only.
+        /// </summary>
+        private string RememberedCamera()
+        {
+            var cameras = TranslatorCore.Config.window_preferences?.inspectorCameras;
+            return cameras != null && cameras.TryGetValue(ModeKey, out string name) && !string.IsNullOrEmpty(name) ? name : null;
         }
 
         private void OnCameraSelected()
         {
             int index = Array.IndexOf(_picker.CameraNames, _cameraDropdown.SelectedValue);
             _picker.SelectCamera(index);
+
+            // Remembered for the next time this inspector opens — UI Only as no entry at all.
+            var prefs = TranslatorCore.Config.window_preferences;
+            if (prefs != null)
+            {
+                if (prefs.inspectorCameras == null) prefs.inspectorCameras = new Dictionary<string, string>();
+                string before = RememberedCamera();
+                string now = index > 0 ? _cameraDropdown.SelectedValue : null;
+                if (!string.Equals(before, now, StringComparison.Ordinal))
+                {
+                    if (now == null) prefs.inspectorCameras.Remove(ModeKey);
+                    else prefs.inspectorCameras[ModeKey] = now;
+                    TranslatorCore.SaveConfig();
+                }
+            }
 
             ClearSelection();
             ClearHover();
@@ -370,7 +437,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         }
 
         /// <summary>The hovered path changed (or was cleared: <paramref name="path"/> is empty).</summary>
-        private void OnHovered(string path)
+        private void OnHovered(string path, object hovered)
         {
             if (string.IsNullOrEmpty(path))
             {
@@ -383,6 +450,48 @@ namespace UnityGameTranslator.Core.UI.Panels
                 _hoveredPathLabel.Tone = Tone.Secondary;
             }
             _hoveredPathLabel.Italic = true;
+            ShowTexts(string.IsNullOrEmpty(path) ? null : hovered, selection: false, _hoveredTextLabel, _hoveredShownLabel);
+        }
+
+        /// <summary>The longest a text is shown under a path: enough to recognise a line, not a page.</summary>
+        private const int TextShownAtMost = 160;
+
+        /// <summary>
+        /// Under a path, what the thing says: the game's text, then what is on screen when it is
+        /// different (our translation) — in quotes, on one line, cut past <see cref="TextShownAtMost"/>.
+        /// A group that is not a text says how many it holds (a selection only: counting walks the
+        /// scene's texts, which a hover must not). Nothing at all in the image inspector, nor for a
+        /// thing that says nothing.
+        /// </summary>
+        private void ShowTexts(object owner, bool selection, LabelHandle sourceLabel, LabelHandle shownLabel)
+        {
+            string source = null, shown = null;
+            int under = 0;
+            if (owner != null && _currentMode != InspectorMode.BitmapReplace)
+                InspectorPicker.TextsOf(owner, selection, out source, out shown, out under);
+
+            if (!string.IsNullOrEmpty(source)) sourceLabel.Show("\u201C" + OneLine(source) + "\u201D");
+            else if (under > 0) sourceLabel.Say(under == 1 ? "Holds 1 text" : $"Holds {under} texts");
+            sourceLabel.Visible = !string.IsNullOrEmpty(source) || under > 0;
+
+            if (!string.IsNullOrEmpty(shown)) shownLabel.Show("\u2192 \u201C" + OneLine(shown) + "\u201D");
+            shownLabel.Visible = !string.IsNullOrEmpty(shown);
+        }
+
+        /// <summary>A text on one line — its line breaks and runs of spaces as one space — cut with an ellipsis.</summary>
+        private static string OneLine(string text)
+        {
+            var sb = new System.Text.StringBuilder(Math.Min(text.Length, TextShownAtMost + 1));
+            bool space = false;
+            foreach (char c in text.Trim())
+            {
+                if (TextShaping.UnicodeInfo.IsWhiteSpace(c)) { space = true; continue; }
+                if (space && sb.Length > 0) sb.Append(' ');
+                space = false;
+                if (sb.Length >= TextShownAtMost) { sb.Append("..."); break; }
+                sb.Append(c);
+            }
+            return sb.ToString();
         }
 
         /// <summary>
@@ -403,6 +512,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _selectedPathLabel.Show(target.Path);
             _selectedPathLabel.Tone = Tone.Plain;
             _selectedPathLabel.Italic = false;
+            ShowTexts(target.Owner, selection: true, _selectedTextLabel, _selectedShownLabel);
             _cancelBtn.Enabled = true;
             _parentBtn.Enabled = _picker.CanSelectParent;
 
@@ -414,17 +524,12 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
             else if (_currentMode == InspectorMode.FontOverride)
             {
-                // Font override mode: add override for parent path with /** to cover siblings
-                // e.g. "Canvas/Panel/Table/Text" → "path:Canvas/Panel/Table/**"
-                string overridePath = target.Path;
-                int lastSlash = overridePath.LastIndexOf('/');
-                if (lastSlash > 0)
-                    overridePath = overridePath.Substring(0, lastSlash) + "/**";
-                // Close inspector FIRST (the router puts the Main back if it was open)
-                SetActive(false);
-                // THEN open the parameters window (SetAsLastSibling puts it on top)
-                Intents.AddFontOverride("path:" + overridePath);
-                return;
+                // 🔴 **Selected, not acted on at the click** (2026-10-22, user: the override "does
+                // not apply only to the intended object"). The click used to close the window and
+                // write a rule for the PARENT with /** — every sibling and everything under them —
+                // before anyone could see what had been picked. Now the selection is shown with its
+                // text, Select Parent widens it on purpose, and Add Override takes it as it is.
+                _addOverrideBtn.Enabled = isCanvasOrWorld;
             }
             else if (_currentMode == InspectorMode.BitmapReplace)
             {
@@ -478,6 +583,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _hoveredPathLabel.Say("(move cursor over a UI element)");
             _hoveredPathLabel.Tone = Tone.Muted;
             _hoveredPathLabel.Italic = true;
+            ShowTexts(null, selection: false, _hoveredTextLabel, _hoveredShownLabel);
             _picker.ClearHover();
         }
 
@@ -491,10 +597,12 @@ namespace UnityGameTranslator.Core.UI.Panels
             _selectedPathLabel.Italic = true;
             _excludeThisBtn.Enabled = false;
             _excludePatternBtn.Enabled = false;
+            _addOverrideBtn.Enabled = false;
             _exportOriginalBtn.Enabled = false;
             _markReplaceBtn.Enabled = false;
             _cancelBtn.Enabled = false;
             _parentBtn.Enabled = false;
+            ShowTexts(null, selection: true, _selectedTextLabel, _selectedShownLabel);
             _spriteInfoLabel.Show("");
             _imagePreview.Clear();
             _slotStrip.Clear();
@@ -539,6 +647,20 @@ namespace UnityGameTranslator.Core.UI.Panels
             _statusLabel.Tone = Tone.Success;
 
             ClearSelection();
+        }
+
+        /// <summary>
+        /// A font override for the selection, exactly as selected — the element and what it holds
+        /// (an exact path covers its children). Opened in the Fonts tab, where it takes effect on Apply.
+        /// </summary>
+        private void OnAddOverrideClicked()
+        {
+            if (string.IsNullOrEmpty(_lastSelectedPath)) return;
+            string path = _lastSelectedPath;
+            // Close the inspector FIRST (the router puts the Main back if it was open), THEN open the
+            // parameters window, on top.
+            SetActive(false);
+            Intents.AddFontOverride("path:" + path);
         }
 
         private void OnCancelClicked()

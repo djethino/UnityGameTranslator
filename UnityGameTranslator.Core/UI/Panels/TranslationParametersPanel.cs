@@ -3463,7 +3463,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // re-trigger so a changed scale/enable/override lands everywhere (issue #21).
                 // ⚠ Spread over frames, like the Options Apply: same pass, same components, the
                 // tick's budget. See TranslatorScanner.SpreadRefreshAllText.
-                TranslatorScanner.SpreadRefreshAllText(reapplyAllScales: true);
+                TranslatorScanner.SpreadRefreshAllText(reapplyAllScales: true, rulesChanged: fontOverridesChanged);
 
                 // Update initial font settings
                 _initialFontSettings.Clear();

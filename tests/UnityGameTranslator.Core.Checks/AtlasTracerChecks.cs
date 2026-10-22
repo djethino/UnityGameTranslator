@@ -40,7 +40,42 @@ namespace UnityGameTranslator.Core.Checks
             foreach (var p in Math.Abs(a0) > Math.Abs(a1) ? contours[0] : contours[1]) { minX = Math.Min(minX, p.X); maxX = Math.Max(maxX, p.X); }
             check(Math.Abs(minX - 6) < 0.2 && Math.Abs(maxX - 26) < 0.2,
                 "a sample stands for its pixel's centre", $"outline from x {minX:F2} to {maxX:F2} (6 to 26): without the half pixel, every letter would slide by it");
-            check(contours[0].Count <= 8 && contours[1].Count <= 8, "a straight edge keeps only its corners", $"{contours[0].Count} and {contours[1].Count} points");
+            // Rebuilt finer, a corner is a few points rather than one (the spline turns it over a
+            // fraction of a pixel); a straight edge must still not come back as its pixels — a 20 px
+            // side traced four times finer is 80 steps before simplification.
+            check(contours[0].Count <= 24 && contours[1].Count <= 24, "a straight edge is not cut into its pixels",
+                $"{contours[0].Count} and {contours[1].Count} points, at most 6 per corner");
+            double strayest = 0;
+            foreach (var c in contours)
+                foreach (var p in c)
+                {
+                    double toOuter = Math.Min(Math.Min(Math.Abs(p.X - 6), Math.Abs(p.X - 26)), Math.Min(Math.Abs(p.Y - 6), Math.Abs(p.Y - 26)));
+                    double toInner = Math.Min(Math.Min(Math.Abs(p.X - 12), Math.Abs(p.X - 20)), Math.Min(Math.Abs(p.Y - 12), Math.Abs(p.Y - 20)));
+                    strayest = Math.Max(strayest, Math.Min(toOuter, toInner));
+                }
+            check(strayest < 0.25, "every traced point sits on the shape's edge", $"farthest {strayest:F2} px from it");
+
+            // A hairline: a bar 0.8 px tall whose centre runs exactly between two rows of samples, as
+            // an SDF with a 10 px spread — the thin strokes of a script font in a small atlas. Both
+            // rows read 0.495: straight from sample to sample, the stroke is not there at all; read
+            // as the smooth field it was sampled from, it is one stroke from end to end.
+            const int hw = 40, hh = 40;
+            var hair = new float[hw * hh];
+            for (int y = 0; y < hh; y++)
+                for (int x = 0; x < hw; x++)
+                {
+                    double cx = x + 0.5, cy = y + 0.5;
+                    double d = Math.Min(0.4 - Math.Abs(cy - 20.0), Math.Min(cx - 5, 35 - cx));
+                    hair[y * hw + x] = (float)Math.Max(0, Math.Min(1, 0.5 + d / 20));
+                }
+            var straight = AtlasTracer.Trace(hair, hw, hh, refine: 1);
+            var smooth = AtlasTracer.Trace(hair, hw, hh);
+            check(straight.Count == 0, "read straight from sample to sample, a hairline between two rows is lost",
+                $"{straight.Count} contour(s) — the case the refinement exists for");
+            double hairMin = double.MaxValue, hairMax = double.MinValue;
+            if (smooth.Count == 1) foreach (var p in smooth[0]) { hairMin = Math.Min(hairMin, p.X); hairMax = Math.Max(hairMax, p.X); }
+            check(smooth.Count == 1 && hairMin < 7 && hairMax > 33,
+                "rebuilt as a smooth field, the hairline comes back whole", $"{smooth.Count} contour(s), x from {hairMin:F1} to {hairMax:F1} (5 to 35): thin script fonts exported in pieces");
 
             // Written into a font from scratch, read back by the mod's own reader.
             var outline = new DerivedFontWriter.Outline { Advance = 600 };

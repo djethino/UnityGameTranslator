@@ -2113,7 +2113,7 @@ namespace UnityGameTranslator.Core
             // Components that came on screen while the walk had not reached them (ShownDuringSpread).
             public List<KeyValuePair<int, object>> ShownNow = new List<KeyValuePair<int, object>>();
             public int ShownNowDone;
-            public bool GlyphsChanged, ReapplyAllScales, GlobalRestore, TranslationsSwitched;
+            public bool GlyphsChanged, ReapplyAllScales, GlobalRestore, TranslationsSwitched, RulesChanged;
             public int Refreshed, Restored, Frames;
             public System.Diagnostics.Stopwatch Spent = new System.Diagnostics.Stopwatch();
         }
@@ -2134,8 +2134,12 @@ namespace UnityGameTranslator.Core
         /// Done at the END of the spread, so it lands with the last texts instead of ahead of them.
         /// </param>
         /// <returns>How many components the spread will walk: 0 is "no component known yet".</returns>
+        /// <param name="rulesChanged">
+        /// The font rules were just applied: every component walked is decided again against them
+        /// (TranslatorPatches.ApplyFontRulesInPlace), whether or not its text is rewritten.
+        /// </param>
         public static int SpreadRefreshAllText(bool reapplyAllScales = false, bool glyphsChanged = true,
-                                               bool translationsSwitched = false)
+                                               bool translationsSwitched = false, bool rulesChanged = false)
         {
             var pass = new SpreadPass
             {
@@ -2145,6 +2149,8 @@ namespace UnityGameTranslator.Core
                 // A pass replacing one that had a switch to finish carries that switch on: what was
                 // asked last is what the screen shows, but the switch still has to be completed.
                 TranslationsSwitched = translationsSwitched || (_spread != null && _spread.TranslationsSwitched),
+                // The same for the rules: a pass cut short would leave the rest on the answers dropped.
+                RulesChanged = rulesChanged || (_spread != null && _spread.RulesChanged),
             };
 
             // Same first act as the immediate pass, and for the same reason: on the way OUT, UI
@@ -2323,9 +2329,9 @@ namespace UnityGameTranslator.Core
                     if (t.ComponentType != null && t.ComponentType.IsInstanceOfType(obj)) { type = t; break; }
 
                 if (type != null)
-                    RefreshComponent(obj, type, pass.GlobalRestore, pass.GlyphsChanged, ref pass.Refreshed, ref pass.Restored);
+                    RefreshComponent(obj, type, pass.GlobalRestore, pass.GlyphsChanged, ref pass.Refreshed, ref pass.Restored, pass.RulesChanged);
                 else
-                    RefreshPatchRef(kvp, pass.GlyphsChanged, pass.GlobalRestore, ref pass.Refreshed, ref pass.Restored);
+                    RefreshPatchRef(kvp, pass.GlyphsChanged, pass.GlobalRestore, ref pass.Refreshed, ref pass.Restored, rulesChanged: pass.RulesChanged);
             }
             return true;
         }
@@ -2345,7 +2351,7 @@ namespace UnityGameTranslator.Core
                 if (id != -1 && !pass.Processed.Add(id)) continue;
 
                 RefreshComponent(item.Component, item.Type, pass.GlobalRestore, pass.GlyphsChanged,
-                                 ref pass.Refreshed, ref pass.Restored);
+                                 ref pass.Refreshed, ref pass.Restored, pass.RulesChanged);
             }
             return true;
         }
@@ -2360,7 +2366,7 @@ namespace UnityGameTranslator.Core
                 var kvp = pass.PatchRefs[pass.NextPatchRef++];
                 if (kvp.Value == null || pass.Processed.Contains(kvp.Key)) continue;
 
-                RefreshPatchRef(kvp, pass.GlyphsChanged, pass.GlobalRestore, ref pass.Refreshed, ref pass.Restored);
+                RefreshPatchRef(kvp, pass.GlyphsChanged, pass.GlobalRestore, ref pass.Refreshed, ref pass.Restored, rulesChanged: pass.RulesChanged);
             }
             return true;
         }
@@ -2392,7 +2398,8 @@ namespace UnityGameTranslator.Core
         /// game where one of the two ways leaves text behind.
         /// </summary>
         private static void RefreshPatchRef(KeyValuePair<int, object> kvp, bool glyphsChanged, bool globalRestore,
-                                            ref int refreshed, ref int restored, PatchRefProbe probe = null)
+                                            ref int refreshed, ref int restored, PatchRefProbe probe = null,
+                                            bool rulesChanged = false)
         {
             if (probe != null) probe.Seen++;
 
@@ -2491,6 +2498,8 @@ namespace UnityGameTranslator.Core
                 }
 
                 if (probe != null) probe.DirtyTicks += probe.Watch.ElapsedTicks - tMark;
+                // The font rules moved: this one is decided again now, not at its next text write.
+                if (rulesChanged) TranslatorPatches.ApplyFontRulesInPlace(kvp.Key, kvp.Value);
                 refreshed++;
             }
             // The game's setter and getter, and the mesh rebuild: one component that fails keeps
@@ -2537,7 +2546,8 @@ namespace UnityGameTranslator.Core
         /// </summary>
         private static long _phCast, _phFont, _phRead, _phApply;
 
-        private static void RefreshComponent(UnityEngine.Object obj, RegisteredTextType type, bool globalRestore, bool glyphsChanged, ref int refreshed, ref int restored)
+        private static void RefreshComponent(UnityEngine.Object obj, RegisteredTextType type, bool globalRestore, bool glyphsChanged, ref int refreshed, ref int restored,
+                                             bool rulesChanged = false)
         {
             long _t = System.Diagnostics.Stopwatch.GetTimestamp();
             try
@@ -2636,6 +2646,9 @@ namespace UnityGameTranslator.Core
                     // glyphs untouched and the text unchanged, there is no stale material to
                     // re-resolve, and this was the other half of the 621 ms.
                     if (glyphsChanged || rewrote) TypeHelper.SetAllDirty(component);
+                    // The font rules moved: decided again now, not at its next text write — a text
+                    // already translated is not rewritten above, so its setter never asks.
+                    if (rulesChanged) TranslatorPatches.ApplyFontRulesInPlace(instanceId, component);
                     refreshed++;
                 }
             }

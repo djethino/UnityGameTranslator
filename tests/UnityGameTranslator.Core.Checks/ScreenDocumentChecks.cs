@@ -232,11 +232,18 @@ namespace UnityGameTranslator.Core.Checks
                 "the merge's title and Apply both say Local", "the whole merge settles this machine's file and publishes nothing");
 
             var inspector = ScreenDocument.FromFile(Path.Combine(folder, "inspector.json"));
-            check(inspector.Acts.Keys.OrderBy(k => k).SequenceEqual(new[] { "cameraChanged", "clearSelection", "excludePattern", "excludeThis", "exportOriginal", "markReplace", "selectParent", "stop" })
+            check(inspector.Acts.Keys.OrderBy(k => k).SequenceEqual(new[] { "addOverride", "cameraChanged", "clearSelection", "excludePattern", "excludeThis", "exportOriginal", "markReplace", "selectParent", "stop" })
                   && inspector.Nodes["CameraTarget"].Word("options") == "code"
-                  && inspector.Nodes["ImageActionRow"].StartsVisible == false && inspector.Nodes["TextEditRow"].StartsVisible == false && inspector.Nodes["ExclusionActionRow"].StartsVisible,
-                "inspector.json: eight acts (Select Parent climbs from a refined text to its group), the camera list the code's, the exclusion row up and the two other modes' rows down",
-                "which row shows is the mode's, decided by the code");
+                  && inspector.Nodes["ImageActionRow"].StartsVisible == false && inspector.Nodes["TextEditRow"].StartsVisible == false
+                  && inspector.Nodes["FontOverrideActionRow"].StartsVisible == false && inspector.Nodes["ExclusionActionRow"].StartsVisible,
+                "inspector.json: nine acts (Select Parent climbs from a refined text to its group; Add Override takes the selection as it is), the camera list the code's, the exclusion row up and the three other modes' rows down",
+                "which row shows is the mode's, decided by the code; a font override is made from a selection, never at the click");
+            // What the hovered and the selected thing say, under their paths: hidden until there is a
+            // text, the game's in the source font and what is on screen in the target one.
+            check(new[] { "HoverTextValue", "SelectedTextValue" }.All(n => !inspector.Nodes[n].StartsVisible && inspector.Nodes[n].Word("gameText") == "source")
+                  && new[] { "HoverShownValue", "SelectedShownValue" }.All(n => !inspector.Nodes[n].StartsVisible && inspector.Nodes[n].Word("gameText") == "target"),
+                "inspector.json: the hovered and the selected thing's text under their paths, each side in its own font",
+                "the person sees the line they have before acting on it");
             check(inspector.Nodes["TextEditScroll"].Int("minHeight") == 120
                   && inspector.Nodes["TextEditScroll"].Int("preferredHeight") > 120
                   && inspector.Footer.Select(f => f.Name).SequenceEqual(new[] { "ParentBtn", "CancelBtn", "StopBtn" }),

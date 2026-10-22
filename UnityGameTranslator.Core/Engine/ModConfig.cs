@@ -832,5 +832,11 @@ namespace UnityGameTranslator.Core
         public Dictionary<string, WindowPreference> panels { get; set; } = new Dictionary<string, WindowPreference>();
         /// <summary>The one window's section bar folded to its pictures (true) or open on its words.</summary>
         public bool sectionBarFolded { get; set; }
+        /// <summary>
+        /// The camera each inspector last picked through, by inspector ("exclusion", "image", "font",
+        /// "text"), as its Target list names it. Absent: UI Only. A camera this scene does not hold
+        /// leaves the inspector on UI Only and the answer kept for the scene that has it.
+        /// </summary>
+        public Dictionary<string, string> inspectorCameras { get; set; } = new Dictionary<string, string>();
     }
 }

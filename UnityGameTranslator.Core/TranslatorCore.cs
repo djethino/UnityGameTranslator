@@ -1470,6 +1470,11 @@ namespace UnityGameTranslator.Core
 
             LogInfo($"[Settings] Replaced sections: {string.Join(", ", changed.ToArray())}");
 
+            // Rules taken from another translation: every component decided again against them now,
+            // as an Apply in the Fonts tab does — not at each one's next text write.
+            if (changed.Contains(SettingsSections.FontRules))
+                TranslatorScanner.SpreadRefreshAllText(reapplyAllScales: true, rulesChanged: true);
+
             // A screen holding unapplied choices about these sections compared them to what was
             // there before: they were made on settings that have just been replaced.
             Host?.TranslationSettingsReplaced();
@@ -3468,6 +3473,10 @@ namespace UnityGameTranslator.Core
                 };
             }
 
+            // The rules as they stood: a file carrying other rules has every component to decide
+            // again against them (ReapplyFontSettings).
+            string rulesBefore = BuildFontOverridesSection()?.ToString(Newtonsoft.Json.Formatting.None);
+
             // Restore all displayed text to originals BEFORE loading new cache,
             // so the scanner doesn't see stale translated text from the old JSON
             // and try to re-translate it
@@ -3494,7 +3503,8 @@ namespace UnityGameTranslator.Core
             // ⚠ Through InvalidateForSections and not AfterSettingsSectionsChanged: the second one
             // also records that this install changed something, which a reload has not.
             InvalidateForSections(SettingsSections.All, out _);
-            ReapplyFontSettings(fontsBefore);
+            ReapplyFontSettings(fontsBefore,
+                rulesMoved: !string.Equals(rulesBefore, BuildFontOverridesSection()?.ToString(Newtonsoft.Json.Formatting.None), StringComparison.Ordinal));
 
             // What is on screen still describes the file that was there a moment ago. Said HERE
             // and not by the callers: it was one of five, and the four that forgot included
@@ -3523,7 +3533,8 @@ namespace UnityGameTranslator.Core
         /// asked for. Its detected type is carried over — the other player may simply never have
         /// met that font.
         /// </summary>
-        private static void ReapplyFontSettings(Dictionary<string, FontSettings> before)
+        /// <param name="rulesMoved">The file just read carries other font rules than the one it replaced.</param>
+        private static void ReapplyFontSettings(Dictionary<string, FontSettings> before, bool rulesMoved)
         {
             if (before == null) return;
 
@@ -3570,8 +3581,9 @@ namespace UnityGameTranslator.Core
             }
 
             // Only when something actually moved: a reload whose fonts are the ones already in
-            // place has nothing to redraw, and this pass is the expensive one.
-            if (anyFontMoved) TranslatorScanner.SpreadRefreshAllText(reapplyAllScales: true);
+            // place has nothing to redraw, and this pass is the expensive one. Rules that moved are
+            // taken by every component during it, not at each one's next text write.
+            if (anyFontMoved || rulesMoved) TranslatorScanner.SpreadRefreshAllText(reapplyAllScales: true, rulesChanged: rulesMoved);
         }
 
         // ── Upstream ancestor (branches only) ────────────────────────────────

@@ -2393,6 +2393,58 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// One component decided again against the font rules as they stand now — the rule's size,
+        /// its replacement font (TextMesh Pro), then the size re-derived — without waiting for the
+        /// game to write its text again.
+        ///
+        /// 🔴 **Why** (2026-10-22, a rule added from the inspector showed on some texts only): a rule
+        /// was only ever taken by the text setter's prefix. An Apply drops every answer and every
+        /// rule size (TranslatorCore.SetFontOverrides), and the refresh that follows rewrites only
+        /// the texts not yet showing a translation — so a text already translated kept no rule at
+        /// all until the game wrote it again, and a new rule reached it then, or never. Called by
+        /// that refresh for every component it walks, when the rules are what changed.
+        ///
+        /// ⚠ The rule is asked with the GAME's text (a <c>text:</c> rule is written against it),
+        /// never the translation the component shows. ⚠ A UI.Text or TextMesh gets its rule's size
+        /// here and its rule's font at its next text write (TryApplyUnityClone has no way back to
+        /// the game's font to swap through).
+        /// </summary>
+        internal static void ApplyFontRulesInPlace(int id, object component)
+        {
+            if (component == null || (component is UnityEngine.Object gone && gone == null)) return;
+            if (!(component is Component comp) || TranslatorCore.IsOwnUI(comp)) return;
+            try
+            {
+                string fontName = FontNameOfTracked(id, component);
+                if (string.IsNullOrEmpty(fontName)) return;
+                string settingsName = FontManager.GetSettingsFontName(id, fontName);
+                if (!FontManager.IsTranslationEnabled(settingsName)) return;
+
+                FontOverrideRule rule = null;
+                if (TranslatorCore.FontOverrides.Count > 0)
+                {
+                    string gameText = TranslatorScanner.GetOriginalText(id) ?? TypeHelper.GetText(component);
+                    rule = TranslatorCore.FindFontOverride(id, TranslatorCore.GetGameObjectPath(comp.gameObject), settingsName, gameText);
+                }
+                FontManager.ApplyRuleScale(id, rule);
+
+                // The font: what the prefix would give it now. ApplyFontReplacement leaves a component
+                // already wearing it, and swaps through the game's font one wearing another rule's.
+                if (TypeHelper.TMP_TextType != null && TypeHelper.TMP_TextType.IsInstanceOfType(component)
+                    && FontManager.TmpReplacesPerComponent)
+                {
+                    string effective = rule != null && !string.IsNullOrEmpty(rule.replacement) ? rule.replacement : settingsName;
+                    FontManager.ApplyFontReplacement(component, TypeHelper.GetFont(component), effective);
+                }
+            }
+            // The game's component, re-dressed through its setters: one that fails keeps what it
+            // wears, the others follow the rules, and it is said.
+            catch (Exception ex) { Faults.Say("Patches.ApplyFontRulesInPlace", ex, component.GetType().Name); }
+
+            ReapplyScaleTo(id, component);
+        }
+
+        /// <summary>
         /// Scan all alternate TMP components and apply font replacements where needed.
         /// Only applies if: translation enabled for the font AND fallback configured.
         /// </summary>

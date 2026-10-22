@@ -2426,6 +2426,8 @@ namespace UnityGameTranslator.Core
         {
             if (component == null || (component is UnityEngine.Object gone && gone == null)) return;
             if (!(component is Component comp) || TranslatorCore.IsOwnUI(comp)) return;
+            // Translations off: the game as it ships, rules included — the guard every other door has.
+            if (!TranslatorCore.TranslationsActive) return;
             try
             {
                 string fontName = FontNameOfTracked(id, component);

@@ -1917,8 +1917,11 @@ namespace UnityGameTranslator.Core
             if (string.IsNullOrEmpty(fontName) || !TranslatorCore.TranslationsActive)
                 return 1.0f;
 
+            // 🔴 And a font whose translation is off keeps the game's size too (2026-10-22): the
+            // size setters and the re-fit after an Apply asked this without looking at the font's
+            // box, so its Size % still reached a text the mod was told to leave alone.
             if (TranslatorCore.FontSettingsMap.TryGetValue(fontName, out var settings))
-                return ComputeEffectiveScale(settings, fontName);
+                return settings.enabled ? ComputeEffectiveScale(settings, fontName) : 1.0f;
 
             return 1.0f;
         }
@@ -2002,6 +2005,8 @@ namespace UnityGameTranslator.Core
         public static float GetFontScale(string fontName, int componentId)
         {
             if (!TranslatorCore.TranslationsActive) return 1.0f;   // see GetFontScale(string)
+            // A font whose translation is off: its rules no more than its Size % (GetFontScale(string)).
+            if (!IsTranslationEnabled(fontName)) return 1.0f;
 
             // Per-component override (from font override rules) REPLACES the font-wide deliberate
             // size_percent for this component — but the design-scale baseline (native-size correction)

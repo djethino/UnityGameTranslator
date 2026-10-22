@@ -1243,70 +1243,6 @@ namespace UnityGameTranslator.Core
             TextTrace.Size(id, instance.GetType().Name, name, what, font, held, scale, original, firstSight, before, after, path);
         }
 
-        /// <summary>
-        /// The sizes the mod wrote, by what a copy of the component would carry — see
-        /// <see cref="InheritedSizes"/>: a template the game keeps in the scene and copies hands its
-        /// copies the size the mod put on it. Interface thread only, like every map here.
-        /// </summary>
-        private static readonly InheritedSizes _inheritedSizes = new InheritedSizes();
-
-        /// <summary>What a copy shares with its template: the font it holds and its object's name.</summary>
-        private static void CopyIdentity(object instance, out string font, out string name)
-        {
-            font = TypeHelper.GetFont(instance) is UnityEngine.Object f && f != null ? f.name : null;
-            name = instance is Component c && c != null ? c.gameObject.name : null;
-        }
-
-        /// <summary>The mod put <paramref name="written"/> on a component whose game size is <paramref name="original"/>.</summary>
-        private static void WroteSize(object instance, string what, float original, float written)
-        {
-            CopyIdentity(instance, out var font, out var name);
-            _inheritedSizes.Wrote(what, font, name, original, written);
-        }
-
-        /// <summary>
-        /// On first sight: whether <paramref name="held"/> is a size the mod wrote on the template this
-        /// component was copied from, and the game's size if so. Said in the text trace.
-        /// </summary>
-        private static bool InheritedOriginal(object instance, int id, string what, string fontName, float held, out float original)
-        {
-            CopyIdentity(instance, out var font, out var name);
-            if (!_inheritedSizes.TryOriginal(what, font, name, held, out original)) return false;
-            TraceSize(instance, id, "inherited-" + what, fontName, 1f, original, true, held, original);
-            return true;
-        }
-
-        /// <summary>Components whose size was looked at once for a template's (<see cref="CarriesInheritedSize"/>).</summary>
-        private static readonly HashSet<int> _inheritanceAsked = ForgetByNumber.Tracked(new HashSet<int>());
-
-        /// <summary>
-        /// For a component at scale 1 the mod has never sized: whether it is a copy carrying a size
-        /// the mod wrote on its template — the text elsewhere, in the same font, that no rule asks
-        /// for and that stayed small. When it is, its game size is recorded and ApplyFontScale puts
-        /// it back. Asked once per component, and only once the mod has sized anything at all.
-        /// </summary>
-        private static bool CarriesInheritedSize(object instance, int instanceId, string fontName)
-        {
-            if (!_inheritedSizes.Any || !_inheritanceAsked.Add(instanceId)) return false;
-
-            float held = TypeHelper.GetFontSize(instance);
-            if (held >= 0 && InheritedOriginal(instance, instanceId, "fontSize", fontName, held, out float gameSize))
-            {
-                _trueOriginalFontSizes[instanceId] = gameSize;
-                return true;
-            }
-
-            // An auto-sized TMP text: its fontSize is the fitter's, its ceiling is what was copied.
-            // ApplyTMPAutoSizeScale recognises it on its own first sight.
-            if (IsTMPAutoSizingEnabled(instance)
-                && instance.GetType().GetProperty("fontSizeMax", BindingFlags.Public | BindingFlags.Instance) is PropertyInfo maxProp)
-            {
-                CopyIdentity(instance, out var font, out var name);
-                return _inheritedSizes.TryOriginal("autoMax", font, name, Convert.ToSingle(maxProp.GetValue(instance, null)), out _);
-            }
-            return false;
-        }
-
         private static void ApplyGenericFontScale(object instance, RegisteredTextType typeInfo, string fontName)
         {
             if (IsOwnUIText(instance)) return;
@@ -1334,8 +1270,6 @@ namespace UnityGameTranslator.Core
                 // and said.
                 catch (Exception ex) { Faults.Say("Patches.ApplyGenericFontScale read", ex, typeInfo.Name); return; }
                 if (originalSize <= 0) return;
-                if (InheritedOriginal(instance, instanceId, "generic", fontName, originalSize, out float gameSize))
-                    originalSize = gameSize;
                 _originalFontSizes[instanceId] = originalSize;
             }
 
@@ -1367,7 +1301,6 @@ namespace UnityGameTranslator.Core
                 {
                     SetGenericFontSize(typeInfo, instance, scaledSize);
                     TraceSize(instance, instanceId, "generic", fontName, scale, originalSize, genericFirst, currentSize, scaledSize);
-                    WroteSize(instance, "generic", originalSize, scaledSize);
                 }
             }
             catch (Exception ex) { Faults.Say("Patches.ApplyGenericFontScale", ex, typeInfo.Name); }
@@ -3040,10 +2973,9 @@ namespace UnityGameTranslator.Core
             // (e.g., component was previously scaled by global, now overridden to 1.0)
             if (Math.Abs(scale - 1.0f) < 0.001f)
             {
-                if (instanceId == -1) return;
-                if (!_originalFontSizes.ContainsKey(instanceId) && !_trueOriginalFontSizes.ContainsKey(instanceId)
-                    && !_originalAutoSizeMax.ContainsKey(instanceId)
-                    && !CarriesInheritedSize(instance, instanceId, fontName))
+                if (instanceId == -1 ||
+                    (!_originalFontSizes.ContainsKey(instanceId) && !_trueOriginalFontSizes.ContainsKey(instanceId)
+                     && !_originalAutoSizeMax.ContainsKey(instanceId)))
                     return;
             }
             if (instanceId == -1) return;
@@ -3055,21 +2987,13 @@ namespace UnityGameTranslator.Core
                 if (!_trueOriginalFontSizes.TryGetValue(instanceId, out originalSize))
                 {
                     sizeFirst = true;
-                    float held = TypeHelper.GetFontSize(instance);
-                    if (held < 0) return;
+                    // Skip components that inherited the clone from template
+                    // Their fontSize is already scaled — re-scaling would double it
+                    if (_inheritedCloneComponents.Contains(instanceId))
+                        return;
 
-                    // 🔴 A copy of a template the mod sized carries OUR size (InheritedSizes): taken
-                    // for the game's, it was sized again, or kept small where no rule asked for it.
-                    if (InheritedOriginal(instance, instanceId, "fontSize", fontName, held, out float gameSize))
-                        originalSize = gameSize;
-                    else
-                    {
-                        // Skip components that inherited the clone from template
-                        // Their fontSize is already scaled — re-scaling would double it
-                        if (_inheritedCloneComponents.Contains(instanceId))
-                            return;
-                        originalSize = held;
-                    }
+                    originalSize = TypeHelper.GetFontSize(instance);
+                    if (originalSize < 0) return;
                     _trueOriginalFontSizes[instanceId] = originalSize;
                 }
                 _originalFontSizes[instanceId] = originalSize;
@@ -3111,7 +3035,6 @@ namespace UnityGameTranslator.Core
                 TypeHelper.SetFontSize(instance, targetSize);
                 _bypassFontSizePrefix = false;
                 TraceSize(instance, instanceId, "fontSize", fontName, scale, originalSize, sizeFirst, currentSize, targetSize);
-                WroteSize(instance, "fontSize", originalSize, targetSize);
             }
 
             // Also scale bestFit maxSize (Mono only — IL2CPP causes atlas corruption)
@@ -3174,8 +3097,6 @@ namespace UnityGameTranslator.Core
                     maxFirst = true;
                     origMax = Convert.ToSingle(maxProp.GetValue(instance, null));
                     if (origMax <= 0) return;
-                    if (InheritedOriginal(instance, instanceId, "autoMax", null, origMax, out float gameMax))
-                        origMax = gameMax;
                     _originalAutoSizeMax[instanceId] = origMax;
                 }
                 bool boundsChanged = false;
@@ -3186,7 +3107,6 @@ namespace UnityGameTranslator.Core
                     maxProp.SetValue(instance, targetMax, null);
                     boundsChanged = true;
                     TraceSize(instance, instanceId, "autoMax", null, scale, origMax, maxFirst, currentMax, targetMax);
-                    WroteSize(instance, "autoMax", origMax, targetMax);
                 }
 
                 var minProp = type.GetProperty("fontSizeMin", BindingFlags.Public | BindingFlags.Instance);
@@ -3197,8 +3117,6 @@ namespace UnityGameTranslator.Core
                     {
                         minFirst = true;
                         origMin = Convert.ToSingle(minProp.GetValue(instance, null));
-                        if (InheritedOriginal(instance, instanceId, "autoMin", null, origMin, out float gameMin))
-                            origMin = gameMin;
                         _originalAutoSizeMin[instanceId] = origMin;
                     }
                     float targetMin = origMin * scale;
@@ -3208,7 +3126,6 @@ namespace UnityGameTranslator.Core
                         minProp.SetValue(instance, targetMin, null);
                         boundsChanged = true;
                         TraceSize(instance, instanceId, "autoMin", null, scale, origMin, minFirst, currentMin, targetMin);
-                        WroteSize(instance, "autoMin", origMin, targetMin);
                     }
                 }
 
@@ -3267,9 +3184,7 @@ namespace UnityGameTranslator.Core
                 // Store original maxSize on first encounter
                 bool bestFirst = !_originalMaxFontSizes.ContainsKey(instanceId);
                 if (bestFirst)
-                    _originalMaxFontSizes[instanceId] =
-                        InheritedOriginal(instance, instanceId, "bestFitMax", null, currentMax, out float gameMax)
-                            ? (int)Math.Round(gameMax) : currentMax;
+                    _originalMaxFontSizes[instanceId] = currentMax;
 
                 int originalMax = _originalMaxFontSizes[instanceId];
                 int targetMax = (int)(originalMax * scale);
@@ -3279,7 +3194,6 @@ namespace UnityGameTranslator.Core
                 {
                     maxSizeProp.SetValue(instance, targetMax, null);
                     TraceSize(instance, instanceId, "bestFitMax", null, scale, originalMax, bestFirst, currentMax, targetMax);
-                    WroteSize(instance, "bestFitMax", originalMax, targetMax);
                 }
             }
             // The game component's best-fit properties, read and written through its own code: a

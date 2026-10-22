@@ -201,7 +201,6 @@
     -->
     <Compile Include="../../UnityGameTranslator.Core/Engine/LoadedFile.cs" />
     <Compile Include="../../UnityGameTranslator.Core/Engine/DamagedFiles.cs" />
-    <Compile Include="../../UnityGameTranslator.Core/Engine/InheritedSizes.cs" />
     <!--
       What the worker does with one item between the dequeue and the verdict — cache, capture,
       refusal, the backend, a rate limit, an invented token, a stale answer, the filing, the

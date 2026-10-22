@@ -5568,11 +5568,30 @@ namespace UnityGameTranslator.Core.UI
         /// </summary>
         /// <param name="translation">The translation to download</param>
         /// <param name="onComplete">Callback with (success, message)</param>
+        /// <summary>
+        /// Why this translation cannot be downloaded by this mod, or null when it can: its file is
+        /// written in a format past what this mod reads (common/TranslationFormat). The one answer
+        /// every Download button and the door below read, so the button says before the click what
+        /// the door would refuse.
+        /// </summary>
+        internal static string WhyNotDownload(TranslationInfo translation)
+            => translation != null && !TranslationFormat.Reads(TranslationFormat.Current, translation.FormatVersion)
+                ? TranslationFormat.UpdateTheMod
+                : null;
+
         public static async Task DownloadTranslation(TranslationInfo translation, Action<bool, string> onComplete = null)
         {
             if (translation == null)
             {
                 onComplete?.Invoke(false, "No translation selected");
+                return;
+            }
+
+            // A file this mod would read wrong and write back damaged (common/TranslationFormat).
+            string tooNew = WhyNotDownload(translation);
+            if (tooNew != null)
+            {
+                onComplete?.Invoke(false, tooNew);
                 return;
             }
 

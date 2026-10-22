@@ -111,6 +111,12 @@ namespace UnityGameTranslator.Core
         /// signed in, or the server predates the field.</summary>
         public int? UserVote { get; set; }
         public int DownloadCount { get; set; }
+
+        /// <summary>
+        /// The format of its file (common/TranslationFormat) — 1 from a site older than the field,
+        /// which is what every file it holds is.
+        /// </summary>
+        public int FormatVersion { get; set; } = 1;
         public int HumanCount { get; set; }
         public int ValidatedCount { get; set; }
         public int AiCount { get; set; }

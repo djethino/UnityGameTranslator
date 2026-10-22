@@ -386,6 +386,7 @@ namespace UnityGameTranslator.Core.Checks
                 d[$"Translations.{i}.Status"] = t.Status;
                 d[$"Translations.{i}.Type"] = t.Type;
                 d[$"Translations.{i}.GameCoverage"] = t.GameCoverage;
+                d[$"Translations.{i}.FormatVersion"] = t.FormatVersion;
             }
         }
 

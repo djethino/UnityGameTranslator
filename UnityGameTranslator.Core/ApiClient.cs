@@ -330,6 +330,10 @@ namespace UnityGameTranslator.Core
 
             client.DefaultRequestHeaders.Add("User-Agent", UserAgent());
             client.DefaultRequestHeaders.Add("Accept", "application/json");
+            // 🔴 The format of translation file this mod reads (common/TranslationFormat), on every
+            // call: the site lists, announces and serves nothing past it. A mod that says nothing is
+            // taken to read the format 1 — every release before this one.
+            client.DefaultRequestHeaders.Add(TranslationFormat.Header, TranslationFormat.Current.ToString(System.Globalization.CultureInfo.InvariantCulture));
 
             // Dedicated SSE client: no timeout (long-lived streams), no gzip (breaks streaming)
             var sseHandler = new HttpClientHandler
@@ -356,6 +360,8 @@ namespace UnityGameTranslator.Core
             sseClient = new HttpClient(new AuthRejectionHandler(sseHandler));
             sseClient.Timeout = System.Threading.Timeout.InfiniteTimeSpan;
             sseClient.DefaultRequestHeaders.Add("User-Agent", UserAgent());
+            // The sync stream's relay asks the site for this mod (sse-server): it passes this on.
+            sseClient.DefaultRequestHeaders.Add(TranslationFormat.Header, TranslationFormat.Current.ToString(System.Globalization.CultureInfo.InvariantCulture));
 
             // No token, no Accept: a plain image fetch. Same per-step limit as the site's calls,
             // and the same ceiling on what is read.

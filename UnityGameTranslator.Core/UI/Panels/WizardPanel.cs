@@ -544,11 +544,21 @@ namespace UnityGameTranslator.Core.UI.Panels
             _comparisonLabel.Tone = Tone.Plain;
             _actionButtonsRow.Visible = true;
             _downloadBtn.Visible = true;
+
+            // A file made for a newer UGT Mod: Download closed, and the reason where the eye is.
+            string tooNew = TranslatorUIManager.WhyNotDownload(selected);
+            _downloadBtn.Enabled = tooNew == null;
+            if (tooNew != null)
+            {
+                _comparisonLabel.Show(tooNew);
+                _comparisonLabel.Tone = Tone.Warning;
+            }
         }
 
         private void SetButtonsInteractable(bool interactable)
         {
-            _downloadBtn.Enabled = interactable;
+            // Closed on a file made for a newer UGT Mod (TranslatorUIManager.WhyNotDownload).
+            _downloadBtn.Enabled = interactable && TranslatorUIManager.WhyNotDownload(_translationList?.SelectedTranslation) == null;
         }
 
         public void UpdateAccountStatus()

@@ -654,6 +654,14 @@ namespace UnityGameTranslator.Core
         public static bool TranslationFileUnreadable { get; private set; }
 
         /// <summary>
+        /// The translation file on disk is written in a format past what this mod reads
+        /// (common/TranslationFormat) — made by a newer UGT Mod. It is neither loaded nor ever
+        /// written: loaded, its placeholders would be read wrong, and the next save would write it
+        /// back in this mod's format, damaged without a word. Said once, at the load.
+        /// </summary>
+        public static bool TranslationFileTooNew { get; private set; }
+
+        /// <summary>
         /// The languages in force for this translation, resolved from the server, then the file,
         /// then the configuration. Null on either side when nobody has settled it yet.
         /// </summary>
@@ -2065,8 +2073,9 @@ namespace UnityGameTranslator.Core
         // Marker for skipped translations (text not in expected source language)
         private const string SkipTranslationMarker = Answers.SkipMarker;
 
-        // Current engine version for migration support
-        private const int CurrentEngineVersion = 1;
+        // The format this mod writes and migrates to — the socle's, so the mod, the Manager and the
+        // site agree on it (common/TranslationFormat).
+        private const int CurrentEngineVersion = TranslationFormat.Current;
 
 
 
@@ -3010,6 +3019,7 @@ namespace UnityGameTranslator.Core
             // four ForkedFrom* read through it and start null.
 
             TranslationFileUnreadable = false;
+            TranslationFileTooNew = false;
 
             if (!File.Exists(CachePath))
             {
@@ -3048,6 +3058,22 @@ namespace UnityGameTranslator.Core
                 var file = LoadedFile.Read(parsed);
 
                 int engineVersion = file.EngineVersion;
+
+                // 🔴 **A newer UGT Mod's file is left exactly as it is** (2026-10-22). Read on, its
+                // placeholders would be taken for text, and the next save would write it back as
+                // this mod's format: the file damaged, and nothing said. The game runs as with no
+                // file, and saving is refused while it is there (PrepareSave).
+                if (!TranslationFormat.Reads(CurrentEngineVersion, TranslationFormat.OfFile(engineVersion)))
+                {
+                    TranslationFileTooNew = true;
+                    TranslationCache = new Dictionary<string, TranslationEntry>();
+                    _readback.ClearGame();
+                    FileUuid = file.Uuid;
+                    Adapter.LogWarning($"[LoadCache] translations.json is format {engineVersion}; this mod reads up to {CurrentEngineVersion}. "
+                                       + "It is left untouched and not used. " + TranslationFormat.UpdateTheMod);
+                    Host?.Warn(TranslationFormat.UpdateTheMod);
+                    return;
+                }
                 // Identity and stamps, every field, as the file states them.
                 Store.TakeIdentity(file);
                 // Kept only when the file says something: a file written with "auto" in it — an
@@ -7064,6 +7090,9 @@ namespace UnityGameTranslator.Core
         {
             try
             {
+                // A newer mod's file is never written over (TranslationFileTooNew).
+                if (TranslationFileTooNew) return null;
+
                 // Counted here rather than trusted, so what the file says is true of the file.
                 //
                 // ⚠ _local_changes was going stale on disk, and it took an outside reader to

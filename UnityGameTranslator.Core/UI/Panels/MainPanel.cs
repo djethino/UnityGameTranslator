@@ -1706,7 +1706,10 @@ namespace UnityGameTranslator.Core.UI.Panels
             _downloadBtn.Retarget(
                 EditScope.SideAfter(onThisMachine: true,
                                     yourPublishedCopy: PublishedByUs(_translationList?.SelectedTranslation)));
-            _downloadBtn.Enabled = interactable;
+            // Closed before the click on a file made for a newer UGT Mod, and says so where the eye is.
+            string tooNew = TranslatorUIManager.WhyNotDownload(_translationList?.SelectedTranslation);
+            _downloadBtn.Enabled = interactable && tooNew == null;
+            if (tooNew != null && interactable) _translationList.SetStatus(tooNew, Tone.Warning);
         }
 
         /// <summary>

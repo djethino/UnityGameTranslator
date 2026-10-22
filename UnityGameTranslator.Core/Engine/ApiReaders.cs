@@ -231,6 +231,8 @@ namespace UnityGameTranslator.Core
                 // Null for anonymous callers and for servers older than this field.
                 UserVote = t["user_vote"]?.Value<int?>(),
                 DownloadCount = t["download_count"]?.Value<int>() ?? 0,
+                // Additive: absent from a site older than the field, whose files are all format 1.
+                FormatVersion = TranslationFormat.OfFile(t["format_version"]?.ToObject<int?>()),
                 HumanCount = t["human_count"]?.Value<int>() ?? 0,
                 ValidatedCount = t["validated_count"]?.Value<int>() ?? 0,
                 AiCount = t["ai_count"]?.Value<int>() ?? 0,

@@ -599,6 +599,9 @@ namespace UnityGameTranslator.Core.UI.Components
                 if (badge.Kind == BadgeKind.Publication || badge.Kind == BadgeKind.Votes) continue;
                 chips.Add(badge);
             }
+            // Its file's format, always (user, 2026-10-22): red when this mod cannot read it, which
+            // is also when Download is closed (TranslatorUIManager.WhyNotDownload).
+            chips.Add(Badges.Format(translation.FormatVersion, TranslationFormat.Current));
             if (chips.Count > 0)
             {
                 // On the row's own surface: the chips take the step above it (BadgeStrip.SurfaceOn).

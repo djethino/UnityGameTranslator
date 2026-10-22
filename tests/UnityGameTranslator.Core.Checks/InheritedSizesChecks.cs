@@ -43,21 +43,6 @@ namespace UnityGameTranslator.Core.Checks
                 "two game sizes giving the same written size leave the copy as it is",
                 "30 or 40: guessing would resize a text the wrong way");
 
-            // A text on the ROOT of what was copied: Unity appends « (Clone) » to that name only.
-            sizes.Wrote("fontSize", "Font A", "Row", 20f, 16f);
-            check(sizes.TryOriginal("fontSize", "Font A", "Row(Clone)", 16f, out float rowGame) && Math.Abs(rowGame - 20f) < 0.01f,
-                "a text on the root of a copy, renamed « (Clone) » by Unity, is recognised",
-                $"got {rowGame}: the root is the one object a copy does not keep the name of");
-            check(sizes.TryOriginal("fontSize", "Font A", "Row(Clone)(Clone)", 16f, out _),
-                "a copy of a copy too", "Unity appends the suffix once per copy");
-            sizes.Wrote("fontSize", "Font A", "Cell(Clone)", 18f, 9f);
-            check(sizes.TryOriginal("fontSize", "Font A", "Cell", 9f, out _) && sizes.TryOriginal("fontSize", "Font A", "Cell(Clone)", 9f, out _),
-                "a template that is itself a copy matches its copies", "the suffix is taken off both sides");
-            check(InheritedSizes.CopyName("Security(Clone)001") == "Security(Clone)001" && InheritedSizes.CopyName("(Clone)") == "",
-                "only Unity's own suffix is taken off", "a name the game changed after copying keeps what the game made of it");
-            check(!sizes.TryOriginal("fontSize", "Font A", "(Clone)", 16f, out _),
-                "a name that is nothing but the suffix names nothing", "an empty name would match every other empty one");
-
             check(!sizes.TryOriginal("fontSize", null, "PASSWORD", 24f, out _) && !sizes.TryOriginal("fontSize", "Font A", "", 24f, out _),
                 "without a font or a name, nothing is recognised", "the three together are what make a copy");
         }

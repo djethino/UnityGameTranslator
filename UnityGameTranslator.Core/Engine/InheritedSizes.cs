@@ -14,7 +14,7 @@ namespace UnityGameTranslator.Core
     /// size when nothing matched it at all — a text elsewhere, in the same font, left small.
     ///
     /// ⚠ **How a copy is recognised: three things together.** The same font, the same object name (a
-    /// copy keeps its children's names; its root gets Unity's « (Clone) », see <see cref="CopyName"/>), and a size the mod itself wrote on
+    /// copy keeps its children's names; only its root is renamed), and a size the mod itself wrote on
     /// such a component. A component of the game's own with that name, that font and, natively,
     /// exactly that size would be taken for a copy — which is why two different game sizes leading to
     /// the same written size make the answer ambiguous, and an ambiguous answer is no answer.
@@ -56,23 +56,6 @@ namespace UnityGameTranslator.Core
 
         private static bool Usable(string font, string name) => !string.IsNullOrEmpty(font) && !string.IsNullOrEmpty(name);
 
-        private const string CloneSuffix = "(Clone)";
-
-        /// <summary>
-        /// The name a copy shares with its template. Unity renames the ROOT of what it copies by
-        /// appending <c>(Clone)</c> — once per copy, so a copy of a copy reads <c>(Clone)(Clone)</c> —
-        /// and a text sitting on that root would otherwise never match its template. Taken off both
-        /// sides, so a template that is itself a copy matches too. A root the GAME renames afterwards
-        /// is out of reach: nothing of the template is left in its name.
-        /// </summary>
-        internal static string CopyName(string name)
-        {
-            if (name == null) return null;
-            while (name.EndsWith(CloneSuffix, StringComparison.Ordinal))
-                name = name.Substring(0, name.Length - CloneSuffix.Length).TrimEnd();
-            return name;
-        }
-
         /// <summary>
         /// The mod put <paramref name="written"/> on a component whose own size is
         /// <paramref name="original"/>. Nothing is remembered when the two are the same: a copy then
@@ -80,7 +63,6 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public void Wrote(string what, string font, string name, float original, float written)
         {
-            name = CopyName(name);
             if (!Usable(font, name) || Tenths(original) == Tenths(written)) return;
             var key = new Key { What = what, Font = font, Name = name, Written = Tenths(written) };
             if (_originals.TryGetValue(key, out var known) && (float.IsNaN(known) || Tenths(known) != Tenths(original)))
@@ -97,7 +79,6 @@ namespace UnityGameTranslator.Core
         public bool TryOriginal(string what, string font, string name, float current, out float original)
         {
             original = 0f;
-            name = CopyName(name);
             if (!Usable(font, name)) return false;
             var key = new Key { What = what, Font = font, Name = name, Written = Tenths(current) };
             if (!_originals.TryGetValue(key, out var known) || float.IsNaN(known)) return false;

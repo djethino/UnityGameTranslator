@@ -1398,14 +1398,55 @@ namespace UnityGameTranslator.Core
             return family as string ?? family?.ToString();
         }
 
+        /// <summary>
+        /// The loaded TextMesh Pro asset of this name — the one holding the most letters when several
+        /// share it.
+        ///
+        /// 🔴 **Not the first one met** (2026-10-22, Extract of a game font refused « it holds no
+        /// letter » in a session where an earlier one had traced 97 from it; the game's data holds a
+        /// single asset of that name): a copy made at run time carries the name and not necessarily
+        /// the letters, and the first met may be it. Not proven to be the cause — when several are
+        /// met, which ones is said once per name and set, and AtlasFontExport says what the one
+        /// taken holds.
+        /// </summary>
         private static object LoadedTmpFontNamed(string name)
         {
             // An asset, not a scene object: the asset scan (the scene one misses it on Mono).
             var loaded = TypeHelper.FindAllAssetsOfType(TypeHelper.TMP_FontAssetType);
-            if (loaded != null)
-                foreach (var asset in loaded)
-                    if (TypeHelper.FontNameOf(asset) == name) return TypeHelper.Il2CppCast(asset, TypeHelper.TMP_FontAssetType);
-            return null;
+            if (loaded == null) return null;
+            object best = null;
+            int bestLetters = -1, met = 0;
+            var counts = new List<int>();
+            foreach (var asset in loaded)
+            {
+                if (TypeHelper.FontNameOf(asset) != name) continue;
+                var typed = TypeHelper.Il2CppCast(asset, TypeHelper.TMP_FontAssetType);
+                if (typed == null) continue;
+                met++;
+                int letters = LetterCountOf(typed);
+                counts.Add(letters);
+                if (letters > bestLetters) { best = typed; bestLetters = letters; }
+            }
+            if (met > 1 && DiagnosticOnce.First("tmp-assets-named", name + "\u0001" + string.Join(",", counts)))
+                TranslatorCore.LogInfo($"[FontManager] '{name}': {met} loaded TextMesh Pro assets carry this name, holding {string.Join(", ", counts)} letter(s) — the fullest one is taken");
+            return best;
+        }
+
+        /// <summary>How many letters a TextMesh Pro asset's own table holds (characterTable; TMProOld: m_glyphInfoList); -1 unreadable.</summary>
+        private static int LetterCountOf(object asset)
+        {
+            try
+            {
+                const BindingFlags any = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
+                var t = asset.GetType();
+                var table = t.GetProperty("characterTable", BindingFlags.Public | BindingFlags.Instance)?.GetValue(asset, null)
+                            ?? t.GetField("m_glyphInfoList", any)?.GetValue(asset)
+                            ?? t.GetProperty("m_glyphInfoList", any)?.GetValue(asset, null);
+                var count = table?.GetType().GetProperty("Count", BindingFlags.Public | BindingFlags.Instance);
+                return count != null ? Convert.ToInt32(count.GetValue(table, null)) : -1;
+            }
+            // Read only to choose between assets of one name: an unreadable one ranks last, said.
+            catch (Exception ex) { Faults.Say("FontManager.LetterCountOf", ex.InnerException ?? ex); return -1; }
         }
 
         public static void RegisterFontObject(object fontObj, string fontType)

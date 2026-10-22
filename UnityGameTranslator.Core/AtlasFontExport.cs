@@ -72,12 +72,15 @@ namespace UnityGameTranslator.Core
             var sizes = new Dictionary<int, Vector2Int>();
             var textures = type.GetProperty("atlasTextures", Pub)?.GetValue(asset, null);
             int padding = shape.Padding;
+            int listed = 0, noGlyph = 0, noCode = 0;
             foreach (var character in Items(characters))
             {
-                if (character == null) continue;
+                listed++;
+                if (character == null) { noGlyph++; continue; }
                 int unicode = (int)Number(character, "unicode");
                 var glyph = Get(character, "glyph");
-                if (glyph == null || unicode <= 0) continue;
+                if (glyph == null) { noGlyph++; continue; }
+                if (unicode <= 0) { noCode++; continue; }
                 var metrics = Get(glyph, "metrics");
                 var rect = Get(glyph, "glyphRect");
                 int atlasIndex = (int)Number(glyph, "atlasIndex");
@@ -118,8 +121,23 @@ namespace UnityGameTranslator.Core
                 }
                 captured.Letters.Add(letter);
             }
-            if (captured.Letters.Count == 0) { refusal = "it holds no letter"; return null; }
+            if (captured.Letters.Count == 0)
+            {
+                // What it holds, so the log says which of the ways to have no letter this was: an
+                // empty table (a font filled as texts are drawn, or a copy), or entries with nothing in them.
+                refusal = $"it holds no letter (character table: {listed} entr{(listed == 1 ? "y" : "ies")}, "
+                          + $"{noGlyph} with no glyph, {noCode} with no code; glyph table: {Count(type.GetProperty("glyphTable", Pub)?.GetValue(asset, null))}; "
+                          + $"filled: {Get(asset, "atlasPopulationMode") ?? "?"}; atlas textures: {Count(textures)})";
+                return null;
+            }
             return captured;
+        }
+
+        /// <summary>How many items a list holds (a managed List, or IL2CPP's); "?" unreadable.</summary>
+        private static string Count(object list)
+        {
+            var count = list?.GetType().GetProperty("Count", Pub) ?? list?.GetType().GetProperty("Length", Pub);
+            return count != null ? Convert.ToString(count.GetValue(list, null)) : "?";
         }
 
         /// <summary>

@@ -125,6 +125,13 @@ namespace UnityGameTranslator.Core.UI.Panels
             _backBtn = _screen.Button("BackBtn");
             _uploadBtn = _screen.Button("UploadBtn");
             _cancelBtn = _screen.Button("CancelBtn");
+
+            // The amber bar on what Apply would send, and Apply's N, from one list (PendingMarks) —
+            // as in every settings window. Marked only while Edit details is the screen's act.
+            Pending.Track(_notesInput, () => NotesChanged(out _));
+            Pending.Track(_resourcesUrlInput, () => UrlChanged(out _));
+            Pending.Track(_statusToggle, () => StatusChanged(out _));
+            Pending.Track(_acceptBranchesToggle, () => AcceptsChanged(out _));
         }
 
         private ButtonHandle _cancelBtn;
@@ -137,30 +144,43 @@ namespace UnityGameTranslator.Core.UI.Panels
         private bool? _detailsAccepts;
         private bool _detailsReady;
 
-        /// <summary>What the details screen would change, field by field — the N of Apply (N).</summary>
-        private int CountDetailChanges(out string notes, out string url, out string status, out bool? accepts)
+        /// <summary>Edit details is the act, and the published copy has been described to compare with.</summary>
+        private bool ComparingDetails => _detailsOnly && _detailsReady;
+
+        // One test per field — what PendingMarks draws and counts, and what Apply sends.
+        private bool NotesChanged(out string notes)
         {
-            notes = url = status = null;
-            accepts = null;
-            if (!_detailsReady) return 0;
-            int n = 0;
-            string typedNotes = _notesInput?.Text ?? "";
-            if (!string.Equals(typedNotes, _detailsNotes ?? "", StringComparison.Ordinal)) { notes = typedNotes; n++; }
-            string typedUrl = _resourcesUrlInput?.Text?.Trim() ?? "";
-            if (!string.Equals(typedUrl, _detailsUrl ?? "", StringComparison.Ordinal)) { url = typedUrl; n++; }
-            // The two declarations are a Main's: hidden from a branch, and never counted there.
-            if (_statusToggle != null && _statusToggle.Visible && _statusToggle.IsOn != _detailsComplete)
-            {
-                status = _statusToggle.IsOn ? "complete" : "in_progress";
-                n++;
-            }
-            if (_acceptBranchesToggle != null && _acceptBranchesToggle.Visible && _detailsAccepts.HasValue
-                && _acceptBranchesToggle.IsOn != _detailsAccepts.Value)
-            {
-                accepts = _acceptBranchesToggle.IsOn;
-                n++;
-            }
-            return n;
+            notes = _notesInput?.Text ?? "";
+            return ComparingDetails && !string.Equals(notes, _detailsNotes ?? "", StringComparison.Ordinal);
+        }
+
+        private bool UrlChanged(out string url)
+        {
+            url = _resourcesUrlInput?.Text?.Trim() ?? "";
+            return ComparingDetails && !string.Equals(url, _detailsUrl ?? "", StringComparison.Ordinal);
+        }
+
+        // The two declarations are a Main's: hidden from a branch, and never counted there.
+        private bool StatusChanged(out string status)
+        {
+            status = _statusToggle != null && _statusToggle.IsOn ? "complete" : "in_progress";
+            return ComparingDetails && _statusToggle != null && _statusToggle.Visible && _statusToggle.IsOn != _detailsComplete;
+        }
+
+        private bool AcceptsChanged(out bool accepts)
+        {
+            accepts = _acceptBranchesToggle != null && _acceptBranchesToggle.IsOn;
+            return ComparingDetails && _acceptBranchesToggle != null && _acceptBranchesToggle.Visible
+                   && _detailsAccepts.HasValue && accepts != _detailsAccepts.Value;
+        }
+
+        /// <summary>What Apply sends: each field that changed, null for the others (the route writes only what it is given).</summary>
+        private void DetailChanges(out string notes, out string url, out string status, out bool? accepts)
+        {
+            notes = NotesChanged(out var n) ? n : null;
+            url = UrlChanged(out var u) ? u : null;
+            status = StatusChanged(out var st) ? st : null;
+            accepts = AcceptsChanged(out var a) ? a : (bool?)null;
         }
 
         /// <summary>
@@ -172,8 +192,10 @@ namespace UnityGameTranslator.Core.UI.Panels
         public override void Update()
         {
             base.Update();
-            if (!Enabled || !_detailsOnly || !_detailsReady || _isUploading) return;
-            int changes = CountDetailChanges(out _, out _, out _, out _);
+            if (!Enabled) return;
+            // Every mode: the marks follow ComparingDetails, and fall off when the screen is an upload.
+            int changes = Pending.Refresh();
+            if (!ComparingDetails || _isUploading) return;
             _uploadBtn.Label = changes > 0 ? $"Apply ({changes})" : "Close";
             if (_cancelBtn != null) _cancelBtn.Visible = changes > 0;
         }
@@ -200,7 +222,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             try
             {
                 // Edit details with nothing changed: the button reads Close, and closes.
-                if (_detailsOnly && _detailsReady && CountDetailChanges(out _, out _, out _, out _) == 0)
+                if (ComparingDetails && Pending.Refresh() == 0)
                 {
                     SetActive(false);
                     return;
@@ -1129,7 +1151,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             _status.Say("Saving...", Tone.Warning, waiting: true);
 
-            CountDetailChanges(out string notes, out string resourcesUrl, out string status, out bool? accepts);
+            DetailChanges(out string notes, out string resourcesUrl, out string status, out bool? accepts);
 
             var result = await ApiClient.UpdateDetails(siteId.Value, notes, resourcesUrl, status, accepts);
 

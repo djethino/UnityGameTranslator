@@ -113,6 +113,11 @@ namespace UnityGameTranslator.Core.UI.Components
 
         /// <summary>The frame each movement was asked in: its clock starts at a LATER frame's Tick.</summary>
         private static readonly List<int> _askedAt = new List<int>();
+
+        // What each movement cost, said when it ends under debug logging: frames drawn and the
+        // longest of them (2026-10-22: the Fonts tab's arrival stuttered where the others did not).
+        private static readonly List<int> _framesDrawn = new List<int>();
+        private static readonly List<float> _longestFrame = new List<float>();
         private static readonly List<bool> _isPanel = new List<bool>();
 
         /// <summary>
@@ -157,6 +162,8 @@ namespace UnityGameTranslator.Core.UI.Components
                 _startedAt[known] = NotStarted;
                 _askedAt[known] = Time.frameCount;
                 _isPanel[known] = panel;
+                _framesDrawn[known] = 0;
+                _longestFrame[known] = 0f;
             }
             else
             {
@@ -164,6 +171,8 @@ namespace UnityGameTranslator.Core.UI.Components
                 _startedAt.Add(NotStarted);
                 _askedAt.Add(Time.frameCount);
                 _isPanel.Add(panel);
+                _framesDrawn.Add(0);
+                _longestFrame.Add(0f);
             }
 
             // Both start where their movement will start from. A panel is out of sight meanwhile —
@@ -220,6 +229,8 @@ namespace UnityGameTranslator.Core.UI.Components
                     continue;
                 }
                 var since = Clock.Now - _startedAt[i];
+                _framesDrawn[i]++;
+                if (Time.unscaledDeltaTime > _longestFrame[i]) _longestFrame[i] = Time.unscaledDeltaTime;
                 var wait = panel ? Settling : 0f;
 
                 // A panel is still sizing itself: kept out of sight by the focus pass rather than
@@ -242,6 +253,9 @@ namespace UnityGameTranslator.Core.UI.Components
                 // ⚠ Put back to exactly one rather than near it: anything left at 0.999 is a whole
                 // subtree re-rasterised for ever at a size nothing asked for.
                 transform.localScale = Vector3.one;
+                if (TranslatorCore.DebugMode)
+                    TranslatorCore.LogDebug($"[Appear] {transform.name}: {_framesDrawn[i]} frames over {since * 1000f:0} ms, "
+                                            + $"longest frame {_longestFrame[i] * 1000f:0} ms");
                 Forget(i);
             }
         }
@@ -251,6 +265,8 @@ namespace UnityGameTranslator.Core.UI.Components
             _playing.RemoveAt(i);
             _startedAt.RemoveAt(i);
             _askedAt.RemoveAt(i);
+            _framesDrawn.RemoveAt(i);
+            _longestFrame.RemoveAt(i);
             _isPanel.RemoveAt(i);
         }
     }

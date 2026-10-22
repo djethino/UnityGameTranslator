@@ -120,6 +120,7 @@ namespace UnityGameTranslator.Core.Checks
         /// <summary>Which paths a written pattern covers — for an exclusion or for a font rule.</summary>
         private static void WhatAPatternCovers()
         {
+            Section("A damaged translation file, set aside", DamagedFilesChecks.Run);
             Section("Exclusion patterns", ExclusionPatternChecks.Run);
         }
 

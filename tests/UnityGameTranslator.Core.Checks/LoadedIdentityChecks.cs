@@ -65,7 +65,8 @@ namespace UnityGameTranslator.Core.Checks
             string record = File.ReadAllText(recordSource);
 
             int loadCache = text.IndexOf("private static void LoadCache()", StringComparison.Ordinal);
-            int reading = text.IndexOf("var file = LoadedFile.Read(parsed);", StringComparison.Ordinal);
+            // Read with the parse since 2026-10-22, so a damaged file is set aside (SetDamagedFileAside).
+            int reading = text.IndexOf("file = LoadedFile.Read(parsed);", StringComparison.Ordinal);
             int entries = text.IndexOf("TranslationCache = entriesRead.Entries;", StringComparison.Ordinal);
             check(loadCache >= 0 && reading > loadCache && entries > reading,
                 "and the three landmarks of LoadCache are where they are expected",

@@ -182,12 +182,18 @@ namespace UnityGameTranslator.Core.Checks
             check(overlay.Body.Count == 1 && overlay.Body[0].Kind == "stack" && overlay.Body[0].Int("pad") != null && overlay.Body[0].Int("spacing") != null,
                 "one stack, whose spacing and padding the document states in pixels", "the code sizes the window from them — read there, never copied");
             check(overlay.Body[0].Children.All(b => !b.StartsVisible || b.Kind == "toast")
-                  && overlay.Body[0].Children.Count(b => b.Kind == "callout") == 10 && overlay.Nodes["ToastBox"].Kind == "toast",
-                "every box starts hidden: ten callouts (a font converting, a font missing characters, a fallback without decorations and the window's font among them), a connection line, a toast", "the code shows each when its moment comes");
+                  && overlay.Body[0].Children.Count(b => b.Kind == "callout") == 11 && overlay.Nodes["ToastBox"].Kind == "toast",
+                "every box starts hidden: eleven callouts (the translation file not used, a font converting, a font missing characters, a fallback without decorations and the window's font among them), a connection line, a toast", "the code shows each when its moment comes");
+            // The translation file not used — a newer mod's, set aside, or unread — is said FIRST and
+            // stays until put away: the load that found it ran before any window could show a passing message.
+            check(overlay.Body[0].Children[0].Name == "FileBox" && overlay.Nodes["FileBox"].Word("tone") == "Error"
+                  && overlay.Acts.ContainsKey("fileDismiss"),
+                "overlay.json opens on the translation file not used, red, with a way to put it away",
+                "a game left untranslated because its file could not be used must say why where the eye lands");
             check(overlay.Acts.Keys.OrderBy(k => k).SequenceEqual(new[] {
-                      "failuresFix", "failuresIgnore", "fontCoverageFix", "fontCoverageIgnore", "fontDecorationsFix", "fontDecorationsIgnore", "modDownload", "modIgnore", "modManager", "syncAction", "syncBranch", "syncCompare", "syncFork",
+                      "failuresFix", "failuresIgnore", "fileDismiss", "fontCoverageFix", "fontCoverageIgnore", "fontDecorationsFix", "fontDecorationsIgnore", "modDownload", "modIgnore", "modManager", "syncAction", "syncBranch", "syncCompare", "syncFork",
                       "syncIgnore", "syncSettings", "unreachableIgnore", "unreachableSettings", "webNotifDismiss", "webNotifView", "windowFontFix", "windowFontIgnore" }),
-                "overlay.json asks for the twenty-one acts its code handles", $"got {string.Join(",", overlay.Acts.Keys)}");
+                "overlay.json asks for the twenty-two acts its code handles", $"got {string.Join(",", overlay.Acts.Keys)}");
             // 🔴 An unreachable server is a STATE, red, with its ways out: not a toast that fades while
             // the queue status comes back saying "Translating…" (2026-09-23).
             check(overlay.Nodes["UnreachableBox"].Word("tone") == "Error"

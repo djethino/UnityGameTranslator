@@ -662,6 +662,20 @@ namespace UnityGameTranslator.Core
         public static bool TranslationFileTooNew { get; private set; }
 
         /// <summary>
+        /// The name the translation file was set aside under at the last load, because it was not a
+        /// translation file any more (damaged JSON, a value of the wrong kind) — null when it was not.
+        /// A new file was started beside it. Said in the corner notification until put away.
+        /// </summary>
+        public static string TranslationFileSetAside { get; private set; }
+
+        /// <summary>
+        /// Whether the translation file on disk must not be written over: written by a newer mod, or
+        /// left unread for a reason that is not its content (a lock, a permission) — in both cases it
+        /// may hold work this session does not have.
+        /// </summary>
+        internal static bool TranslationFileProtected => TranslationFileTooNew || TranslationFileUnreadable;
+
+        /// <summary>
         /// The languages in force for this translation, resolved from the server, then the file,
         /// then the configuration. Null on either side when nobody has settled it yet.
         /// </summary>
@@ -3020,6 +3034,7 @@ namespace UnityGameTranslator.Core
 
             TranslationFileUnreadable = false;
             TranslationFileTooNew = false;
+            TranslationFileSetAside = null;
 
             if (!File.Exists(CachePath))
             {
@@ -3038,8 +3053,6 @@ namespace UnityGameTranslator.Core
                 // Normalize line endings to prevent key mismatches (Windows editors may add \r\n)
                 json = json.Replace("\r\n", "\n");
 
-                // Parse as JObject to handle metadata
-                var parsed = JObject.Parse(json);
                 // ⚠ Emptied HERE and filled at the end, not built in place. The worker thread
                 // reads this map while the file is being read, and it has always seen an empty one
                 // during that window — leaving the previous translation visible instead would be a
@@ -3049,13 +3062,28 @@ namespace UnityGameTranslator.Core
                 // Fresh cache: allow own-UI labels that failed once to be submitted again.
                 _queue.ForgetOwnUiSubmitted();
 
+                // Parse as JObject to handle metadata — and the record of it (LoadedFile) at once:
+                // a file that is not a translation file any more is set aside rather than lost.
+                JObject parsed;
+                LoadedFile file;
+                try
+                {
+                    parsed = JObject.Parse(json);
+                    file = LoadedFile.Read(parsed);
+                }
+                catch (Exception damaged) when (damaged is JsonException || damaged is FormatException
+                                                || damaged is InvalidCastException || damaged is OverflowException)
+                {
+                    SetDamagedFileAside(damaged);
+                    return;
+                }
+
                 // 🔴 **The whole file, read into a record with a value for every field** —
                 // Engine/LoadedFile.cs, where each key's reading is held by cases. Then every
                 // field assigned from it, unconditionally: a file that says nothing says "none",
                 // and "the previous one survives" is no longer expressible. The reset above still
                 // stands for the two paths that never get here: no file, and a file that could
-                // not be read.
-                var file = LoadedFile.Read(parsed);
+                // not be read. (Read above, with the parse, so a damaged file is set aside.)
 
                 int engineVersion = file.EngineVersion;
 
@@ -3071,7 +3099,8 @@ namespace UnityGameTranslator.Core
                     FileUuid = file.Uuid;
                     Adapter.LogWarning($"[LoadCache] translations.json is format {engineVersion}; this mod reads up to {CurrentEngineVersion}. "
                                        + "It is left untouched and not used. " + TranslationFormat.UpdateTheMod);
-                    Host?.Warn(TranslationFormat.UpdateTheMod);
+                    // Said in the corner notification (StatusOverlay, TranslationFileTooNew): this
+                    // runs before any window exists, where a passing message would be lost.
                     return;
                 }
                 // Identity and stamps, every field, as the file states them.
@@ -3299,7 +3328,11 @@ namespace UnityGameTranslator.Core
             }
             catch (Exception e)
             {
-                Adapter.LogError($"Failed to load cache: {e.Message}");
+                // 🔴 **Left as it is, and never written over** (2026-10-22). The cache runs empty
+                // beside the file, and the first line translated used to be saved over it: a whole
+                // translation lost, silently. The file is protected (TranslationFileProtected) and the
+                // corner notification says it; a file whose CONTENT is damaged is set aside instead.
+                Adapter.LogError($"Failed to load cache: {e.Message}. translations.json is left as it is and nothing is saved over it.");
                 TranslationFileUnreadable = true;
                 TranslationCache = new Dictionary<string, TranslationEntry>();
 
@@ -3316,6 +3349,39 @@ namespace UnityGameTranslator.Core
                     nextTranslationIndex = 1;
                 }
             }
+        }
+
+        /// <summary>
+        /// A translation file that is not one any more — damaged JSON, a value of the wrong kind — is
+        /// renamed beside itself (<c>translations.json.damaged-&lt;date&gt;</c>) and a new file is
+        /// started, as with no file at all.
+        ///
+        /// 🔴 **Set aside, not read past** (user, 2026-10-22). The mod used to run on an empty cache
+        /// and save the first line it translated over the damaged file, which was then gone. Set
+        /// aside, the work is still there to repair by hand, and the game goes on being translated.
+        /// When even the renaming fails, the file is left in place and protected.
+        /// </summary>
+        private static void SetDamagedFileAside(Exception damaged)
+        {
+            string aside = DamagedFiles.SetAside(CachePath, DateTime.Now, out string moveError);
+            if (aside == null)
+            {
+                Adapter.LogError($"[LoadCache] translations.json could not be read ({damaged.Message}) nor set aside ({moveError}). "
+                                 + "It is left as it is and nothing is saved over it.");
+                TranslationFileUnreadable = true;
+                TranslationCache = new Dictionary<string, TranslationEntry>();
+                _readback.ClearGame();
+                _queue.ForgetOwnUiSubmitted();
+                FileUuid = Guid.NewGuid().ToString();
+                lock (lockObj) { nextTranslationIndex = 1; }
+                return;
+            }
+
+            Adapter.LogWarning($"[LoadCache] translations.json could not be read ({damaged.Message}). "
+                               + $"It was set aside as {Path.GetFileName(aside)} and a new translation file was started.");
+            // The road of a game with no file: a fresh file, a fresh identity.
+            LoadCache();
+            TranslationFileSetAside = Path.GetFileName(aside);
         }
 
         private static void LoadAncestorCache()
@@ -7090,8 +7156,9 @@ namespace UnityGameTranslator.Core
         {
             try
             {
-                // A newer mod's file is never written over (TranslationFileTooNew).
-                if (TranslationFileTooNew) return null;
+                // A file that may hold work this session does not have is never written over:
+                // a newer mod's, or one left unread (TranslationFileProtected).
+                if (TranslationFileProtected) return null;
 
                 // Counted here rather than trusted, so what the file says is true of the file.
                 //

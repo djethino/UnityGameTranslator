@@ -84,6 +84,14 @@ namespace UnityGameTranslator.Core.UI.Panels
         // translation). Shown IN PLACE of the AI queue box, which would claim a translation is
         // under way while the queue is held.
         private Host _unreachableBox;
+
+        // The translation file on disk was not used: written by a newer mod, set aside as damaged,
+        // or left unread (TranslatorCore.TranslationFileTooNew / SetAside / Unreadable).
+        private Host _fileBox;
+        private LabelHandle _fileTitle;
+        private LabelHandle _fileCause;
+        /// <summary>The problem put away with Dismiss, by its words: a different one shows again.</summary>
+        private string _fileDismissedFor;
         private LabelHandle _unreachableCause;
 
         // Lines the AI gave up on this session: the fact, and the way to the Failures tab
@@ -475,6 +483,9 @@ namespace UnityGameTranslator.Core.UI.Panels
             _webNotifViewBtn = _screen.Button("WebNotifViewBtn");
 
             _unreachableBox = _screen.Host("UnreachableBox");
+            _fileBox = _screen.Host("FileBox");
+            _fileTitle = _screen.Label("FileTitle");
+            _fileCause = _screen.Label("FileCause");
             _unreachableCause = _screen.Label("UnreachableCause");
 
             _fontBox = _screen.Host("FontConversionBox");
@@ -523,6 +534,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 case "windowFontIgnore": return OnWindowFontIgnoreClicked;
                 case "unreachableSettings": return Intents.OpenTranslationSettings;
                 case "unreachableIgnore": return Intents.PauseLiveTranslation;
+                case "fileDismiss": return () => { _fileDismissedFor = FileProblem(out _); RefreshOverlay(); };
                 default: return null;
             }
         }
@@ -582,8 +594,35 @@ namespace UnityGameTranslator.Core.UI.Panels
             AdjustHeight();
         }
 
+        /// <summary>
+        /// What is wrong with the translation file on disk, as a title (null when nothing), and the
+        /// line under it: the fact, then what was done about it.
+        /// </summary>
+        private static string FileProblem(out string cause)
+        {
+            if (TranslatorCore.TranslationFileTooNew)
+            {
+                cause = Tr(TranslationFormat.UpdateTheMod) + " " + Tr("The file is left as it is.");
+                return "This game's translation was not loaded";
+            }
+            if (TranslatorCore.TranslationFileSetAside is string aside)
+            {
+                // The file name is data: appended, never sent for translation.
+                cause = Tr("It was set aside and a new translation file was started:") + " " + aside;
+                return "This game's translation file was damaged";
+            }
+            if (TranslatorCore.TranslationFileUnreadable)
+            {
+                cause = Tr("It is left as it is and nothing is saved over it. The mod log says why.");
+                return "This game's translation could not be read";
+            }
+            cause = null;
+            return null;
+        }
+
         private void HideNonToastBoxes()
         {
+            if (_fileBox != null) _fileBox.Visible = false;
             if (_modUpdateBox != null) _modUpdateBox.Visible = false;
             if (_syncBox != null) _syncBox.Visible = false;
             if (_aiBox != null) _aiBox.Visible = false;
@@ -714,6 +753,17 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // When panels are open, only show AI queue (mod update & sync are in MainPanel)
             // When panels are closed, show all notifications
+
+            // 0. The translation file was not used — whatever the panels: nothing else on screen
+            // says why the game is untranslated, and the load that found it ran before any window.
+            string fileTitle = FileProblem(out string fileCause);
+            bool showFile = fileTitle != null && fileTitle != _fileDismissedFor;
+            if (_fileBox != null) _fileBox.Visible = showFile;
+            if (showFile)
+            {
+                _fileTitle?.Say(fileTitle);
+                _fileCause?.Show(fileCause);
+            }
 
             // 1. Mod update notification (hidden when panels open - shown in MainPanel instead)
             bool showModUpdate = ShowsModUpdate(_panelsOpenMode);
@@ -1097,7 +1147,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // 🔴 Every box of the stack, the site's notification included: left out of this list,
             // it was drawn without a height of its own, over the buttons of the box above it.
-            foreach (var box in new[] { _modUpdateBox, _syncBox, _webNotifBox, _failuresBox, _fontCoverageBox, _fontDecorationsBox, _windowFontBox, _unreachableBox, _fontBox, _aiBox, _connectionBox, _toast?.Handle })
+            foreach (var box in new[] { _fileBox, _modUpdateBox, _syncBox, _webNotifBox, _failuresBox, _fontCoverageBox, _fontDecorationsBox, _windowFontBox, _unreachableBox, _fontBox, _aiBox, _connectionBox, _toast?.Handle })
             {
                 if (box == null || !box.Visible) continue;
 
@@ -1119,7 +1169,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (TranslatorCore.DebugMode)
             {
                 var names = new List<string>();
-                foreach (var box in new[] { _modUpdateBox, _syncBox, _webNotifBox, _failuresBox, _fontCoverageBox, _fontDecorationsBox, _windowFontBox, _unreachableBox, _fontBox, _aiBox, _connectionBox, _toast?.Handle })
+                foreach (var box in new[] { _fileBox, _modUpdateBox, _syncBox, _webNotifBox, _failuresBox, _fontCoverageBox, _fontDecorationsBox, _windowFontBox, _unreachableBox, _fontBox, _aiBox, _connectionBox, _toast?.Handle })
                     if (box != null && box.Visible) names.Add(box.Object != null ? box.Object.name : "?");
                 string boxes = names.Count == 0 ? "none" : string.Join(", ", names.ToArray());
                 if (DiagnosticOnce.First("overlay-boxes", boxes))
@@ -1155,6 +1205,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (_fontCoverageBox != null && _fontCoverageBox.Visible) height += 60;
             if (_fontDecorationsBox != null && _fontDecorationsBox.Visible) height += 60;
             if (_windowFontBox != null && _windowFontBox.Visible) height += 60;
+            if (_fileBox != null && _fileBox.Visible) height += 80;
             if (_unreachableBox != null && _unreachableBox.Visible) height += 80;
             if (_aiBox != null && _aiBox.Visible) height += 50;
             if (_fontBox != null && _fontBox.Visible) height += 50;

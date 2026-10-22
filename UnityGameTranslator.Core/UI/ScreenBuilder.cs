@@ -421,14 +421,15 @@ namespace UnityGameTranslator.Core.UI
                     switch (node.Word("format"))
                     {
                         case "Percent": format = v => $"{v * 100f:0}%"; step = 0.01f; break;
-                        // A size multiplier in steps of 5%, "default" at zero.
+                        // A rule's size multiplier, as the rule holds it (FontOverrideRule.RoundSize),
+                        // "default" at zero.
                         case "PercentOrDefault":
                             format = v =>
                             {
-                                float rounded = (float)Math.Round(v * 20) / 20f;
-                                return rounded > 0.001f ? $"{(int)(rounded * 100)}%" : "default";
+                                float rounded = FontOverrideRule.RoundSize(v);
+                                return rounded > 0.001f ? $"{Math.Round(rounded * 100f):0}%" : "default";
                             };
-                            step = 0.05f;
+                            step = FontOverrideRule.SizeStep;
                             break;
                         default:
                             format = v => v.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);

@@ -1808,6 +1808,17 @@ namespace UnityGameTranslator.Core
                         {
                             TranslatorCore.UpdateSeenText(instanceId, currentText);
                             processedTextHashes[instanceId] = textHash;
+
+                            // 🔴 **Its font, its rule and its size, though nothing is written**
+                            // (user, 2026-10-22: a rule on a letter's « . . . » was not there after a
+                            // restart, and was once changed and applied again). A text with nothing
+                            // to translate and no translation in the file fires no setter above, and
+                            // the setter is what takes the font's Size, its rules and its lines; the
+                            // scene pass takes them only for a font with a replacement. So such a
+                            // text sat at the game's size until an Apply walked it. The door the
+                            // Apply uses, once — this branch is not reached again for this text.
+                            if (!TranslatorCore.HasCachedTranslation(currentText))
+                                TranslatorPatches.ApplyFontRulesInPlace(instanceId, component);
                         }
                     }
                 }

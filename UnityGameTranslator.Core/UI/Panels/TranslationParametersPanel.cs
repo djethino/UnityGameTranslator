@@ -1770,7 +1770,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                     case "sizeChanged": return () =>
                     {
                         if (_fillingRows) return;
-                        float rounded = (float)Math.Round(row.Slider("OverrideSize").Value * 20) / 20f;
+                        float rounded = FontOverrideRule.RoundSize(row.Slider("OverrideSize").Value);
                         if (capturedIndex < _pendingFontOverrides.Count)
                         {
                             _pendingFontOverrides[capturedIndex].size_multiplier = rounded;
@@ -1859,7 +1859,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// the size shown is not already 100%.</summary>
         private static void ShowOverrideSizeButtons(BuiltScreen row, FontOverrideRule rule, FontOverrideRule initial)
         {
-            float shown = (float)Math.Round(row.Slider("OverrideSize").Value * 20) / 20f;
+            float shown = FontOverrideRule.RoundSize(row.Slider("OverrideSize").Value);
             row.Button("SizeUndoBtn").Visible = initial != null && Math.Abs(rule.size_multiplier - initial.size_multiplier) > 0.001f;
             row.Button("SizeDefaultBtn").Visible = Math.Abs(shown - 1f) > 0.001f;
         }

@@ -44,6 +44,16 @@ namespace UnityGameTranslator.Core
         public float size_multiplier { get; set; } = 0f;
 
         /// <summary>
+        /// A size as a rule holds it: to the percent (user, 2026-10-22 — it was 5%, coarser than the
+        /// Fonts tab beside it). The rail's number, what is saved and the wheel's step all go through
+        /// this, so the three cannot disagree.
+        /// </summary>
+        public static float RoundSize(float multiplier) => (float)Math.Round(multiplier * 100f) / 100f;
+
+        /// <summary>The step <see cref="RoundSize"/> leaves — one notch of the wheel.</summary>
+        public const float SizeStep = 0.01f;
+
+        /// <summary>
         /// Whether this rule is active.
         /// </summary>
         public bool enabled { get; set; } = true;

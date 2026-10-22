@@ -57,6 +57,7 @@ namespace UnityGameTranslator.Core
         private static PropertyInfo _worldBoundProp;       // VisualElement.worldBound -> Rect
         private static MethodInfo _screenToPanelMethod;    // RuntimePanelUtils.ScreenToPanel(IPanel, Vector2)
         private static MethodInfo _pickMethod;             // IPanel.Pick(Vector2) -> VisualElement
+        private static MethodInfo _pickAllMethod;          // IPanel.PickAll(Vector2, List<VisualElement>) -> VisualElement
 
         private static PropertyInfo _panelProp;            // VisualElement.panel     -> IPanel
         private static PropertyInfo _focusControllerProp;  // IPanel.focusController
@@ -240,6 +241,15 @@ namespace UnityGameTranslator.Core
                 {
                     _pickMethod = _panelProp.PropertyType.GetMethod(
                         "Pick", pubInst, null, new[] { typeof(Vector2) }, null);
+                    // Every element under a point, top first — the inspector's list of what is under
+                    // the pointer. Found by name and shape: its list parameter is the runtime's own
+                    // List type (an interop one under IL2CPP), made from the parameter itself.
+                    foreach (var method in _panelProp.PropertyType.GetMethods(pubInst))
+                    {
+                        if (method.Name != "PickAll") continue;
+                        var parameters = method.GetParameters();
+                        if (parameters.Length == 2 && parameters[0].ParameterType == typeof(Vector2)) { _pickAllMethod = method; break; }
+                    }
                     _focusControllerProp = _panelProp.PropertyType.GetProperty("focusController", pubInst);
                     if (_focusControllerProp != null)
                         _focusedElementProp = _focusControllerProp.PropertyType
@@ -1307,6 +1317,60 @@ namespace UnityGameTranslator.Core
             catch (Exception ex) { Faults.Say("UIToolkit.PickAt", ex); }
 
             return null;
+        }
+
+        /// <summary>
+        /// Every element under a screen point the inspector can act on — one carrying text or, in
+        /// <paramref name="images"/>, one carrying a picture — top first, each once, with where it
+        /// sits on screen. The inspector's list of what is under the pointer (user, 2026-10-22: the
+        /// list must not leave UI Toolkit out — what lies on top hides what is under it here too).
+        ///
+        /// ⚠ The panel's own PickAll, and its list made from the method's parameter: a managed
+        /// List under Mono, the interop one under IL2CPP — read through its Count and indexer, which
+        /// both kinds have. Empty when the runtime offers no PickAll: the click then takes the one
+        /// element PickAt finds, as before.
+        /// </summary>
+        public static List<KeyValuePair<object, Rect>> PickAllAt(Vector2 screenPoint, bool images)
+        {
+            var found = new List<KeyValuePair<object, Rect>>();
+            if (!Available || _pickAllMethod == null || _textProp == null) return found;
+
+            try
+            {
+                var documents = TypeHelper.FindAllObjectsOfType(UIDocumentType);
+                if (documents == null) return found;
+                var seen = new HashSet<long>();
+                var listType = _pickAllMethod.GetParameters()[1].ParameterType;
+
+                foreach (var document in documents)
+                {
+                    if (document == null) continue;
+                    object root = null, panel = null;
+                    try { root = _rootProp.GetValue(document, null); } catch (Exception ex) { Faults.Say("UIToolkit.PickAllAt root", ex); }
+                    if (root == null) continue;
+                    try { panel = _panelProp.GetValue(root, null); } catch (Exception ex) { Faults.Say("UIToolkit.PickAllAt panel", ex); }
+                    if (panel == null) continue;
+
+                    var mapping = PanelMapping.For(panel, _screenToPanelMethod);
+                    var picked = Activator.CreateInstance(listType);
+                    _pickAllMethod.Invoke(panel, new[] { (object)mapping.ToPanel(screenPoint), picked });
+
+                    var type = picked.GetType();
+                    int count = (int)type.GetProperty("Count").GetValue(picked, null);
+                    var item = type.GetProperty("Item");
+                    for (int i = 0; i < count; i++)
+                    {
+                        var element = item.GetValue(picked, new object[] { i });
+                        if (element == null) continue;
+                        bool wanted = images ? SpriteOf(element) != null
+                                             : HasText(element) && !IsInsideTextInput(element);
+                        if (!wanted || !seen.Add(IdFor(element))) continue;
+                        found.Add(new KeyValuePair<object, Rect>(element, mapping.ToScreen(WorldBoundOf(element))));
+                    }
+                }
+            }
+            catch (Exception ex) { Faults.Say("UIToolkit.PickAllAt", ex); }
+            return found;
         }
 
         private static bool HasText(object element)

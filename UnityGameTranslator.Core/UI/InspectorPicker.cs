@@ -1348,25 +1348,34 @@ namespace UnityGameTranslator.Core.UI
             if (InputManager.GetMouseButtonDown(0))
             {
                 var hitObject = RaycastUIElement(mousePos);
-                if (hitObject == null && SelectUIToolkitAt(mousePos)) return;
+                // UI Toolkit's elements under the pointer, top first — the game's answer being
+                // empty, the top one is the click's own answer, as it has always been.
+                var toolkit = UIToolkitSupport.PickAllAt(mousePos, images: !WantsText);
+                bool toolkitAnswers = hitObject == null && toolkit.Count > 0;
 
                 // Same order as the hover: the game's answer, UI Toolkit, then — when neither is a
                 // text, in a mode about text — the text under the pointer by its rectangle.
                 bool clickedByRectangle = false;
-                if (WantsText && (hitObject == null || !CarriesText(hitObject)))
+                if (!toolkitAnswers)
                 {
-                    var text = TextUnderPointer(mousePos);
-                    if (text != null) { hitObject = text; clickedByRectangle = true; }
+                    if (WantsText && (hitObject == null || !CarriesText(hitObject)))
+                    {
+                        var text = TextUnderPointer(mousePos);
+                        if (text != null) { hitObject = text; clickedByRectangle = true; }
+                    }
+                    else
+                        hitObject = RefineToText(hitObject, mousePos, out clickedByRectangle);
                 }
-                else
-                    hitObject = RefineToText(hitObject, mousePos, out clickedByRectangle);
                 if (hitObject != null && IsOwnUI(hitObject)) hitObject = null;
 
                 // 🔴 More than one thing under the pointer: the list of them, to choose from (user,
-                // 2026-10-22) — the click's own answer first. One: taken at once, as always.
+                // 2026-10-22) — the click's own answer first, UI Toolkit's elements included. One:
+                // taken at once, as always.
                 var under = UnderPointer(mousePos, hitObject);
-                if (under.Count > 1 && OpenUnderPointer(under, mousePos)) return;
+                if (under.Count + toolkit.Count > 1 && OpenUnderPointer(under, toolkit, toolkitAnswers, mousePos)) return;
+                if (toolkitAnswers) { SelectUIToolkit(toolkit[0].Key, toolkit[0].Value); return; }
                 if (hitObject == null && under.Count == 1) hitObject = under[0];
+                if (hitObject == null && SelectUIToolkitAt(mousePos)) return;
 
                 if (hitObject != null)
                 {
@@ -1425,7 +1434,8 @@ namespace UnityGameTranslator.Core.UI
 
         /// <summary>Everything under the pointer at the last click, as the open list shows it.</summary>
         private readonly Components.UnderPointerList _underPointer = new Components.UnderPointerList();
-        private readonly List<GameObject> _underPointerObjects = new List<GameObject>();
+        /// <summary>The lines of the open list: a GameObject (no rectangle), or a UI Toolkit element and where it sits.</summary>
+        private readonly List<KeyValuePair<object, Rect?>> _underPointerObjects = new List<KeyValuePair<object, Rect?>>();
 
         /// <summary>
         /// Everything under the pointer, front first, for the list a click opens: what the click
@@ -1483,41 +1493,75 @@ namespace UnityGameTranslator.Core.UI
         /// and names it in the window, as a hover does; a line clicked is the selection, through
         /// the one door (<see cref="Select"/>).
         /// </summary>
-        private bool OpenUnderPointer(List<GameObject> under, Vector3 pointer)
+        private bool OpenUnderPointer(List<GameObject> under, List<KeyValuePair<object, Rect>> toolkit,
+                                      bool toolkitFirst, Vector3 pointer)
         {
             var canvas = _panelRect != null ? _panelRect.GetComponentInParent<Canvas>() : null;
             if (canvas == null) return false;
 
+            // One line per thing: a GameObject, or a UI Toolkit element with where it sits on screen.
+            // UI Toolkit's first when its top element is the click's own answer, after the game's
+            // answer otherwise — so the first line is always what the click alone would have taken.
             _underPointerObjects.Clear();
-            _underPointerObjects.AddRange(under);
             var entries = new List<Components.UnderPointerList.Entry>();
-            foreach (var go in under) entries.Add(EntryOf(go));
+            void AddToolkit()
+            {
+                foreach (var element in toolkit)
+                {
+                    _underPointerObjects.Add(new KeyValuePair<object, Rect?>(element.Key, element.Value));
+                    entries.Add(EntryOfElement(element.Key));
+                }
+            }
+            if (toolkitFirst) AddToolkit();
+            foreach (var go in under)
+            {
+                _underPointerObjects.Add(new KeyValuePair<object, Rect?>(go, null));
+                entries.Add(EntryOf(go));
+            }
+            if (!toolkitFirst) AddToolkit();
 
-            TranslatorCore.LogDebug($"[Inspector] {under.Count} objects under the pointer at {pointer.x:F0},{pointer.y:F0}: "
+            TranslatorCore.LogDebug($"[Inspector] {entries.Count} objects under the pointer at {pointer.x:F0},{pointer.y:F0}: "
                                     + string.Join(", ", entries.ConvertAll(e => "'" + e.Name + "'").ToArray()));
 
             _underPointer.Open(canvas, new Vector2(pointer.x, pointer.y), entries,
                 onHover: index =>
                 {
-                    var go = index >= 0 && index < _underPointerObjects.Count ? _underPointerObjects[index] : null;
-                    if (go == null)
+                    var line = index >= 0 && index < _underPointerObjects.Count ? _underPointerObjects[index] : default;
+                    if (line.Key is GameObject go && go != null)
                     {
-                        HideHoverMarker();
-                        _hoverTarget = null;
-                        if (_lastHoveredPath != "") { _lastHoveredPath = ""; Hovered?.Invoke("", null); }
+                        PositionHighlight(_hoverHighlightRect, _hoverHighlight, _hoverEdges, _hoverEdgeImages, go);
+                        _hoverTarget = go;
+                        string path = TranslatorCore.GetGameObjectPath(go);
+                        if (path != _lastHoveredPath) { _lastHoveredPath = path; Hovered?.Invoke(path, go); }
                         return;
                     }
-                    PositionHighlight(_hoverHighlightRect, _hoverHighlight, _hoverEdges, _hoverEdgeImages, go);
-                    _hoverTarget = go;
-                    string path = TranslatorCore.GetGameObjectPath(go);
-                    if (path != _lastHoveredPath) { _lastHoveredPath = path; Hovered?.Invoke(path, go); }
+                    if (line.Key != null && line.Value is Rect rect)
+                    {
+                        // An element has no GameObject to follow: framed where it was picked, as a hover on it does.
+                        _hoverTarget = null;
+                        HideEdges(_hoverEdgeImages);
+                        PositionHighlightRect(_hoverHighlightRect, _hoverHighlight, rect);
+                        string path = UIToolkitSupport.PathOf(line.Key);
+                        if (path != _lastHoveredPath) { _lastHoveredPath = path; Hovered?.Invoke(path, line.Key); }
+                        return;
+                    }
+                    HideHoverMarker();
+                    _hoverTarget = null;
+                    if (_lastHoveredPath != "") { _lastHoveredPath = ""; Hovered?.Invoke("", null); }
                 },
                 onPick: index =>
                 {
-                    var go = index >= 0 && index < _underPointerObjects.Count ? _underPointerObjects[index] : null;
-                    if (go == null) return;
-                    TranslatorCore.LogDebug($"[Inspector] picked '{go.name}' from the list of what is under the pointer");
-                    Select(go, pointer);
+                    var line = index >= 0 && index < _underPointerObjects.Count ? _underPointerObjects[index] : default;
+                    if (line.Key is GameObject go && go != null)
+                    {
+                        TranslatorCore.LogDebug($"[Inspector] picked '{go.name}' from the list of what is under the pointer");
+                        Select(go, pointer);
+                    }
+                    else if (line.Key != null && line.Value is Rect rect)
+                    {
+                        TranslatorCore.LogDebug($"[Inspector] picked UI Toolkit '{UIToolkitSupport.PathOf(line.Key)}' from the list of what is under the pointer");
+                        SelectUIToolkit(line.Key, rect);
+                    }
                 },
                 onClose: () =>
                 {
@@ -1526,6 +1570,19 @@ namespace UnityGameTranslator.Core.UI
                     _searchAgain = true;
                 });
             return _underPointer.IsOpen;
+        }
+
+        /// <summary>A line of the list for a UI Toolkit element: its last path segment, then what it says or what it is.</summary>
+        private static Components.UnderPointerList.Entry EntryOfElement(object element)
+        {
+            string path = UIToolkitSupport.PathOf(element) ?? "";
+            int cut = path.LastIndexOf('/');
+            string name = cut >= 0 ? path.Substring(cut + 1) : path;
+            TextsOf(element, false, out string source, out _, out _);
+            string detail = !string.IsNullOrEmpty(source)
+                ? "“" + source.Replace("\r", " ").Replace("\n", " ").Trim() + "”"
+                : "Image";
+            return new Components.UnderPointerList.Entry { Name = name, Detail = detail + " (UI Toolkit)" };
         }
 
         /// <summary>
@@ -3202,8 +3259,15 @@ namespace UnityGameTranslator.Core.UI
         private bool SelectUIToolkitAt(Vector2 mousePos)
         {
             var element = UIToolkitSupport.PickAt(mousePos, out var screenRect);
-            if (element == null) return false;
+            return element != null && SelectUIToolkit(element, screenRect);
+        }
 
+        /// <summary>
+        /// Make a UI Toolkit element the selection — the click's door, and the list's when one of
+        /// its lines is an element (<see cref="OpenUnderPointer"/>).
+        /// </summary>
+        private bool SelectUIToolkit(object element, Rect screenRect)
+        {
             string path = UIToolkitSupport.PathOf(element);
             if (string.IsNullOrEmpty(path)) return false;
 
